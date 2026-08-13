@@ -1,0 +1,255 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+)
+
+// AttachmentRole is the source-authoritative role of one attachment
+// occurrence. Unknown fails closed for hosted processing.
+type AttachmentRole string
+
+const (
+	AttachmentRoleStandalone AttachmentRole = "standalone"
+	AttachmentRoleInline     AttachmentRole = "inline"
+	AttachmentRoleAvatar     AttachmentRole = "avatar"
+	AttachmentRoleThumbnail  AttachmentRole = "thumbnail"
+	AttachmentRolePreview    AttachmentRole = "preview"
+	AttachmentRoleSticker    AttachmentRole = "sticker"
+	AttachmentRoleUIAsset    AttachmentRole = "ui_asset"
+	AttachmentRoleUnknown    AttachmentRole = "unknown"
+)
+
+// AttachmentRoleSource records why an attachment role is trusted. It is
+// evidence provenance, not an eligibility decision by itself.
+type AttachmentRoleSource string
+
+const (
+	AttachmentRoleSourceMIMEDisposition   AttachmentRoleSource = "mime_disposition"
+	AttachmentRoleSourceProviderExplicit  AttachmentRoleSource = "provider_explicit"
+	AttachmentRoleSourceImporterSemantics AttachmentRoleSource = "importer_semantics"
+	AttachmentRoleSourceLegacyAPI         AttachmentRoleSource = "legacy_api"
+	AttachmentRoleSourceRawMIMERepair     AttachmentRoleSource = "raw_mime_repair"
+	AttachmentRoleSourceUnknown           AttachmentRoleSource = "unknown"
+)
+
+// AttachmentWrite is the complete typed write contract for one attachment
+// occurrence. SourcePartKey is stable within the owning source message; when
+// unavailable it stays empty and the row retains legacy best-effort hash
+// identity.
+type AttachmentWrite struct {
+	Filename           string
+	MIMEType           string
+	StoragePath        string
+	ContentHash        string
+	Size               int64
+	SourceAttachmentID string
+	MediaType          string
+	Width              int64
+	Height             int64
+	DurationMS         int64
+	Metadata           string
+	Role               AttachmentRole
+	RoleSource         AttachmentRoleSource
+	SourcePartKey      string
+	ContentID          string
+}
+
+func (r AttachmentRole) valid() bool {
+	switch r {
+	case AttachmentRoleStandalone, AttachmentRoleInline, AttachmentRoleAvatar,
+		AttachmentRoleThumbnail, AttachmentRolePreview, AttachmentRoleSticker,
+		AttachmentRoleUIAsset, AttachmentRoleUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s AttachmentRoleSource) valid() bool {
+	switch s {
+	case AttachmentRoleSourceMIMEDisposition,
+		AttachmentRoleSourceProviderExplicit,
+		AttachmentRoleSourceImporterSemantics,
+		AttachmentRoleSourceLegacyAPI,
+		AttachmentRoleSourceRawMIMERepair,
+		AttachmentRoleSourceUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// AttachmentRoleFromMIME maps only explicit MIME occurrence evidence. A
+// filename or media type is never enough to promote an ambiguous part.
+func AttachmentRoleFromMIME(
+	disposition string,
+	isInline bool,
+	contentID string,
+) (AttachmentRole, AttachmentRoleSource) {
+	switch {
+	case isInline || contentID != "" || disposition == "inline":
+		return AttachmentRoleInline, AttachmentRoleSourceMIMEDisposition
+	case disposition == "attachment":
+		return AttachmentRoleStandalone, AttachmentRoleSourceMIMEDisposition
+	default:
+		return AttachmentRoleUnknown, AttachmentRoleSourceUnknown
+	}
+}
+
+func (w AttachmentWrite) normalized() AttachmentWrite {
+	if w.Role == "" {
+		w.Role = AttachmentRoleUnknown
+	}
+	if w.RoleSource == "" {
+		w.RoleSource = AttachmentRoleSourceUnknown
+	}
+	return w
+}
+
+func (w AttachmentWrite) validate() error {
+	if !w.Role.valid() {
+		return fmt.Errorf("invalid attachment role %q", w.Role)
+	}
+	if !w.RoleSource.valid() {
+		return fmt.Errorf("invalid attachment role source %q", w.RoleSource)
+	}
+	if w.Size < 0 {
+		return errors.New("attachment size must not be negative")
+	}
+	return nil
+}
+
+// UpsertAttachmentRecord stores one attachment occurrence through the typed
+// role/provenance contract. A stable source-part key updates the same logical
+// occurrence on resync, even when its bytes change. Rows without such a key
+// retain the legacy content-hash behavior.
+func (s *Store) UpsertAttachmentRecord(
+	ctx context.Context,
+	messageID int64,
+	write AttachmentWrite,
+) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
+}
+
+func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write AttachmentWrite) error {
+	if write.SourcePartKey != "" && write.ContentHash != "" {
+		// Upgrade the pre-provenance row in place when a resync supplies a
+		// stable source occurrence for the same bytes. This preserves its row
+		// identity and prevents a later raw-MIME repair from colliding with a
+		// separately inserted keyed row.
+		result, err := q.Exec(fmt.Sprintf(`
+			UPDATE attachments SET
+				filename = ?, mime_type = ?, storage_path = ?, content_hash = ?, size = ?,
+				source_attachment_id = ?, media_type = ?, width = ?, height = ?, duration_ms = ?,
+				attachment_metadata = %s, attachment_role = ?, role_source = ?,
+				source_part_key = ?, content_id = ?
+			WHERE message_id = ?
+			  AND source_part_key IS NULL
+			  AND content_hash = ?
+			  AND attachment_role = 'unknown'
+			  AND NOT EXISTS (
+				SELECT 1 FROM attachments keyed
+				WHERE keyed.message_id = ? AND keyed.source_part_key = ?
+			  )
+		`, s.dialect.JSONBindExpr()),
+			write.Filename, write.MIMEType, write.StoragePath, write.ContentHash, write.Size,
+			nullIfEmpty(write.SourceAttachmentID), nullIfEmpty(write.MediaType),
+			nullIfZero(write.Width), nullIfZero(write.Height), nullIfZero(write.DurationMS),
+			nullIfEmpty(write.Metadata), string(write.Role), string(write.RoleSource),
+			write.SourcePartKey, nullIfEmpty(write.ContentID),
+			messageID, write.ContentHash, messageID, write.SourcePartKey,
+		)
+		if err != nil {
+			return err
+		}
+		if count, countErr := result.RowsAffected(); countErr == nil && count > 0 {
+			return nil
+		}
+	}
+
+	args := []any{
+		messageID,
+		write.Filename,
+		write.MIMEType,
+		write.StoragePath,
+		write.ContentHash,
+		write.Size,
+		nullIfEmpty(write.SourceAttachmentID),
+		nullIfEmpty(write.MediaType),
+		nullIfZero(write.Width),
+		nullIfZero(write.Height),
+		nullIfZero(write.DurationMS),
+		nullIfEmpty(write.Metadata),
+		string(write.Role),
+		string(write.RoleSource),
+		nullIfEmpty(write.SourcePartKey),
+		nullIfEmpty(write.ContentID),
+	}
+	const columns = `(message_id, filename, mime_type, storage_path, content_hash,
+		size, source_attachment_id, media_type, width, height, duration_ms,
+		attachment_metadata, attachment_role, role_source, source_part_key,
+		content_id, created_at)`
+	values := fmt.Sprintf(`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, %s)`,
+		s.dialect.JSONBindExpr(), s.dialect.Now())
+
+	if write.SourcePartKey != "" {
+		_, err := q.Exec(`
+			INSERT INTO attachments `+columns+`
+			`+values+`
+			ON CONFLICT (message_id, source_part_key) WHERE source_part_key IS NOT NULL
+			DO UPDATE SET
+				filename = EXCLUDED.filename,
+				mime_type = EXCLUDED.mime_type,
+				storage_path = EXCLUDED.storage_path,
+				content_hash = EXCLUDED.content_hash,
+				size = EXCLUDED.size,
+				source_attachment_id = EXCLUDED.source_attachment_id,
+				media_type = EXCLUDED.media_type,
+				width = EXCLUDED.width,
+				height = EXCLUDED.height,
+				duration_ms = EXCLUDED.duration_ms,
+				attachment_metadata = EXCLUDED.attachment_metadata,
+				attachment_role = EXCLUDED.attachment_role,
+				role_source = EXCLUDED.role_source,
+				content_id = EXCLUDED.content_id`, args...)
+		return err
+	}
+
+	if write.ContentHash != "" {
+		_, err := q.Exec(`
+			INSERT INTO attachments `+columns+`
+			`+values+`
+			ON CONFLICT (message_id, content_hash)
+				WHERE source_part_key IS NULL
+				  AND content_hash IS NOT NULL
+				  AND content_hash != ''
+			DO NOTHING`, args...)
+		return err
+	}
+
+	var existingID int64
+	err := q.QueryRow(`
+		SELECT id FROM attachments
+		WHERE message_id = ?
+		  AND source_part_key IS NULL
+		  AND (content_hash IS NULL OR content_hash = '')
+	`, messageID).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = q.Exec(`INSERT INTO attachments `+columns+` `+values, args...)
+	return err
+}

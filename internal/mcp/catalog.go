@@ -10,6 +10,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
@@ -28,6 +29,7 @@ type catalogCapabilities struct {
 	semanticSearch  bool
 	vectorInMessage bool
 	similarMessages bool
+	documentSearch  bool
 }
 
 type catalogToolHandler func(*handlers, context.Context, toolRequest) (*toolResult, error)
@@ -64,23 +66,25 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
+		documentSearch:  opts.DocumentSearcher != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only eight possible capability keys, which also keeps the
+// request. There are only sixteen possible capability keys, which also keeps the
 // shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 8)
-	for mask := range 8 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 16)
+	for mask := range 16 {
 		capabilities := catalogCapabilities{
-			semanticSearch:  mask&0b100 != 0,
-			vectorInMessage: mask&0b010 != 0,
-			similarMessages: mask&0b001 != 0,
+			semanticSearch:  mask&0b1000 != 0,
+			vectorInMessage: mask&0b0100 != 0,
+			similarMessages: mask&0b0010 != 0,
+			documentSearch:  mask&0b0001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
@@ -101,6 +105,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
 		searchByDomainsDefinition(nil),
+		searchDocumentsDefinition(nil),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),
@@ -158,6 +163,8 @@ func writeDefinition(
 func alwaysAvailable(catalogCapabilities) bool { return true }
 
 func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMessages }
+
+func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSearch }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false
@@ -599,6 +606,34 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 		(*handlers).findSimilarMessages,
 	)
 	definition.availability = similarMessagesAvailable
+	return definition
+}
+
+func searchDocumentsDefinition(_ *handlers) toolDefinition {
+	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
+	limit.Default = json.RawMessage("20")
+	definition := readDefinition(
+		ToolSearchDocuments,
+		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
+		closedObject(map[string]*jsonschema.Schema{
+			"query": stringSchema("Document content or filename query; terms are ANDed"),
+			"source_ids": {
+				Type: "array", Description: "Optional source ID scope",
+				Items: safeIDSchema("Source ID"),
+			},
+			"message_types": {
+				Type: "array", Description: "Optional containing message type scope",
+				Items: stringSchema("Containing message type"),
+			},
+			"attachment_id": safeIDSchema("Optional exact attachment occurrence ID"),
+			"message_id":    safeIDSchema("Optional exact containing message ID"),
+			"limit":         limit,
+			"cursor":        stringSchema("Opaque cursor from the previous page"),
+		}, "query"),
+		outputSchemaFor[store.DocumentSearchResponse](),
+		(*handlers).searchDocuments,
+	)
+	definition.availability = documentSearchAvailable
 	return definition
 }
 

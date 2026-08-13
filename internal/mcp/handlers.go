@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -106,6 +107,7 @@ type handlers struct {
 	hybridSearcher   HybridSearcher
 	similarSearcher  SimilarSearcher
 	dataDir          string
+	documentSearcher DocumentSearcher
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -115,6 +117,13 @@ type handlers struct {
 	hybridEngine *hybrid.Engine
 	vectorCfg    vector.Config
 	backend      vector.Backend
+}
+
+// DocumentSearcher runs the dedicated extracted-document retrieval contract.
+// Daemon-backed MCP supplies an HTTP client implementation, keeping this MCP
+// process out of the archive database.
+type DocumentSearcher interface {
+	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
 }
 
 // AttachmentReader fetches content-addressed attachment bytes. It is optional:
@@ -425,6 +434,53 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 
 	return jsonResult(searchMetadataResponse(newPaginatedResponse(results, totalMatched, offset)))
+}
+
+func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
+	args := req.GetArguments()
+	queryText, _ := args["query"].(string)
+	if strings.TrimSpace(queryText) == "" {
+		return toolErrorResult("query parameter is required"), nil
+	}
+	if h.documentSearcher == nil {
+		return toolErrorResult("document_search_unavailable: document attachment search is not configured"), nil
+	}
+	sourceIDs, err := positiveInt64ArrayArg(args, "source_ids")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	messageTypes, err := stringArrayArg(args, "message_types")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	attachmentID, err := positiveInt64Arg(args, "attachment_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	messageID, err := positiveInt64Arg(args, "message_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	limit := 20
+	if _, found := args["limit"]; found {
+		parsedLimit, parseErr := positiveInt64Arg(args, "limit")
+		if parseErr != nil {
+			return toolErrorResult(parseErr.Error()), nil
+		}
+		if parsedLimit > 100 {
+			return toolErrorResult("limit must be an integer between 1 and 100"), nil
+		}
+		limit = int(parsedLimit)
+	}
+	cursor, _ := args["cursor"].(string)
+	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
+		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
+		AttachmentID: attachmentID, MessageID: messageID, PageSize: limit, Cursor: cursor,
+	})
+	if err != nil {
+		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil
+	}
+	return jsonResult(response)
 }
 
 func unsupportedSearchOperatorMessage(q *search.Query) string {
@@ -1731,6 +1787,59 @@ func similarLimitArg(args map[string]any) int {
 		return defaultSearchLimit
 	}
 	return limit
+}
+
+func positiveInt64Arg(args map[string]any, key string) (int64, error) {
+	raw, found := args[key]
+	if !found {
+		return 0, nil
+	}
+	value, ok := raw.(float64)
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 ||
+		value >= float64(math.MaxInt64) || math.Trunc(value) != value {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return int64(value), nil
+}
+
+func positiveInt64ArrayArg(args map[string]any, key string) ([]int64, error) {
+	raw, found := args[key]
+	if !found {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of positive integers", key)
+	}
+	result := make([]int64, 0, len(values))
+	for _, value := range values {
+		parsed, err := positiveInt64Arg(map[string]any{key: value}, key)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, parsed)
+	}
+	return result, nil
+}
+
+func stringArrayArg(args map[string]any, key string) ([]string, error) {
+	raw, found := args[key]
+	if !found {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of nonempty strings", key)
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text, ok := value.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("%s must be an array of nonempty strings", key)
+		}
+		result = append(result, text)
+	}
+	return result, nil
 }
 
 // maxStageDeletionResults limits how many messages can be staged in one call.

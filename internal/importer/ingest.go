@@ -321,8 +321,18 @@ func storeAttachment(
 	if err != nil || storagePath == "" {
 		return err
 	}
-	return st.UpsertAttachment(
-		messageID, att.Filename, att.ContentType,
-		storagePath, att.ContentHash, len(att.Content),
+	role, roleSource := store.AttachmentRoleFromMIME(
+		att.Disposition, att.IsInline, att.ContentID,
 	)
+	return st.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+		Filename:      att.Filename,
+		MIMEType:      att.ContentType,
+		StoragePath:   storagePath,
+		ContentHash:   att.ContentHash,
+		Size:          int64(len(att.Content)),
+		Role:          role,
+		RoleSource:    roleSource,
+		SourcePartKey: att.PartKey,
+		ContentID:     att.ContentID,
+	})
 }

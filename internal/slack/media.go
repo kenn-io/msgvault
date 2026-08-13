@@ -170,6 +170,8 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		sourceAttID := slackAttachmentID(f.ID)
 		seen[sourceAttID] = true
 		if prev, ok := existing[sourceAttID]; ok && prev.ContentHash != "" {
+			prev.Role = store.AttachmentRoleStandalone
+			prev.RoleSource = store.AttachmentRoleSourceProviderExplicit
 			refs = append(refs, prev)
 			continue
 		}
@@ -268,6 +270,8 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			Size:               len(data),
 			SourceAttachmentID: sourceAttID,
 			MediaType:          mediaTypeOf(f),
+			Role:               store.AttachmentRoleStandalone,
+			RoleSource:         store.AttachmentRoleSourceProviderExplicit,
 		}
 		refs = append(refs, stored)
 		sum.AttachmentsDownloaded++

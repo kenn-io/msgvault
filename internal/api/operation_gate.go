@@ -454,10 +454,12 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
-	"logs":            true,
-	"list-deletions":  true,
-	"show-deletion":   true,
-	"embeddings list": true,
+	"logs":             true,
+	"list-deletions":   true,
+	"show-deletion":    true,
+	"embeddings list":  true,
+	"documents search": true,
+	"documents status": true,
 }
 
 // cliRunSelfGatedCommands are proxied CLI commands that acquire the
@@ -504,6 +506,7 @@ func cliRunGateDecision(r *http.Request) (label string, skip bool, err error) {
 var cliRunCommandGroups = map[string]bool{
 	"embeddings": true,
 	"backup":     true,
+	"documents":  true,
 }
 
 // cliRunCommandWords extracts the command path from proxied args. Positional

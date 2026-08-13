@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -295,6 +296,57 @@ func TestSearchMetadata(t *testing.T) {
 	})
 }
 
+type recordingDocumentSearcher struct {
+	request store.DocumentSearchRequest
+}
+
+func (s *recordingDocumentSearcher) SearchDocuments(
+	_ context.Context,
+	request store.DocumentSearchRequest,
+) (store.DocumentSearchResponse, error) {
+	s.request = request
+	return store.DocumentSearchResponse{
+		Revision: 4,
+		Results: []store.DocumentSearchResult{{
+			AttachmentID: 17, MessageID: 18, Filename: "inspection.xlsx",
+			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
+			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
+			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
+		}},
+	}, nil
+}
+
+func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
+	assert := assert.New(t)
+	searcher := &recordingDocumentSearcher{}
+	h := &handlers{documentSearcher: searcher}
+	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
+		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
+		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
+		"message_id": float64(18), "limit": float64(5), "cursor": "opaque",
+	})
+	assert.Equal("carton damage", searcher.request.Query)
+	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
+	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
+	assert.Equal(int64(17), searcher.request.AttachmentID)
+	assert.Equal(int64(18), searcher.request.MessageID)
+	assert.Equal(5, searcher.request.PageSize)
+	assert.Equal("opaque", searcher.request.Cursor)
+	require.Len(t, response.Results, 1)
+	assert.Equal("inspection.xlsx", response.Results[0].Filename)
+	assert.Equal("mistral", response.Results[0].Provider)
+}
+
+func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
+	searcher := &recordingDocumentSearcher{}
+	h := &handlers{documentSearcher: searcher}
+	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
+		"query": "carton damage", "attachment_id": math.Exp2(63),
+	})
+	assert.Contains(t, resultText(t, result), "attachment_id must be a positive integer")
+	assert.Empty(t, searcher.request.Query, "an invalid exact filter must never be silently dropped")
+}
+
 func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
 	queries := []struct {
 		name string
@@ -533,6 +585,7 @@ func TestSearchMessageBodies(t *testing.T) {
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
+				assert := assert.New(t)
 				var searchRan bool
 				invalid := &listAccountsTrackingEngine{
 					MockEngine: &querytest.MockEngine{
@@ -547,10 +600,10 @@ func TestSearchMessageBodies(t *testing.T) {
 					newTestHandlers(invalid).searchMessageBodies,
 					map[string]any{"query": tc.query, "account": "alice@example.com"})
 				txt := resultText(t, r)
-				assert.Contains(t, txt, "invalid value")
-				assert.Contains(t, txt, tc.op)
-				assert.False(t, invalid.listAccountsCalled, "invalid query must not resolve account filters")
-				assert.False(t, searchRan, "invalid query must not reach body search")
+				assert.Contains(txt, "invalid value")
+				assert.Contains(txt, tc.op)
+				assert.False(invalid.listAccountsCalled, "invalid query must not resolve account filters")
+				assert.False(searchRan, "invalid query must not reach body search")
 			})
 		}
 	})

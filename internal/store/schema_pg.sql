@@ -324,6 +324,13 @@ CREATE TABLE IF NOT EXISTS attachments (
     source_attachment_id TEXT,
     attachment_metadata JSONB,
 
+    attachment_role TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown')),
+    role_source TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown')),
+    source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != ''),
+    content_id TEXT,
+
     encryption_version INTEGER DEFAULT 0,
 
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -371,6 +378,43 @@ CREATE TABLE IF NOT EXISTS message_raw (
 
     compression TEXT DEFAULT 'zlib',
     encryption_version INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS attachment_role_repair_progress (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    last_message_id BIGINT NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS attachment_change_log (
+    sequence                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_kind              TEXT NOT NULL CHECK (event_kind IN (
+                                'attachment_insert', 'attachment_update',
+                                'attachment_delete', 'message_live_enter',
+                                'message_live_exit')),
+    old_message_id          BIGINT,
+    new_message_id          BIGINT,
+    old_attachment_id       BIGINT,
+    new_attachment_id       BIGINT,
+    old_content_hash        TEXT,
+    new_content_hash        TEXT,
+    old_source_part_key     TEXT,
+    new_source_part_key     TEXT,
+    old_role                TEXT,
+    new_role                TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS attachment_change_consumers (
+    consumer_key            TEXT PRIMARY KEY,
+    baseline_sequence       BIGINT NOT NULL,
+    last_sequence           BIGINT NOT NULL,
+    reconciliation_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (baseline_sequence >= 0),
+    CHECK (last_sequence >= baseline_sequence)
 );
 
 -- ============================================================================
@@ -1241,6 +1285,201 @@ CREATE TABLE IF NOT EXISTS attachment_pack_index (
     flags       INTEGER NOT NULL,
     crc32c      BIGINT NOT NULL
 );
+
+-- ==========================================================================
+-- DOCUMENT ATTACHMENT EXTRACTION
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS document_extraction_profiles (
+    id                    TEXT PRIMARY KEY,
+    fingerprint           TEXT NOT NULL UNIQUE,
+    provider              TEXT NOT NULL,
+    endpoint              TEXT NOT NULL,
+    region                TEXT NOT NULL,
+    model                 TEXT NOT NULL,
+    retention_posture     TEXT NOT NULL,
+    training_posture      TEXT NOT NULL,
+    allowed_media_types   JSONB NOT NULL,
+    policy_json           JSONB NOT NULL,
+    enabled               BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    retired_at            TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS document_provider_consents (
+    profile_id            TEXT PRIMARY KEY REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
+    profile_fingerprint   TEXT NOT NULL,
+    retention_posture     TEXT NOT NULL,
+    training_posture      TEXT NOT NULL,
+    consented_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS document_extraction_rebuilds (
+    id                    TEXT PRIMARY KEY,
+    profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
+    extraction_input_key  TEXT NOT NULL,
+    state                 TEXT NOT NULL CHECK (state IN ('building', 'completed')),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at          TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_extraction_rebuilds_active
+    ON document_extraction_rebuilds(profile_id, extraction_input_key)
+    WHERE state = 'building';
+
+CREATE TABLE IF NOT EXISTS document_extraction_rebuild_targets (
+    rebuild_id            TEXT NOT NULL REFERENCES document_extraction_rebuilds(id) ON DELETE CASCADE,
+    canonical_blob_hash   TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    PRIMARY KEY (rebuild_id, canonical_blob_hash)
+);
+
+CREATE TABLE IF NOT EXISTS document_extractions (
+    id                    TEXT PRIMARY KEY,
+    profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
+    rebuild_id            TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL,
+    canonical_blob_hash   TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    extraction_input_key  TEXT NOT NULL DEFAULT 'original',
+    state                 TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'terminal', 'tombstoned')),
+    lease_owner           TEXT,
+    lease_fence           BIGINT NOT NULL DEFAULT 0,
+    lease_until           TIMESTAMPTZ,
+    attempt_count         INTEGER NOT NULL DEFAULT 0,
+    request_count         INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    retry_count           INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count),
+    provider_latency_ms   BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0),
+    next_retry_at         TIMESTAMPTZ,
+    local_bytes           BIGINT NOT NULL,
+    provider_bytes        BIGINT,
+    units_processed       INTEGER,
+    returned_model        TEXT,
+    manifest_checksum     TEXT,
+    terminal_reason       TEXT,
+    source_sequence       BIGINT NOT NULL DEFAULT 0,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_at          TIMESTAMPTZ,
+    CHECK (local_bytes >= 0),
+    CHECK (provider_bytes IS NULL OR provider_bytes >= 0),
+    CHECK (units_processed IS NULL OR units_processed >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_extractions_owner
+    ON document_extractions(profile_id, canonical_blob_hash, extraction_input_key, state);
+CREATE INDEX IF NOT EXISTS idx_document_extractions_lease
+    ON document_extractions(state, lease_until);
+
+CREATE TABLE IF NOT EXISTS document_extraction_claims (
+    profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
+    canonical_blob_hash   TEXT NOT NULL,
+    extraction_input_key  TEXT NOT NULL,
+    extraction_id         TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    lease_owner           TEXT NOT NULL,
+    lease_fence           BIGINT NOT NULL,
+    lease_until           TIMESTAMPTZ NOT NULL,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (profile_id, canonical_blob_hash, extraction_input_key)
+);
+
+CREATE TABLE IF NOT EXISTS document_extraction_heads (
+    profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
+    canonical_blob_hash   TEXT NOT NULL,
+    extraction_input_key  TEXT NOT NULL,
+    extraction_id         TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    source_sequence       BIGINT NOT NULL DEFAULT 0,
+    switched_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (profile_id, canonical_blob_hash, extraction_input_key)
+);
+
+CREATE TABLE IF NOT EXISTS document_units (
+    extraction_id         TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    unit_index            INTEGER NOT NULL,
+    unit_kind             TEXT NOT NULL,
+    text                  TEXT NOT NULL,
+    header_text           TEXT,
+    footer_text           TEXT,
+    width                 INTEGER,
+    height                INTEGER,
+    dpi                    INTEGER,
+    checksum              TEXT NOT NULL,
+    char_count            INTEGER NOT NULL,
+    truncated             BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (extraction_id, unit_index),
+    CHECK (unit_index >= 0),
+    CHECK (char_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    extraction_id         TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    chunk_key             TEXT NOT NULL,
+    ordinal               INTEGER NOT NULL,
+    text                  TEXT NOT NULL,
+    heading_path          JSONB NOT NULL,
+    first_unit_index      INTEGER NOT NULL,
+    last_unit_index       INTEGER NOT NULL,
+    synthetic_prefix_len  INTEGER NOT NULL DEFAULT 0,
+    checksum              TEXT NOT NULL,
+    char_count            INTEGER NOT NULL,
+    table_chunk           BOOLEAN NOT NULL DEFAULT FALSE,
+    code_chunk            BOOLEAN NOT NULL DEFAULT FALSE,
+    truncated             BOOLEAN NOT NULL DEFAULT FALSE,
+    search_fts            TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', COALESCE(text, ''))) STORED,
+    UNIQUE (extraction_id, chunk_key),
+    UNIQUE (extraction_id, ordinal),
+    CHECK (ordinal >= 0),
+    CHECK (first_unit_index >= 0 AND last_unit_index >= first_unit_index),
+    CHECK (synthetic_prefix_len >= 0 AND char_count >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_search_fts
+    ON document_chunks USING GIN(search_fts);
+
+CREATE TABLE IF NOT EXISTS document_chunk_spans (
+    extraction_id         TEXT NOT NULL,
+    chunk_key             TEXT NOT NULL,
+    span_ordinal          INTEGER NOT NULL,
+    unit_index            INTEGER NOT NULL,
+    start_char            INTEGER NOT NULL,
+    end_char              INTEGER NOT NULL,
+    synthetic             BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (extraction_id, chunk_key, span_ordinal),
+    FOREIGN KEY (extraction_id, chunk_key)
+        REFERENCES document_chunks(extraction_id, chunk_key) ON DELETE CASCADE,
+    FOREIGN KEY (extraction_id, unit_index)
+        REFERENCES document_units(extraction_id, unit_index) ON DELETE CASCADE,
+    CHECK (span_ordinal >= 0),
+    CHECK (start_char >= 0 AND end_char >= start_char)
+);
+
+CREATE TABLE IF NOT EXISTS document_occurrences (
+    occurrence_key        TEXT PRIMARY KEY,
+    attachment_id         BIGINT NOT NULL UNIQUE REFERENCES attachments(id) ON DELETE CASCADE,
+    message_id            BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_id             BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_part_key       TEXT,
+    stable_source_part    BOOLEAN NOT NULL DEFAULT FALSE,
+    canonical_blob_hash   TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    filename              TEXT,
+    mime_type             TEXT,
+    attachment_role       TEXT NOT NULL,
+    role_source           TEXT NOT NULL,
+    source_sequence       BIGINT NOT NULL DEFAULT 0,
+    reconciled_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_occurrences_hash
+    ON document_occurrences(canonical_blob_hash, message_id, occurrence_key);
+CREATE INDEX IF NOT EXISTS idx_document_occurrences_source
+    ON document_occurrences(source_id, message_id);
+
+CREATE TABLE IF NOT EXISTS document_index_state (
+    singleton             SMALLINT PRIMARY KEY CHECK (singleton = 1),
+    revision              BIGINT NOT NULL DEFAULT 0,
+    target_profile_id     TEXT,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO document_index_state(singleton, revision) VALUES (1, 0)
+ON CONFLICT (singleton) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
     ON attachment_pack_index(pack_id);
 

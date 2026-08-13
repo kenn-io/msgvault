@@ -37,7 +37,11 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 		WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'html1')`),
 		`<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p>`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE attachments SET attachment_metadata = NULL`)
+	_, err = st.DB().Exec(`
+		UPDATE attachments
+		SET attachment_metadata = NULL,
+		    attachment_role = 'standalone',
+		    role_source = 'importer_semantics'`)
 	require.NoError(err)
 
 	sum, err := imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)
@@ -53,16 +57,21 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	assert.Equal("hello there", body, "HTML must be converted to plain text")
 	assert.Equal("hello there", snippet)
 
-	// The forwarded link keeps its share URL; the photo stays unclassified.
-	var shareMeta, photoMeta string
-	require.NoError(st.DB().QueryRow(`SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+	// The forwarded link keeps its share URL and is excluded from standalone
+	// processing; the composed photo remains standalone.
+	var shareMeta, shareRole, photoMeta, photoRole string
+	require.NoError(st.DB().QueryRow(`SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), ''),
+		a.attachment_role
 		FROM attachments a JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = 'share1'`).Scan(&shareMeta))
-	require.NoError(st.DB().QueryRow(`SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		WHERE m.source_message_id = 'share1'`).Scan(&shareMeta, &shareRole))
+	require.NoError(st.DB().QueryRow(`SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), ''),
+		a.attachment_role
 		FROM attachments a JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = 'photo1'`).Scan(&photoMeta))
+		WHERE m.source_message_id = 'photo1'`).Scan(&photoMeta, &photoRole))
 	assert.JSONEq(`{"shared_url":"https://www.instagram.com/p/ABC/"}`, shareMeta)
+	assert.Equal("preview", shareRole)
 	assert.Empty(photoMeta, "media the sender composed is not a share")
+	assert.Equal("standalone", photoRole)
 
 	// Re-running must be a no-op: nothing left differing from the archive.
 	again, err := imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)
@@ -249,12 +258,12 @@ func shareAndHTMLChat() *fakeChat {
 				ID: "share1", SortKey: 2, Timestamp: base.Add(time.Minute), Type: typeImage,
 				Text:     `<a href="https://www.instagram.com/p/ABC/" rel="noopener noreferrer">https://www.instagram.com/p/ABC/</a>`,
 				SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
-				Attachments: []map[string]any{{"id": "mxc://x/share1", "type": "img", "mimeType": "image/jpeg"}},
+				Attachments: []map[string]any{{"id": "mxc://x/share1", "type": beeperAttachmentTypeImage, "mimeType": "image/jpeg"}},
 			},
 			{
 				ID: "photo1", SortKey: 3, Timestamp: base.Add(2 * time.Minute), Type: typeImage,
 				SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
-				Attachments: []map[string]any{{"id": "mxc://x/photo1", "type": "img", "mimeType": "image/jpeg"}},
+				Attachments: []map[string]any{{"id": "mxc://x/photo1", "type": beeperAttachmentTypeImage, "mimeType": "image/jpeg"}},
 			},
 		},
 	}

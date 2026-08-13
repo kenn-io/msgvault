@@ -14,7 +14,10 @@ import (
 
 // defaultMaxMediaBytes caps individual attachment downloads (config
 // max_media_mb overrides).
-const defaultMaxMediaBytes = int64(100 << 20)
+const (
+	defaultMaxMediaBytes      = int64(100 << 20)
+	beeperAttachmentTypeImage = "img"
+)
 
 // beeperAttachmentID namespaces Beeper-managed attachment rows in
 // attachments.source_attachment_id.
@@ -33,7 +36,7 @@ func mediaTypeOf(att *Attachment) string {
 		return "voice_note"
 	}
 	switch att.Type {
-	case "img":
+	case beeperAttachmentTypeImage:
 		return "image"
 	case "video":
 		return "video"
@@ -105,6 +108,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		maxBytes = defaultMaxMediaBytes
 	}
 	shareMeta := shareMetadata(m)
+	isPreview := shareMeta != ""
 	refs := make([]store.AttachmentRef, 0, len(m.Attachments))
 	for i := range m.Attachments {
 		att := &m.Attachments[i]
@@ -118,6 +122,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			// refresh the share marker, so re-running over an existing archive
 			// classifies rows stored before this was recorded.
 			prev.Metadata = shareMeta
+			setBeeperAttachmentRole(&prev, att, isPreview)
 			refs = append(refs, prev)
 			continue
 		}
@@ -175,6 +180,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			DurationMS:         int64(att.Duration * 1000),
 			Metadata:           shareMeta,
 		}
+		setBeeperAttachmentRole(&stored, att, isPreview)
 		if att.Size != nil {
 			stored.Width = int64(att.Size.Width)
 			stored.Height = int64(att.Size.Height)
@@ -189,6 +195,21 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
 		sum.Errors++
 	}
+}
+
+func setBeeperAttachmentRole(ref *store.AttachmentRef, att *Attachment, isPreview bool) {
+	if att.IsSticker {
+		ref.Role = store.AttachmentRoleSticker
+		ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
+		return
+	}
+	if isPreview {
+		ref.Role = store.AttachmentRolePreview
+		ref.RoleSource = store.AttachmentRoleSourceImporterSemantics
+		return
+	}
+	ref.Role = store.AttachmentRoleStandalone
+	ref.RoleSource = store.AttachmentRoleSourceImporterSemantics
 }
 
 // clearPendingMarkers removes a message's pending Beeper markers while

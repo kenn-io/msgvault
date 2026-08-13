@@ -1494,8 +1494,19 @@ func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
 		return err
 	}
 
-	// Record in database
-	return s.store.UpsertAttachment(messageID, att.Filename, att.ContentType, storagePath, att.ContentHash, len(att.Content))
+	role, roleSource := store.AttachmentRoleFromMIME(
+		att.Disposition, att.IsInline, att.ContentID)
+	return s.store.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+		Filename:      att.Filename,
+		MIMEType:      att.ContentType,
+		StoragePath:   storagePath,
+		ContentHash:   att.ContentHash,
+		Size:          int64(len(att.Content)),
+		Role:          role,
+		RoleSource:    roleSource,
+		SourcePartKey: att.PartKey,
+		ContentID:     att.ContentID,
+	})
 }
 
 // joinEmails concatenates email addresses from a slice of mime.Address with spaces.

@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
@@ -401,6 +402,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if err := registerAttachmentMaintenanceJob(sched, attachmentMaint); err != nil {
 		return fmt.Errorf("schedule attachment maintenance: %w", err)
+	}
+	if err := configureDocumentReconcileJob(
+		ctx, sched, s, cfg.Attachments.Documents.Enabled,
+	); err != nil {
+		return fmt.Errorf("configure document reconciliation: %w", err)
+	}
+	if err := configureDocumentExtractionJob(
+		sched, s, cfg.Attachments.Documents, scheduledDocumentDeps{
+			newProcessor: newConfiguredMistralProcessor, openAttachments: openDocumentAttachments,
+			dataDirectory: cfg.Data.DataDir,
+		},
+	); err != nil {
+		return fmt.Errorf("configure document extraction: %w", err)
 	}
 
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
@@ -1106,6 +1120,8 @@ var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
+var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
+var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
 	return a.store.ConversationExistsContext(ctx, conversationID)
@@ -1137,6 +1153,64 @@ func (a *storeAPIAdapter) ListChangedMessages(
 // reports itself unavailable on every production request.
 func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error) {
 	return a.store.ArchiveUIDContext(ctx)
+}
+
+func (a *storeAPIAdapter) SearchDocuments(
+	ctx context.Context,
+	request store.DocumentSearchRequest,
+) (store.DocumentSearchResponse, error) {
+	if _, err := a.store.GetAttachmentChangeConsumer(
+		ctx, documentindex.DocumentAttachmentConsumerKey,
+	); err == nil {
+		reconciler, reconcileErr := documentindex.NewReconciler(a.store, documentindex.ReconcilerConfig{
+			AttachmentPageSize: 1000,
+			ChangePageSize:     1000,
+		})
+		if reconcileErr != nil {
+			return store.DocumentSearchResponse{}, reconcileErr
+		}
+		if _, reconcileErr = reconciler.Reconcile(ctx); reconcileErr != nil {
+			return store.DocumentSearchResponse{}, reconcileErr
+		}
+	} else if !errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
+		return store.DocumentSearchResponse{}, err
+	}
+	return a.store.SearchDocuments(ctx, request)
+}
+
+func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
+	return reconcileDocumentOccurrencesIfEnabled(ctx, a.store)
+}
+
+func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
+	ctx context.Context,
+	profileID string,
+	extractionInputKey string,
+	allowedMediaTypes []string,
+	allowedMessageTypes []string,
+) (store.DocumentIndexStatus, error) {
+	return a.store.GetDocumentIndexStatusForScope(
+		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
+	)
+}
+
+func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
+	ctx context.Context,
+	profileID string,
+	extractionInputKey string,
+) (store.DocumentExtractionRebuild, error) {
+	return a.store.GetActiveDocumentExtractionRebuild(ctx, profileID, extractionInputKey)
+}
+
+func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
+	ctx context.Context,
+	rebuild store.DocumentExtractionRebuild,
+	allowedMediaTypes []string,
+	allowedMessageTypes []string,
+) (int64, error) {
+	return a.store.CountIncompleteDocumentExtractionRebuild(
+		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
+	)
 }
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {

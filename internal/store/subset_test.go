@@ -37,21 +37,22 @@ func subsetPersonDefinition(slug string) AttributeDefinitionInput {
 // data. Returns the path to the database.
 func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 	t.Helper()
+	require := require.New(t)
 
 	dbPath := filepath.Join(dir, "msgvault.db")
 
 	st, err := Open(dbPath)
-	require.NoError(t, err, "Open")
-	require.NoError(t, st.InitSchema(), "InitSchema")
+	require.NoError(err, "Open")
+	require.NoError(st.InitSchema(), "InitSchema")
 	_ = st.Close()
 
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=OFF")
-	require.NoError(t, err, "open db")
+	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`INSERT INTO sources (id, source_type, identifier)
 		VALUES (1, 'gmail', 'test@example.com')`)
-	require.NoError(t, err, "insert source")
+	require.NoError(err, "insert source")
 
 	_, err = db.Exec(`
 		INSERT INTO participants
@@ -60,7 +61,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 'alice@example.com', 'Alice', 'example.com'),
 			(2, 'bob@example.com', 'Bob', 'example.com'),
 			(3, 'charlie@example.com', 'Charlie', 'example.com')`)
-	require.NoError(t, err, "insert participants")
+	require.NoError(err, "insert participants")
 
 	_, err = db.Exec(`
 		INSERT INTO participant_identifiers
@@ -69,7 +70,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 1, 'email', 'alice@example.com'),
 			(2, 2, 'email', 'bob@example.com'),
 			(3, 3, 'email', 'charlie@example.com')`)
-	require.NoError(t, err, "insert participant_identifiers")
+	require.NoError(err, "insert participant_identifiers")
 
 	_, err = db.Exec(`
 		INSERT INTO conversations
@@ -78,13 +79,13 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 		VALUES
 			(1, 1, 'email_thread', 'Thread 1', 5, 2),
 			(2, 1, 'email_thread', 'Thread 2', 5, 2)`)
-	require.NoError(t, err, "insert conversations")
+	require.NoError(err, "insert conversations")
 
 	_, err = db.Exec(`
 		INSERT INTO conversation_participants
 			(conversation_id, participant_id)
 		VALUES (1, 1), (1, 2), (2, 2), (2, 3)`)
-	require.NoError(t, err, "insert conversation_participants")
+	require.NoError(err, "insert conversation_participants")
 
 	_, err = db.Exec(`
 		INSERT INTO labels (id, source_id, name, label_type)
@@ -92,7 +93,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 1, 'INBOX', 'system'),
 			(2, 1, 'SENT', 'system'),
 			(3, 1, 'Work', 'user')`)
-	require.NoError(t, err, "insert labels")
+	require.NoError(err, "insert labels")
 
 	for i := 1; i <= msgCount; i++ {
 		convID := 1
@@ -112,20 +113,20 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 				?, ?)`,
 			i, convID, fmt.Sprintf("msg_%d", i),
 			i, senderID, "Subject "+string(rune('A'+i%26)))
-		require.NoError(t, err, "insert message %d", i)
+		require.NoError(err, "insert message %d", i)
 
 		_, err = db.Exec(
 			`INSERT INTO message_bodies (message_id, body_text)
 			 VALUES (?, ?)`,
 			i, "Body of message "+string(rune('A'+i%26)))
-		require.NoError(t, err, "insert message_body %d", i)
+		require.NoError(err, "insert message_body %d", i)
 
 		_, err = db.Exec(
 			`INSERT INTO message_recipients
 				(message_id, participant_id, recipient_type)
 			 VALUES (?, ?, 'from')`,
 			i, senderID)
-		require.NoError(t, err, "insert message_recipient from %d", i)
+		require.NoError(err, "insert message_recipient from %d", i)
 
 		toID := 2
 		if senderID == 2 {
@@ -136,14 +137,14 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 				(message_id, participant_id, recipient_type)
 			 VALUES (?, ?, 'to')`,
 			i, toID)
-		require.NoError(t, err, "insert message_recipient to %d", i)
+		require.NoError(err, "insert message_recipient to %d", i)
 
 		labelID := (i % 3) + 1
 		_, err = db.Exec(
 			`INSERT INTO message_labels (message_id, label_id)
 			 VALUES (?, ?)`,
 			i, labelID)
-		require.NoError(t, err, "insert message_label %d", i)
+		require.NoError(err, "insert message_label %d", i)
 	}
 
 	return dbPath
@@ -204,6 +205,53 @@ func TestCopySubset_Basic(t *testing.T) {
 	hasViolation := fkRows.Next()
 	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	assert.False(hasViolation, "foreign key violations found in destination database")
+}
+
+func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
+	require := require.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	srcDB := createTestSourceDB(t, srcDir, 1)
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=ON")
+	require.NoError(err)
+	fingerprint := strings.Repeat("a", 64)
+	_, err = db.Exec(`
+		INSERT INTO document_extraction_profiles
+			(id, fingerprint, provider, endpoint, region, model,
+			 retention_posture, training_posture, allowed_media_types, policy_json, enabled)
+		VALUES ('profile-subset', ?, 'mistral', 'https://api.mistral.ai/v1/ocr', 'eu',
+		        'mistral-ocr-4-0', 'standard', 'opted-out', '["application/pdf"]', '{}', TRUE);
+		INSERT INTO document_provider_consents
+			(profile_id, profile_fingerprint, retention_posture, training_posture)
+		VALUES ('profile-subset', ?, 'standard', 'opted-out');
+		INSERT INTO document_extractions
+			(id, profile_id, canonical_blob_hash, state, local_bytes,
+			 returned_model, manifest_checksum, units_processed)
+		VALUES ('subset-extraction', 'profile-subset', ?, 'ready', 10,
+		        'mistral-ocr-4-0', ?, 1);
+		INSERT INTO document_units
+			(extraction_id, unit_index, unit_kind, text, checksum, char_count)
+		VALUES ('subset-extraction', 0, 'page', 'private extracted evidence', ?, 26)`,
+		fingerprint, fingerprint, strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
+	)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err)
+	destination, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = destination.Close() }()
+	for _, table := range []string{
+		"document_extraction_profiles", "document_provider_consents", "document_extractions",
+		"document_extraction_rebuilds", "document_extraction_rebuild_targets",
+		"document_extraction_heads", "document_units", "document_chunks", "document_chunk_spans",
+		"document_occurrences", "document_extraction_claims",
+	} {
+		var count int
+		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)
+		assert.Zero(t, count, table+" must require a target-side rebuild")
+	}
 }
 
 func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {

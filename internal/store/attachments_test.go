@@ -23,6 +23,19 @@ func captureAttachmentQueryLogs(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
+func persistedProviderRef(ref store.AttachmentRef) store.AttachmentRef {
+	if ref.Role == "" {
+		ref.Role = store.AttachmentRoleUnknown
+	}
+	if ref.RoleSource == "" {
+		ref.RoleSource = store.AttachmentRoleSourceUnknown
+	}
+	if ref.SourcePartKey == "" {
+		ref.SourcePartKey = ref.SourceAttachmentID
+	}
+	return ref
+}
+
 func TestListDiscordPendingAttachmentMessagesManyDownloadedUsesSingleQuery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -176,8 +189,7 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 	assert.Equal(storagePath, got["discord:attachment-1"].StoragePath)
 	assert.Equal(storagePath, got["discord:attachment-2"].StoragePath)
 	assert.Equal(contentHash, got["discord:attachment-1"].ContentHash)
-	assert.Equal(contentHash, got["discord:attachment-2"].ContentHash,
-		"store reads must recover a duplicate alias hash from its trusted CAS path")
+	assert.Equal(contentHash, got["discord:attachment-2"].ContentHash)
 
 	message, err := st.GetMessage(messageID)
 	require.NoError(err)
@@ -195,13 +207,13 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 		SELECT COALESCE(content_hash, '') FROM attachments
 		WHERE message_id = ? AND source_attachment_id = ?
 	`), messageID, "discord:attachment-2").Scan(&storedHash))
-	require.Empty(storedHash, "schema-level duplicate alias must retain an empty hash")
+	assert.Equal(contentHash, storedHash,
+		"source-part identity permits duplicate occurrences to retain their canonical hash")
 	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{remaining}))
 	got, err = st.MessageDiscordAttachments(messageID)
 	require.NoError(err)
 	require.Len(got, 1)
-	assert.Equal(contentHash, got["discord:attachment-2"].ContentHash,
-		"a surviving local alias must be promoted to own the CAS hash")
+	assert.Equal(contentHash, got["discord:attachment-2"].ContentHash)
 }
 
 func TestReplaceMessageDiscordAttachmentsPersistsEmptyURLMarker(t *testing.T) {
@@ -224,10 +236,10 @@ func TestReplaceMessageDiscordAttachmentsPersistsEmptyURLMarker(t *testing.T) {
 	got, err := st.MessageDiscordAttachments(messageID)
 	require.NoError(err)
 	assert.Equal(map[string]store.AttachmentRef{
-		"discord:attachment-empty": {
+		"discord:attachment-empty": persistedProviderRef(store.AttachmentRef{
 			Filename: "unavailable.bin", MimeType: "application/octet-stream", Size: 42,
 			StoragePath: "discord:pending:attachment-empty", SourceAttachmentID: "discord:attachment-empty",
-		},
+		}),
 	}, got)
 	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
 	require.NoError(err)
@@ -297,8 +309,7 @@ func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
 	require.NoError(err)
 	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "C01:1.000100")
 
-	// Two Slack files sharing one CAS blob: normalization keeps the hash on
-	// the first row and writes the duplicate as a hashless alias.
+	// Two Slack source parts may retain the same canonical content hash.
 	contentHash := strings.Repeat("ab", 32)
 	casPath := contentHash[:2] + "/" + contentHash
 	require.NoError(st.ReplaceMessageSlackAttachments(messageID, []store.AttachmentRef{
@@ -306,14 +317,13 @@ func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
 		{Filename: "copy.png", StoragePath: casPath, ContentHash: contentHash, SourceAttachmentID: "slack:F2", MediaType: "image"},
 	}))
 
-	// The message-detail API must serve BOTH attachments as accessible:
-	// the alias row's hash re-derives from its trusted CAS path.
+	// The message-detail API must serve both occurrences as accessible.
 	message, err := st.GetMessage(messageID)
 	require.NoError(err)
 	require.Len(message.Attachments, 2)
 	for _, att := range message.Attachments {
 		assert.Equal(contentHash, att.ContentHash,
-			"a Slack duplicate-content alias must stay accessible through the API (%s)", att.Filename)
+			"a duplicate-byte Slack occurrence must stay accessible through the API (%s)", att.Filename)
 		assert.Empty(att.URL)
 	}
 }
@@ -361,6 +371,9 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 			SourceAttachmentID: "discord:attachment-2",
 		},
 	}
+	for key, ref := range want {
+		want[key] = persistedProviderRef(ref)
+	}
 	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{
 		want["discord:attachment-1"],
 		want["discord:attachment-2"],
@@ -383,7 +396,9 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 
 	beeperGot, err := st.MessageBeeperAttachments(messageID)
 	require.NoError(err)
-	assert.Equal(map[string]store.AttachmentRef{beeperRef.SourceAttachmentID: beeperRef}, beeperGot)
+	assert.Equal(map[string]store.AttachmentRef{
+		beeperRef.SourceAttachmentID: persistedProviderRef(beeperRef),
+	}, beeperGot)
 }
 
 func TestListDiscordPendingAttachmentMessages(t *testing.T) {

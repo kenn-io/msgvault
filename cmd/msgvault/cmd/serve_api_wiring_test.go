@@ -5,13 +5,17 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestServeRuntimeConfigCarriesVectorScopeBeforeInitialization(t *testing.T) {
@@ -37,6 +41,37 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 	files, err := adapter.GetFileMetadataBatch(t.Context(), nil)
 	requirements.NoError(err)
 	assertions.Empty(files)
+}
+
+func TestStoreAPIAdapterReconcilesEnabledDocumentSearchConsumer(t *testing.T) {
+	fixture := storetest.New(t)
+	messageID := fixture.CreateMessage("document-search-adapter")
+	hash := strings.Repeat("a", 64)
+	require.NoError(t, fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "evidence.pdf", MIMEType: "application/pdf", Size: 128,
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: "part:1",
+	}))
+	_, created, err := fixture.Store.RegisterAttachmentChangeConsumer(
+		t.Context(), documentindex.DocumentAttachmentConsumerKey,
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	adapter := &storeAPIAdapter{store: fixture.Store}
+	_, err = adapter.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "absent"})
+	require.NoError(t, err)
+	consumer, err := fixture.Store.GetAttachmentChangeConsumer(
+		t.Context(), documentindex.DocumentAttachmentConsumerKey,
+	)
+	require.NoError(t, err)
+	assert.True(t, consumer.ReconciliationComplete)
+	var occurrences int
+	require.NoError(t, fixture.Store.DB().QueryRow(
+		`SELECT COUNT(*) FROM document_occurrences`,
+	).Scan(&occurrences))
+	assert.Equal(t, 1, occurrences)
 }
 
 func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T) {

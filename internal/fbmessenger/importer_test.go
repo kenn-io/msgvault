@@ -249,14 +249,19 @@ func TestImportDYI_AttachmentStorage(t *testing.T) {
 	require.NoError(err)
 	wantHash := fmt.Sprintf("%x", sha256.Sum256(png))
 
-	var contentHash, storagePath string
+	var contentHash, storagePath, role, roleSource, sourcePartKey string
 	var size int64
 	err = st.DB().QueryRow(
-		"SELECT content_hash, storage_path, size FROM attachments LIMIT 1",
-	).Scan(&contentHash, &storagePath, &size)
+		`SELECT content_hash, storage_path, size, attachment_role,
+		        role_source, COALESCE(source_part_key, '')
+		 FROM attachments LIMIT 1`,
+	).Scan(&contentHash, &storagePath, &size, &role, &roleSource, &sourcePartKey)
 	require.NoError(err)
 	assert.Equal(wantHash, contentHash, "content_hash")
 	assert.NotEmpty(storagePath, "storage_path")
+	assert.Equal(string(store.AttachmentRoleStandalone), role, "attachment_role")
+	assert.Equal(string(store.AttachmentRoleSourceImporterSemantics), roleSource, "role_source")
+	assert.NotEmpty(sourcePartKey, "source_part_key")
 	absStorage := filepath.Join(attachDir, storagePath)
 	got, err := os.ReadFile(absStorage)
 	require.NoError(err, "stored file")

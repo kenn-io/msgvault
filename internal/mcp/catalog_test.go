@@ -178,16 +178,19 @@ func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
 	remoteSimilar := similarSearcherFunc(func(context.Context, SimilarSearchRequest) (*SimilarSearchResult, error) {
 		return &SimilarSearchResult{}, nil
 	})
+	documents := &recordingDocumentSearcher{}
 
 	shapes := []struct {
 		name string
 		opts ServeOptions
 	}{
-		{name: "000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
-		{name: "100", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}},
-		{name: "001", opts: ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: remoteSimilar}},
-		{name: "101", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}},
-		{name: "111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}},
+		{name: "0000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
+		{name: "1000", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}},
+		{name: "0010", opts: ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: remoteSimilar}},
+		{name: "1010", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}},
+		{name: "1110", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}},
+		{name: "0001", opts: ServeOptions{Engine: &querytest.MockEngine{}, DocumentSearcher: documents}},
+		{name: "1111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend, DocumentSearcher: documents}},
 	}
 
 	for _, shape := range shapes {
@@ -223,6 +226,7 @@ func TestCatalogSchemas(t *testing.T) {
 	remoteSimilar := similarSearcherFunc(func(context.Context, SimilarSearchRequest) (*SimilarSearchResult, error) {
 		return &SimilarSearchResult{}, nil
 	})
+	documents := &recordingDocumentSearcher{}
 
 	shapes := []struct {
 		name            string
@@ -230,12 +234,15 @@ func TestCatalogSchemas(t *testing.T) {
 		semantic        bool
 		vectorInMessage bool
 		similar         bool
+		document        bool
 	}{
-		{name: "000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
-		{name: "100", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}, semantic: true},
-		{name: "001", opts: ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: remoteSimilar}, similar: true},
-		{name: "101", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}, semantic: true, similar: true},
-		{name: "111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}, semantic: true, vectorInMessage: true, similar: true},
+		{name: "0000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
+		{name: "1000", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}, semantic: true},
+		{name: "0010", opts: ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: remoteSimilar}, similar: true},
+		{name: "1010", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}, semantic: true, similar: true},
+		{name: "1110", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}, semantic: true, vectorInMessage: true, similar: true},
+		{name: "0001", opts: ServeOptions{Engine: &querytest.MockEngine{}, DocumentSearcher: documents}, document: true},
+		{name: "1111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend, DocumentSearcher: documents}, semantic: true, vectorInMessage: true, similar: true, document: true},
 	}
 
 	for _, shape := range shapes {
@@ -268,6 +275,9 @@ func TestCatalogSchemas(t *testing.T) {
 				if shape.similar {
 					expectedNames = append(expectedNames, "find_similar_messages")
 				}
+				if shape.document {
+					expectedNames = append(expectedNames, ToolSearchDocuments)
+				}
 				if allowWrites {
 					expectedNames = append(expectedNames, "export_attachment", "stage_deletion")
 				}
@@ -295,6 +305,12 @@ func TestCatalogSchemas(t *testing.T) {
 					checks.Equal(
 						[]string{"account", "after", "before", "has_attachment", "limit", "message_id", "message_type"},
 						toolPropertyNames(t, byName[ToolFindSimilarMessages]),
+					)
+				}
+				if shape.document {
+					checks.Equal(
+						[]string{"attachment_id", "cursor", "limit", "message_id", "message_types", "query", "source_ids"},
+						toolPropertyNames(t, byName[ToolSearchDocuments]),
 					)
 				}
 
@@ -330,6 +346,8 @@ func TestCatalogSchemas(t *testing.T) {
 		{ToolGetAttachment, "attachment_id"},
 		{ToolExportAttachment, "attachment_id"},
 		{ToolFindSimilarMessages, "message_id"},
+		{ToolSearchDocuments, "attachment_id"},
+		{ToolSearchDocuments, "message_id"},
 		{ToolListMessages, "conversation_id"},
 		{ToolSearchInMessage, "id"},
 	} {

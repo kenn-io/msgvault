@@ -220,14 +220,20 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 // synctech-sms/ namespace) and that the file exists on disk at that path.
 func assertAttachmentAtCanonicalPath(t *testing.T, st *store.Store, attachmentsDir string) {
 	t.Helper()
-	var storagePath, contentHash string
-	err := st.DB().QueryRow(`SELECT storage_path, content_hash FROM attachments ORDER BY id LIMIT 1`).Scan(&storagePath, &contentHash)
+	var storagePath, contentHash, role, roleSource, sourcePartKey string
+	err := st.DB().QueryRow(`
+		SELECT storage_path, content_hash, attachment_role, role_source, source_part_key
+		FROM attachments ORDER BY id LIMIT 1`).
+		Scan(&storagePath, &contentHash, &role, &roleSource, &sourcePartKey)
 	require.NoError(t, err, "read attachment row")
 	require.NotEmpty(t, contentHash, "content_hash")
 	// storage_path is stored slash-separated on every platform.
 	wantPath := contentHash[:2] + "/" + contentHash
 	assert.Equal(t, wantPath, storagePath, "storage_path")
 	assert.NotContains(t, storagePath, "synctech-sms", "storage_path must not use legacy namespace")
+	assert.Equal(t, "standalone", role)
+	assert.Equal(t, "importer_semantics", roleSource)
+	assert.NotEmpty(t, sourcePartKey)
 	_, err = os.Stat(filepath.Join(attachmentsDir, contentHash[:2], contentHash))
 	assert.NoError(t, err, "attachment file at canonical path")
 }

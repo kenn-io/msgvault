@@ -1120,16 +1120,26 @@ func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
 		return nil, err
 	}
 
-	if compression.Valid && compression.String == "zlib" {
-		r, err := zlib.NewReader(bytes.NewReader(compressed))
-		if err != nil {
-			return nil, fmt.Errorf("zlib reader: %w", err)
-		}
-		defer func() { _ = r.Close() }()
-		return io.ReadAll(r)
-	}
+	return decodeMessageRaw(compressed, compression)
+}
 
-	return compressed, nil
+func decodeMessageRaw(compressed []byte, compression sql.NullString) ([]byte, error) {
+	if !compression.Valid || compression.String != "zlib" {
+		return compressed, nil
+	}
+	r, err := zlib.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, fmt.Errorf("zlib reader: %w", err)
+	}
+	data, readErr := io.ReadAll(r)
+	closeErr := r.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close zlib reader: %w", closeErr)
+	}
+	return data, nil
 }
 
 // GetMessageIsFromMe returns the baked account-attribution flag for a message.
@@ -4036,13 +4046,12 @@ func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
 	return count > 0, nil
 }
 
-// UpsertAttachment stores an attachment record. Idempotency for the
-// common case is enforced by the partial unique index
-// idx_attachments_msg_content_hash on (message_id, content_hash) where
-// content_hash is non-empty; concurrent inserts collapse to one row via
-// ON CONFLICT DO NOTHING. `size` is widened to int64 at the bind
-// boundary so 32-bit builds cannot truncate large attachments before
-// the column (BIGINT on PG, INTEGER on SQLite).
+// UpsertAttachment is the compatibility write path for callers without stable
+// occurrence provenance. It fails closed to role unknown/legacy_api and keeps
+// the legacy best-effort content-hash identity. New and source-aware writers
+// use UpsertAttachmentRecord. `size` is widened to int64 at the bind boundary
+// so 32-bit builds cannot truncate large attachments before the column (BIGINT
+// on PG, INTEGER on SQLite).
 //
 // When contentHash is empty (the rare untyped-blob path used by some
 // importers), the unique index does not cover the row; a best-effort
@@ -4050,30 +4059,15 @@ func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
 // but two concurrent empty-hash inserts on the same message may both
 // succeed.
 func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePath, contentHash string, size int) error {
-	if contentHash != "" {
-		_, err := s.db.Exec(fmt.Sprintf(`
-			INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, %s)
-			ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-		`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, int64(size))
-		return err
-	}
-
-	var existingID int64
-	err := s.db.QueryRow(`
-		SELECT id FROM attachments WHERE message_id = ? AND (content_hash IS NULL OR content_hash = '')
-	`, messageID).Scan(&existingID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	_, err = s.db.Exec(fmt.Sprintf(`
-		INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, %s)
-	`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, int64(size))
-	return err
+	return s.UpsertAttachmentRecord(context.Background(), messageID, AttachmentWrite{
+		Filename:    filename,
+		MIMEType:    mimeType,
+		StoragePath: storagePath,
+		ContentHash: contentHash,
+		Size:        int64(size),
+		Role:        AttachmentRoleUnknown,
+		RoleSource:  AttachmentRoleSourceLegacyAPI,
+	})
 }
 
 // RecomputeMessageAttachmentStats refreshes the denormalized attachment flags
@@ -4103,7 +4097,11 @@ type AttachmentRef struct {
 	// Metadata is importer-supplied JSON stored in attachments.attachment_metadata
 	// (e.g. the source URL a link-preview attachment was forwarded from). Empty
 	// stores NULL; callers own the shape and must supply valid JSON.
-	Metadata string
+	Metadata      string
+	Role          AttachmentRole
+	RoleSource    AttachmentRoleSource
+	SourcePartKey string
+	ContentID     string
 }
 
 // replaceMessageAttachmentsWhere atomically deletes a message's attachment
@@ -4121,14 +4119,34 @@ func (s *Store) replaceMessageAttachmentsWhere(
 			if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
 				continue
 			}
-			if _, err := tx.Exec(fmt.Sprintf(`
-				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
-					media_type, width, height, duration_ms, attachment_metadata, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, %s)
-				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.JSONBindExpr(), s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
-				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS),
-				nullIfEmpty(ref.Metadata)); err != nil {
+			write := AttachmentWrite{
+				Filename:           ref.Filename,
+				MIMEType:           ref.MimeType,
+				StoragePath:        ref.StoragePath,
+				ContentHash:        ref.ContentHash,
+				Size:               int64(ref.Size),
+				SourceAttachmentID: ref.SourceAttachmentID,
+				MediaType:          ref.MediaType,
+				Width:              ref.Width,
+				Height:             ref.Height,
+				DurationMS:         ref.DurationMS,
+				Metadata:           ref.Metadata,
+				Role:               ref.Role,
+				RoleSource:         ref.RoleSource,
+				SourcePartKey:      ref.SourcePartKey,
+				ContentID:          ref.ContentID,
+			}.normalized()
+			if write.SourcePartKey == "" && write.SourceAttachmentID != "" {
+				// Provider attachment IDs are already namespaced by every caller of
+				// this replacement path. They are the stable occurrence identity;
+				// unlike a content hash, they preserve two source parts with the
+				// same bytes and keep hashless pending rows distinct.
+				write.SourcePartKey = write.SourceAttachmentID
+			}
+			if err := write.validate(); err != nil {
+				return err
+			}
+			if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
 				return err
 			}
 		}
@@ -4233,24 +4251,43 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 	return out, rows.Err()
 }
 
-// SetBeeperAttachmentMetadata replaces attachment_metadata on a message's
-// Beeper-managed attachment rows, returning how many rows changed. Empty
-// metadata clears the column. Rows already holding the value are left alone so
-// a repeated call reports no change; updating in place (rather than replacing
-// rows) leaves the stored blobs untouched.
-func (s *Store) SetBeeperAttachmentMetadata(messageID int64, metadata string) (int64, error) {
+// SetBeeperAttachmentClassification refreshes link-preview metadata and role
+// on a message's Beeper-managed attachment rows. Sticker is explicit provider
+// evidence and takes precedence over the message-level preview shape.
+func (s *Store) SetBeeperAttachmentClassification(
+	messageID int64,
+	metadata string,
+	isPreview bool,
+) (int64, error) {
+	role := AttachmentRoleStandalone
+	if isPreview {
+		role = AttachmentRolePreview
+	}
 	res, err := s.db.Exec(s.Rebind(fmt.Sprintf(`
-		UPDATE attachments SET attachment_metadata = %s
+		UPDATE attachments
+		SET attachment_metadata = %s,
+		    attachment_role = CASE
+		        WHEN attachment_role = 'sticker' THEN attachment_role
+		        ELSE ?
+		    END,
+		    role_source = CASE
+		        WHEN attachment_role = 'sticker' THEN role_source
+		        ELSE 'importer_semantics'
+		    END
 		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%%'
-		  AND %s
+		  AND (
+		      %s
+		      OR (attachment_role != 'sticker' AND attachment_role != ?)
+		      OR (attachment_role != 'sticker' AND role_source != 'importer_semantics')
+		  )
 	`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))),
-		nullIfEmpty(metadata), messageID, nullIfEmpty(metadata))
+		nullIfEmpty(metadata), string(role), messageID, nullIfEmpty(metadata), string(role))
 	if err != nil {
-		return 0, fmt.Errorf("set beeper attachment metadata: %w", err)
+		return 0, fmt.Errorf("set beeper attachment classification: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("set beeper attachment metadata: rows affected: %w", err)
+		return 0, fmt.Errorf("set beeper attachment classification: rows affected: %w", err)
 	}
 	return n, nil
 }
@@ -4443,41 +4480,15 @@ func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAtt
 
 // ReplaceMessageSlackAttachments replaces Slack-managed attachment rows for
 // a message (rows whose source_attachment_id carries the "slack:" prefix).
-// Duplicate-content refs are normalized into alias rows first (see
-// normalizeSlackAttachmentRefs) so every Slack file ID keeps a row.
+// Stable Slack file IDs are persisted as source-part keys so every file keeps
+// one row even when several files on a message have identical bytes.
 func (s *Store) ReplaceMessageSlackAttachments(messageID int64, refs []AttachmentRef) error {
-	refs = normalizeSlackAttachmentRefs(refs)
 	return s.replaceMessageProviderAttachments(messageID, "slack:", refs)
-}
-
-// normalizeSlackAttachmentRefs preserves one row per Slack file ID when
-// several files on a message share one CAS blob. The schema's
-// (message_id, content_hash) uniqueness keeps the real hash on the first
-// row; later duplicates retain the same trusted local path with an empty
-// hash (the Discord alias pattern). Pending markers and link rows carry
-// permalink URLs, never CAS paths, so they pass through untouched.
-func normalizeSlackAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
-	normalized := append([]AttachmentRef(nil), refs...)
-	seen := make(map[string]struct{}, len(normalized))
-	for i := range normalized {
-		contentHash := strings.ToLower(normalized[i].ContentHash)
-		if contentHash == "" {
-			continue
-		}
-		if _, ok := seen[contentHash]; ok {
-			normalized[i].ContentHash = ""
-			continue
-		}
-		seen[contentHash] = struct{}{}
-	}
-	return normalized
 }
 
 // MessageSlackAttachments returns the message's existing Slack-managed
 // attachment rows keyed by source_attachment_id, so re-persisting a message
-// can keep already-downloaded media without re-fetching it. Alias rows get
-// their hash re-derived from the CAS path, so callers see them as
-// downloaded.
+// can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentRef, error) {
 	refs, err := s.messageProviderAttachments(messageID, "slack:")
 	if err != nil {

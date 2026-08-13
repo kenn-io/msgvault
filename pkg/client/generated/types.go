@@ -1592,6 +1592,118 @@ func (d DiscoverResult) Validate() error {
 	return errors
 }
 
+type DocumentIndexRebuildStatus struct {
+	RemainingOwners int64 `json:"remaining_owners"`
+	SnapshotOwners  int64 `json:"snapshot_owners"`
+}
+
+type DocumentIndexStatus struct {
+	AverageProviderLatencyMillis float64 `json:"average_provider_latency_millis"`
+	EligibleBytes                int64   `json:"eligible_bytes"`
+	EligibleOccurrences          int64   `json:"eligible_occurrences"`
+	EligibleOwners               int64   `json:"eligible_owners"`
+	ExactConsent                 bool    `json:"exact_consent"`
+	ExtractionAttempts           int64   `json:"extraction_attempts"`
+	FailedAttempts               int64   `json:"failed_attempts"`
+	IneligibleRoleOccurrences    int64   `json:"ineligible_role_occurrences"`
+	MissingOwners                int64   `json:"missing_owners"`
+	MissingProviderByteReports   int64   `json:"missing_provider_byte_reports"`
+	ProcessedProviderUnits       int64   `json:"processed_provider_units"`
+	ProfileEnabled               bool    `json:"profile_enabled"`
+	ProfileExists                bool    `json:"profile_exists"`
+	ProviderLatencyMillis        int64   `json:"provider_latency_millis"`
+	ProviderRequests             int64   `json:"provider_requests"`
+	ProviderRetries              int64   `json:"provider_retries"`
+	ReadyOwners                  int64   `json:"ready_owners"`
+	ReportedProviderBytes        int64   `json:"reported_provider_bytes"`
+	RetryOwners                  int64   `json:"retry_owners"`
+	StagingOwners                int64   `json:"staging_owners"`
+	StoredPlaintextChunks        int64   `json:"stored_plaintext_chunks"`
+	SuccessfulAttempts           int64   `json:"successful_attempts"`
+	TerminalOwners               int64   `json:"terminal_owners"`
+	UnknownRoleOccurrences       int64   `json:"unknown_role_occurrences"`
+	VerifiedUploadBytes          int64   `json:"verified_upload_bytes"`
+}
+
+type DocumentIndexStatusResponse struct {
+	ActiveRebuild *DocumentIndexRebuildStatus `json:"active_rebuild,omitempty"`
+	Status        DocumentIndexStatus         `json:"status"`
+}
+
+func (d DocumentIndexStatusResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if d.ActiveRebuild != nil {
+		if v, ok := any(d.ActiveRebuild).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ActiveRebuild", err)
+			}
+		}
+	}
+	if v, ok := any(d.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocumentSearchResponse struct {
+	NextCursor *string                `json:"next_cursor,omitempty"`
+	Results    []DocumentSearchResult `json:"results,omitempty" validate:"required"`
+	Revision   int64                  `json:"revision"`
+	Truncated  *bool                  `json:"truncated,omitempty"`
+}
+
+func (d DocumentSearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocumentSearchResult struct {
+	AttachmentID      int64    `json:"attachment_id"`
+	CanonicalBlobHash string   `json:"canonical_blob_hash" validate:"required"`
+	ChunkKey          string   `json:"chunk_key" validate:"required"`
+	ChunkOrdinal      int64    `json:"chunk_ordinal"`
+	ContainingTitle   *string  `json:"containing_title,omitempty"`
+	Excerpt           string   `json:"excerpt" validate:"required"`
+	ExtractionID      string   `json:"extraction_id" validate:"required"`
+	Filename          *string  `json:"filename,omitempty"`
+	FirstUnitIndex    int64    `json:"first_unit_index"`
+	HeadingPath       []string `json:"heading_path,omitempty"`
+	HighlightEnd      int64    `json:"highlight_end"`
+	HighlightStart    int64    `json:"highlight_start"`
+	LastUnitIndex     int64    `json:"last_unit_index"`
+	MatchedSignals    []string `json:"matched_signals,omitempty" validate:"required"`
+	MessageID         int64    `json:"message_id"`
+	MimeType          *string  `json:"mime_type,omitempty"`
+	Model             string   `json:"model" validate:"required"`
+	OccurrenceKey     string   `json:"occurrence_key" validate:"required"`
+	OtherLiveCopies   int64    `json:"other_live_copies"`
+	ProfileID         string   `json:"profile_id" validate:"required"`
+	Provider          string   `json:"provider" validate:"required"`
+	Rank              int64    `json:"rank"`
+	SourceID          int64    `json:"source_id"`
+	SourcePartKey     *string  `json:"source_part_key,omitempty"`
+	Truncated         bool     `json:"truncated"`
+}
+
+func (d DocumentSearchResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DomainContextSummaryHTTPResponse struct {
 	CacheRevision       string           `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`

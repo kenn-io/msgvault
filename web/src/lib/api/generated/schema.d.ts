@@ -838,6 +838,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search extracted document attachments */
+        get: operations["searchDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get extracted document index status */
+        get: operations["getDocumentIndexStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/domains/search": {
         parameters: {
             query?: never;
@@ -2936,6 +2970,119 @@ export interface components {
             /** Format: int64 */
             source_id: number;
             source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentIndexRebuildStatus: {
+            /** Format: int64 */
+            remaining_owners: number;
+            /** Format: int64 */
+            snapshot_owners: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentIndexStatus: {
+            /** Format: double */
+            average_provider_latency_millis: number;
+            /** Format: int64 */
+            eligible_bytes: number;
+            /** Format: int64 */
+            eligible_occurrences: number;
+            /** Format: int64 */
+            eligible_owners: number;
+            exact_consent: boolean;
+            /** Format: int64 */
+            extraction_attempts: number;
+            /** Format: int64 */
+            failed_attempts: number;
+            /** Format: int64 */
+            ineligible_role_occurrences: number;
+            /** Format: int64 */
+            missing_owners: number;
+            /** Format: int64 */
+            missing_provider_byte_reports: number;
+            /** Format: int64 */
+            processed_provider_units: number;
+            profile_enabled: boolean;
+            profile_exists: boolean;
+            /** Format: int64 */
+            provider_latency_millis: number;
+            /** Format: int64 */
+            provider_requests: number;
+            /** Format: int64 */
+            provider_retries: number;
+            /** Format: int64 */
+            ready_owners: number;
+            /** Format: int64 */
+            reported_provider_bytes: number;
+            /** Format: int64 */
+            retry_owners: number;
+            /** Format: int64 */
+            staging_owners: number;
+            /** Format: int64 */
+            stored_plaintext_chunks: number;
+            /** Format: int64 */
+            successful_attempts: number;
+            /** Format: int64 */
+            terminal_owners: number;
+            /** Format: int64 */
+            unknown_role_occurrences: number;
+            /** Format: int64 */
+            verified_upload_bytes: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentIndexStatusResponse: {
+            active_rebuild?: components["schemas"]["DocumentIndexRebuildStatus"];
+            status: components["schemas"]["DocumentIndexStatus"];
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentSearchResponse: {
+            next_cursor?: string;
+            results: components["schemas"]["DocumentSearchResult"][] | null;
+            /** Format: int64 */
+            revision: number;
+            truncated?: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentSearchResult: {
+            /** Format: int64 */
+            attachment_id: number;
+            canonical_blob_hash: string;
+            chunk_key: string;
+            /** Format: int64 */
+            chunk_ordinal: number;
+            containing_title?: string;
+            excerpt: string;
+            extraction_id: string;
+            filename?: string;
+            /** Format: int64 */
+            first_unit_index: number;
+            heading_path?: string[] | null;
+            /** Format: int64 */
+            highlight_end: number;
+            /** Format: int64 */
+            highlight_start: number;
+            /** Format: int64 */
+            last_unit_index: number;
+            matched_signals: string[] | null;
+            /** Format: int64 */
+            message_id: number;
+            mime_type?: string;
+            model: string;
+            occurrence_key: string;
+            /** Format: int64 */
+            other_live_copies: number;
+            profile_id: string;
+            provider: string;
+            /** Format: int64 */
+            rank: number;
+            /** Format: int64 */
+            source_id: number;
+            source_part_key?: string;
+            truncated: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -7747,6 +7894,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelDeletionResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchDocuments: {
+        parameters: {
+            query: {
+                /** @description Extracted document content or filename query */
+                q: string;
+                /** @description Source IDs to include; repeat or comma-separate values */
+                source_id?: number[];
+                /** @description Message types to include; repeat or comma-separate values */
+                message_type?: string[];
+                /** @description Exact attachment occurrence ID */
+                attachment_id?: number;
+                /** @description Exact containing message ID */
+                message_id?: number;
+                /** @description Maximum results to return (default 20, max 100) */
+                limit?: number;
+                /** @description Opaque cursor from the previous document search page */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentSearchResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getDocumentIndexStatus: {
+        parameters: {
+            query: {
+                /** @description Exact document extraction profile ID */
+                profile_id: string;
+                /** @description Exact extraction input key */
+                input_key: string;
+                /** @description Allowed document media types */
+                media_type: string[];
+                /** @description Allowed message types */
+                message_type?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentIndexStatusResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

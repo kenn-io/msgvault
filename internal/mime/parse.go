@@ -49,6 +49,8 @@ type Attachment struct {
 	Filename    string
 	ContentType string
 	ContentID   string
+	Disposition string
+	PartKey     string
 	Size        int
 	ContentHash string // SHA-256 of content
 	Content     []byte
@@ -307,11 +309,18 @@ func processParts(parts []*enmime.Part, isInline bool) []Attachment {
 func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 	content := part.Content
 	hash := sha256.Sum256(content)
+	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
+	partKey := ""
+	if part.PartID != "" {
+		partKey = "mime:" + part.PartID
+	}
 
 	return Attachment{
 		Filename:    part.FileName,
 		ContentType: part.ContentType,
 		ContentID:   part.ContentID,
+		Disposition: disposition,
+		PartKey:     partKey,
 		Size:        len(content),
 		ContentHash: hex.EncodeToString(hash[:]),
 		Content:     content,

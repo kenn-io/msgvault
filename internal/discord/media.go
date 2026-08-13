@@ -198,6 +198,8 @@ func (m *MediaArchiver) persistAttachments(
 			if store.IsDiscordAttachmentDownloaded(previous) {
 				ref.StoragePath = previous.StoragePath
 				ref.ContentHash = previous.ContentHash
+				ref.Role = store.AttachmentRoleStandalone
+				ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
 				item.download = false
 				item.report = retryExisting
 			} else if !retryExisting {
@@ -488,6 +490,8 @@ func (m *MediaArchiver) downloadAttachment(
 	marker.StoragePath = storagePath
 	marker.ContentHash = mimeAttachment.ContentHash
 	marker.Size = len(content)
+	marker.Role = store.AttachmentRoleStandalone
+	marker.RoleSource = store.AttachmentRoleSourceProviderExplicit
 	return marker, nil
 }
 

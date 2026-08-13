@@ -153,7 +153,7 @@ func printBackupSnapshots(w io.Writer, snapshots []*backup.Manifest) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tMESSAGES\tBYTES ADDED\tTAG")
+	_, _ = fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tMESSAGES\tDOCUMENT TEXT\tBYTES ADDED\tTAG")
 	for _, m := range snapshots {
 		tag := m.Options.Tag
 		if tag == "" {
@@ -163,8 +163,12 @@ func printBackupSnapshots(w io.Writer, snapshots []*backup.Manifest) error {
 		if err != nil {
 			return fmt.Errorf("snapshot %s: parsing manifest stats: %w", m.SnapshotID, err)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			m.SnapshotID, m.CreatedAt, formatCount(st.Messages), formatSize(m.BytesAdded), tag)
+		documentText := "no"
+		if backupapp.ManifestContainsDocumentPlaintext(m) {
+			documentText = "normalized plaintext"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			m.SnapshotID, m.CreatedAt, formatCount(st.Messages), documentText, formatSize(m.BytesAdded), tag)
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("write backup list output: %w", err)
@@ -260,6 +264,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		Progress:           renderer.handle,
 		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
+		AuxiliaryTarget:    backupapp.NewDocumentAuxiliaryTarget(),
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)

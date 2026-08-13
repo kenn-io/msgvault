@@ -22,7 +22,8 @@ const rawArchiveFormat = "beeper_json"
 //	v1 — plain-text conversion of HTML message text; link-preview classification.
 //	v2 — refresh snippets and the search index even when body text is current.
 //	v3 — exclude Matrix reply fallbacks from body text, snippets, and search.
-const rederiveVersion = "v3"
+//	v4 — keep link-preview media out of standalone document processing.
+const rederiveVersion = "v4"
 
 // repairBatchSize bounds how many archived messages are held in memory per
 // pass of the walk.
@@ -122,7 +123,8 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 	if len(m.Attachments) == 0 {
 		return
 	}
-	changed, err := imp.store.SetBeeperAttachmentMetadata(item.MessageID, shareMetadata(&m))
+	metadata := shareMetadata(&m)
+	changed, err := imp.store.SetBeeperAttachmentClassification(item.MessageID, metadata, metadata != "")
 	if err != nil {
 		sum.Errors++
 		return

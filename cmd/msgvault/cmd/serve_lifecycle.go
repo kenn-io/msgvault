@@ -22,6 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
+const statusValue = "status"
+
 const (
 	backgroundServeReadyTimeout = 5 * time.Second
 	serveAPIShutdownTimeout     = 10 * time.Second
@@ -63,7 +65,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			return runServeStart(cmd, cfg)
 		}
-	case "status":
+	case statusValue:
 		cmd.Short = "Show msgvault daemon status"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
@@ -85,7 +87,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 }
 
 func addServeLifecycleCommands(parent *cobra.Command) {
-	for _, name := range []string{"start", "status", "stop", "restart"} {
+	for _, name := range []string{"start", statusValue, "stop", "restart"} {
 		parent.AddCommand(newLifecycleCommand(name, true))
 	}
 }
@@ -96,7 +98,7 @@ func newDaemonCommand() *cobra.Command {
 		Short: "Manage the background daemon",
 		Args:  cobra.NoArgs,
 	}
-	for _, name := range []string{"start", "status", "stop", "restart"} {
+	for _, name := range []string{"start", statusValue, "stop", "restart"} {
 		cmd.AddCommand(newLifecycleCommand(name, false))
 	}
 	return cmd

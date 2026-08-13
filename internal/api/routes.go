@@ -221,6 +221,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSavedViewRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
+	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
@@ -569,6 +570,25 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam("offset", "Zero-based row offset"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 		}, scopeParams()...)
+	case "searchDocuments":
+		return []*huma.Param{
+			queryStringParam("q", "Extracted document content or filename query", true),
+			queryIntegerArrayParam("source_id", "Source IDs to include; repeat or comma-separate values"),
+			queryRefArrayParam("message_type", "Message types to include; repeat or comma-separate values"),
+			queryIntegerParam("attachment_id", "Exact attachment occurrence ID"),
+			queryIntegerParam("message_id", "Exact containing message ID"),
+			queryIntegerParam("limit", "Maximum results to return (default 20, max 100)"),
+			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
+		}
+	case "getDocumentIndexStatus":
+		mediaTypes := queryRefArrayParam("media_type", "Allowed document media types")
+		mediaTypes.Required = true
+		return []*huma.Param{
+			queryStringParam("profile_id", "Exact document extraction profile ID", true),
+			queryStringParam("input_key", "Exact extraction input key", true),
+			mediaTypes,
+			queryRefArrayParam("message_type", "Allowed message types"),
+		}
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}
 	case "getCLIAttachment":

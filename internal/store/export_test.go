@@ -95,3 +95,11 @@ func (s *Store) SetInitSchemaWindowHookForTest(fn func()) func() {
 	s.initSchemaWindowHook = fn
 	return func() { s.initSchemaWindowHook = nil }
 }
+
+// SetAttachmentRoleRepairPreparedHookForTest installs a hook after historical
+// MIME evidence has been prepared but before the repair transaction begins.
+// Tests use it to reproduce a concurrent resync that changes attachment bytes.
+func (s *Store) SetAttachmentRoleRepairPreparedHookForTest(fn func()) func() {
+	s.attachmentRoleRepairPreparedHook = fn
+	return func() { s.attachmentRoleRepairPreparedHook = nil }
+}

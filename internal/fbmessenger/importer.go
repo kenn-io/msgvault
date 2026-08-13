@@ -724,7 +724,18 @@ func writeThreadToStore(
 			} else if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
 				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
-			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
+			role := store.AttachmentRoleStandalone
+			roleSource := store.AttachmentRoleSourceImporterSemantics
+			if att.Kind == "sticker" {
+				role = store.AttachmentRoleSticker
+				roleSource = store.AttachmentRoleSourceProviderExplicit
+			}
+			if err := st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+				Filename: att.Filename, MIMEType: att.MimeType, StoragePath: storagePath,
+				ContentHash: hash, Size: int64(size), SourceAttachmentID: att.URI,
+				MediaType: att.Kind, Role: role, RoleSource: roleSource,
+				SourcePartKey: syntheticHash,
+			}); err != nil {
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
 				continue
 			}

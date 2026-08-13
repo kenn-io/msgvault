@@ -1878,6 +1878,244 @@ components:
         - rejected
         - applied
       type: object
+    DocumentIndexRebuildStatus:
+      additionalProperties: true
+      properties:
+        remaining_owners:
+          format: int64
+          type: integer
+        snapshot_owners:
+          format: int64
+          type: integer
+      required:
+        - snapshot_owners
+        - remaining_owners
+      type: object
+    DocumentIndexStatus:
+      additionalProperties: true
+      properties:
+        average_provider_latency_millis:
+          format: double
+          type: number
+        eligible_bytes:
+          format: int64
+          type: integer
+        eligible_occurrences:
+          format: int64
+          type: integer
+        eligible_owners:
+          format: int64
+          type: integer
+        exact_consent:
+          type: boolean
+        extraction_attempts:
+          format: int64
+          type: integer
+        failed_attempts:
+          format: int64
+          type: integer
+        ineligible_role_occurrences:
+          format: int64
+          type: integer
+        missing_owners:
+          format: int64
+          type: integer
+        missing_provider_byte_reports:
+          format: int64
+          type: integer
+        processed_provider_units:
+          format: int64
+          type: integer
+        profile_enabled:
+          type: boolean
+        profile_exists:
+          type: boolean
+        provider_latency_millis:
+          format: int64
+          type: integer
+        provider_requests:
+          format: int64
+          type: integer
+        provider_retries:
+          format: int64
+          type: integer
+        ready_owners:
+          format: int64
+          type: integer
+        reported_provider_bytes:
+          format: int64
+          type: integer
+        retry_owners:
+          format: int64
+          type: integer
+        staging_owners:
+          format: int64
+          type: integer
+        stored_plaintext_chunks:
+          format: int64
+          type: integer
+        successful_attempts:
+          format: int64
+          type: integer
+        terminal_owners:
+          format: int64
+          type: integer
+        unknown_role_occurrences:
+          format: int64
+          type: integer
+        verified_upload_bytes:
+          format: int64
+          type: integer
+      required:
+        - profile_exists
+        - profile_enabled
+        - exact_consent
+        - extraction_attempts
+        - successful_attempts
+        - failed_attempts
+        - provider_requests
+        - provider_retries
+        - provider_latency_millis
+        - average_provider_latency_millis
+        - verified_upload_bytes
+        - processed_provider_units
+        - reported_provider_bytes
+        - missing_provider_byte_reports
+        - eligible_occurrences
+        - eligible_owners
+        - eligible_bytes
+        - unknown_role_occurrences
+        - ineligible_role_occurrences
+        - ready_owners
+        - staging_owners
+        - retry_owners
+        - terminal_owners
+        - missing_owners
+        - stored_plaintext_chunks
+      type: object
+    DocumentIndexStatusResponse:
+      additionalProperties: true
+      properties:
+        active_rebuild:
+          $ref: "#/components/schemas/DocumentIndexRebuildStatus"
+        status:
+          $ref: "#/components/schemas/DocumentIndexStatus"
+      required:
+        - status
+      type: object
+    DocumentSearchResponse:
+      additionalProperties: true
+      properties:
+        next_cursor:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/DocumentSearchResult"
+          type:
+            - array
+            - "null"
+        revision:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - results
+        - revision
+      type: object
+    DocumentSearchResult:
+      additionalProperties: true
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        canonical_blob_hash:
+          type: string
+        chunk_key:
+          type: string
+        chunk_ordinal:
+          format: int64
+          type: integer
+        containing_title:
+          type: string
+        excerpt:
+          type: string
+        extraction_id:
+          type: string
+        filename:
+          type: string
+        first_unit_index:
+          format: int64
+          type: integer
+        heading_path:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        highlight_end:
+          format: int64
+          type: integer
+        highlight_start:
+          format: int64
+          type: integer
+        last_unit_index:
+          format: int64
+          type: integer
+        matched_signals:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        model:
+          type: string
+        occurrence_key:
+          type: string
+        other_live_copies:
+          format: int64
+          type: integer
+        profile_id:
+          type: string
+        provider:
+          type: string
+        rank:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_part_key:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - attachment_id
+        - message_id
+        - source_id
+        - occurrence_key
+        - canonical_blob_hash
+        - other_live_copies
+        - chunk_key
+        - chunk_ordinal
+        - first_unit_index
+        - last_unit_index
+        - excerpt
+        - highlight_start
+        - highlight_end
+        - profile_id
+        - extraction_id
+        - provider
+        - model
+        - matched_signals
+        - truncated
+        - rank
+      type: object
     DomainContextSummaryHTTPResponse:
       additionalProperties: true
       properties:
@@ -6608,7 +6846,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.39.0
+  version: 1.40.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -9061,6 +9299,151 @@ paths:
       security:
         - apiKey: []
       summary: Inspect a staged deletion manifest
+      tags:
+        - API
+  /api/v1/documents/search:
+    get:
+      operationId: searchDocuments
+      parameters:
+        - description: Extracted document content or filename query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Source IDs to include; repeat or comma-separate values
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Message types to include; repeat or comma-separate values
+          in: query
+          name: message_type
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Exact attachment occurrence ID
+          in: query
+          name: attachment_id
+          schema:
+            format: int64
+            type: integer
+        - description: Exact containing message ID
+          in: query
+          name: message_id
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum results to return (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Opaque cursor from the previous document search page
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search extracted document attachments
+      tags:
+        - API
+  /api/v1/documents/status:
+    get:
+      operationId: getDocumentIndexStatus
+      parameters:
+        - description: Exact document extraction profile ID
+          in: query
+          name: profile_id
+          required: true
+          schema:
+            type: string
+        - description: Exact extraction input key
+          in: query
+          name: input_key
+          required: true
+          schema:
+            type: string
+        - description: Allowed document media types
+          in: query
+          name: media_type
+          required: true
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Allowed message types
+          in: query
+          name: message_type
+          schema:
+            items:
+              type: string
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentIndexStatusResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get extracted document index status
       tags:
         - API
   /api/v1/domains/search:

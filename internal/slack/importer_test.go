@@ -1644,10 +1644,14 @@ func TestAttachmentRowFailureFailsRun(t *testing.T) {
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "a failed attachment row write must fail the run — the marker was never durable")
 
-	// Heal: the dropped table also lost its migration-created unique index,
-	// so clear that marker before the idempotent re-init (a test-only
+	// Heal: the dropped table also lost its migration-created unique indexes,
+	// so clear those markers before the idempotent re-init (a test-only
 	// artifact of injecting failure via DROP TABLE).
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "attachments_content_hash_unique_index")
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM applied_migrations WHERE name IN (?, ?)`),
+		"attachments_content_hash_unique_index",
+		"attachment_occurrence_unique_indexes_v1",
+	)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
 	_, err = imp.Import(context.Background(), opts)

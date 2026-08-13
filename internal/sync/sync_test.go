@@ -1056,6 +1056,8 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 	att := mime.Attachment{
 		Filename:    "a.txt",
 		ContentType: "text/plain",
+		Disposition: "attachment",
+		PartKey:     "mime:2",
 		Size:        len(content),
 		ContentHash: "",
 		Content:     content,
@@ -1063,14 +1065,49 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 	require.NoError(env.Syncer.storeAttachment(messageID, &att), "storeAttachment")
 	require.Equal(wantHash, att.ContentHash, "ContentHash")
 
-	var gotHash, storagePath string
-	require.NoError(env.Store.DB().QueryRow(`SELECT content_hash, storage_path FROM attachments WHERE message_id = ?`, messageID).Scan(&gotHash, &storagePath), "select attachment")
+	var gotHash, storagePath, role, roleSource, sourcePartKey string
+	require.NoError(env.Store.DB().QueryRow(`
+		SELECT content_hash, storage_path, attachment_role, role_source, source_part_key
+		FROM attachments WHERE message_id = ?`, messageID).
+		Scan(&gotHash, &storagePath, &role, &roleSource, &sourcePartKey), "select attachment")
 	require.Equal(wantHash, gotHash, "db content_hash")
+	require.Equal("standalone", role)
+	require.Equal("mime_disposition", roleSource)
+	require.Equal("mime:2", sourcePartKey)
 
 	fullPath := filepath.Join(attachmentsDir, filepath.FromSlash(storagePath))
 	b, err := os.ReadFile(fullPath)
 	require.NoError(err, "read attachment file")
 	require.Equal(string(content), string(b), "attachment file contents")
+}
+
+func TestStoreAttachmentPersistsInlineMIMEEvidence(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	env.SetOptions(t, func(o *Options) { o.AttachmentsDir = filepath.Join(env.TmpDir, "attachments") })
+	src := env.CreateSource(t)
+	convID, err := env.Store.EnsureConversation(src.ID, "inline-thread", "Thread")
+	require.NoError(err)
+	messageID, err := env.Store.UpsertMessage(&store.Message{
+		ConversationID: convID, SourceID: src.ID, SourceMessageID: "inline-message", MessageType: "email",
+	})
+	require.NoError(err)
+
+	att := mime.Attachment{
+		Filename: "inline.png", ContentType: "image/png", Content: []byte("png"),
+		Disposition: "inline", PartKey: "mime:3", ContentID: "inline-1", IsInline: true,
+	}
+	require.NoError(env.Syncer.storeAttachment(messageID, &att))
+
+	var role, roleSource, sourcePartKey, contentID string
+	require.NoError(env.Store.DB().QueryRow(`
+		SELECT attachment_role, role_source, source_part_key, content_id
+		FROM attachments WHERE message_id = ?`, messageID).
+		Scan(&role, &roleSource, &sourcePartKey, &contentID))
+	require.Equal("inline", role)
+	require.Equal("mime_disposition", roleSource)
+	require.Equal("mime:3", sourcePartKey)
+	require.Equal("inline-1", contentID)
 }
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {

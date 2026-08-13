@@ -290,6 +290,51 @@ type ListDeletionsQuery struct {
 	Status *string `json:"status,omitempty"`
 }
 
+type SearchDocumentsQuery struct {
+	// Q Extracted document content or filename query
+	Q string `json:"q" validate:"required"`
+
+	// SourceID Source IDs to include; repeat or comma-separate values
+	SourceID []int64 `json:"source_id,omitempty"`
+
+	// MessageType Message types to include; repeat or comma-separate values
+	MessageType []string `json:"message_type,omitempty"`
+
+	// AttachmentID Exact attachment occurrence ID
+	AttachmentID *int64 `json:"attachment_id,omitempty"`
+
+	// MessageID Exact containing message ID
+	MessageID *int64 `json:"message_id,omitempty"`
+
+	// Limit Maximum results to return (default 20, max 100)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from the previous document search page
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+func (s SearchDocumentsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetDocumentIndexStatusQuery struct {
+	// ProfileID Exact document extraction profile ID
+	ProfileID string `json:"profile_id" validate:"required"`
+
+	// InputKey Exact extraction input key
+	InputKey string `json:"input_key" validate:"required"`
+
+	// MediaType Allowed document media types
+	MediaType []string `json:"media_type" validate:"required"`
+
+	// MessageType Allowed message types
+	MessageType []string `json:"message_type,omitempty"`
+}
+
+func (g GetDocumentIndexStatusQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

@@ -1134,15 +1134,18 @@ func TestStore_GetStats_ClosedDB(t *testing.T) {
 }
 
 func TestStore_GetStats_MissingTable(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Drop a table to simulate missing table scenario
-	_, err := st.DB().Exec("DROP TABLE IF EXISTS attachments")
-	require.NoError(t, err, "DROP TABLE attachments")
+	_, err := st.DB().Exec("DROP TABLE IF EXISTS document_occurrences")
+	require.NoError(err, "DROP TABLE document_occurrences")
+	_, err = st.DB().Exec("DROP TABLE IF EXISTS attachments")
+	require.NoError(err, "DROP TABLE attachments")
 
 	// GetStats should ignore missing tables and return partial stats
 	stats, err := st.GetStats()
-	require.NoError(t, err, "GetStats() with missing table")
+	require.NoError(err, "GetStats() with missing table")
 
 	// AttachmentCount should be 0 (table missing, ignored)
 	assert.Equal(t, int64(0), stats.AttachmentCount, "AttachmentCount (missing table)")

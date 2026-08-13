@@ -265,19 +265,26 @@ type mockStore struct {
 	needsFTSBackfillQuick bool
 	// needsFTSBackfillFunc overrides the needsFTSBackfill field when set, so
 	// tests can block inside the probe or vary its answer per call.
-	needsFTSBackfillFunc func() bool
-	backfillFTSFunc      func(func(done, total int64)) (int64, error)
-	rebuildFTSFunc       func(func(done, total int64)) (int64, error)
-	buildCacheFunc       func(context.Context, bool, func(CLICacheBuildEvent) error) error
-	syncFunc             func(context.Context, CLISyncRequest, func(CLISyncEvent) error) error
-	verifyFunc           func(context.Context, CLIVerifyRequest, func(CLIVerifyEvent) error) error
-	repairFunc           func(context.Context, func(CLIRepairEncodingEvent) error) error
-	runFunc              func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error
-	planCalendarFunc     func(context.Context, CLIAddCalendarPlanRequest) (CLIAddCalendarPlanResponse, error)
-	planEmbedsFunc       func(context.Context, CLIEmbeddingsPlanRequest) (CLIEmbeddingsPlanResponse, error)
-	planDeleteFunc       func(context.Context, CLIDeleteStagedPlanRequest) (CLIDeleteStagedPlanResponse, error)
-	planDedupFunc        func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error)
-	saveManifestFunc     func(context.Context, *deletion.Manifest) error
+	needsFTSBackfillFunc  func() bool
+	backfillFTSFunc       func(func(done, total int64)) (int64, error)
+	rebuildFTSFunc        func(func(done, total int64)) (int64, error)
+	buildCacheFunc        func(context.Context, bool, func(CLICacheBuildEvent) error) error
+	syncFunc              func(context.Context, CLISyncRequest, func(CLISyncEvent) error) error
+	verifyFunc            func(context.Context, CLIVerifyRequest, func(CLIVerifyEvent) error) error
+	repairFunc            func(context.Context, func(CLIRepairEncodingEvent) error) error
+	runFunc               func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error
+	planCalendarFunc      func(context.Context, CLIAddCalendarPlanRequest) (CLIAddCalendarPlanResponse, error)
+	planEmbedsFunc        func(context.Context, CLIEmbeddingsPlanRequest) (CLIEmbeddingsPlanResponse, error)
+	planDeleteFunc        func(context.Context, CLIDeleteStagedPlanRequest) (CLIDeleteStagedPlanResponse, error)
+	planDedupFunc         func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error)
+	saveManifestFunc      func(context.Context, *deletion.Manifest) error
+	documentSearchFunc    func(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
+	documentStatusFunc    func(context.Context, string, string, []string, []string) (store.DocumentIndexStatus, error)
+	documentRebuildFunc   func(context.Context, string, string) (store.DocumentExtractionRebuild, error)
+	documentRemainingFunc func(
+		context.Context, store.DocumentExtractionRebuild, []string, []string,
+	) (int64, error)
+	documentReconcileFunc func(context.Context) error
 
 	// Error injection for the context-aware read paths, used to verify
 	// handlers map context deadline/cancellation to a structured 503.
@@ -305,6 +312,61 @@ type mockStore struct {
 	sourcesByLookup    map[string][]*store.Source
 	sourcesByLookupErr error
 	collections        map[string]*store.CollectionWithSources
+}
+
+func (m *mockStore) ReconcileDocumentOccurrences(ctx context.Context) error {
+	if m.documentReconcileFunc == nil {
+		return nil
+	}
+	return m.documentReconcileFunc(ctx)
+}
+
+func (m *mockStore) SearchDocuments(
+	ctx context.Context,
+	request store.DocumentSearchRequest,
+) (store.DocumentSearchResponse, error) {
+	if m.documentSearchFunc == nil {
+		return store.DocumentSearchResponse{}, nil
+	}
+	return m.documentSearchFunc(ctx, request)
+}
+
+func (m *mockStore) GetDocumentIndexStatusForScope(
+	ctx context.Context,
+	profileID string,
+	extractionInputKey string,
+	allowedMediaTypes []string,
+	allowedMessageTypes []string,
+) (store.DocumentIndexStatus, error) {
+	if m.documentStatusFunc == nil {
+		return store.DocumentIndexStatus{}, nil
+	}
+	return m.documentStatusFunc(
+		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
+	)
+}
+
+func (m *mockStore) GetActiveDocumentExtractionRebuild(
+	ctx context.Context,
+	profileID string,
+	extractionInputKey string,
+) (store.DocumentExtractionRebuild, error) {
+	if m.documentRebuildFunc == nil {
+		return store.DocumentExtractionRebuild{}, store.ErrDocumentExtractionRebuildMissing
+	}
+	return m.documentRebuildFunc(ctx, profileID, extractionInputKey)
+}
+
+func (m *mockStore) CountIncompleteDocumentExtractionRebuild(
+	ctx context.Context,
+	rebuild store.DocumentExtractionRebuild,
+	allowedMediaTypes []string,
+	allowedMessageTypes []string,
+) (int64, error) {
+	if m.documentRemainingFunc == nil {
+		return 0, nil
+	}
+	return m.documentRemainingFunc(ctx, rebuild, allowedMediaTypes, allowedMessageTypes)
 }
 
 func (m *mockStore) GetStats() (*StoreStats, error) {

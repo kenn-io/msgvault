@@ -638,6 +638,15 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS content_id TEXT`, "attachments.content_id"},
+		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS rebuild_id TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL`, "document_extractions.rebuild_id"},
+		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
+		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
+		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
+		{`ALTER TABLE document_index_state ADD COLUMN IF NOT EXISTS target_profile_id TEXT`, "document_index_state.target_profile_id"},
 	}
 }
 
@@ -1116,6 +1125,118 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_embedding_changes_participant_display_name
 		     AFTER UPDATE OF display_name, email_address, phone_number ON participants FOR EACH ROW
 		     EXECUTE FUNCTION journal_beeper_participant_display_name()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' THEN
+		         INSERT INTO attachment_change_log
+		             (event_kind, new_message_id, new_attachment_id,
+		              new_content_hash, new_source_part_key, new_role)
+		         VALUES ('attachment_insert', NEW.message_id, NEW.id,
+		                 NEW.content_hash, NEW.source_part_key, NEW.attachment_role);
+		         RETURN NEW;
+		     ELSIF TG_OP = 'UPDATE' THEN
+		         INSERT INTO attachment_change_log
+		             (event_kind, old_message_id, new_message_id,
+		              old_attachment_id, new_attachment_id,
+		              old_content_hash, new_content_hash,
+		              old_source_part_key, new_source_part_key,
+		              old_role, new_role)
+		         VALUES ('attachment_update', OLD.message_id, NEW.message_id,
+		                 OLD.id, NEW.id, OLD.content_hash, NEW.content_hash,
+		                 OLD.source_part_key, NEW.source_part_key,
+		                 OLD.attachment_role, NEW.attachment_role);
+		         RETURN NEW;
+		     ELSE
+		         INSERT INTO attachment_change_log
+		             (event_kind, old_message_id, old_attachment_id,
+		              old_content_hash, old_source_part_key, old_role)
+		         VALUES ('attachment_delete', OLD.message_id, OLD.id,
+		                 OLD.content_hash, OLD.source_part_key, OLD.attachment_role);
+		         RETURN OLD;
+		     END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_insert ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_insert
+		     AFTER INSERT ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_update ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_update
+		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		         storage_path, media_type, width, height, duration_ms,
+		         source_attachment_id, attachment_metadata, attachment_role,
+		         role_source, source_part_key, content_id, encryption_version
+		     ON attachments FOR EACH ROW
+		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.filename IS DISTINCT FROM NEW.filename
+		        OR OLD.mime_type IS DISTINCT FROM NEW.mime_type
+		        OR OLD.size IS DISTINCT FROM NEW.size
+		        OR OLD.content_hash IS DISTINCT FROM NEW.content_hash
+		        OR OLD.storage_path IS DISTINCT FROM NEW.storage_path
+		        OR OLD.media_type IS DISTINCT FROM NEW.media_type
+		        OR OLD.width IS DISTINCT FROM NEW.width
+		        OR OLD.height IS DISTINCT FROM NEW.height
+		        OR OLD.duration_ms IS DISTINCT FROM NEW.duration_ms
+		        OR OLD.source_attachment_id IS DISTINCT FROM NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS DISTINCT FROM NEW.attachment_metadata
+		        OR OLD.attachment_role IS DISTINCT FROM NEW.attachment_role
+		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
+		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
+		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_delete ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_delete
+		     AFTER DELETE ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_message_live_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         RETURN NEW;
+		     END IF;
+		     INSERT INTO attachment_change_log
+		         (event_kind, old_message_id, new_message_id,
+		          old_attachment_id, new_attachment_id,
+		          old_content_hash, new_content_hash,
+		          old_source_part_key, new_source_part_key,
+		          old_role, new_role)
+		     SELECT
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN 'message_live_enter' ELSE 'message_live_exit' END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN OLD.id END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN NEW.id END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.id END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.id END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.content_hash END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.content_hash END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.source_part_key END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.source_part_key END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.attachment_role END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.attachment_role END
+		     FROM attachments a WHERE a.message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_live_change ON messages`,
+		`CREATE TRIGGER trg_attachment_message_live_change
+		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS DISTINCT FROM
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     EXECUTE FUNCTION capture_attachment_message_live_change()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
@@ -1235,7 +1356,7 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
-	"attachments", "labels", "participants", "participant_identifiers", "reactions",
+	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions",
 	"participant_contact_observations", "identity_match_candidates", "identity_match_evidence",
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so

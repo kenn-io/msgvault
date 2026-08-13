@@ -36,6 +36,7 @@ const (
 	ToolSearchByDomains        = "search_by_domains"
 	ToolFindSimilarMessages    = "find_similar_messages"
 	ToolSearchInMessage        = "search_in_message"
+	ToolSearchDocuments        = "search_document_attachments"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -57,6 +58,7 @@ type ServeOptions struct {
 	HybridSearcher   HybridSearcher
 	SimilarSearcher  SimilarSearcher
 	DataDir          string
+	DocumentSearcher DocumentSearcher
 
 	// HybridEngine is optional. When nil, semantic_search_messages rejects
 	// vector/hybrid searches with a vector_not_enabled error.
@@ -182,6 +184,7 @@ func newMCPServerWithPolicy(
 		hybridSearcher:   opts.HybridSearcher,
 		similarSearcher:  opts.SimilarSearcher,
 		dataDir:          opts.DataDir,
+		documentSearcher: opts.DocumentSearcher,
 		hybridEngine:     opts.HybridEngine,
 		vectorCfg:        opts.VectorCfg,
 		backend:          opts.Backend,

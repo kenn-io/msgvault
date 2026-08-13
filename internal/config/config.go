@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
@@ -366,29 +367,30 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	Data         DataConfig         `toml:"data"`
-	Log          LogConfig          `toml:"log"`
-	OAuth        OAuthConfig        `toml:"oauth"`
-	Microsoft    MicrosoftConfig    `toml:"microsoft"`
-	Sync         SyncConfig         `toml:"sync"`
-	Chat         ChatConfig         `toml:"chat"`
-	Server       ServerConfig       `toml:"server"`
-	Analytics    AnalyticsConfig    `toml:"analytics"`
-	Web          WebConfig          `toml:"web"`
-	Integrations IntegrationsConfig `toml:"integrations"`
-	Remote       RemoteConfig       `toml:"remote"`
-	Vector       vector.Config      `toml:"vector"`
-	Identity     IdentityConfig     `toml:"identity"`
-	Fastmail     []FastmailSource   `toml:"fastmail"`
-	Accounts     []AccountSchedule  `toml:"accounts"`
-	SynctechSMS  SynctechSMSConfig  `toml:"synctech_sms"`
-	GCal         []GCalSource       `toml:"gcal"`
-	Beeper       BeeperConfig       `toml:"beeper"`
-	Slack        SlackConfig        `toml:"slack"`
-	Granola      []GranolaSource    `toml:"granola"`
-	Circleback   []CirclebackSource `toml:"circleback"`
-	Backup       BackupConfig       `toml:"backup"`
-	Discord      DiscordConfig      `toml:"discord"`
+	Data         DataConfig                      `toml:"data"`
+	Log          LogConfig                       `toml:"log"`
+	OAuth        OAuthConfig                     `toml:"oauth"`
+	Microsoft    MicrosoftConfig                 `toml:"microsoft"`
+	Sync         SyncConfig                      `toml:"sync"`
+	Chat         ChatConfig                      `toml:"chat"`
+	Server       ServerConfig                    `toml:"server"`
+	Analytics    AnalyticsConfig                 `toml:"analytics"`
+	Web          WebConfig                       `toml:"web"`
+	Integrations IntegrationsConfig              `toml:"integrations"`
+	Remote       RemoteConfig                    `toml:"remote"`
+	Vector       vector.Config                   `toml:"vector"`
+	Identity     IdentityConfig                  `toml:"identity"`
+	Fastmail     []FastmailSource                `toml:"fastmail"`
+	Accounts     []AccountSchedule               `toml:"accounts"`
+	SynctechSMS  SynctechSMSConfig               `toml:"synctech_sms"`
+	GCal         []GCalSource                    `toml:"gcal"`
+	Beeper       BeeperConfig                    `toml:"beeper"`
+	Slack        SlackConfig                     `toml:"slack"`
+	Granola      []GranolaSource                 `toml:"granola"`
+	Circleback   []CirclebackSource              `toml:"circleback"`
+	Backup       BackupConfig                    `toml:"backup"`
+	Discord      DiscordConfig                   `toml:"discord"`
+	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -579,6 +581,7 @@ func NewDefaultConfig() *Config {
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
 	}
+	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
@@ -679,6 +682,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
+	cfg.Attachments.Documents.CapabilityManifest = expandPath(cfg.Attachments.Documents.CapabilityManifest)
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
 		app.ServiceAccountKey = expandPath(app.ServiceAccountKey)
@@ -694,6 +698,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
+		cfg.Attachments.Documents.CapabilityManifest = resolveRelative(
+			cfg.Attachments.Documents.CapabilityManifest, cfg.HomeDir,
+		)
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
 			app.ServiceAccountKey = resolveRelative(app.ServiceAccountKey, cfg.HomeDir)
@@ -706,6 +713,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	cfg.Attachments.Documents.ApplyDefaults()
+	if err := cfg.Attachments.Documents.Validate(); err != nil {
+		return nil, err
+	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	if err := cfg.Server.Validate(); err != nil {

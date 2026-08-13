@@ -124,7 +124,7 @@ func writeDeletionsJSON(w io.Writer, groups ...[]*deletion.Manifest) error {
 		for _, m := range manifests {
 			out = append(out, map[string]any{
 				"id":            m.ID,
-				"status":        m.Status,
+				statusValue:     m.Status,
 				"message_count": len(m.GmailIDs),
 				"description":   m.Description,
 				"account":       m.Filters.Account,

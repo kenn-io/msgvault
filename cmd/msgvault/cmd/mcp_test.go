@@ -134,6 +134,7 @@ func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *
 	assert.NotNil(opts.Engine, "engine")
 	assert.NotNil(opts.AttachmentReader, "attachment reader")
 	assert.NotNil(opts.ManifestSaver, "manifest saver")
+	assert.NotNil(opts.DocumentSearcher, "document searcher")
 	assert.Nil(opts.HybridSearcher, "hybrid searcher")
 	assert.Nil(opts.SimilarSearcher, "similar searcher")
 }

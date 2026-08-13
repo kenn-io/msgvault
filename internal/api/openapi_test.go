@@ -265,8 +265,8 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.39.0", APISchemaVersion,
-		"structured profiles are additive to the attribute schema release")
+	assert.Equal("1.40.0", APISchemaVersion,
+		"document search is additive to the attribute schema release")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
@@ -339,8 +339,8 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.39.0", APISchemaVersion,
-		"raw profile media content is an additive schema release")
+	assert.Equal("1.40.0", APISchemaVersion,
+		"document search is additive to the profile media schema release")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/persons/{id}/profile/media/{media_id}/content"]
 	require.NotNil(path)
@@ -372,8 +372,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// shipped in 1.33.0; the feed added in 1.34.0, the attributes added in
 	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
 	// added in 1.37.0, raw profile media added in 1.38.0, and typed temporal
-	// person relationships added in 1.39.0 did not touch it.
-	assert.Equal("1.39.0", APISchemaVersion, "meeting import is an additive schema release")
+	// person relationships added in 1.39.0 and document search added in 1.40.0
+	// did not touch it.
+	assert.Equal("1.40.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

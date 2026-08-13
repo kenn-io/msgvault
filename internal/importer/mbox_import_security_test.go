@@ -90,6 +90,59 @@ func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+
+	src, err := st.GetOrCreateSource("mbox", "me@example.com")
+	require.NoError(err)
+	convID, err := st.EnsureConversation(src.ID, "thread-role", "Thread")
+	require.NoError(err)
+	msgID, err := st.UpsertMessage(&store.Message{
+		ConversationID: convID, SourceID: src.ID,
+		SourceMessageID: "msg-role", MessageType: "email",
+	})
+	require.NoError(err)
+
+	attachmentsDir := filepath.Join(tmp, "attachments")
+	for _, att := range []*mime.Attachment{
+		{
+			Filename: "report.pdf", ContentType: "application/pdf",
+			Content: []byte("standalone"), Disposition: "attachment", PartKey: "mime:1",
+		},
+		{
+			Filename: "signature.png", ContentType: "image/png",
+			Content: []byte("inline"), Disposition: "inline", IsInline: true,
+			ContentID: "signature-1", PartKey: "mime:2",
+		},
+	} {
+		require.NoError(storeAttachment(st, attachmentsDir, msgID, att))
+	}
+
+	rows, err := st.DB().Query(`
+		SELECT attachment_role, role_source, source_part_key, COALESCE(content_id, '')
+		FROM attachments WHERE message_id = ? ORDER BY source_part_key`, msgID)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	type evidence struct{ role, source, partKey, contentID string }
+	var got []evidence
+	for rows.Next() {
+		var item evidence
+		require.NoError(rows.Scan(&item.role, &item.source, &item.partKey, &item.contentID))
+		got = append(got, item)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]evidence{
+		{role: "standalone", source: "mime_disposition", partKey: "mime:1"},
+		{role: "inline", source: "mime_disposition", partKey: "mime:2", contentID: "signature-1"},
+	}, got)
+}
+
 func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 	require := require.New(t)
 	if runtime.GOOS == "windows" {

@@ -1,6 +1,7 @@
 package synctechsms
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -463,7 +464,16 @@ func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, 
 		if err != nil {
 			return count, fmt.Errorf("store MMS attachment: %w", err)
 		}
-		if err := i.store.UpsertAttachment(messageID, filename, part.ContentType, storagePath, att.ContentHash, len(part.Data)); err != nil {
+		if err := i.store.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+			Filename:      filename,
+			MIMEType:      part.ContentType,
+			StoragePath:   storagePath,
+			ContentHash:   att.ContentHash,
+			Size:          int64(len(part.Data)),
+			Role:          store.AttachmentRoleStandalone,
+			RoleSource:    store.AttachmentRoleSourceImporterSemantics,
+			SourcePartKey: fmt.Sprintf("synctech:mms:%d", idx),
+		}); err != nil {
 			return count, fmt.Errorf("upsert attachment: %w", err)
 		}
 		count++

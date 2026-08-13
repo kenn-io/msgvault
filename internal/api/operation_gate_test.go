@@ -218,6 +218,35 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	assert.Equal(1, done, "done calls")
 }
 
+func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"build", `{"args":["documents","build","--capabilities","manifest.json"]}`},
+		{"consent", `{"args":["documents","consent-mistral","--yes"]}`},
+		{"retry", `{"args":["documents","retry","--hash","abc"]}`},
+		{"retire", `{"args":["documents","retire","profile","--yes"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := &recordingOperationGate{allow: true}
+			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(tc.body))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			assert.Equal(t, http.StatusNoContent, resp.Code)
+			begin, done := gate.counts()
+			assert.Equal(t, 1, begin)
+			assert.Equal(t, 1, done)
+		})
+	}
+}
+
 func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
@@ -558,6 +587,8 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
+		{"documents search", `{"args":["documents","search","shipping damage"]}`},
+		{"documents status", `{"args":["documents","status","--capabilities","manifest.json"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},
 		{"show-deletion with id", `{"args":["show-deletion","batch-123"]}`},
 	}

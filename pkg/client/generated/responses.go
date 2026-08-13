@@ -395,6 +395,20 @@ type GetDeletionResponse = DeletionManifestDetail
 
 type GetDeletionErrorResponse = ErrorResponse
 
+type SearchDocumentsResponse = DocumentSearchResponse
+
+type SearchDocumentsErrorResponse = ErrorResponse
+
+type SearchDocumentsErrorResponseJSON = ErrorResponse
+
+type SearchDocumentsErrorResponseJSON503 = ErrorResponse
+
+type GetDocumentIndexStatusResponse = DocumentIndexStatusResponse
+
+type GetDocumentIndexStatusErrorResponse = ErrorResponse
+
+type GetDocumentIndexStatusErrorResponseJSON = ErrorResponse
+
 type SearchDomainsResponse = DomainSearchHTTPResponse
 
 type SearchDomainsErrorResponse = ErrorResponse
@@ -2144,6 +2158,25 @@ type GetDeletionResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetDeletionResponse
+}
+
+type SearchDocumentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchDocumentsResponse
+	JSON400      *SearchDocumentsErrorResponse
+	JSON409      *SearchDocumentsErrorResponseJSON
+	JSON503      *SearchDocumentsErrorResponseJSON503
+}
+
+type GetDocumentIndexStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDocumentIndexStatusResponse
+	JSON400      *GetDocumentIndexStatusErrorResponse
+	JSON503      *GetDocumentIndexStatusErrorResponseJSON
 }
 
 type SearchDomainsResp struct {

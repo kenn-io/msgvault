@@ -17,11 +17,12 @@ import (
 // startup on a large archive).
 const (
 	migrationAttachmentsContentHashUnique     = "attachments_content_hash_unique_index"
+	migrationAttachmentOccurrenceUnique       = "attachment_occurrence_unique_indexes_v1"
 	migrationMessagesLastModifiedBackfill     = "messages_last_modified_backfill"
 	migrationMessageAttributionProvenance     = "message_attribution_provenance_v2"
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
-	migrationMessageWatermarkTriggers         = "message_watermark_triggers_v1"
+	migrationMessageWatermarkTriggers         = "message_and_attachment_triggers_v2"
 	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
 )
 

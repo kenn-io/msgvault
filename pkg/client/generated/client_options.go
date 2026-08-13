@@ -2225,6 +2225,94 @@ func (o *GetDeletionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// SearchDocumentsRequestOptions is the options needed to make a request to SearchDocuments.
+type SearchDocumentsRequestOptions struct {
+	Query *SearchDocumentsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SearchDocumentsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchDocumentsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchDocumentsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchDocumentsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchDocumentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetDocumentIndexStatusRequestOptions is the options needed to make a request to GetDocumentIndexStatus.
+type GetDocumentIndexStatusRequestOptions struct {
+	Query *GetDocumentIndexStatusQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetDocumentIndexStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetDocumentIndexStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetDocumentIndexStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetDocumentIndexStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetDocumentIndexStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SearchDomainsRequestOptions is the options needed to make a request to SearchDomains.
 type SearchDomainsRequestOptions struct {
 	Body *SearchDomainsBody

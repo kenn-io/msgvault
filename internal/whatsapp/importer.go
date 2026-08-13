@@ -386,7 +386,17 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					// Without --media-dir, storagePath and contentHash are both
 					// empty; inserting would create broken records.
 					if storagePath != "" || contentHash != "" {
-						err := imp.store.UpsertAttachment(messageID, filename, mimeType, storagePath, contentHash, size)
+						role := store.AttachmentRoleStandalone
+						roleSource := store.AttachmentRoleSourceImporterSemantics
+						if mediaType == "sticker" {
+							role = store.AttachmentRoleSticker
+							roleSource = store.AttachmentRoleSourceProviderExplicit
+						}
+						err := imp.store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+							Filename: filename, MIMEType: mimeType, StoragePath: storagePath,
+							ContentHash: contentHash, Size: int64(size), MediaType: mediaType,
+							Role: role, RoleSource: roleSource, SourcePartKey: "whatsapp:media",
+						})
 						if err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("upsert attachment for message %s: %w", waMsg.KeyID, err))
@@ -413,7 +423,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 					// Store media metadata in the attachments table is done above.
 					// For extra metadata (width, height, duration, media_type),
-					// update via a direct SQL call since UpsertAttachment doesn't have those fields.
+					// update via a direct SQL call for provider dimensions and duration.
 					if mediaType != "" || (media.Width.Valid && media.Width.Int64 > 0) {
 						imp.updateAttachmentMetadata(messageID, contentHash, mediaType, media)
 					}
