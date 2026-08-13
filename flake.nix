@@ -25,14 +25,14 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Pin Go 1.26.5 until nixpkgs-unstable ships it.
+        # Pin Go 1.26.6 until nixpkgs-unstable ships it.
         # Scoped to msgvault only — do NOT export via overlay, that would
         # invalidate every Go derivation in the transitive closure.
         goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
-          version = "1.26.5";
+          version = "1.26.6";
           src = pkgs.fetchurl {
             url = "https://go.dev/dl/go${version}.src.tar.gz";
-            hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
           };
         });
 
