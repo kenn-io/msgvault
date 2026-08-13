@@ -219,8 +219,10 @@ func (s *Store) relationshipTypeForRelatedType(ctx context.Context, rawType stri
 
 // resolveMatchedRelatedValue links an exactly matched occurrence in one
 // transaction, honoring any earlier review of the same occurrence: a settled
-// decision stands, and a pending review is accepted alongside the edge that
-// satisfies it.
+// decision stands, and a pending review is claimed before its edge is
+// written. The ledger row is always established ahead of the edge, so a
+// concurrent resolver of the same occurrence serializes on the row instead
+// of committing an edge against someone else's decision.
 func (s *Store) resolveMatchedRelatedValue(
 	ctx context.Context, in RelatedImport, matchedPersonID int64,
 	relationshipType RelationshipType, actor string,
@@ -231,42 +233,7 @@ func (s *Store) resolveMatchedRelatedValue(
 		if err != nil && !errors.Is(err, ErrRelationshipReviewNotFound) {
 			return err
 		}
-		if review != nil && review.Status != RelationshipReviewPending {
-			resolution, err = s.settledRelatedDecisionTx(ctx, tx, review)
-			return err
-		}
-		// RELATED's TYPE describes the related person's role toward the card
-		// subject (RFC 6350 section 6.6.6): TYPE=parent naming bob on alice's
-		// card asserts that bob is alice's parent. The matched person is
-		// therefore the typed source and the card subject the target.
-		input := PersonRelationshipInput{
-			SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
-			TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
-			VCardIdentity: in.VCardIdentity, Actor: actor,
-		}
-		validatedActor, notes, err := validatePersonRelationshipInput(input)
-		if err != nil {
-			return err
-		}
-		edge, err := s.addPersonRelationshipTx(ctx, tx, input, validatedActor, notes)
-		if errors.Is(err, ErrPersonRelationshipDuplicate) {
-			edge, err = s.activePersonRelationshipTx(ctx, tx, matchedPersonID, in.PersonID, relationshipType.Slug)
-		}
-		if err != nil {
-			return err
-		}
-		resolution = &RelatedResolution{Relationship: edge}
-		if review == nil {
-			resolution.Review, err = s.recordResolvedOccurrenceTx(ctx, tx, in, matchedPersonID, edge.ID, validatedActor)
-			return err
-		}
-		if _, err := s.claimRelationshipReviewTx(ctx, tx, review.ID, RelationshipReviewAccepted, validatedActor); err != nil {
-			return err
-		}
-		if err := s.recordAcceptedRelationshipTx(ctx, tx, review.ID, edge.ID); err != nil {
-			return err
-		}
-		resolution.Review, err = s.relationshipReviewTx(ctx, tx, review.ID)
+		resolution, err = s.resolveMatchedOccurrenceTx(ctx, tx, in, review, matchedPersonID, relationshipType, actor)
 		return err
 	})
 	if err != nil {
@@ -275,31 +242,130 @@ func (s *Store) resolveMatchedRelatedValue(
 	return resolution, nil
 }
 
-// recordResolvedOccurrenceTx persists a first-seen occurrence that resolved
-// automatically as an already-accepted review, so the decision ledger covers
-// automatic links too: deleting the edge leaves a durable tombstone that
-// stops re-import from resurrecting it.
-func (s *Store) recordResolvedOccurrenceTx(
-	ctx context.Context, tx *loggedTx, in RelatedImport, matchedPersonID, edgeID int64, actor string,
+// resolveMatchedOccurrenceTx dispatches on the occurrence's ledger state;
+// review is nil for a first sighting. A lost insert or claim race re-reads
+// the winner's committed row and honors it, so the recursion is bounded to
+// one step.
+func (s *Store) resolveMatchedOccurrenceTx(
+	ctx context.Context, tx *loggedTx, in RelatedImport, review *RelationshipReview,
+	matchedPersonID int64, relationshipType RelationshipType, actor string,
+) (*RelatedResolution, error) {
+	if review == nil {
+		staged, err := s.insertAcceptedOccurrenceTx(ctx, tx, in, matchedPersonID, actor)
+		if err != nil {
+			return nil, err
+		}
+		if staged == nil {
+			committed, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+			if err != nil {
+				return nil, err
+			}
+			return s.resolveMatchedOccurrenceTx(ctx, tx, in, committed, matchedPersonID, relationshipType, actor)
+		}
+		return s.completeAcceptedOccurrenceTx(ctx, tx, in, staged.ID, matchedPersonID, relationshipType, actor)
+	}
+	if review.Status != RelationshipReviewPending {
+		return s.settledRelatedDecisionTx(ctx, tx, review)
+	}
+	if _, err := s.claimRelationshipReviewTx(ctx, tx, review.ID, RelationshipReviewAccepted, actor); err != nil {
+		if errors.Is(err, ErrRelationshipReviewNotPending) {
+			committed, readErr := s.relationshipReviewTx(ctx, tx, review.ID)
+			if readErr != nil {
+				return nil, readErr
+			}
+			return s.settledRelatedDecisionTx(ctx, tx, committed)
+		}
+		return nil, err
+	}
+	return s.completeAcceptedOccurrenceTx(ctx, tx, in, review.ID, matchedPersonID, relationshipType, actor)
+}
+
+// completeAcceptedOccurrenceTx writes the matched edge (reusing the existing
+// active edge when another occurrence already linked this pair) and records
+// it on the claimed ledger row, so no committed state shows an accepted
+// automatic link without its edge.
+func (s *Store) completeAcceptedOccurrenceTx(
+	ctx context.Context, tx *loggedTx, in RelatedImport, reviewID int64,
+	matchedPersonID int64, relationshipType RelationshipType, actor string,
+) (*RelatedResolution, error) {
+	edge, err := s.createMatchedRelatedEdgeTx(ctx, tx, in, matchedPersonID, relationshipType, actor)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recordAcceptedRelationshipTx(ctx, tx, reviewID, edge.ID); err != nil {
+		return nil, err
+	}
+	review, err := s.relationshipReviewTx(ctx, tx, reviewID)
+	if err != nil {
+		return nil, err
+	}
+	return &RelatedResolution{Relationship: edge, Review: review}, nil
+}
+
+// createMatchedRelatedEdgeTx adds the canonical edge for a matched occurrence
+// under a savepoint: PostgreSQL aborts a transaction whose statement raised a
+// unique violation, so duplicate recovery must roll the failed INSERT back
+// before it can look up the existing active edge.
+func (s *Store) createMatchedRelatedEdgeTx(
+	ctx context.Context, tx *loggedTx, in RelatedImport,
+	matchedPersonID int64, relationshipType RelationshipType, actor string,
+) (*PersonRelationship, error) {
+	// RELATED's TYPE describes the related person's role toward the card
+	// subject (RFC 6350 section 6.6.6): TYPE=parent naming bob on alice's
+	// card asserts that bob is alice's parent. The matched person is
+	// therefore the typed source and the card subject the target.
+	input := PersonRelationshipInput{
+		SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
+		TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
+		VCardIdentity: in.VCardIdentity, Actor: actor,
+	}
+	validatedActor, notes, err := validatePersonRelationshipInput(input)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT matched_related_edge`); err != nil {
+		return nil, fmt.Errorf("create relationship savepoint: %w", err)
+	}
+	edge, err := s.addPersonRelationshipTx(ctx, tx, input, validatedActor, notes)
+	if errors.Is(err, ErrPersonRelationshipDuplicate) {
+		if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matched_related_edge`); rollbackErr != nil {
+			return nil, fmt.Errorf("roll back relationship savepoint: %w", rollbackErr)
+		}
+		return s.activePersonRelationshipTx(ctx, tx, matchedPersonID, in.PersonID, relationshipType.Slug)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matched_related_edge`); err != nil {
+		return nil, fmt.Errorf("release relationship savepoint: %w", err)
+	}
+	return edge, nil
+}
+
+// insertAcceptedOccurrenceTx claims a first-seen occurrence by inserting its
+// accepted ledger row before the edge exists; the caller records the edge id
+// in the same transaction. Returns nil when a concurrent transaction owns
+// the occurrence row, in which case that row's committed status governs.
+func (s *Store) insertAcceptedOccurrenceTx(
+	ctx context.Context, tx *loggedTx, in RelatedImport, matchedPersonID int64, actor string,
 ) (*RelationshipReview, error) {
 	var insertedID int64
 	err := tx.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO person_relationship_reviews (
 			person_id, raw_related_value, raw_related_type, value_kind, matched_person_id,
-			status, accepted_relationship_id, source, source_ref, vcard_property, vcard_group,
+			status, source, source_ref, vcard_property, vcard_group,
 			vcard_prop_id, vcard_pid, vcard_altid, created_by, reviewed_by, reviewed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
 		ON CONFLICT DO NOTHING
 		RETURNING id`, s.dialect.Now()),
 		in.PersonID, in.RawValue, in.RawType, string(in.ValueKind), matchedPersonID,
-		string(RelationshipReviewAccepted), edgeID, string(in.Source), normalizeNullableText(in.SourceRef),
+		string(RelationshipReviewAccepted), string(in.Source), normalizeNullableText(in.SourceRef),
 		nullableVCardText(in.VCardIdentity.Property), nullableVCardPointer(in.VCardIdentity.Group),
 		nullableVCardPointer(in.VCardIdentity.PropID), nullableVCardText(strings.Join(in.VCardIdentity.PID, ",")),
 		nullableVCardPointer(in.VCardIdentity.AltID), actor, actor,
 	).Scan(&insertedID)
 	if errors.Is(err, sql.ErrNoRows) {
-		// A concurrent import recorded the same occurrence first.
-		return s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("record resolved relationship occurrence: %w", err)

@@ -548,3 +548,89 @@ func TestResolveRelatedValueRecordsAutomaticAcceptanceAndKeepsDeletionDurable(t 
 	require.NoError(err)
 	assert.Empty(views, "deleting an automatically imported relationship is durable")
 }
+
+func TestResolveRelatedValueSecondOccurrenceReusesActiveEdge(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+
+	firstRef := "card-1.vcf"
+	first, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: bob.VCardUID, RawType: "agent",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport,
+		SourceRef: &firstRef, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(first.Relationship)
+
+	// A distinct occurrence of the same assertion must reuse the active
+	// edge and record its own accepted ledger row, inside one transaction
+	// (on PostgreSQL the duplicate insert must not abort it).
+	secondRef := "card-2.vcf"
+	second, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: bob.VCardUID, RawType: "agent",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport,
+		SourceRef: &secondRef, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(second.Relationship)
+	assert.Equal(first.Relationship.ID, second.Relationship.ID)
+	require.NotNil(second.Review)
+	assert.NotEqual(first.Review.ID, second.Review.ID)
+	assert.Equal(store.RelationshipReviewAccepted, second.Review.Status)
+	require.NotNil(second.Review.AcceptedRelationshipID)
+	assert.Equal(first.Relationship.ID, *second.Review.AcceptedRelationshipID)
+	reviews, err := f.Store.ListRelationshipReviewsContext(ctx, store.RelationshipReviewListOptions{PersonID: aliceID})
+	require.NoError(err)
+	assert.Len(reviews, 2)
+}
+
+func TestResolveRelatedValueConcurrentFirstImportsShareOneDecision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "agent",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system"}
+
+	start := make(chan struct{})
+	results := make(chan *store.RelatedResolution, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for range 2 {
+		go func() {
+			defer wg.Done()
+			<-start
+			resolution, resolveErr := f.Store.ResolveRelatedValueContext(ctx, in)
+			results <- resolution
+			errs <- resolveErr
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for resolveErr := range errs {
+		require.NoError(resolveErr)
+	}
+	edgeIDs := make(map[int64]bool)
+	for resolution := range results {
+		require.NotNil(resolution.Relationship)
+		edgeIDs[resolution.Relationship.ID] = true
+		require.NotNil(resolution.Review)
+		assert.Equal(store.RelationshipReviewAccepted, resolution.Review.Status)
+	}
+	assert.Len(edgeIDs, 1, "concurrent first imports must converge on one edge")
+	reviews, err := f.Store.ListRelationshipReviewsContext(ctx, store.RelationshipReviewListOptions{PersonID: aliceID})
+	require.NoError(err)
+	require.Len(reviews, 1, "the occurrence must own exactly one ledger row")
+	require.NotNil(reviews[0].AcceptedRelationshipID)
+}
