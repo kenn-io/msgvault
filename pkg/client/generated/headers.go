@@ -24,6 +24,42 @@ func (p PatchAttributeDefinitionHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type DeleteEmploymentHeaders struct {
+	// IfMatch Strong ETag returned by the latest employment read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeleteEmploymentHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PatchEmploymentHeaders struct {
+	// IfMatch Strong ETag returned by the latest employment read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchEmploymentHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type EndEmploymentHeaders struct {
+	// IfMatch Strong ETag returned by the latest employment read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (e EndEmploymentHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type SetPrimaryEmploymentHeaders struct {
+	// IfMatch Strong ETag returned by the latest employment read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (s SetPrimaryEmploymentHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type CreateOrLinkMessageTaskHeaders struct {
 	// XRequestID Browser-generated retry-stable request ID
 	XRequestID string `json:"X-Request-Id" validate:"required"`
@@ -31,6 +67,42 @@ type CreateOrLinkMessageTaskHeaders struct {
 
 func (c CreateOrLinkMessageTaskHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type DeleteOrganizationHeaders struct {
+	// IfMatch Strong ETag returned by the latest organization read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeleteOrganizationHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PatchOrganizationHeaders struct {
+	// IfMatch Strong ETag returned by the latest organization read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchOrganizationHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type MergeOrganizationHeaders struct {
+	// IfMatch Strong ETag returned by the latest organization read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (m MergeOrganizationHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type PutOrganizationProfileHeaders struct {
+	// IfMatch Strong ETag returned by the latest organization read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PutOrganizationProfileHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type DeletePersonRelationshipHeaders struct {

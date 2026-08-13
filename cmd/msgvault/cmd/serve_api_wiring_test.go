@@ -89,3 +89,37 @@ func TestStoreAPIAdapterServesPersonRelationshipRoutes(t *testing.T) {
 
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 }
+
+func TestStoreAPIAdapterServesOrganizationAndEmploymentRoutes(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"email", "employment-adapter@example.test", "Employment Adapter",
+	)
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	requirements.NoError(err)
+
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{"organizations", "/api/v1/organizations"},
+		{"employments", fmt.Sprintf("/api/v1/persons/%d/employments", person.ID)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			response := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		})
+	}
+}

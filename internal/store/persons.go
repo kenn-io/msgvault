@@ -189,6 +189,17 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 		if references > 0 {
 			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
 		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM organization_attribute_values
+			WHERE value_record_type = 'person' AND value_record_id = ?
+			  AND active_until IS NULL AND superseded_at IS NULL
+		`, id).Scan(&references); err != nil {
+			return fmt.Errorf("check organization references to person %d: %w", id, err)
+		}
+		if references > 0 {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
 			WHERE (left_kind = ? AND left_id = ?)
 			   OR (right_kind = ? AND right_id = ?)

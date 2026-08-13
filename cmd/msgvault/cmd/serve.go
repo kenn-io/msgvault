@@ -1101,6 +1101,8 @@ var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonAttributeStore = (*storeAPIAdapter)(nil)
 var _ api.PersonRelationshipStore = (*storeAPIAdapter)(nil)
+var _ api.OrganizationStore = (*storeAPIAdapter)(nil)
+var _ api.EmploymentStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
@@ -2054,6 +2056,134 @@ func (a *storeAPIAdapter) ListRelationshipReviewsContext(
 	ctx context.Context, opts store.RelationshipReviewListOptions,
 ) ([]store.RelationshipReview, error) {
 	return a.store.ListRelationshipReviewsContext(ctx, opts)
+}
+
+func (a *storeAPIAdapter) CreateOrganizationContext(
+	ctx context.Context, input store.OrganizationInput,
+) (*store.Organization, error) {
+	return a.store.CreateOrganizationContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) GetOrganizationContext(
+	ctx context.Context, id int64,
+) (*store.Organization, error) {
+	return a.store.GetOrganizationContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) ListOrganizationsContext(
+	ctx context.Context, filter store.OrganizationFilter,
+) ([]store.Organization, error) {
+	return a.store.ListOrganizationsContext(ctx, filter)
+}
+
+func (a *storeAPIAdapter) CountOrganizationsContext(
+	ctx context.Context, filter store.OrganizationFilter,
+) (int64, error) {
+	return a.store.CountOrganizationsContext(ctx, filter)
+}
+
+func (a *storeAPIAdapter) ReplaceOrganizationContext(
+	ctx context.Context, id, expectedRevision int64, input store.OrganizationInput, retired bool,
+) (*store.Organization, error) {
+	return a.store.ReplaceOrganizationContext(ctx, id, expectedRevision, input, retired)
+}
+
+func (a *storeAPIAdapter) DeleteOrganizationContext(
+	ctx context.Context, id, expectedRevision int64,
+) error {
+	return a.store.DeleteOrganizationContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) MergeOrganizationsContext(
+	ctx context.Context, survivorID, survivorRevision, losingID, losingRevision int64,
+) (*store.Organization, error) {
+	return a.store.MergeOrganizationsContext(
+		ctx, survivorID, survivorRevision, losingID, losingRevision,
+	)
+}
+
+func (a *storeAPIAdapter) GetOrganizationProfileContext(
+	ctx context.Context, id int64, includeSuperseded bool,
+) (*store.OrganizationProfile, error) {
+	return a.store.GetOrganizationProfileContext(ctx, id, includeSuperseded)
+}
+
+func (a *storeAPIAdapter) ReplaceOrganizationProfileContext(
+	ctx context.Context, id, expectedRevision int64, input store.OrganizationProfileInput,
+) (*store.OrganizationProfile, error) {
+	return a.store.ReplaceOrganizationProfileContext(ctx, id, expectedRevision, input)
+}
+
+func (a *storeAPIAdapter) ListOrganizationAttributeValuesContext(
+	ctx context.Context, organizationID int64, query store.OrganizationAttributeQuery,
+) ([]store.OrganizationAttributeValue, error) {
+	return a.store.ListOrganizationAttributeValuesContext(ctx, organizationID, query)
+}
+
+func (a *storeAPIAdapter) SetOrganizationAttributeValueContext(
+	ctx context.Context, input store.OrganizationAttributeValueInput,
+) (*store.OrganizationAttributeWrite, error) {
+	return a.store.SetOrganizationAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) SupersedeOrganizationAttributeValueContext(
+	ctx context.Context, input store.OrganizationAttributeSupersedeInput,
+) (*store.OrganizationAttributeWrite, error) {
+	return a.store.SupersedeOrganizationAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) ReadOrganizationMediaDataContext(
+	ctx context.Context, organizationID, mediaID int64,
+) ([]byte, string, error) {
+	return a.store.ReadOrganizationMediaDataContext(ctx, organizationID, mediaID)
+}
+
+func (a *storeAPIAdapter) AddEmploymentContext(
+	ctx context.Context, input store.EmploymentInput,
+) (*store.Employment, error) {
+	return a.store.AddEmploymentContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) GetEmploymentContext(
+	ctx context.Context, id int64,
+) (*store.Employment, error) {
+	return a.store.GetEmploymentContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) UpdateEmploymentContext(
+	ctx context.Context, id, expectedRevision int64, input store.EmploymentInput,
+) (*store.Employment, error) {
+	return a.store.UpdateEmploymentContext(ctx, id, expectedRevision, input)
+}
+
+func (a *storeAPIAdapter) EndEmploymentContext(
+	ctx context.Context, id, expectedRevision int64, endDate store.PartialDate,
+) (*store.Employment, error) {
+	return a.store.EndEmploymentContext(ctx, id, expectedRevision, endDate)
+}
+
+func (a *storeAPIAdapter) SetPrimaryEmploymentContext(
+	ctx context.Context, id, expectedRevision int64,
+) (*store.Employment, error) {
+	return a.store.SetPrimaryEmploymentContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) DeleteEmploymentContext(
+	ctx context.Context, id, expectedRevision int64,
+) error {
+	return a.store.DeleteEmploymentContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) ListEmploymentsContext(
+	ctx context.Context, filter store.EmploymentFilter,
+) ([]store.Employment, error) {
+	return a.store.ListEmploymentsContext(ctx, filter)
+}
+
+func (a *storeAPIAdapter) PrimaryCurrentEmploymentContext(
+	ctx context.Context, personID int64,
+) (store.EmploymentProjection, bool, error) {
+	return a.store.PrimaryCurrentEmploymentContext(ctx, personID)
 }
 
 func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {

@@ -10,10 +10,13 @@ import (
 	"time"
 )
 
-// PersonAttributeValue is one typed value and its history metadata.
-type PersonAttributeValue struct {
+// ErrAttributeObjectTypeMismatch reports a definition scoped to another owner type.
+var ErrAttributeObjectTypeMismatch = errors.New("attribute definition object type mismatch")
+
+// OrganizationAttributeValue is one typed value and its history metadata.
+type OrganizationAttributeValue struct {
 	ID             int64          `json:"id"`
-	PersonID       int64          `json:"person_id"`
+	OrganizationID int64          `json:"organization_id"`
 	DefinitionID   int64          `json:"definition_id"`
 	DefinitionSlug string         `json:"definition_slug"`
 	Ordinal        int64          `json:"ordinal"`
@@ -28,9 +31,9 @@ type PersonAttributeValue struct {
 	Actor          *string        `json:"actor,omitempty"`
 }
 
-// PersonAttributeValueInput sets one typed person attribute value.
-type PersonAttributeValueInput struct {
-	PersonID        int64
+// OrganizationAttributeValueInput sets one typed organization attribute value.
+type OrganizationAttributeValueInput struct {
+	OrganizationID  int64
 	DefinitionSlug  string
 	Ordinal         *int64
 	Value           AttributeValue
@@ -44,9 +47,9 @@ type PersonAttributeValueInput struct {
 	DryRun          bool
 }
 
-// PersonAttributeSupersedeInput closes one current value without replacement.
-type PersonAttributeSupersedeInput struct {
-	PersonID        int64
+// OrganizationAttributeSupersedeInput closes one current value without replacement.
+type OrganizationAttributeSupersedeInput struct {
+	OrganizationID  int64
 	DefinitionSlug  string
 	Ordinal         *int64
 	At              *time.Time
@@ -55,36 +58,36 @@ type PersonAttributeSupersedeInput struct {
 	DryRun          bool
 }
 
-// PersonAttributeWrite describes a set or supersede result.
-type PersonAttributeWrite struct {
-	Value      *PersonAttributeValue `json:"value,omitempty"`
-	Superseded *PersonAttributeValue `json:"superseded,omitempty"`
-	DryRun     bool                  `json:"dry_run"`
+// OrganizationAttributeWrite describes a set or supersede result.
+type OrganizationAttributeWrite struct {
+	Value      *OrganizationAttributeValue `json:"value,omitempty"`
+	Superseded *OrganizationAttributeValue `json:"superseded,omitempty"`
+	DryRun     bool                        `json:"dry_run"`
 }
 
-// PersonAttributeQuery filters a person's attribute values.
-type PersonAttributeQuery struct {
+// OrganizationAttributeQuery filters an organization's attribute values.
+type OrganizationAttributeQuery struct {
 	DefinitionSlug string
 	IncludeHistory bool
 }
 
-const personAttributeValueColumns = `
-	v.id, v.person_id, v.definition_id, d.slug, v.ordinal,
+const organizationAttributeValueColumns = `
+	v.id, v.organization_id, v.definition_id, d.slug, v.ordinal,
 	d.value_type, v.value_text, v.value_integer, v.value_real, v.value_boolean,
 	v.value_date, v.value_timestamp, v.value_json, v.value_record_type,
 	v.value_record_id, v.active_from, v.active_until, v.created_at,
 	v.superseded_at, v.source, v.source_ref, v.confidence, v.actor
 `
 
-// ListPersonAttributeValuesContext lists current or historical values.
-func (s *Store) ListPersonAttributeValuesContext(
-	ctx context.Context, personID int64, query PersonAttributeQuery,
-) ([]PersonAttributeValue, error) {
-	conditions := []string{"v.person_id = ?"}
-	args := []any{personID}
+// ListOrganizationAttributeValuesContext lists current or historical values.
+func (s *Store) ListOrganizationAttributeValuesContext(
+	ctx context.Context, organizationID int64, query OrganizationAttributeQuery,
+) ([]OrganizationAttributeValue, error) {
+	conditions := []string{"v.organization_id = ?"}
+	args := []any{organizationID}
 	if query.DefinitionSlug != "" {
 		conditions = append(conditions, "d.slug = ?", "d.object_type = ?")
-		args = append(args, query.DefinitionSlug, string(AttributeObjectPerson))
+		args = append(args, query.DefinitionSlug, string(AttributeObjectOrganization))
 	}
 	if !query.IncludeHistory {
 		conditions = append(conditions,
@@ -98,53 +101,52 @@ func (s *Store) ListPersonAttributeValuesContext(
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s
-		FROM person_attribute_values v
+		FROM organization_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
 		WHERE %s
 		ORDER BY %s
-	`, personAttributeValueColumns, strings.Join(conditions, " AND "), order), args...)
+	`, organizationAttributeValueColumns, strings.Join(conditions, " AND "), order), args...)
 	if err != nil {
-		return nil, fmt.Errorf("list person %d attribute values: %w", personID, err)
+		return nil, fmt.Errorf("list organization %d attribute values: %w", organizationID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	values := make([]PersonAttributeValue, 0)
+	values := make([]OrganizationAttributeValue, 0)
 	for rows.Next() {
-		value, scanErr := scanPersonAttributeValue(rows)
+		value, scanErr := scanOrganizationAttributeValue(rows)
 		if scanErr != nil {
-			return nil, fmt.Errorf("scan person attribute value: %w", scanErr)
+			return nil, fmt.Errorf("scan organization attribute value: %w", scanErr)
 		}
 		values = append(values, *value)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate person attribute values: %w", err)
+		return nil, fmt.Errorf("iterate organization attribute values: %w", err)
 	}
 	return values, nil
 }
 
-// SetPersonAttributeValueContext supersedes the current value and inserts a
-// replacement. Definition-dependent validation runs inside each write
-// attempt's transaction so a concurrent definition change cannot slip
-// between check and insert.
-func (s *Store) SetPersonAttributeValueContext(
-	ctx context.Context, input PersonAttributeValueInput,
-) (*PersonAttributeWrite, error) {
+// SetOrganizationAttributeValueContext supersedes the current value and inserts a replacement.
+func (s *Store) SetOrganizationAttributeValueContext(
+	ctx context.Context, input OrganizationAttributeValueInput,
+) (*OrganizationAttributeWrite, error) {
 	if err := validateProvenance(input.Source, input.Confidence); err != nil {
 		return nil, err
 	}
 	if input.Ordinal != nil && *input.Ordinal < 0 {
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
-	return retryContendedWrite(s, "set person attribute value",
-		func() (*PersonAttributeWrite, error) {
-			return s.setPersonAttributeValueOnce(ctx, input)
+
+	return retryContendedWrite(s, "set organization attribute value",
+		func() (*OrganizationAttributeWrite, error) {
+			return s.setOrganizationAttributeValueOnce(ctx, input)
 		})
 }
 
-func (s *Store) setPersonAttributeValueOnce(
-	ctx context.Context, input PersonAttributeValueInput,
-) (*PersonAttributeWrite, error) {
-	activeFrom := time.Now().UTC()
+func (s *Store) setOrganizationAttributeValueOnce(
+	ctx context.Context, input OrganizationAttributeValueInput,
+) (*OrganizationAttributeWrite, error) {
+	writeTime := time.Now().UTC()
+	activeFrom := writeTime
 	if input.ActiveFrom != nil {
 		activeFrom = input.ActiveFrom.UTC()
 	}
@@ -153,18 +155,17 @@ func (s *Store) setPersonAttributeValueOnce(
 			ErrAttributeValueInvalid)
 	}
 
-	write := &PersonAttributeWrite{DryRun: input.DryRun}
+	write := &OrganizationAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		loaded, err := s.getAttributeDefinitionBySlugTx(
-			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
+		definition, err := s.getOrganizationAttributeDefinitionTx(
+			ctx, tx, input.DefinitionSlug)
 		if err != nil {
 			return err
 		}
-		definition := *loaded
-		if err := writableAttributeDefinition(definition); err != nil {
+		if err := writableAttributeDefinition(*definition); err != nil {
 			return err
 		}
-		value, err := normalizeAttributeValue(definition, input.Value)
+		value, err := normalizeAttributeValue(*definition, input.Value)
 		if err != nil {
 			return err
 		}
@@ -180,24 +181,24 @@ func (s *Store) setPersonAttributeValueOnce(
 				return err
 			}
 		}
-		var personExists int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM persons WHERE id = ?`, input.PersonID,
-		).Scan(&personExists); err != nil {
-			return fmt.Errorf("verify person %d: %w", input.PersonID, err)
+		organization, err := getOrganizationForUpdateTx(
+			ctx, tx, s.dialect, input.OrganizationID)
+		if err != nil {
+			return err
 		}
-		if personExists == 0 {
-			return ErrPersonNotFound
+		if organization.MergedIntoID != nil {
+			return fmt.Errorf("%w: merged organization redirects are immutable",
+				ErrOrganizationInvalid)
 		}
 		if err := s.verifyAttributeRecordTargetTx(ctx, tx, input.Value); err != nil {
 			return err
 		}
-		ordinal, err := s.resolveAttributeOrdinalTx(ctx, tx, definition, input)
+		ordinal, err := s.resolveOrganizationAttributeOrdinalTx(ctx, tx, *definition, input)
 		if err != nil {
 			return err
 		}
-		current, hasCurrent, err := s.currentPersonAttributeValueTx(
-			ctx, tx, input.PersonID, definition.ID, ordinal)
+		current, hasCurrent, err := s.currentOrganizationAttributeValueTx(
+			ctx, tx, input.OrganizationID, definition.ID, ordinal)
 		if err != nil {
 			return err
 		}
@@ -210,15 +211,15 @@ func (s *Store) setPersonAttributeValueOnce(
 				return fmt.Errorf("%w: active_from precedes the current value",
 					ErrAttributeValueInvalid)
 			}
-			closed, err := s.closePersonAttributeValueTx(
-				ctx, tx, current.ID, activeFrom, time.Now().UTC())
+			closed, err := s.closeOrganizationAttributeValueTx(
+				ctx, tx, current.ID, activeFrom, writeTime)
 			if err != nil {
 				return err
 			}
 			write.Superseded = closed
 		}
-		inserted, err := s.insertPersonAttributeValueTx(
-			ctx, tx, definition, input, ordinal, activeFrom)
+		inserted, err := s.insertOrganizationAttributeValueTx(
+			ctx, tx, *definition, input, ordinal, activeFrom)
 		if err != nil {
 			return err
 		}
@@ -238,9 +239,9 @@ func (s *Store) setPersonAttributeValueOnce(
 	return write, nil
 }
 
-func (s *Store) resolveAttributeOrdinalTx(
+func (s *Store) resolveOrganizationAttributeOrdinalTx(
 	ctx context.Context, tx *loggedTx,
-	definition AttributeDefinition, input PersonAttributeValueInput,
+	definition AttributeDefinition, input OrganizationAttributeValueInput,
 ) (int64, error) {
 	if definition.Cardinality == AttributeCardinalitySingle {
 		return 0, nil
@@ -253,50 +254,25 @@ func (s *Store) resolveAttributeOrdinalTx(
 	var next int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(ordinal) + 1, 0)
-		FROM person_attribute_values
-		WHERE person_id = ? AND definition_id = ?
-	`, input.PersonID, definition.ID).Scan(&next); err != nil {
+		FROM organization_attribute_values
+		WHERE organization_id = ? AND definition_id = ?
+	`, input.OrganizationID, definition.ID).Scan(&next); err != nil {
 		return 0, fmt.Errorf("resolve next ordinal for %s: %w", definition.Slug, err)
 	}
 	return next, nil
 }
 
-func (s *Store) verifyAttributeRecordTargetTx(
-	ctx context.Context, tx *loggedTx, value AttributeValue,
-) error {
-	if value.Type != AttributeValueRecordReference {
-		return nil
-	}
-	switch *value.RecordType {
-	case "person":
-		var exists int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM persons WHERE id = ?`, *value.RecordID,
-		).Scan(&exists); err != nil {
-			return fmt.Errorf("verify referenced person %d: %w", *value.RecordID, err)
-		}
-		if exists == 0 {
-			return fmt.Errorf("%w: referenced person %d does not exist",
-				ErrAttributeValueInvalid, *value.RecordID)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: record_type %q is not supported yet",
-			ErrAttributeValueInvalid, *value.RecordType)
-	}
-}
-
-func (s *Store) currentPersonAttributeValueTx(
-	ctx context.Context, tx *loggedTx, personID, definitionID, ordinal int64,
-) (*PersonAttributeValue, bool, error) {
-	value, err := scanPersonAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
+func (s *Store) currentOrganizationAttributeValueTx(
+	ctx context.Context, tx *loggedTx, organizationID, definitionID, ordinal int64,
+) (*OrganizationAttributeValue, bool, error) {
+	value, err := scanOrganizationAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s
-		FROM person_attribute_values v
+		FROM organization_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
-		WHERE v.person_id = ? AND v.definition_id = ? AND v.ordinal = ?
+		WHERE v.organization_id = ? AND v.definition_id = ? AND v.ordinal = ?
 		  AND v.active_until IS NULL AND v.superseded_at IS NULL%s
-	`, personAttributeValueColumns, s.dialect.SelectForUpdate()),
-		personID, definitionID, ordinal))
+	`, organizationAttributeValueColumns, s.dialect.SelectForUpdate()),
+		organizationID, definitionID, ordinal))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -306,12 +282,12 @@ func (s *Store) currentPersonAttributeValueTx(
 	return value, true, nil
 }
 
-func (s *Store) closePersonAttributeValueTx(
+func (s *Store) closeOrganizationAttributeValueTx(
 	ctx context.Context, tx *loggedTx, valueID int64,
 	activeUntil, supersededAt time.Time,
-) (*PersonAttributeValue, error) {
+) (*OrganizationAttributeValue, error) {
 	result, err := tx.ExecContext(ctx, `
-		UPDATE person_attribute_values
+		UPDATE organization_attribute_values
 		SET active_until = ?, superseded_at = ?
 		WHERE id = ? AND active_until IS NULL AND superseded_at IS NULL
 	`, activeUntil, supersededAt, valueID)
@@ -325,22 +301,22 @@ func (s *Store) closePersonAttributeValueTx(
 	if affected != 1 {
 		return nil, ErrAttributeValueConflict
 	}
-	closed, err := scanPersonAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
+	closed, err := scanOrganizationAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s
-		FROM person_attribute_values v
+		FROM organization_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
 		WHERE v.id = ?
-	`, personAttributeValueColumns), valueID))
+	`, organizationAttributeValueColumns), valueID))
 	if err != nil {
 		return nil, fmt.Errorf("re-read closed attribute value %d: %w", valueID, err)
 	}
 	return closed, nil
 }
 
-func (s *Store) insertPersonAttributeValueTx(
+func (s *Store) insertOrganizationAttributeValueTx(
 	ctx context.Context, tx *loggedTx, definition AttributeDefinition,
-	input PersonAttributeValueInput, ordinal int64, activeFrom time.Time,
-) (*PersonAttributeValue, error) {
+	input OrganizationAttributeValueInput, ordinal int64, activeFrom time.Time,
+) (*OrganizationAttributeValue, error) {
 	var jsonValue any
 	if len(input.Value.JSON) > 0 {
 		jsonValue = string(input.Value.JSON)
@@ -351,8 +327,8 @@ func (s *Store) insertPersonAttributeValueTx(
 	}
 	var insertedID int64
 	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-		INSERT INTO person_attribute_values (
-		    person_id, definition_id, ordinal,
+		INSERT INTO organization_attribute_values (
+		    organization_id, definition_id, ordinal,
 		    value_text, value_integer, value_real, value_boolean,
 		    value_date, value_timestamp, value_json,
 		    value_record_type, value_record_id,
@@ -360,7 +336,7 @@ func (s *Store) insertPersonAttributeValueTx(
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`, s.dialect.JSONBindExpr()),
-		input.PersonID, definition.ID, ordinal,
+		input.OrganizationID, definition.ID, ordinal,
 		input.Value.Text, input.Value.Integer, input.Value.Real, input.Value.Boolean,
 		input.Value.Date, input.Value.Timestamp, jsonValue,
 		input.Value.RecordType, input.Value.RecordID,
@@ -369,25 +345,22 @@ func (s *Store) insertPersonAttributeValueTx(
 	).Scan(&insertedID); err != nil {
 		return nil, fmt.Errorf("insert attribute value for %s: %w", definition.Slug, err)
 	}
-	inserted, err := scanPersonAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
+	inserted, err := scanOrganizationAttributeValue(tx.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s
-		FROM person_attribute_values v
+		FROM organization_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
 		WHERE v.id = ?
-	`, personAttributeValueColumns), insertedID))
+	`, organizationAttributeValueColumns), insertedID))
 	if err != nil {
 		return nil, fmt.Errorf("re-read inserted attribute value: %w", err)
 	}
 	return inserted, nil
 }
 
-// SupersedePersonAttributeValueContext closes a current value without
-// replacement. Unlike Set it also works on inactive definitions: retracting a
-// stale value from a retired definition must stay possible. As in Set, the
-// definition is loaded and checked inside each attempt's transaction.
-func (s *Store) SupersedePersonAttributeValueContext(
-	ctx context.Context, input PersonAttributeSupersedeInput,
-) (*PersonAttributeWrite, error) {
+// SupersedeOrganizationAttributeValueContext closes a current value without replacement.
+func (s *Store) SupersedeOrganizationAttributeValueContext(
+	ctx context.Context, input OrganizationAttributeSupersedeInput,
+) (*OrganizationAttributeWrite, error) {
 	if input.Ordinal != nil && *input.Ordinal < 0 {
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
@@ -395,19 +368,21 @@ func (s *Store) SupersedePersonAttributeValueContext(
 	if input.At != nil {
 		at = input.At.UTC()
 	}
-	return retryContendedWrite(s, "supersede person attribute value",
-		func() (*PersonAttributeWrite, error) {
-			return s.supersedePersonAttributeValueOnce(ctx, at, input)
+
+	return retryContendedWrite(s, "supersede organization attribute value",
+		func() (*OrganizationAttributeWrite, error) {
+			return s.supersedeOrganizationAttributeValueOnce(ctx, at, input)
 		})
 }
 
-func (s *Store) supersedePersonAttributeValueOnce(
-	ctx context.Context, at time.Time, input PersonAttributeSupersedeInput,
-) (*PersonAttributeWrite, error) {
-	write := &PersonAttributeWrite{DryRun: input.DryRun}
+func (s *Store) supersedeOrganizationAttributeValueOnce(
+	ctx context.Context, at time.Time, input OrganizationAttributeSupersedeInput,
+) (*OrganizationAttributeWrite, error) {
+	writeTime := time.Now().UTC()
+	write := &OrganizationAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		definition, err := s.getAttributeDefinitionBySlugTx(
-			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
+		definition, err := s.getOrganizationAttributeDefinitionTx(
+			ctx, tx, input.DefinitionSlug)
 		if err != nil {
 			return err
 		}
@@ -423,8 +398,17 @@ func (s *Store) supersedePersonAttributeValueOnce(
 			}
 			ordinal = *input.Ordinal
 		}
-		current, hasCurrent, err := s.currentPersonAttributeValueTx(
-			ctx, tx, input.PersonID, definition.ID, ordinal)
+		organization, err := getOrganizationForUpdateTx(
+			ctx, tx, s.dialect, input.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if organization.MergedIntoID != nil {
+			return fmt.Errorf("%w: merged organization redirects are immutable",
+				ErrOrganizationInvalid)
+		}
+		current, hasCurrent, err := s.currentOrganizationAttributeValueTx(
+			ctx, tx, input.OrganizationID, definition.ID, ordinal)
 		if err != nil {
 			return err
 		}
@@ -438,8 +422,8 @@ func (s *Store) supersedePersonAttributeValueOnce(
 			return fmt.Errorf("%w: supersede time precedes active_from",
 				ErrAttributeValueInvalid)
 		}
-		closed, err := s.closePersonAttributeValueTx(
-			ctx, tx, current.ID, at, time.Now().UTC())
+		closed, err := s.closeOrganizationAttributeValueTx(
+			ctx, tx, current.ID, at, writeTime)
 		if err != nil {
 			return err
 		}
@@ -455,9 +439,40 @@ func (s *Store) supersedePersonAttributeValueOnce(
 	return write, nil
 }
 
-func scanPersonAttributeValue(row scanner) (*PersonAttributeValue, error) {
+func (s *Store) getOrganizationAttributeDefinitionTx(
+	ctx context.Context, tx *loggedTx, slug string,
+) (*AttributeDefinition, error) {
+	definition, err := scanAttributeDefinition(tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s
+		FROM attribute_definitions
+		WHERE object_type = ? AND slug = ?%s
+	`, attributeDefinitionColumns, s.dialect.SelectForUpdate()),
+		string(AttributeObjectOrganization), slug))
+	if err == nil {
+		return definition, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("get organization attribute definition %q: %w", slug, err)
+	}
+	var objectType AttributeObjectType
+	scopeErr := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT object_type FROM attribute_definitions
+		WHERE slug = ? ORDER BY id LIMIT 1%s
+	`, s.dialect.SelectForUpdate()), slug).Scan(&objectType)
+	if errors.Is(scopeErr, sql.ErrNoRows) {
+		return nil, ErrAttributeDefinitionNotFound
+	}
+	if scopeErr != nil {
+		return nil, fmt.Errorf("check attribute definition scope: %w", scopeErr)
+	}
+	return nil, fmt.Errorf(
+		"%w: definition %q is scoped to %s, not organization",
+		ErrAttributeObjectTypeMismatch, slug, objectType)
+}
+
+func scanOrganizationAttributeValue(row scanner) (*OrganizationAttributeValue, error) {
 	var (
-		value        PersonAttributeValue
+		value        OrganizationAttributeValue
 		valueType    string
 		text         sql.NullString
 		integer      sql.NullInt64
@@ -476,7 +491,7 @@ func scanPersonAttributeValue(row scanner) (*PersonAttributeValue, error) {
 		actor        sql.NullString
 	)
 	if err := row.Scan(
-		&value.ID, &value.PersonID, &value.DefinitionID, &value.DefinitionSlug,
+		&value.ID, &value.OrganizationID, &value.DefinitionID, &value.DefinitionSlug,
 		&value.Ordinal, &valueType, &text, &integer, &realValue, &boolean, &date,
 		&timestamp, &rawJSON, &recordType, &recordID, &value.ActiveFrom,
 		&activeUntil, &value.CreatedAt, &supersededAt, &source, &sourceRef,

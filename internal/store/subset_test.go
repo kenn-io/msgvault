@@ -2426,3 +2426,189 @@ func TestCopySubsetExcludesRelationshipsByDefault(t *testing.T) {
 	_, err = destination.GetRelationshipTypeBySlugContext(ctx, "mentor")
 	require.ErrorIs(err, ErrRelationshipTypeNotFound)
 }
+
+func TestCopySubset_ProfilesIncludeEmploymentsAndOrganizations(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	organization, err := source.CreateOrganizationContext(ctx, OrganizationInput{
+		Name: "Example Org", Kind: OrganizationKindCompany,
+	})
+	require.NoError(err)
+	profile, err := source.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision, OrganizationProfileInput{
+			Names: []OrganizationNameInput{{
+				Name: "Example Organisation", NameKind: OrganizationNameKindAlias,
+				Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+			}},
+		})
+	require.NoError(err)
+	require.Len(profile.Names, 1)
+	definition := subsetPersonDefinition("org_industry")
+	definition.ObjectType = AttributeObjectOrganization
+	_, err = source.CreateAttributeDefinitionContext(ctx, definition)
+	require.NoError(err)
+	industry := "archiving"
+	_, err = source.SetOrganizationAttributeValueContext(ctx, OrganizationAttributeValueInput{
+		OrganizationID: organization.ID, DefinitionSlug: definition.Slug,
+		Value:  AttributeValue{Type: AttributeValueText, Text: &industry},
+		Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	employment, err := source.AddEmploymentContext(ctx, EmploymentInput{
+		PersonID: person.ID, OrganizationID: organization.ID,
+		Title: new("Engineer"), Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true, IncludeAttributes: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	copiedOrganization, err := destination.GetOrganizationContext(ctx, organization.ID)
+	require.NoError(err)
+	assert.Equal("Example Org", copiedOrganization.Name)
+	copiedEmployments, err := destination.ListEmploymentsContext(ctx,
+		EmploymentFilter{PersonID: person.ID})
+	require.NoError(err)
+	require.Len(copiedEmployments, 1)
+	assert.Equal(employment.ID, copiedEmployments[0].ID)
+	copiedProfile, err := destination.GetOrganizationProfileContext(ctx, organization.ID, false)
+	require.NoError(err)
+	require.Len(copiedProfile.Names, 1)
+	assert.Equal("Example Organisation", copiedProfile.Names[0].Name)
+	values, err := destination.ListOrganizationAttributeValuesContext(ctx,
+		organization.ID, OrganizationAttributeQuery{})
+	require.NoError(err)
+	require.Len(values, 1)
+	require.NotNil(values[0].Value.Text)
+	assert.Equal("archiving", *values[0].Value.Text)
+}
+
+func TestCopySubset_ExcludesEmploymentsByDefault(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	organization, err := source.CreateOrganizationContext(ctx, OrganizationInput{
+		Name: "Private Employer", Kind: OrganizationKindCompany,
+	})
+	require.NoError(err)
+	_, err = source.AddEmploymentContext(ctx, EmploymentInput{
+		PersonID: person.ID, OrganizationID: organization.ID,
+		Title: new("Engineer"), Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 5, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	_, err = destination.GetOrganizationContext(ctx, organization.ID)
+	require.ErrorIs(err, ErrOrganizationNotFound,
+		"a shared subset must not copy employers without the profiles opt-in")
+	employments, err := destination.ListEmploymentsContext(ctx,
+		EmploymentFilter{PersonID: person.ID})
+	require.NoError(err)
+	assert.Empty(employments)
+}
+
+func TestCopySubset_OrganizationRecordReferencesFollowIdentityPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	owner, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	targetParticipant, err := source.EnsureParticipant(
+		"org-attribute-target@example.com", "org attribute target", "example.com")
+	require.NoError(err)
+	target, _, err := source.CreatePersonFromParticipant(targetParticipant)
+	require.NoError(err)
+	organization, err := source.CreateOrganizationContext(ctx, OrganizationInput{
+		Name: "Reference Org", Kind: OrganizationKindCompany,
+	})
+	require.NoError(err)
+	_, err = source.AddEmploymentContext(ctx, EmploymentInput{
+		PersonID: owner.ID, OrganizationID: organization.ID,
+		Title: new("Engineer"), Source: ProvenanceUser,
+	})
+	require.NoError(err)
+
+	definition := subsetPersonDefinition("org_primary_contact")
+	definition.UniversalID = "test-org-primary-contact"
+	definition.ObjectType = AttributeObjectOrganization
+	definition.ValueType = AttributeValueRecordReference
+	definition.FieldType = AttributeFieldPerson
+	definition.RecordTarget = new("person")
+	_, err = source.CreateAttributeDefinitionContext(ctx, definition)
+	require.NoError(err)
+	write, err := source.SetOrganizationAttributeValueContext(ctx, OrganizationAttributeValueInput{
+		OrganizationID: organization.ID, DefinitionSlug: definition.Slug,
+		Value: AttributeValue{
+			Type:       AttributeValueRecordReference,
+			RecordType: new("person"),
+			RecordID:   &target.ID,
+		},
+		Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	boundedDir := filepath.Join(t.TempDir(), "bounded")
+	_, err = CopySubsetWithOptions(srcDB, boundedDir, 5, CopySubsetOptions{
+		IncludeProfiles: true, IncludeAttributes: true,
+	})
+	require.NoError(err)
+	boundedSubset, err := Open(filepath.Join(boundedDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = boundedSubset.Close() }()
+	_, err = boundedSubset.GetPerson(target.ID)
+	require.ErrorIs(err, ErrPersonNotFound,
+		"off-message reference target stays outside the default identity boundary")
+	boundedValues, err := boundedSubset.ListOrganizationAttributeValuesContext(
+		ctx, organization.ID, OrganizationAttributeQuery{IncludeHistory: true})
+	require.NoError(err)
+	assert.Empty(boundedValues,
+		"organization references to excluded identities must not dangle in the subset")
+
+	identityDir := filepath.Join(t.TempDir(), "identity")
+	_, err = CopySubsetWithOptions(srcDB, identityDir, 5, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true, IncludeAttributes: true,
+	})
+	require.NoError(err)
+	identitySubset, err := Open(filepath.Join(identityDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = identitySubset.Close() }()
+	copiedTarget, err := identitySubset.GetPerson(target.ID)
+	require.NoError(err,
+		"identity closure must follow organization-attribute references from employers of included people")
+	assert.Equal(target.ParticipantIDs, copiedTarget.ParticipantIDs)
+	identityValues, err := identitySubset.ListOrganizationAttributeValuesContext(
+		ctx, organization.ID, OrganizationAttributeQuery{})
+	require.NoError(err)
+	require.Len(identityValues, 1)
+	assert.Equal(write.Value.ID, identityValues[0].ID)
+	assert.Equal(target.ID, *identityValues[0].Value.RecordID)
+}

@@ -34,6 +34,56 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
+func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
+	require := require.New(t)
+	assert.Equal(t, "1.40.0", APISchemaVersion,
+		"organization and employment routes are an additive schema release")
+	for _, document := range []*huma.OpenAPI{
+		OpenAPIDocument(),
+		openAPIClientDocument(),
+	} {
+		operation := document.Paths[organizationsPath].Post
+		require.NotNil(operation)
+		response := operation.Responses[httpStatusKey(http.StatusCreated)]
+		require.NotNil(response)
+		require.Contains(response.Headers, "Location")
+		require.Equal(huma.TypeString, response.Headers["Location"].Schema.Type)
+	}
+}
+
+func TestOrganizationCreateSchemaOmitsPatchOnlyRetiredState(t *testing.T) {
+	require := require.New(t)
+	for _, document := range []*huma.OpenAPI{
+		OpenAPIDocument(),
+		openAPIClientDocument(),
+	} {
+		createSchema := operationBodySchema(
+			t, document, document.Paths[organizationsPath].Post)
+		patchSchema := operationBodySchema(
+			t, document, document.Paths[organizationsPath+"/{id}"].Patch)
+		require.NotContains(createSchema.Properties, "retired")
+		require.Contains(patchSchema.Properties, "retired")
+	}
+}
+
+func operationBodySchema(
+	t *testing.T, document *huma.OpenAPI, operation *huma.Operation,
+) *huma.Schema {
+	t.Helper()
+	require.NotNil(t, operation)
+	require.NotNil(t, operation.RequestBody)
+	schema := operation.RequestBody.Content["application/json"].Schema
+	require.NotNil(t, schema)
+	if schema.Ref == "" {
+		return schema
+	}
+	const prefix = "#/components/schemas/"
+	require.True(t, strings.HasPrefix(schema.Ref, prefix), schema.Ref)
+	resolved := document.Components.Schemas.Map()[strings.TrimPrefix(schema.Ref, prefix)]
+	require.NotNil(t, resolved)
+	return resolved
+}
+
 func TestSourceStatusRunReferencesAreNullable(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -265,7 +315,7 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.39.0", APISchemaVersion,
+	assert.Equal("1.40.0", APISchemaVersion,
 		"structured profiles are additive to the attribute schema release")
 
 	doc := OpenAPIDocument()
@@ -339,7 +389,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.39.0", APISchemaVersion,
+	assert.Equal("1.40.0", APISchemaVersion,
 		"raw profile media content is an additive schema release")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/persons/{id}/profile/media/{media_id}/content"]
@@ -371,9 +421,10 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// confirm the meeting-import contract below still holds. Meeting import
 	// shipped in 1.33.0; the feed added in 1.34.0, the attributes added in
 	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
-	// added in 1.37.0, raw profile media added in 1.38.0, and typed temporal
-	// person relationships added in 1.39.0 did not touch it.
-	assert.Equal("1.39.0", APISchemaVersion, "meeting import is an additive schema release")
+	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
+	// person relationships added in 1.39.0, and organizations and employments
+	// added in 1.40.0 did not touch it.
+	assert.Equal("1.40.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

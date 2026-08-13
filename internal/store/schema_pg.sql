@@ -436,6 +436,281 @@ CREATE TABLE IF NOT EXISTS collection_sources (
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
+-- ============================================================================
+-- ORGANIZATIONS & EMPLOYMENT
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS organizations (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name            TEXT NOT NULL,
+    name_normalized TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'other',
+    primary_domain  TEXT,
+    description     TEXT,
+    revision        BIGINT NOT NULL DEFAULT 1,
+    merged_into_id  BIGINT REFERENCES organizations(id) ON DELETE RESTRICT,
+    retired_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (LENGTH(name) > 0),
+    CHECK (merged_into_id IS NULL OR merged_into_id <> id)
+);
+CREATE INDEX IF NOT EXISTS idx_organizations_name_normalized
+    ON organizations(name_normalized);
+CREATE INDEX IF NOT EXISTS idx_organizations_primary_domain
+    ON organizations(primary_domain)
+    WHERE primary_domain IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_organizations_merged_into
+    ON organizations(merged_into_id)
+    WHERE merged_into_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organization_names (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name_kind TEXT NOT NULL,
+    formatted TEXT,
+    original_value TEXT NOT NULL, name_normalized TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_names_active
+    ON organization_names(organization_id, name_kind, name_normalized)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_organization_names_lookup
+    ON organization_names(name_normalized)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_names_property_identity
+    ON organization_names(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_identifiers (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    identifier_kind TEXT NOT NULL, identifier_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_identifiers_active
+    ON organization_identifiers(organization_id, identifier_kind, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_organization_identifiers_lookup
+    ON organization_identifiers(identifier_kind, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_identifiers_property_identity
+    ON organization_identifiers(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_addresses (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL DEFAULT 'postal',
+    post_office_box TEXT, extended_address TEXT, street_address TEXT,
+    locality TEXT, region TEXT, postal_code TEXT, country_name TEXT,
+    extended_components TEXT, free_text TEXT, label TEXT, geo_uri TEXT,
+    timezone TEXT, country_code TEXT, place_uri TEXT,
+    original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_organization_addresses_current
+    ON organization_addresses(organization_id, address_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_addresses_property_identity
+    ON organization_addresses(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_contact_points (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL,
+    service_id BIGINT REFERENCES communication_services(id) ON DELETE RESTRICT,
+    scope_kind TEXT, scope_value TEXT,
+    original_value TEXT NOT NULL, normalized_value TEXT NOT NULL,
+    normalization TEXT NOT NULL DEFAULT 'none',
+    normalization_version INTEGER NOT NULL DEFAULT 1,
+    uri TEXT,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_organization_contact_points_current_lookup
+    ON organization_contact_points(address_kind, service_id, scope_kind, scope_value, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_contact_points_property_identity
+    ON organization_contact_points(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_categories (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    original_value TEXT NOT NULL, normalized_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_categories_current_value
+    ON organization_categories(organization_id, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_media (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    media_kind TEXT NOT NULL, media_type TEXT, uri TEXT, data BYTEA,
+    byte_size BIGINT, content_hash TEXT, original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from TIMESTAMPTZ, active_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_organization_media_current
+    ON organization_media(organization_id, media_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_media_property_identity
+    ON organization_media(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS employments (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    person_id        BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    organization_id  BIGINT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+    title            TEXT,
+    title_normalized TEXT NOT NULL DEFAULT '',
+    role             TEXT,
+    department       TEXT,
+    location         TEXT,
+    address_id       BIGINT REFERENCES organization_addresses(id) ON DELETE SET NULL,
+    description      TEXT,
+    start_year       INTEGER,
+    start_month      INTEGER,
+    start_day        INTEGER,
+    end_year         INTEGER,
+    end_month        INTEGER,
+    end_day          INTEGER,
+    is_current       BOOLEAN NOT NULL DEFAULT TRUE,
+    is_primary       BOOLEAN NOT NULL DEFAULT FALSE,
+    source           TEXT NOT NULL DEFAULT 'user'
+        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source_ref       TEXT,
+    confidence       DOUBLE PRECISION CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import'))),
+    revision         BIGINT NOT NULL DEFAULT 1,
+    created_by       TEXT NOT NULL DEFAULT 'user',
+    updated_by       TEXT NOT NULL DEFAULT 'user',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (start_year BETWEEN 1 AND 9999),
+    CHECK (start_month BETWEEN 1 AND 12),
+    CHECK (start_day BETWEEN 1 AND 31),
+    CHECK (end_year BETWEEN 1 AND 9999),
+    CHECK (end_month BETWEEN 1 AND 12),
+    CHECK (end_day BETWEEN 1 AND 31),
+    CHECK (start_day IS NULL OR start_month IS NOT NULL),
+    CHECK (end_day IS NULL OR end_month IS NOT NULL),
+    CHECK (start_month IS NULL OR start_year IS NOT NULL),
+    CHECK (end_month IS NULL OR end_year IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employments_one_primary_current
+    ON employments(person_id) WHERE is_primary AND is_current;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employments_active_person_org_title
+    ON employments(person_id, organization_id, title_normalized) WHERE is_current;
+CREATE INDEX IF NOT EXISTS idx_employments_person ON employments(person_id);
+CREATE INDEX IF NOT EXISTS idx_employments_organization ON employments(organization_id);
+CREATE INDEX IF NOT EXISTS idx_employments_person_current ON employments(person_id) WHERE is_current;
+CREATE INDEX IF NOT EXISTS idx_employments_address ON employments(address_id) WHERE address_id IS NOT NULL;
+
 -- Daemon-owned analytical Saved Views. Canonical state contains only the
 -- query/view definition; result rows and transient selection remain client
 -- state and are never persisted here.
@@ -781,6 +1056,66 @@ CREATE INDEX IF NOT EXISTS idx_person_attribute_values_current_text
 CREATE INDEX IF NOT EXISTS idx_person_attribute_values_record_ref
     ON person_attribute_values(value_record_type, value_record_id)
     WHERE value_record_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organization_attribute_values (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id   BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    definition_id     BIGINT NOT NULL
+                          REFERENCES attribute_definitions(id) ON DELETE RESTRICT,
+    ordinal           BIGINT NOT NULL DEFAULT 0,
+    value_text        TEXT,
+    value_integer     BIGINT,
+    value_real        DOUBLE PRECISION,
+    value_boolean     BOOLEAN,
+    value_date        TEXT,
+    value_timestamp   TIMESTAMPTZ,
+    value_json        JSONB,
+    value_record_type TEXT,
+    value_record_id   BIGINT,
+    active_from       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    active_until      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at     TIMESTAMPTZ,
+    source            TEXT NOT NULL,
+    source_ref        TEXT,
+    confidence        DOUBLE PRECISION,
+    actor             TEXT,
+    CHECK (ordinal >= 0),
+    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                      'archive_observation', 'extraction', 'enrichment',
+                      'system')),
+    CHECK (active_until IS NULL OR active_until >= active_from),
+    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
+    CHECK (
+        (CASE WHEN value_text      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_integer   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_real      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_boolean   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_date      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_timestamp IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_json      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_record_id IS NOT NULL THEN 1 ELSE 0 END) = 1
+    ),
+    CHECK ((value_record_id IS NULL) = (value_record_type IS NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_attribute_values_current
+    ON organization_attribute_values(organization_id, definition_id, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_history
+    ON organization_attribute_values(
+        organization_id, definition_id, active_from DESC, id DESC
+    );
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_definition
+    ON organization_attribute_values(definition_id, active_until);
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_current_text
+    ON organization_attribute_values(definition_id, value_text)
+    WHERE value_text IS NOT NULL
+      AND active_until IS NULL AND superseded_at IS NULL;
 
 -- ============================================================================
 -- PEOPLE PROFILE PRIMITIVES

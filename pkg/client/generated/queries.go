@@ -448,6 +448,50 @@ func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type ListOrganizationsQuery struct {
+	// Limit Maximum results
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Results to skip
+	Offset *int64 `json:"offset,omitempty"`
+
+	// IncludeRetired Include retired organizations
+	IncludeRetired *bool `json:"include_retired,omitempty"`
+
+	// Q Normalized-name search
+	Q *string `json:"q,omitempty"`
+}
+
+type ListOrganizationAttributesQuery struct {
+	// IncludeSuperseded Include superseded values
+	IncludeSuperseded *bool `json:"include_superseded,omitempty"`
+
+	// DefinitionSlug Restrict to one definition
+	DefinitionSlug *string `json:"definition_slug,omitempty"`
+}
+
+type ClearOrganizationAttributeQuery struct {
+	// Ordinal Ordinal for a multi-valued definition
+	Ordinal *int64 `json:"ordinal,omitempty"`
+
+	// ExpectedValueID Compare-and-swap: the current value ID expected to be superseded
+	ExpectedValueID *int64 `json:"expected_value_id,omitempty"`
+
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type ListOrganizationEmploymentsQuery struct {
+	// CurrentOnly Only current employments
+	CurrentOnly *bool `json:"current_only,omitempty"`
+
+	// Limit Maximum results
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Results to skip
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type ListPersonRelationshipReviewsQuery struct {
 	Status   *ListPersonRelationshipReviewsQueryStatus `json:"status,omitempty"`
 	PersonID *int64                                    `json:"person_id,omitempty"`
@@ -490,6 +534,17 @@ type ClearPersonAttributeQuery struct {
 type SetPersonAttributeQuery struct {
 	// DryRun Validate and preview without writing
 	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type ListPersonEmploymentsQuery struct {
+	// CurrentOnly Only current employments
+	CurrentOnly *bool `json:"current_only,omitempty"`
+
+	// Limit Maximum results
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Results to skip
+	Offset *int64 `json:"offset,omitempty"`
 }
 
 type ListPersonRelationshipsQuery struct {

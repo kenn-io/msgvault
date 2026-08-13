@@ -575,6 +575,68 @@ func (g *GetDomainTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type CreateEmploymentResponse = Employment
+
+type CreateEmploymentErrorResponse = ErrorResponse
+
+type CreateEmploymentErrorResponseJSON = ErrorResponse
+
+type CreateEmploymentErrorResponseJSON503 = ErrorResponse
+
+type DeleteEmploymentErrorResponse = ErrorResponse
+
+type DeleteEmploymentErrorResponseJSON = ErrorResponse
+
+type DeleteEmploymentErrorResponseJSON409 = ErrorResponse
+
+type DeleteEmploymentErrorResponseJSON428 = ErrorResponse
+
+type DeleteEmploymentErrorResponseJSON503 = ErrorResponse
+
+type GetEmploymentResponse = Employment
+
+type GetEmploymentErrorResponse = ErrorResponse
+
+type GetEmploymentErrorResponseJSON = ErrorResponse
+
+type GetEmploymentErrorResponseJSON503 = ErrorResponse
+
+type PatchEmploymentResponse = Employment
+
+type PatchEmploymentErrorResponse = ErrorResponse
+
+type PatchEmploymentErrorResponseJSON = ErrorResponse
+
+type PatchEmploymentErrorResponseJSON409 = ErrorResponse
+
+type PatchEmploymentErrorResponseJSON428 = ErrorResponse
+
+type PatchEmploymentErrorResponseJSON503 = ErrorResponse
+
+type EndEmploymentResponse = Employment
+
+type EndEmploymentErrorResponse = ErrorResponse
+
+type EndEmploymentErrorResponseJSON = ErrorResponse
+
+type EndEmploymentErrorResponseJSON409 = ErrorResponse
+
+type EndEmploymentErrorResponseJSON428 = ErrorResponse
+
+type EndEmploymentErrorResponseJSON503 = ErrorResponse
+
+type SetPrimaryEmploymentResponse = Employment
+
+type SetPrimaryEmploymentErrorResponse = ErrorResponse
+
+type SetPrimaryEmploymentErrorResponseJSON = ErrorResponse
+
+type SetPrimaryEmploymentErrorResponseJSON409 = ErrorResponse
+
+type SetPrimaryEmploymentErrorResponseJSON428 = ErrorResponse
+
+type SetPrimaryEmploymentErrorResponseJSON503 = ErrorResponse
+
 type ExploreResponse = ExploreHTTPResponse
 
 type ExploreErrorResponse = ErrorResponse
@@ -985,6 +1047,130 @@ type UnlinkMessageTaskResponse = TaskLinkMutationResponse
 
 type UnlinkMessageTaskErrorResponse = ErrorResponse
 
+type ListOrganizationsResponse = OrganizationsResponse
+
+type ListOrganizationsErrorResponse = ErrorResponse
+
+type ListOrganizationsErrorResponseJSON = ErrorResponse
+
+type CreateOrganizationResponse = Organization
+
+type CreateOrganizationErrorResponse = ErrorResponse
+
+type CreateOrganizationErrorResponseJSON = ErrorResponse
+
+type DeleteOrganizationErrorResponse = ErrorResponse
+
+type DeleteOrganizationErrorResponseJSON = ErrorResponse
+
+type DeleteOrganizationErrorResponseJSON409 = ErrorResponse
+
+type DeleteOrganizationErrorResponseJSON428 = ErrorResponse
+
+type DeleteOrganizationErrorResponseJSON503 = ErrorResponse
+
+type GetOrganizationResponse = OrganizationProfile
+
+type GetOrganizationErrorResponse = ErrorResponse
+
+type GetOrganizationErrorResponseJSON = ErrorResponse
+
+type GetOrganizationErrorResponseJSON503 = ErrorResponse
+
+type PatchOrganizationResponse = Organization
+
+type PatchOrganizationErrorResponse = ErrorResponse
+
+type PatchOrganizationErrorResponseJSON = ErrorResponse
+
+type PatchOrganizationErrorResponseJSON409 = ErrorResponse
+
+type PatchOrganizationErrorResponseJSON428 = ErrorResponse
+
+type PatchOrganizationErrorResponseJSON503 = ErrorResponse
+
+type ListOrganizationAttributesResponse = OrganizationAttributesResponse
+
+type ListOrganizationAttributesErrorResponse = ErrorResponse
+
+type ListOrganizationAttributesErrorResponseJSON = ErrorResponse
+
+type ListOrganizationAttributesErrorResponseJSON503 = ErrorResponse
+
+type SetOrganizationAttributeResponse = OrganizationAttributeWrite
+
+type SetOrganizationAttributeResponseJSON = OrganizationAttributeWrite
+
+type SetOrganizationAttributeErrorResponse = ErrorResponse
+
+type SetOrganizationAttributeErrorResponseJSON = ErrorResponse
+
+type SetOrganizationAttributeErrorResponseJSON409 = ErrorResponse
+
+type SetOrganizationAttributeErrorResponseJSON503 = ErrorResponse
+
+type ClearOrganizationAttributeResponse = OrganizationAttributeWrite
+
+type ClearOrganizationAttributeErrorResponse = ErrorResponse
+
+type ClearOrganizationAttributeErrorResponseJSON = ErrorResponse
+
+type ClearOrganizationAttributeErrorResponseJSON409 = ErrorResponse
+
+type ClearOrganizationAttributeErrorResponseJSON503 = ErrorResponse
+
+type ListOrganizationEmploymentsResponse = EmploymentsResponse
+
+type ListOrganizationEmploymentsErrorResponse = ErrorResponse
+
+type ListOrganizationEmploymentsErrorResponseJSON = ErrorResponse
+
+type ListOrganizationEmploymentsErrorResponseJSON503 = ErrorResponse
+
+type GetOrganizationHistoryResponse = OrganizationProfile
+
+type GetOrganizationHistoryErrorResponse = ErrorResponse
+
+type GetOrganizationHistoryErrorResponseJSON = ErrorResponse
+
+type GetOrganizationHistoryErrorResponseJSON503 = ErrorResponse
+
+type MergeOrganizationResponse = Organization
+
+type MergeOrganizationErrorResponse = ErrorResponse
+
+type MergeOrganizationErrorResponseJSON = ErrorResponse
+
+type MergeOrganizationErrorResponseJSON409 = ErrorResponse
+
+type MergeOrganizationErrorResponseJSON428 = ErrorResponse
+
+type MergeOrganizationErrorResponseJSON503 = ErrorResponse
+
+type PutOrganizationProfileResponse = OrganizationProfile
+
+type PutOrganizationProfileErrorResponse = ErrorResponse
+
+type PutOrganizationProfileErrorResponseJSON = ErrorResponse
+
+type PutOrganizationProfileErrorResponseJSON409 = ErrorResponse
+
+type PutOrganizationProfileErrorResponseJSON428 = ErrorResponse
+
+type PutOrganizationProfileErrorResponseJSON503 = ErrorResponse
+
+type GetOrganizationProfileMediaContentResponse = []byte
+
+type GetOrganizationProfileMediaContentErrorResponse = ErrorResponse
+
+type GetOrganizationProfileMediaContentErrorResponseJSON = ErrorResponse
+
+type GetOrganizationProfileMediaContentErrorResponseJSON404 = ErrorResponse
+
+type GetOrganizationProfileMediaContentErrorResponseJSON500 = ErrorResponse
+
+type GetOrganizationProfileMediaContentErrorResponseJSON503 = ErrorResponse
+
 type SearchPeopleResponse = PersonSearchHTTPResponse
 
 type SearchPeopleErrorResponse = ErrorResponse
@@ -1276,6 +1462,14 @@ type SetPersonAttributeErrorResponseJSON = ErrorResponse
 type SetPersonAttributeErrorResponseJSON409 = ErrorResponse
 
 type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
+
+type ListPersonEmploymentsResponse = EmploymentsResponse
+
+type ListPersonEmploymentsErrorResponse = ErrorResponse
+
+type ListPersonEmploymentsErrorResponseJSON = ErrorResponse
+
+type ListPersonEmploymentsErrorResponseJSON503 = ErrorResponse
 
 type GetPersonStructuredProfileResponse = StructuredPersonProfile
 
@@ -2193,6 +2387,99 @@ type GetDomainTimelineResp struct {
 	JSON503      *GetDomainTimelineErrorResponseJSON503
 }
 
+type CreateEmploymentResp201Headers struct {
+	ETag     string `header:"ETag"`
+	Location string `header:"Location"`
+}
+
+type CreateEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateEmploymentResponse
+	Headers201   *CreateEmploymentResp201Headers
+	JSON400      *CreateEmploymentErrorResponse
+	JSON409      *CreateEmploymentErrorResponseJSON
+	JSON503      *CreateEmploymentErrorResponseJSON503
+}
+
+type DeleteEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteEmploymentErrorResponse
+	JSON404      *DeleteEmploymentErrorResponseJSON
+	JSON409      *DeleteEmploymentErrorResponseJSON409
+	JSON428      *DeleteEmploymentErrorResponseJSON428
+	JSON503      *DeleteEmploymentErrorResponseJSON503
+}
+
+type GetEmploymentResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmploymentResponse
+	Headers200   *GetEmploymentResp200Headers
+	JSON400      *GetEmploymentErrorResponse
+	JSON404      *GetEmploymentErrorResponseJSON
+	JSON503      *GetEmploymentErrorResponseJSON503
+}
+
+type PatchEmploymentResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchEmploymentResponse
+	Headers200   *PatchEmploymentResp200Headers
+	JSON400      *PatchEmploymentErrorResponse
+	JSON404      *PatchEmploymentErrorResponseJSON
+	JSON409      *PatchEmploymentErrorResponseJSON409
+	JSON428      *PatchEmploymentErrorResponseJSON428
+	JSON503      *PatchEmploymentErrorResponseJSON503
+}
+
+type EndEmploymentResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type EndEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *EndEmploymentResponse
+	Headers200   *EndEmploymentResp200Headers
+	JSON400      *EndEmploymentErrorResponse
+	JSON404      *EndEmploymentErrorResponseJSON
+	JSON409      *EndEmploymentErrorResponseJSON409
+	JSON428      *EndEmploymentErrorResponseJSON428
+	JSON503      *EndEmploymentErrorResponseJSON503
+}
+
+type SetPrimaryEmploymentResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type SetPrimaryEmploymentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetPrimaryEmploymentResponse
+	Headers200   *SetPrimaryEmploymentResp200Headers
+	JSON400      *SetPrimaryEmploymentErrorResponse
+	JSON404      *SetPrimaryEmploymentErrorResponseJSON
+	JSON409      *SetPrimaryEmploymentErrorResponseJSON409
+	JSON428      *SetPrimaryEmploymentErrorResponseJSON428
+	JSON503      *SetPrimaryEmploymentErrorResponseJSON503
+}
+
 type ExploreResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -2403,6 +2690,176 @@ type UnlinkMessageTaskResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *UnlinkMessageTaskResponse
+}
+
+type ListOrganizationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListOrganizationsResponse
+	JSON400      *ListOrganizationsErrorResponse
+	JSON503      *ListOrganizationsErrorResponseJSON
+}
+
+type CreateOrganizationResp201Headers struct {
+	ETag     string `header:"ETag"`
+	Location string `header:"Location"`
+}
+
+type CreateOrganizationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateOrganizationResponse
+	Headers201   *CreateOrganizationResp201Headers
+	JSON400      *CreateOrganizationErrorResponse
+	JSON503      *CreateOrganizationErrorResponseJSON
+}
+
+type DeleteOrganizationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteOrganizationErrorResponse
+	JSON404      *DeleteOrganizationErrorResponseJSON
+	JSON409      *DeleteOrganizationErrorResponseJSON409
+	JSON428      *DeleteOrganizationErrorResponseJSON428
+	JSON503      *DeleteOrganizationErrorResponseJSON503
+}
+
+type GetOrganizationResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetOrganizationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetOrganizationResponse
+	Headers200   *GetOrganizationResp200Headers
+	JSON400      *GetOrganizationErrorResponse
+	JSON404      *GetOrganizationErrorResponseJSON
+	JSON503      *GetOrganizationErrorResponseJSON503
+}
+
+type PatchOrganizationResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchOrganizationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchOrganizationResponse
+	Headers200   *PatchOrganizationResp200Headers
+	JSON400      *PatchOrganizationErrorResponse
+	JSON404      *PatchOrganizationErrorResponseJSON
+	JSON409      *PatchOrganizationErrorResponseJSON409
+	JSON428      *PatchOrganizationErrorResponseJSON428
+	JSON503      *PatchOrganizationErrorResponseJSON503
+}
+
+type ListOrganizationAttributesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListOrganizationAttributesResponse
+	JSON400      *ListOrganizationAttributesErrorResponse
+	JSON404      *ListOrganizationAttributesErrorResponseJSON
+	JSON503      *ListOrganizationAttributesErrorResponseJSON503
+}
+
+type SetOrganizationAttributeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetOrganizationAttributeResponse
+	JSON201      *SetOrganizationAttributeResponseJSON
+	JSON400      *SetOrganizationAttributeErrorResponse
+	JSON404      *SetOrganizationAttributeErrorResponseJSON
+	JSON409      *SetOrganizationAttributeErrorResponseJSON409
+	JSON503      *SetOrganizationAttributeErrorResponseJSON503
+}
+
+type ClearOrganizationAttributeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ClearOrganizationAttributeResponse
+	JSON400      *ClearOrganizationAttributeErrorResponse
+	JSON404      *ClearOrganizationAttributeErrorResponseJSON
+	JSON409      *ClearOrganizationAttributeErrorResponseJSON409
+	JSON503      *ClearOrganizationAttributeErrorResponseJSON503
+}
+
+type ListOrganizationEmploymentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListOrganizationEmploymentsResponse
+	JSON400      *ListOrganizationEmploymentsErrorResponse
+	JSON404      *ListOrganizationEmploymentsErrorResponseJSON
+	JSON503      *ListOrganizationEmploymentsErrorResponseJSON503
+}
+
+type GetOrganizationHistoryResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetOrganizationHistoryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetOrganizationHistoryResponse
+	Headers200   *GetOrganizationHistoryResp200Headers
+	JSON400      *GetOrganizationHistoryErrorResponse
+	JSON404      *GetOrganizationHistoryErrorResponseJSON
+	JSON503      *GetOrganizationHistoryErrorResponseJSON503
+}
+
+type MergeOrganizationResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type MergeOrganizationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MergeOrganizationResponse
+	Headers200   *MergeOrganizationResp200Headers
+	JSON400      *MergeOrganizationErrorResponse
+	JSON404      *MergeOrganizationErrorResponseJSON
+	JSON409      *MergeOrganizationErrorResponseJSON409
+	JSON428      *MergeOrganizationErrorResponseJSON428
+	JSON503      *MergeOrganizationErrorResponseJSON503
+}
+
+type PutOrganizationProfileResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PutOrganizationProfileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PutOrganizationProfileResponse
+	Headers200   *PutOrganizationProfileResp200Headers
+	JSON400      *PutOrganizationProfileErrorResponse
+	JSON404      *PutOrganizationProfileErrorResponseJSON
+	JSON409      *PutOrganizationProfileErrorResponseJSON409
+	JSON428      *PutOrganizationProfileErrorResponseJSON428
+	JSON503      *PutOrganizationProfileErrorResponseJSON503
+}
+
+type GetOrganizationProfileMediaContentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *GetOrganizationProfileMediaContentErrorResponse
+	JSON401      *GetOrganizationProfileMediaContentErrorResponseJSON
+	JSON404      *GetOrganizationProfileMediaContentErrorResponseJSON404
+	JSON500      *GetOrganizationProfileMediaContentErrorResponseJSON500
+	JSON503      *GetOrganizationProfileMediaContentErrorResponseJSON503
 }
 
 type SearchPeopleResp struct {
@@ -2620,6 +3077,16 @@ type SetPersonAttributeResp struct {
 	JSON404      *SetPersonAttributeErrorResponseJSON
 	JSON409      *SetPersonAttributeErrorResponseJSON409
 	JSON503      *SetPersonAttributeErrorResponseJSON503
+}
+
+type ListPersonEmploymentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonEmploymentsResponse
+	JSON400      *ListPersonEmploymentsErrorResponse
+	JSON404      *ListPersonEmploymentsErrorResponseJSON
+	JSON503      *ListPersonEmploymentsErrorResponseJSON503
 }
 
 type GetPersonStructuredProfileResp200Headers struct {

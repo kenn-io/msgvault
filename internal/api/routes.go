@@ -222,6 +222,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerOrganizationRoutes(apiV1)
+	s.registerEmploymentRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)

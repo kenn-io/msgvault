@@ -291,6 +291,30 @@ type ClientInterface interface {
 	GetDomainTimeline(ctx context.Context, options *GetDomainTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDomainTimelineResponse, error)
 	GetDomainTimelineWithResponse(ctx context.Context, options *GetDomainTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDomainTimelineResp, error)
 
+	// CreateEmployment Create an employment record
+	CreateEmployment(ctx context.Context, options *CreateEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateEmploymentResponse, error)
+	CreateEmploymentWithResponse(ctx context.Context, options *CreateEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateEmploymentResp, error)
+
+	// DeleteEmployment Delete an employment record
+	DeleteEmployment(ctx context.Context, options *DeleteEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DeleteEmploymentWithResponse(ctx context.Context, options *DeleteEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteEmploymentResp, error)
+
+	// GetEmployment Get an employment record
+	GetEmployment(ctx context.Context, options *GetEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmploymentResponse, error)
+	GetEmploymentWithResponse(ctx context.Context, options *GetEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmploymentResp, error)
+
+	// PatchEmployment Replace an employment record's mutable fields
+	PatchEmployment(ctx context.Context, options *PatchEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchEmploymentResponse, error)
+	PatchEmploymentWithResponse(ctx context.Context, options *PatchEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchEmploymentResp, error)
+
+	// EndEmployment End an employment record
+	EndEmployment(ctx context.Context, options *EndEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EndEmploymentResponse, error)
+	EndEmploymentWithResponse(ctx context.Context, options *EndEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EndEmploymentResp, error)
+
+	// SetPrimaryEmployment Set the primary current employment
+	SetPrimaryEmployment(ctx context.Context, options *SetPrimaryEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPrimaryEmploymentResponse, error)
+	SetPrimaryEmploymentWithResponse(ctx context.Context, options *SetPrimaryEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPrimaryEmploymentResp, error)
+
 	// Explore Explore canonical archive entries
 	Explore(ctx context.Context, options *ExploreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExploreResponse, error)
 	ExploreWithResponse(ctx context.Context, options *ExploreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExploreResp, error)
@@ -391,6 +415,58 @@ type ClientInterface interface {
 	UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResponse, error)
 	UnlinkMessageTaskWithResponse(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResp, error)
 
+	// ListOrganizations List organizations
+	ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error)
+	ListOrganizationsWithResponse(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResp, error)
+
+	// CreateOrganization Create an organization
+	CreateOrganization(ctx context.Context, options *CreateOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateOrganizationResponse, error)
+	CreateOrganizationWithResponse(ctx context.Context, options *CreateOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateOrganizationResp, error)
+
+	// DeleteOrganization Delete an organization without employment records
+	DeleteOrganization(ctx context.Context, options *DeleteOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DeleteOrganizationWithResponse(ctx context.Context, options *DeleteOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteOrganizationResp, error)
+
+	// GetOrganization Get an organization
+	GetOrganization(ctx context.Context, options *GetOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationResponse, error)
+	GetOrganizationWithResponse(ctx context.Context, options *GetOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationResp, error)
+
+	// PatchOrganization Replace an organization's mutable fields
+	PatchOrganization(ctx context.Context, options *PatchOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchOrganizationResponse, error)
+	PatchOrganizationWithResponse(ctx context.Context, options *PatchOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchOrganizationResp, error)
+
+	// ListOrganizationAttributes List organization typed attributes
+	ListOrganizationAttributes(ctx context.Context, options *ListOrganizationAttributesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationAttributesResponse, error)
+	ListOrganizationAttributesWithResponse(ctx context.Context, options *ListOrganizationAttributesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationAttributesResp, error)
+
+	// SetOrganizationAttribute Set an organization typed attribute
+	SetOrganizationAttribute(ctx context.Context, options *SetOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetOrganizationAttributeResponseJSON, error)
+	SetOrganizationAttributeWithResponse(ctx context.Context, options *SetOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetOrganizationAttributeResp, error)
+
+	// ClearOrganizationAttribute Supersede an organization typed attribute
+	ClearOrganizationAttribute(ctx context.Context, options *ClearOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClearOrganizationAttributeResponse, error)
+	ClearOrganizationAttributeWithResponse(ctx context.Context, options *ClearOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClearOrganizationAttributeResp, error)
+
+	// ListOrganizationEmployments List an organization's employment records
+	ListOrganizationEmployments(ctx context.Context, options *ListOrganizationEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationEmploymentsResponse, error)
+	ListOrganizationEmploymentsWithResponse(ctx context.Context, options *ListOrganizationEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationEmploymentsResp, error)
+
+	// GetOrganizationHistory Get organization profile history
+	GetOrganizationHistory(ctx context.Context, options *GetOrganizationHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationHistoryResponse, error)
+	GetOrganizationHistoryWithResponse(ctx context.Context, options *GetOrganizationHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationHistoryResp, error)
+
+	// MergeOrganization Merge another organization into this organization
+	MergeOrganization(ctx context.Context, options *MergeOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeOrganizationResponse, error)
+	MergeOrganizationWithResponse(ctx context.Context, options *MergeOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeOrganizationResp, error)
+
+	// PutOrganizationProfile Replace organization profile collections
+	PutOrganizationProfile(ctx context.Context, options *PutOrganizationProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutOrganizationProfileResponse, error)
+	PutOrganizationProfileWithResponse(ctx context.Context, options *PutOrganizationProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutOrganizationProfileResp, error)
+
+	// GetOrganizationProfileMediaContent Download stored inline content for one organization profile media value
+	GetOrganizationProfileMediaContent(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResponse, error)
+	GetOrganizationProfileMediaContentWithResponse(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResp, error)
+
 	// SearchPeople Search analytical people
 	SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error)
 	SearchPeopleWithResponse(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResp, error)
@@ -462,6 +538,10 @@ type ClientInterface interface {
 	// SetPersonAttribute Set a person's attribute value
 	SetPersonAttribute(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResponse, error)
 	SetPersonAttributeWithResponse(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResp, error)
+
+	// ListPersonEmployments List a person's employment history
+	ListPersonEmployments(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResponse, error)
+	ListPersonEmploymentsWithResponse(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResp, error)
 
 	// GetPersonStructuredProfile Get a person's current structured profile
 	GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error)
@@ -4557,6 +4637,372 @@ func (c *Client) GetDomainTimeline(ctx context.Context, options *GetDomainTimeli
 	return responseParser(ctx, resp)
 }
 
+// CreateEmployment Create an employment record
+func (c *Client) CreateEmployment(ctx context.Context, options *CreateEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateEmploymentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/employments",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateEmploymentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(CreateEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreateEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreateEmploymentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreateEmploymentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeleteEmployment Delete an employment record
+func (c *Client) DeleteEmployment(ctx context.Context, options *DeleteEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/employments/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 204 {
+			target := new(DeleteEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DeleteEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetEmployment Get an employment record
+func (c *Client) GetEmployment(ctx context.Context, options *GetEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmploymentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/employments/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmploymentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetEmploymentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetEmploymentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PatchEmployment Replace an employment record's mutable fields
+func (c *Client) PatchEmployment(ctx context.Context, options *PatchEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchEmploymentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/employments/{id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchEmploymentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PatchEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PatchEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PatchEmploymentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PatchEmploymentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// EndEmployment End an employment record
+func (c *Client) EndEmployment(ctx context.Context, options *EndEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EndEmploymentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/employments/{id}/end",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*EndEmploymentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(EndEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "EndEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(EndEmploymentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "EndEmploymentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments/{id}/end")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPrimaryEmployment Set the primary current employment
+func (c *Client) SetPrimaryEmployment(ctx context.Context, options *SetPrimaryEmploymentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPrimaryEmploymentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/employments/{id}/primary",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetPrimaryEmploymentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SetPrimaryEmploymentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SetPrimaryEmploymentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SetPrimaryEmploymentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SetPrimaryEmploymentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/employments/{id}/primary")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // Explore Explore canonical archive entries
 func (c *Client) Explore(ctx context.Context, options *ExploreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExploreResponse, error) {
 	var err error
@@ -6126,6 +6572,801 @@ func (c *Client) UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTa
 	return responseParser(ctx, resp)
 }
 
+// ListOrganizations List organizations
+func (c *Client) ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListOrganizationsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListOrganizationsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListOrganizationsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListOrganizationsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListOrganizationsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateOrganization Create an organization
+func (c *Client) CreateOrganization(ctx context.Context, options *CreateOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateOrganizationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/organizations",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateOrganizationResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(CreateOrganizationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreateOrganizationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreateOrganizationResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreateOrganizationResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeleteOrganization Delete an organization without employment records
+func (c *Client) DeleteOrganization(ctx context.Context, options *DeleteOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 204 {
+			target := new(DeleteOrganizationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DeleteOrganizationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetOrganization Get an organization
+func (c *Client) GetOrganization(ctx context.Context, options *GetOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetOrganizationResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetOrganizationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetOrganizationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetOrganizationResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetOrganizationResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PatchOrganization Replace an organization's mutable fields
+func (c *Client) PatchOrganization(ctx context.Context, options *PatchOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchOrganizationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchOrganizationResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PatchOrganizationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PatchOrganizationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PatchOrganizationResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PatchOrganizationResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListOrganizationAttributes List organization typed attributes
+func (c *Client) ListOrganizationAttributes(ctx context.Context, options *ListOrganizationAttributesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationAttributesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/attributes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListOrganizationAttributesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListOrganizationAttributesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListOrganizationAttributesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListOrganizationAttributesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListOrganizationAttributesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/attributes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetOrganizationAttribute Set an organization typed attribute
+func (c *Client) SetOrganizationAttribute(ctx context.Context, options *SetOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetOrganizationAttributeResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/attributes",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetOrganizationAttributeResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(SetOrganizationAttributeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SetOrganizationAttributeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SetOrganizationAttributeResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SetOrganizationAttributeResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/attributes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ClearOrganizationAttribute Supersede an organization typed attribute
+func (c *Client) ClearOrganizationAttribute(ctx context.Context, options *ClearOrganizationAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClearOrganizationAttributeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/attributes/{slug}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ClearOrganizationAttributeResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ClearOrganizationAttributeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ClearOrganizationAttributeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ClearOrganizationAttributeResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ClearOrganizationAttributeResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/attributes/{slug}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListOrganizationEmployments List an organization's employment records
+func (c *Client) ListOrganizationEmployments(ctx context.Context, options *ListOrganizationEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationEmploymentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/employments",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListOrganizationEmploymentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListOrganizationEmploymentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListOrganizationEmploymentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListOrganizationEmploymentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListOrganizationEmploymentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/employments")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetOrganizationHistory Get organization profile history
+func (c *Client) GetOrganizationHistory(ctx context.Context, options *GetOrganizationHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationHistoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/history",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetOrganizationHistoryResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetOrganizationHistoryErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetOrganizationHistoryErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetOrganizationHistoryResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetOrganizationHistoryResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/history")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MergeOrganization Merge another organization into this organization
+func (c *Client) MergeOrganization(ctx context.Context, options *MergeOrganizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeOrganizationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/merge",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*MergeOrganizationResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(MergeOrganizationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "MergeOrganizationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(MergeOrganizationResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "MergeOrganizationResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/merge")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PutOrganizationProfile Replace organization profile collections
+func (c *Client) PutOrganizationProfile(ctx context.Context, options *PutOrganizationProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutOrganizationProfileResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/profile",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PutOrganizationProfileResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PutOrganizationProfileErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PutOrganizationProfileErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PutOrganizationProfileResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PutOrganizationProfileResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/profile")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetOrganizationProfileMediaContent Download stored inline content for one organization profile media value
+func (c *Client) GetOrganizationProfileMediaContent(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/organizations/{id}/profile/media/{media_id}/content",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetOrganizationProfileMediaContentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetOrganizationProfileMediaContentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetOrganizationProfileMediaContentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := GetOrganizationProfileMediaContentResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/organizations/{id}/profile/media/{media_id}/content")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // SearchPeople Search analytical people
 func (c *Client) SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error) {
 	var err error
@@ -7232,6 +8473,69 @@ func (c *Client) SetPersonAttribute(ctx context.Context, options *SetPersonAttri
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/attributes/{slug}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonEmployments List a person's employment history
+func (c *Client) ListPersonEmployments(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/employments",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonEmploymentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonEmploymentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonEmploymentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonEmploymentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonEmploymentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/employments")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

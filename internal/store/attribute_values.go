@@ -22,7 +22,28 @@ var (
 
 var errAttributeDryRun = errors.New("attribute dry run rollback")
 
-const maxAttributeWriteAttempts = 5
+const maxContendedWriteAttempts = 5
+
+// retryContendedWrite retries read-then-write transactions that can fail
+// snapshot upgrade (SQLITE_BUSY), deadlock, or race a unique index. Attribute
+// and employment writers use the same bounded policy.
+func retryContendedWrite[T any](
+	s *Store, operation string, attempt func() (*T, error),
+) (*T, error) {
+	var lastErr error
+	for range maxContendedWriteAttempts {
+		write, err := attempt()
+		if err == nil {
+			return write, nil
+		}
+		if !s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("%s: gave up after %d attempts: %w",
+		operation, maxContendedWriteAttempts, lastErr)
+}
 
 // AttributeValue is a typed value union with exactly one populated member.
 type AttributeValue struct {

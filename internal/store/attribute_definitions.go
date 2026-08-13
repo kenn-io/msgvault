@@ -763,8 +763,11 @@ func (s *Store) DeleteAttributeDefinitionContext(
 			return ErrAttributeDefinitionNotDeletable
 		}
 		var values int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM person_attribute_values WHERE definition_id = ?`, id,
+		if err := tx.QueryRowContext(ctx, `
+			SELECT
+			    (SELECT COUNT(*) FROM person_attribute_values WHERE definition_id = ?)
+			  + (SELECT COUNT(*) FROM organization_attribute_values WHERE definition_id = ?)
+		`, id, id,
 		).Scan(&values); err != nil {
 			return fmt.Errorf("count values for attribute definition %d: %w", id, err)
 		}
