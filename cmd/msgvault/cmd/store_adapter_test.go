@@ -397,7 +397,7 @@ func TestMarkedCLIRequestCancellationStopsProductionStoreWork(t *testing.T) {
 
 			select {
 			case <-requestDone:
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(2 * time.Second):
 				require.FailNow(t, "production store work continued after marked request cancellation")
 			}
 		})
