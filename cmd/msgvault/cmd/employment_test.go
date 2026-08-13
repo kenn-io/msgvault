@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -200,6 +201,27 @@ func TestEmploymentListPrintsHistoryAndProjection(t *testing.T) {
 	assert.Contains(output, "Current title: Staff Engineer")
 	assert.Contains(output, "vCard ORG: Example Org;Archive Platform")
 	require.NotContains(output, "<nil>")
+}
+
+func TestEmploymentListByOrganizationShowsPersonColumn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/organizations/4/employments", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"employments":[{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","is_current":true,"is_primary":true,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"},{"id":8,"person_id":7,"organization_id":4,"title":"Advisor","is_current":true,"is_primary":false,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}]}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output := runEmploymentCommand(t, employmentListCmd, []string{"--organization", "4"})
+	require.Contains(output, "PERSON",
+		"an organization-scoped listing must identify employees, not repeat the organization")
+	assert.NotContains(output, "ORGANIZATION")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	require.Len(lines, 3)
+	assert.Regexp(`^9\s+3\s+Staff Engineer`, lines[1])
+	assert.Regexp(`^8\s+7\s+Advisor`, lines[2])
 }
 
 func TestEmploymentListRequiresPersonOrOrganization(t *testing.T) {

@@ -407,10 +407,18 @@ func writeCLIEmploymentList(
 	if jsonOutput {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(response)
 	}
+	// A person-scoped listing distinguishes rows by employer; an
+	// organization-scoped listing distinguishes them by employee.
+	counterpartHeader := "ORGANIZATION"
+	counterpartID := func(employment generated.Employment) int64 { return employment.OrganizationID }
+	if !personScoped {
+		counterpartHeader = "PERSON"
+		counterpartID = func(employment generated.Employment) int64 { return employment.PersonID }
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ID\tORGANIZATION\tTITLE\tSTART\tEND\tCURRENT\tPRIMARY")
+	_, _ = fmt.Fprintln(w, "ID\t"+counterpartHeader+"\tTITLE\tSTART\tEND\tCURRENT\tPRIMARY")
 	for _, employment := range response.Employments {
-		_, _ = fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\t%t\t%t\n", employment.ID, employment.OrganizationID, cliString(employment.Title), formatCLIPartialDate(employment.StartDate), formatCLIPartialDate(employment.EndDate), employment.IsCurrent, employment.IsPrimary)
+		_, _ = fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\t%t\t%t\n", employment.ID, counterpartID(employment), cliString(employment.Title), formatCLIPartialDate(employment.StartDate), formatCLIPartialDate(employment.EndDate), employment.IsCurrent, employment.IsPrimary)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flush employment table: %w", err)
