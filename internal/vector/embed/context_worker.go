@@ -544,7 +544,7 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 		}
 		scopes := make([]contextScope, 0, len(ids))
 		for _, id := range ids {
-			row, found, readErr := snapshot.Message(ctx, id)
+			row, found, readErr := snapshot.MessageMeta(ctx, id)
 			if readErr != nil {
 				_ = snapshot.Close()
 				return readErr
@@ -1440,7 +1440,7 @@ func (s SourceSnapshot) scopesForChanges(
 			oldChat := change.OldMessageType.Valid && change.OldMessageType.String == contextualChatMessageType
 			newChat := change.NewMessageType.Valid && change.NewMessageType.String == contextualChatMessageType
 			var oldChatKey, newChatKey string
-			row, found, err := s.Message(ctx, id)
+			row, found, err := s.MessageMeta(ctx, id)
 			if err != nil {
 				return nil, err
 			}

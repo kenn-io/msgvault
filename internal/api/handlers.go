@@ -1061,7 +1061,7 @@ func (s *Server) enrichHybridMatches(
 }
 
 func embeddingBodyText(msg *APIMessage) string {
-	body := embed.ContextualBodyText(msg.BodyText, msg.BodyHTML)
+	body := embed.HydrationBodyText(msg.MessageType, msg.BodyText, msg.BodyHTML)
 	if body == "" {
 		// Preserve compatibility with MessageStore implementations that only
 		// populate the legacy selected Body field.

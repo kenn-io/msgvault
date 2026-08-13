@@ -254,6 +254,28 @@ func TestSourceSnapshot_ChatHTMLCanonicalizesBeforeTruncation(t *testing.T) {
 		"assembly must canonicalize the same full source search-time hydration uses")
 }
 
+func TestSourceSnapshot_MessageMetaOmitsBody(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 100})
+	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	id := f.seed("meta-only", day.Format(time.RFC3339), "Alice", "routing does not need this body")
+	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
+	require.NoError(err)
+	defer func() { require.NoError(snapshot.Close()) }()
+	row, found, err := snapshot.MessageMeta(t.Context(), id)
+	require.NoError(err)
+	require.True(found)
+	assert.Equal(id, row.ID)
+	assert.Equal(f.conversationID, row.ConversationID)
+	assert.Equal("beeper", row.MessageType)
+	assert.Equal(day, row.SentAt)
+	assert.Empty(row.Body, "scope routing must not materialize message bodies")
+	_, found, err = snapshot.MessageMeta(t.Context(), id+9999)
+	require.NoError(err)
+	assert.False(found)
+}
+
 func TestSourceSnapshot_ChatOversizedHTMLIsSkippedNotTruncated(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

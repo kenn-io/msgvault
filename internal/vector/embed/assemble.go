@@ -162,6 +162,41 @@ func (s SourceSnapshot) Message(ctx context.Context, id int64) (AssemblyMessage,
 	return row, true, nil
 }
 
+// MessageMeta reads one live source row's routing metadata — type,
+// conversation, timestamp — without materializing or canonicalizing its body.
+// Scope discovery only routes messages, so it must not pay body loading or
+// HTML stripping for every touched row; bodies load later through the
+// size-guarded assembly queries.
+func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMessage, bool, error) {
+	if s.state == nil {
+		return AssemblyMessage{}, false, ErrSourceSnapshotClosed
+	}
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
+	if s.state.closed {
+		return AssemblyMessage{}, false, ErrSourceSnapshotClosed
+	}
+	query := s.state.rebind(`
+		SELECT m.id, m.conversation_id, COALESCE(m.message_type, ''),
+		       m.sent_at, m.received_at, m.internal_date
+		FROM messages m
+		WHERE m.id = ? AND m.deleted_at IS NULL
+		  AND m.deleted_from_source_at IS NULL`)
+	var row AssemblyMessage
+	var sentAt, receivedAt, internalDate sql.NullTime
+	err := s.state.tx.QueryRowContext(ctx, query, id).Scan(
+		&row.ID, &row.ConversationID, &row.MessageType, &sentAt, &receivedAt, &internalDate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AssemblyMessage{}, false, nil
+	}
+	if err != nil {
+		return AssemblyMessage{}, false, fmt.Errorf("read embedding source message meta %d: %w", id, err)
+	}
+	row.SentAt = firstValidTime(sentAt, receivedAt, internalDate)
+	row.SourceSequence = s.state.sourceSequence
+	return row, true, nil
+}
+
 // Messages returns the complete live message set selected by one persisted
 // scope. Conversation ranges are bounded by canonical time and ordered by
 // canonical time then message ID, including deterministic NULL ordering.
@@ -487,14 +522,18 @@ func scanAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessage, e
 		return AssemblyMessage{}, err
 	}
 	row.Body = BodyTextForEmbedding(bodyText, bodyHTML)
-	for _, candidate := range []sql.NullTime{sentAt, receivedAt, internalDate} {
-		if candidate.Valid {
-			row.SentAt = candidate.Time.UTC()
-			break
-		}
-	}
+	row.SentAt = firstValidTime(sentAt, receivedAt, internalDate)
 	row.SourceSequence = sequence
 	return row, nil
+}
+
+func firstValidTime(candidates ...sql.NullTime) time.Time {
+	for _, candidate := range candidates {
+		if candidate.Valid {
+			return candidate.Time.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 func scanChatAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessage, error) {
@@ -518,12 +557,7 @@ func scanChatAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessag
 	if senderID.Valid {
 		row.SenderID = senderID.Int64
 	}
-	for _, candidate := range []sql.NullTime{sentAt, receivedAt, internalDate} {
-		if candidate.Valid {
-			row.SentAt = candidate.Time.UTC()
-			break
-		}
-	}
+	row.SentAt = firstValidTime(sentAt, receivedAt, internalDate)
 	row.SourceSequence = sequence
 	return row, nil
 }
