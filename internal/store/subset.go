@@ -66,8 +66,9 @@ func CopySubset(
 // metadata. IncludeAttributes copies current and historical attribute values,
 // including their value content, provenance references, and actor metadata.
 // IncludeProfiles copies current and historical structured profile values,
-// media, contact observations, identity-review candidates and evidence, and
-// their provenance dependencies.
+// media, contact observations, identity-review candidates and evidence,
+// relationship types and edges between copied persons with their decision
+// ledger, and their provenance dependencies.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
@@ -445,6 +446,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, err
 		}
 		result.Sources += extraSources
+		if err := copySubsetRelationships(tx); err != nil {
+			return nil, err
+		}
 	}
 
 	if options.IncludeAttributes {
@@ -823,6 +827,149 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			ON CONFLICT(alias) DO UPDATE SET service_id = excluded.service_id`); err != nil {
 			return fmt.Errorf("copy communication service aliases: %w", err)
 		}
+	}
+	return nil
+}
+
+// copySubsetRelationships mirrors the source's relationship type catalog and
+// copies the curated relationship data of copied persons. Types reconcile
+// through universal_id because the destination schema is seeded with its own
+// local ids; edges are copied only when both endpoints crossed the subset
+// boundary; and the decision ledger keeps its rows, so a re-import into the
+// subset honors the same decisions the source recorded — including deletion
+// tombstones. References that did not cross the boundary (a matched person or
+// accepted edge outside the subset) are cleared exactly as the live schema
+// clears them on deletion.
+func copySubsetRelationships(tx *sql.Tx) error {
+	hasRelationships, err := sourceTableExists(tx, "relationship_types")
+	if err != nil {
+		return fmt.Errorf("check relationship schema: %w", err)
+	}
+	if !hasRelationships {
+		return nil
+	}
+	// The destination holds only its own freshly seeded rows with nothing
+	// referencing them, so clearing every vCard mapping first lets the
+	// mirrored source values land without transient unique collisions (the
+	// source may have moved a mapping between types).
+	if _, err := tx.Exec(`UPDATE relationship_types SET vcard_related_type = NULL`); err != nil {
+		return fmt.Errorf("clear destination relationship type mappings: %w", err)
+	}
+	// inverse_type_id is remapped inline because SQLite evaluates CHECK
+	// constraints on the candidate row before conflict resolution: the
+	// non-canonical 'child' candidate needs a non-NULL inverse even when it
+	// resolves to the DO UPDATE path.
+	if _, err := tx.Exec(`
+		INSERT INTO relationship_types (
+		    universal_id, slug, forward_label, reverse_label,
+		    is_symmetric, is_canonical, inverse_type_id, vcard_related_type,
+		    color, icon, description, ownership, is_deletable,
+		    revision, created_at, updated_at
+		)
+		SELECT
+		    source_type.universal_id, source_type.slug,
+		    source_type.forward_label, source_type.reverse_label,
+		    source_type.is_symmetric, source_type.is_canonical,
+		    (
+		        SELECT destination_inverse.id
+		        FROM src.relationship_types source_inverse
+		        JOIN relationship_types destination_inverse
+		          ON destination_inverse.universal_id = source_inverse.universal_id
+		        WHERE source_inverse.id = source_type.inverse_type_id
+		    ),
+		    source_type.vcard_related_type,
+		    source_type.color, source_type.icon, source_type.description,
+		    source_type.ownership, source_type.is_deletable,
+		    source_type.revision, source_type.created_at, source_type.updated_at
+		FROM src.relationship_types source_type
+		WHERE TRUE
+		ON CONFLICT(universal_id) DO UPDATE SET
+		    slug = excluded.slug,
+		    forward_label = excluded.forward_label,
+		    reverse_label = excluded.reverse_label,
+		    is_symmetric = excluded.is_symmetric,
+		    is_canonical = excluded.is_canonical,
+		    vcard_related_type = excluded.vcard_related_type,
+		    color = excluded.color,
+		    icon = excluded.icon,
+		    description = excluded.description,
+		    ownership = excluded.ownership,
+		    is_deletable = excluded.is_deletable,
+		    revision = excluded.revision,
+		    created_at = excluded.created_at,
+		    updated_at = excluded.updated_at`); err != nil {
+		return fmt.Errorf("copy relationship types: %w", err)
+	}
+	// inverse_type_id is a database-local key; relink it through universal_id
+	// once every type row exists. Destination-only seeds (absent from an older
+	// source) keep their own links.
+	if _, err := tx.Exec(`
+		UPDATE relationship_types
+		SET inverse_type_id = (
+		    SELECT destination_inverse.id
+		    FROM src.relationship_types source_type
+		    JOIN src.relationship_types source_inverse
+		      ON source_inverse.id = source_type.inverse_type_id
+		    JOIN relationship_types destination_inverse
+		      ON destination_inverse.universal_id = source_inverse.universal_id
+		    WHERE source_type.universal_id = relationship_types.universal_id
+		)
+		WHERE EXISTS (
+		    SELECT 1 FROM src.relationship_types source_type
+		    WHERE source_type.universal_id = relationship_types.universal_id
+		)`); err != nil {
+		return fmt.Errorf("link relationship type inverses: %w", err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO person_relationships (
+		    id, source_person_id, target_person_id, relationship_type_id,
+		    start_year, start_month, start_day, end_year, end_month, end_day,
+		    status, notes, source, source_ref, confidence,
+		    vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid,
+		    created_by, updated_by, revision, created_at, updated_at
+		)
+		SELECT
+		    edge.id, edge.source_person_id, edge.target_person_id,
+		    destination_type.id,
+		    edge.start_year, edge.start_month, edge.start_day,
+		    edge.end_year, edge.end_month, edge.end_day,
+		    edge.status, edge.notes, edge.source, edge.source_ref, edge.confidence,
+		    edge.vcard_property, edge.vcard_group, edge.vcard_prop_id,
+		    edge.vcard_pid, edge.vcard_altid,
+		    edge.created_by, edge.updated_by, edge.revision,
+		    edge.created_at, edge.updated_at
+		FROM src.person_relationships edge
+		JOIN src.relationship_types source_type
+		  ON source_type.id = edge.relationship_type_id
+		JOIN relationship_types destination_type
+		  ON destination_type.universal_id = source_type.universal_id
+		WHERE edge.source_person_id IN (SELECT id FROM persons)
+		  AND edge.target_person_id IN (SELECT id FROM persons)`); err != nil {
+		return fmt.Errorf("copy person relationships: %w", err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO person_relationship_reviews (
+		    id, person_id, raw_related_value, raw_related_type, value_kind,
+		    matched_person_id, accepted_relationship_id, status, source,
+		    source_ref, vcard_property, vcard_group, vcard_prop_id, vcard_pid,
+		    vcard_altid, created_by, reviewed_by, reviewed_at,
+		    created_at, updated_at
+		)
+		SELECT
+		    review.id, review.person_id, review.raw_related_value,
+		    review.raw_related_type, review.value_kind,
+		    CASE WHEN review.matched_person_id IN (SELECT id FROM persons)
+		         THEN review.matched_person_id END,
+		    CASE WHEN review.accepted_relationship_id IN (SELECT id FROM person_relationships)
+		         THEN review.accepted_relationship_id END,
+		    review.status, review.source, review.source_ref,
+		    review.vcard_property, review.vcard_group, review.vcard_prop_id,
+		    review.vcard_pid, review.vcard_altid,
+		    review.created_by, review.reviewed_by, review.reviewed_at,
+		    review.created_at, review.updated_at
+		FROM src.person_relationship_reviews review
+		WHERE review.person_id IN (SELECT id FROM persons)`); err != nil {
+		return fmt.Errorf("copy person relationship reviews: %w", err)
 	}
 	return nil
 }

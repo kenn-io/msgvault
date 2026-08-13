@@ -54,7 +54,7 @@ func init() {
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeProfiles, "include-profiles", false,
-		"copy structured profile values, history, media, contact observations, and provenance; may expose sensitive personal data",
+		"copy structured profile values, history, media, contact observations, relationships, and provenance; may expose sensitive personal data",
 	)
 	_ = createSubsetCmd.MarkFlagRequired("output")
 	_ = createSubsetCmd.MarkFlagRequired("rows")
@@ -105,7 +105,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	}
 	if subsetIncludeProfiles {
 		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, and provenance metadata.")
+			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata.")
 	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,

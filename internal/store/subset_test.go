@@ -2320,3 +2320,109 @@ func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) 
 	).Scan(&count), "count legacy recipients without envelope snapshots")
 	assert.Equal(int64(4), count)
 }
+
+func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	alice, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	bob, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+
+	// A user-defined type and an edge that uses it, plus a seeded-type edge,
+	// so the copy exercises both catalog reconciliation and id remapping.
+	mentor, err := source.CreateRelationshipTypeContext(ctx, RelationshipTypeInput{
+		Slug: "mentor", ForwardLabel: "mentor", ReverseLabel: "mentee",
+	})
+	require.NoError(err)
+	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: alice.ID, TargetPersonID: bob.ID, TypeSlug: "mentor",
+		Source: ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: alice.ID, TargetPersonID: bob.ID, TypeSlug: "parent",
+		Source: ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+
+	// An automatically imported relationship that the user then deleted:
+	// its accepted-with-cleared-edge tombstone must survive the copy.
+	in := RelatedImport{PersonID: alice.ID, RawValue: bob.VCardUID, RawType: "friend",
+		ValueKind: RelatedValueKindText, Source: ProvenanceVCardImport, Actor: "system"}
+	resolved, err := source.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(resolved.Relationship)
+	edge, err := source.GetPersonRelationshipContext(ctx, resolved.Relationship.ID)
+	require.NoError(err)
+	require.NoError(source.DeletePersonRelationshipContext(ctx, edge.ID, edge.Revision))
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{IncludeProfiles: true})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	copiedMentor, err := destination.GetRelationshipTypeBySlugContext(ctx, "mentor")
+	require.NoError(err)
+	assert.Equal(mentor.UniversalID, copiedMentor.UniversalID)
+
+	views, err := destination.ListPersonRelationshipsContext(ctx, alice.ID, PersonRelationshipListOptions{})
+	require.NoError(err)
+	slugs := make([]string, 0, len(views))
+	for _, view := range views {
+		slugs = append(slugs, view.Relationship.TypeSlug)
+	}
+	assert.ElementsMatch([]string{"mentor", "parent"}, slugs)
+
+	// Re-importing the deleted occurrence into the subset must hit the
+	// copied tombstone, not recreate the relationship.
+	again, err := destination.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	assert.Nil(again.Relationship)
+	require.NotNil(again.Review)
+	assert.Equal(RelationshipReviewAccepted, again.Review.Status)
+	assert.Nil(again.Review.AcceptedRelationshipID)
+}
+
+func TestCopySubsetExcludesRelationshipsByDefault(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	alice, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	bob, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	_, err = source.CreateRelationshipTypeContext(ctx, RelationshipTypeInput{
+		Slug: "mentor", ForwardLabel: "mentor", ReverseLabel: "mentee",
+	})
+	require.NoError(err)
+	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: alice.ID, TargetPersonID: bob.ID, TypeSlug: "mentor",
+		Source: ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 5, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	views, err := destination.ListPersonRelationshipsContext(ctx, alice.ID, PersonRelationshipListOptions{})
+	require.NoError(err)
+	assert.Empty(views, "a shared subset must not copy relationships without the profiles opt-in")
+	_, err = destination.GetRelationshipTypeBySlugContext(ctx, "mentor")
+	require.ErrorIs(err, ErrRelationshipTypeNotFound)
+}
