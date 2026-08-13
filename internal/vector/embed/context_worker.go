@@ -743,7 +743,8 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			plans[target.scopeIndex].failedDocs[target.docIndex] = true
 			continue
 		}
-		if results[i].truncated {
+		if results[i].embeddedChunks != nil {
+			applyTruncatedEmbedding(&plans[target.scopeIndex].scope.docs[target.docIndex], results[i].embeddedChunks)
 			res.Truncated++
 		}
 		plans[target.scopeIndex].vectors[target.docIndex] = results[i].vectors
@@ -993,9 +994,11 @@ func documentInputUTF8Bytes(input DocumentInput) int {
 }
 
 type contextualDocumentEmbedding struct {
-	vectors   [][]float32
-	tooLarge  bool
-	truncated bool
+	vectors  [][]float32
+	tooLarge bool
+	// embeddedChunks holds the truncated chunk texts actually sent to the
+	// provider when the truncation fallback ran; nil for ordinary results.
+	embeddedChunks []string
 }
 
 // truncatedContextualDocumentFloorUTF8Bytes is the smallest chunk-text budget
@@ -1055,13 +1058,14 @@ func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input Docume
 	}
 	for budget/2 >= truncatedContextualDocumentFloorUTF8Bytes {
 		budget /= 2
-		vectors, err := w.deps.Client.EmbedDocuments(ctx, []DocumentInput{truncateDocumentInput(input, budget)})
+		truncated := truncateDocumentInput(input, budget)
+		vectors, err := w.deps.Client.EmbedDocuments(ctx, []DocumentInput{truncated})
 		if err == nil {
 			if len(vectors) != 1 || len(vectors[0]) != len(input.Chunks) {
 				return nil, fmt.Errorf("contextual truncated document chunk count mismatch: got %d, expected %d",
 					len(vectors), len(input.Chunks))
 			}
-			return []contextualDocumentEmbedding{{vectors: vectors[0], truncated: true}}, nil
+			return []contextualDocumentEmbedding{{vectors: vectors[0], embeddedChunks: truncated.Chunks}}, nil
 		}
 		var sizeErr *voyageSizeError
 		if !errors.Is(err, ErrDocumentTooLarge) && !errors.As(err, &sizeErr) {
@@ -1092,6 +1096,27 @@ func truncateDocumentInput(input DocumentInput, budget int) DocumentInput {
 		out.Chunks[i] = text
 	}
 	return out
+}
+
+// applyTruncatedEmbedding rewrites a document's owned chunks to describe the
+// truncated text that was actually embedded, so published offsets never cover
+// text the vector never saw. Chunks follow the trimOwnedChunkText layout: the
+// trailing SourceCharEnd-SourceCharStart runes of Text are the source span and
+// any leading runes are out-of-band context, so a prefix cut removes source
+// runes from the span's tail first.
+func applyTruncatedEmbedding(doc *Document, embedded []string) {
+	for i := range doc.Chunks {
+		if i >= len(embedded) || embedded[i] == doc.Chunks[i].Text {
+			continue
+		}
+		chunk := &doc.Chunks[i]
+		sourceRunes := max(0, chunk.SourceCharEnd-chunk.SourceCharStart)
+		prefixRunes := max(0, utf8.RuneCountInString(chunk.Text)-sourceRunes)
+		keptSource := min(sourceRunes, max(0, utf8.RuneCountInString(embedded[i])-prefixRunes))
+		chunk.Text = embedded[i]
+		chunk.SourceCharEnd = chunk.SourceCharStart + keptSource
+		chunk.Truncated = true
+	}
 }
 
 func sameDocumentRevisions(existing []vector.DocumentRecord, desired []Document) bool {

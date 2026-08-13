@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2041,6 +2042,19 @@ func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t 
 	doc, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", id))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, doc.State)
+
+	// Published offsets must describe only the truncated text that was
+	// actually embedded, not the original full chunk.
+	var start, end int
+	var truncated bool
+	require.NoError(t, f.backend.DB().QueryRow(
+		`SELECT chunk_char_start, chunk_char_end, truncated FROM embeddings WHERE message_id = ?`, id).
+		Scan(&start, &end, &truncated))
+	assert.Zero(t, start)
+	assert.True(t, truncated, "stored chunk must be flagged truncated")
+	assert.Greater(t, end, 0)
+	assert.Less(t, end, utf8.RuneCountInString(body),
+		"stored span must end within the embedded truncated prefix")
 
 	beforeIdle := f.client.Calls()
 	_, err = f.run()
