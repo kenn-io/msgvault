@@ -485,3 +485,27 @@ func TestConfig_GenerationFingerprint_IncludesEmbedScope(t *testing.T) {
 	assert.Contains(t, scoped.GenerationFingerprint(), ":smt-mms,sms",
 		"scope fingerprint should normalize and sort message types")
 }
+
+// TestConfig_GenerationFingerprint_IncludesEmbedScopeSources pins the account
+// dimension: resolved source IDs fold into the generation fingerprint, so an
+// account-scoped build never shares a generation with a full-corpus one.
+func TestConfig_GenerationFingerprint_IncludesEmbedScopeSources(t *testing.T) {
+	base := Config{
+		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},
+	}
+	baseline := base.GenerationFingerprint()
+
+	scoped := base
+	scoped.Embed.Scope.SourceIDs = []int64{7, 3, 7}
+
+	assert.NotEqual(t, baseline, scoped.GenerationFingerprint(),
+		"GenerationFingerprint should change when embedding is scoped to accounts")
+	assert.Contains(t, scoped.GenerationFingerprint(), ":ssrc-3,7",
+		"scope fingerprint should normalize and sort source IDs")
+
+	combined := base
+	combined.Embed.Scope.MessageTypes = []string{"email"}
+	combined.Embed.Scope.SourceIDs = []int64{3}
+	assert.Contains(t, combined.GenerationFingerprint(), ":smt-email:src-3",
+		"message types and source IDs compose in one scope fingerprint")
+}

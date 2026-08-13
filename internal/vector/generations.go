@@ -10,9 +10,9 @@ import (
 // fingerprint matches the supplied one. Production callers pass
 // Config.GenerationFingerprint() so the preprocessing policy is part
 // of the staleness check; a mismatch means an operator changed the
-// model, dimension, or any preprocess toggle without rebuilding the
-// index, and the active vectors are no longer comparable to what new
-// queries would embed.
+// embedding settings (model, dimension, preprocessing policy, or build
+// scope) without rebuilding the index, or built a one-off scoped generation
+// without making that scope durable in config.
 //
 // Error semantics:
 //   - ErrIndexStale: an active generation exists but its fingerprint

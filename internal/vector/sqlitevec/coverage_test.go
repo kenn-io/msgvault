@@ -229,7 +229,7 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 		Path:       filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension:  8,
 		MainDB:     st.DB(),
-		BuildScope: vector.NewBuildScope([]string{"sms"}),
+		BuildScope: vector.NewBuildScope([]string{"sms"}, nil),
 	})
 	require.NoError(err, "Open backend")
 	t.Cleanup(func() { _ = b.Close() })
@@ -264,7 +264,7 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	}), "Upsert embedded vectors")
 	require.NoError(st.SetEmbedGen(ctx, []int64{outOfScopeEmail, inScopeSMS}, int64(gen)), "stamp embedded")
 
-	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), []string{"sms"})
+	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), []string{"sms"}, nil)
 	require.NoError(err, "CoverageCountsScoped")
 	embedded, err := b.EmbeddedMessageCount(ctx, gen)
 	require.NoError(err, "EmbeddedMessageCount")
@@ -332,4 +332,130 @@ func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 
 	_, err = b.EmbeddedMessageCountForIDs(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
 	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
+}
+
+// TestCoverageSplit_SourceScopedEmbeddedHoldsInvariant mirrors the
+// message-type scoped invariant for the account dimension: coverage and the
+// embedded split count only the scoped sources, and the activation gate
+// ignores out-of-scope messages entirely — a generation covering one account
+// activates even while another account's messages are unstamped.
+func TestCoverageSplit_SourceScopedEmbeddedHoldsInvariant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	st := testutil.NewSQLiteTestStore(t)
+	srcA, err := st.GetOrCreateSource("gmail", "a@example.com")
+	require.NoError(err, "GetOrCreateSource a")
+	srcB, err := st.GetOrCreateSource("gmail", "b@example.com")
+	require.NoError(err, "GetOrCreateSource b")
+
+	b, err := Open(ctx, Options{
+		Path:       filepath.Join(t.TempDir(), "vectors.db"),
+		Dimension:  8,
+		MainDB:     st.DB(),
+		BuildScope: vector.NewBuildScope(nil, []int64{srcB.ID}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	makeMsg := func(src *store.Source, srcMsgID string) int64 {
+		convID, err := st.EnsureConversationWithType(src.ID, "conv-"+srcMsgID, "email_thread", "S")
+		require.NoError(err, "EnsureConversationWithType")
+		id, err := st.UpsertMessage(&store.Message{
+			SourceID:        src.ID,
+			SourceMessageID: srcMsgID,
+			ConversationID:  convID,
+			MessageType:     "email",
+			Subject:         sql.NullString{String: "s-" + srcMsgID, Valid: true},
+		})
+		require.NoErrorf(err, "UpsertMessage %s", srcMsgID)
+		return id
+	}
+	outOfScopeA := makeMsg(srcA, "a-unstamped")
+	inScopeB := makeMsg(srcB, "b-embedded")
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: outOfScopeA, Vector: []float32{1, 0, 0, 0, 0, 0, 0, 0}},
+		{MessageID: inScopeB, Vector: []float32{0, 1, 0, 0, 0, 0, 0, 0}},
+	}), "Upsert embedded vectors")
+	require.NoError(st.SetEmbedGen(ctx, []int64{inScopeB}, int64(gen)), "stamp only the in-scope message")
+
+	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), nil, []int64{srcB.ID})
+	require.NoError(err, "CoverageCountsScoped")
+	embedded, err := b.EmbeddedMessageCount(ctx, gen)
+	require.NoError(err, "EmbeddedMessageCount")
+	blank := max(stamped-embedded, 0)
+
+	assert.Equal(int64(1), live, "only source B is in scope")
+	assert.Equal(int64(1), stamped)
+	assert.Equal(int64(1), embedded, "out-of-scope source A vector excluded")
+	assert.Equal(int64(0), blank)
+	assert.Equal(int64(0), missingCount)
+	assert.Equal(live, embedded+blank+missingCount,
+		"invariant: live == embedded + blank + missing")
+
+	// The activation gate is source-scoped too: source A's unstamped message
+	// must not block activation of the scoped generation.
+	require.NoError(b.ActivateGeneration(ctx, gen, false),
+		"scoped generation activates with out-of-scope messages unstamped")
+}
+
+// TestActivateGeneration_RefusesEmptySourceScope pins the empty-scope
+// activation guard: a source scope matching no live messages trivially
+// satisfies the no-missing gate, so without the guard every non-forced
+// activation path (CLI drain, daemon scheduler, `embeddings activate`)
+// would swap in an empty index and retire the serving generation. force
+// remains the operator override.
+func TestActivateGeneration_RefusesEmptySourceScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	st := testutil.NewSQLiteTestStore(t)
+	srcA, err := st.GetOrCreateSource("gmail", "a@example.com")
+	require.NoError(err, "GetOrCreateSource a")
+	srcB, err := st.GetOrCreateSource("gmail", "b@example.com")
+	require.NoError(err, "GetOrCreateSource b")
+
+	// Source A holds the archive's only live message; source B — the scoped
+	// account — has none (added but never synced).
+	convID, err := st.EnsureConversationWithType(srcA.ID, "conv-a", "email_thread", "S")
+	require.NoError(err, "EnsureConversationWithType")
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID:        srcA.ID,
+		SourceMessageID: "a-1",
+		ConversationID:  convID,
+		MessageType:     "email",
+		Subject:         sql.NullString{String: "s", Valid: true},
+	})
+	require.NoError(err, "UpsertMessage")
+
+	b, err := Open(ctx, Options{
+		Path:       filepath.Join(t.TempDir(), "vectors.db"),
+		Dimension:  8,
+		MainDB:     st.DB(),
+		BuildScope: vector.NewBuildScope(nil, []int64{srcB.ID}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	serving, err := b.CreateGeneration(ctx, "test-model", 8, "fp-serving")
+	require.NoError(err, "CreateGeneration serving")
+	require.NoError(b.ActivateGeneration(ctx, serving, true), "force-activate serving generation")
+
+	empty, err := b.CreateGeneration(ctx, "test-model", 8, "fp-empty")
+	require.NoError(err, "CreateGeneration empty-scope build")
+
+	err = b.ActivateGeneration(ctx, empty, false)
+	require.ErrorIs(err, vector.ErrRefuseActivateEmptyScope,
+		"an empty source scope must be refused, not activated as an empty index")
+
+	active, err := b.ActiveGeneration(ctx)
+	require.NoError(err, "ActiveGeneration")
+	assert.Equal(serving, active.ID, "the serving generation must remain active")
+
+	require.NoError(b.ActivateGeneration(ctx, empty, true), "force overrides the guard")
 }

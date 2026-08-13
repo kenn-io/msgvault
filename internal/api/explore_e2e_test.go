@@ -347,6 +347,67 @@ func TestExploreSemanticPaginationFollowsSnapshotRankNotArchiveDate(t *testing.T
 	assertions.Equal(int64(2), *secondPage.Rows[0].AnchorMessageID)
 }
 
+// TestExploreSnapshotReuseRevalidatesActiveGeneration guards the cached
+// snapshot path against generation swaps: a one-off scoped rebuild (or any
+// full rebuild) can activate a new generation without changing the daemon's
+// configured scope, so the status stays ready and only the snapshot pins
+// the retired generation. Reuse must re-run the issuing path's
+// active-generation check instead of serving retired candidates.
+func TestExploreSnapshotReuseRevalidatesActiveGeneration(t *testing.T) {
+	vecCfg := vector.Config{
+		Enabled:    true,
+		Embeddings: vector.EmbeddingsConfig{Model: "test", Dimension: 2},
+	}
+	fingerprint := vecCfg.GenerationFingerprint()
+	newSnapshotServer := func(t *testing.T) (*Server, *fakeVectorBackend, string) {
+		t.Helper()
+		engine := newExploreDuckDBFixture(t)
+		backend := &fakeVectorBackend{
+			active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: fingerprint, State: vector.GenerationActive},
+			searchHits: []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}, {MessageID: 2, Score: .8, Rank: 2}},
+		}
+		hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: fingerprint})
+		store := &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}}, total: 2, stats: &StoreStats{}}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store, Engine: engine,
+			HybridEngine: hybridEngine, Backend: backend, VectorCfg: vecCfg, Logger: testLogger(),
+		})
+		first := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"alpha","search_mode":"semantic","limit":1}`)
+		require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+		var firstPage ExploreHTTPResponse
+		require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstPage))
+		require.NotEmpty(t, firstPage.NextCursor)
+		return srv, backend, firstPage.NextCursor
+	}
+
+	t.Run("same-fingerprint generation swap expires the snapshot", func(t *testing.T) {
+		srv, backend, cursor := newSnapshotServer(t)
+		backend.active = &vector.Generation{ID: 8, Model: "test", Dimension: 2, Fingerprint: fingerprint, State: vector.GenerationActive}
+
+		second := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(
+			`{"query":"alpha","search_mode":"semantic","limit":1,"cursor":%q}`, cursor))
+		assert.Equal(t, http.StatusConflict, second.Code, second.Body.String())
+		assert.Contains(t, second.Body.String(), "candidate_snapshot_expired")
+	})
+
+	t.Run("fingerprint change returns index_stale", func(t *testing.T) {
+		srv, backend, cursor := newSnapshotServer(t)
+		backend.active = &vector.Generation{ID: 8, Model: "test", Dimension: 2, Fingerprint: fingerprint + ":ssrc-3", State: vector.GenerationActive}
+
+		second := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(
+			`{"query":"alpha","search_mode":"semantic","limit":1,"cursor":%q}`, cursor))
+		assert.Equal(t, http.StatusServiceUnavailable, second.Code, second.Body.String())
+		assert.Contains(t, second.Body.String(), "index_stale")
+	})
+
+	t.Run("unchanged generation keeps serving the snapshot", func(t *testing.T) {
+		srv, _, cursor := newSnapshotServer(t)
+		second := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(
+			`{"query":"alpha","search_mode":"semantic","limit":1,"cursor":%q}`, cursor))
+		assert.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	})
+}
+
 func TestExploreSemanticPreflightRequiresAndReusesCandidateSnapshot(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

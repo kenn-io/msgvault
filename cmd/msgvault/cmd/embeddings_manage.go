@@ -65,15 +65,15 @@ type embeddingGenerationRow struct {
 // used by the activation gate (which only needs MissingCount). It leaves
 // EmbeddedCount/BlankCount at zero — use fillFullCoverage for the display
 // table where the embedded/blank split is wanted. A failure is surfaced to
-// the caller.
-func fillCoverage(ctx context.Context, row *embeddingGenerationRow) error {
+// the caller. The scope is passed in explicitly so daemon handlers can use
+// a per-request resolved copy instead of the shared global config.
+func fillCoverage(ctx context.Context, scope vector.BuildScope, row *embeddingGenerationRow) error {
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db for coverage: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	scope := cfg.Vector.Embed.Scope.BuildScope()
-	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
+	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return err
 	}
@@ -90,14 +90,13 @@ func fillCoverage(ctx context.Context, row *embeddingGenerationRow) error {
 // DONE but with no vector (the empty/unembeddable case). The invariant
 // live == embedded + blank + missing holds. The backend handle is passed
 // in by the caller (which already opened it for the generation listing).
-func fillFullCoverage(ctx context.Context, backend vector.Backend, row *embeddingGenerationRow) error {
+func fillFullCoverage(ctx context.Context, backend vector.Backend, scope vector.BuildScope, row *embeddingGenerationRow) error {
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db for coverage: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	scope := cfg.Vector.Embed.Scope.BuildScope()
-	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
+	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return err
 	}
@@ -140,6 +139,9 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
+	if err := ensureEmbedScopeResolved(); err != nil {
+		return err
+	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
 	if err != nil {
 		return err
@@ -177,7 +179,7 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 			if rows[i].State == vector.GenerationRetired {
 				continue
 			}
-			if err := fillFullCoverage(cmd.Context(), backend, &rows[i]); err != nil {
+			if err := fillFullCoverage(cmd.Context(), backend, cfg.Vector.Embed.Scope.BuildScope(), &rows[i]); err != nil {
 				return err
 			}
 		}
@@ -318,6 +320,9 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
+	if err := ensureEmbedScopeResolved(); err != nil {
+		return err
+	}
 
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
 	if err != nil {
@@ -354,7 +359,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			}
 			contextualSequence = &state.LatestJournalSequence
 		} else {
-			if err := fillCoverage(cmd.Context(), &row); err != nil {
+			if err := fillCoverage(cmd.Context(), cfg.Vector.Embed.Scope.BuildScope(), &row); err != nil {
 				return err
 			}
 			if row.MissingCount > 0 {
@@ -516,6 +521,13 @@ func planCLIEmbeddingsActivate(
 	if err := ensureMainSchema(); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
+	// This runs on daemon HTTP handler goroutines, so the account scope is
+	// resolved into a per-request config copy — mutating the shared global
+	// cfg here would race with concurrent plan requests.
+	vecCfg, err := openResolvedVectorConfig()
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
 	if err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
@@ -529,7 +541,7 @@ func planCLIEmbeddingsActivate(
 	if row.State != vector.GenerationBuilding {
 		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d is %q, not %q", gen, row.State, vector.GenerationBuilding)
 	}
-	expected := cfg.Vector.GenerationFingerprint()
+	expected := vecCfg.GenerationFingerprint()
 	if row.Fingerprint != expected && !force {
 		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d fingerprint=%q does not match config=%q; pass --force to activate anyway",
 			gen, row.Fingerprint, expected)
@@ -540,7 +552,7 @@ func planCLIEmbeddingsActivate(
 				return api.CLIEmbeddingsPlanResponse{}, err
 			}
 		} else {
-			if err := fillCoverage(ctx, &row); err != nil {
+			if err := fillCoverage(ctx, vecCfg.Embed.Scope.BuildScope(), &row); err != nil {
 				return api.CLIEmbeddingsPlanResponse{}, err
 			}
 			if row.MissingCount > 0 {

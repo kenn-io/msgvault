@@ -315,6 +315,25 @@ type Server struct {
 	backend      vector.Backend
 	vectorStatus VectorStatus
 	vectorErr    string
+	// vectorStaleLatch pins a stale status that refreshVectorStatusIfStale
+	// must not clear: set when the durable embedding scope drifts from the
+	// scope the installed components were initialized with. The active
+	// generation still matches the STARTUP fingerprint in that state, so
+	// the ordinary refresh would flip straight back to ready. Only a
+	// successful reinit (SetVectorFeatures) clears the latch.
+	vectorStaleLatch bool
+	// vectorScopeCheck re-resolves the durable embedding scope on the
+	// vector-search preflight path (throttled by vectorScopeNextCheck) so
+	// drift is detected even when no embed job ever runs. Wired by the
+	// daemon; see SetVectorScopeCheck.
+	vectorScopeCheck     func(ctx context.Context) (string, error)
+	vectorScopeNextCheck time.Time
+	// vectorFreshNextCheck throttles maybeRefreshVectorFreshness, the
+	// ready→stale counterpart of refreshVectorStatusIfStale: a
+	// daemon-proxied one-off scoped build can activate a generation whose
+	// fingerprint no longer matches the installed configuration without
+	// any config change, and nothing else re-validates a ready status.
+	vectorFreshNextCheck time.Time
 	// backupFreeze tracks the single active backup freeze window opened via
 	// POST /api/v1/backup/freeze/begin. See backup_freeze.go.
 	backupFreeze backupFreezeState
@@ -1203,12 +1222,14 @@ func (s *Server) handleDaemonIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleHealth returns a simple health check response.
+// handleHealth returns a simple health check response. It is served
+// unauthenticated, so the vector view carries no detail message — init and
+// drift details can name configured account identifiers.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	s.refreshVectorStatusIfStale(r.Context())
+	s.refreshVectorStatus(r.Context())
 	writeJSON(w, http.StatusOK, HealthResponse{
 		Status:          "ok",
-		Vector:          s.vectorHealth(),
+		Vector:          s.vectorHealthPublic(),
 		Operation:       s.operationBusyHealth(),
 		AnalyticsEngine: s.analyticsModeForContext(r.Context()),
 	})
@@ -1217,7 +1238,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleAuthenticatedHealth returns health details that are safe behind the
 // API-key boundary.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
-	s.refreshVectorStatusIfStale(r.Context())
+	s.refreshVectorStatus(r.Context())
 	writeJSON(w, http.StatusOK, HealthResponse{
 		Status:          "ok",
 		Vector:          s.vectorHealth(),

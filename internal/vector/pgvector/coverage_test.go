@@ -100,7 +100,7 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	b, err := Open(ctx, Options{
 		DB:         db,
 		Dimension:  8,
-		BuildScope: vector.NewBuildScope([]string{"sms"}),
+		BuildScope: vector.NewBuildScope([]string{"sms"}, nil),
 	})
 	require.NoError(err, "Open backend")
 	t.Cleanup(func() { _ = b.Close() })
@@ -154,6 +154,41 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 		"invariant: live == embedded + blank + missing")
 }
 
+func TestStats_SourceScopeExcludesOutOfScopePendingMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	b, err := Open(ctx, Options{
+		DB:         db,
+		Dimension:  8,
+		BuildScope: vector.NewBuildScope(nil, []int64{1}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO messages (id, source_id, embed_gen) VALUES
+			(1, 1, NULL),
+			(2, 2, NULL)
+		ON CONFLICT (id) DO UPDATE SET
+			source_id = EXCLUDED.source_id,
+			embed_gen = NULL,
+			deleted_at = NULL,
+			deleted_from_source_at = NULL`)
+	require.NoError(err, "seed in-scope and out-of-scope messages")
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err, "CreateGeneration")
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = 1`, int64(gen))
+	require.NoError(err, "stamp in-scope message")
+
+	stats, err := b.Stats(ctx, gen)
+	require.NoError(err, "Stats")
+	assert.Equal(int64(0), stats.PendingCount,
+		"an unstamped out-of-scope message must not make a source-scoped generation pending")
+}
+
 func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -190,4 +225,47 @@ func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 
 	_, err = b.EmbeddedMessageCountForIDs(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
 	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
+}
+
+// TestActivateGeneration_RefusesEmptySourceScope mirrors the sqlitevec
+// empty-scope activation guard for PostgreSQL, where the guard is folded
+// into the gated promote UPDATE atomically: a source scope matching no live
+// messages must refuse a non-forced activation and leave the serving
+// generation active. force remains the operator override.
+func TestActivateGeneration_RefusesEmptySourceScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
+	b, err := Open(ctx, Options{
+		DB:         db,
+		Dimension:  8,
+		BuildScope: vector.NewBuildScope(nil, []int64{99}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	// The archive's only live message belongs to source 1; the scoped
+	// source 99 has none (added but never synced).
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO messages (id, source_id) VALUES (1, 1) ON CONFLICT DO NOTHING`)
+	require.NoError(err, "insert out-of-scope message")
+
+	serving, err := b.CreateGeneration(ctx, "test-model", 8, "fp-serving")
+	require.NoError(err, "CreateGeneration serving")
+	require.NoError(b.ActivateGeneration(ctx, serving, true), "force-activate serving generation")
+
+	empty, err := b.CreateGeneration(ctx, "test-model", 8, "fp-empty")
+	require.NoError(err, "CreateGeneration empty-scope build")
+
+	err = b.ActivateGeneration(ctx, empty, false)
+	require.ErrorIs(err, vector.ErrRefuseActivateEmptyScope,
+		"an empty source scope must be refused, not activated as an empty index")
+
+	active, err := b.ActiveGeneration(ctx)
+	require.NoError(err, "ActiveGeneration")
+	assert.Equal(serving, active.ID, "the serving generation must remain active")
+
+	require.NoError(b.ActivateGeneration(ctx, empty, true), "force overrides the guard")
 }

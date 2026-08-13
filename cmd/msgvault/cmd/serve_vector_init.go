@@ -136,8 +136,14 @@ func startVectorInit(
 		h.vf = vf
 		h.mu.Unlock()
 		apiServer.SetVectorFeatures(vf.HybridEngine, vf.Backend, vf.Cfg)
+		// Preflight drift detection: vector-search requests re-resolve the
+		// durable account scope (throttled) so drift latches index_stale
+		// even on daemons whose embed job never runs (empty cron,
+		// run_after_sync=false). The embed job's own per-run check remains
+		// the detection path for scheduled embeds.
+		apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope()))
 		checkVectorIndexFreshness(ctx, apiServer, vf)
-		if err := registerEmbedJob(sched, vf, s); err != nil {
+		if err := registerEmbedJob(sched, vf, s, apiServer); err != nil {
 			// Cron was validated in precheckVectorFeatures, so this is an
 			// invariant violation, not user error; vector search still works.
 			logger.Error("register embed job failed", "error", err)
@@ -154,17 +160,47 @@ func startVectorInit(
 // index_stale. Only ErrIndexStale flips the status: a still-building or
 // not-yet-configured index (ErrIndexBuilding/ErrNotEnabled) and transient
 // backend errors leave the freshly-installed "ready" status untouched, since
-// those are not the "index does not match the configured model" failure this
+// those are not the "index does not match the configured embedding settings" failure this
 // status exists to expose.
 func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *vectorFeatures) {
 	_, err := resolveActiveGeneration(ctx, vf.Backend, vf.Cfg.GenerationFingerprint())
 	if !errors.Is(err, vector.ErrIndexStale) {
 		return
 	}
-	detail := err.Error() + "; run `msgvault embeddings build --full-rebuild` to rebuild"
-	logger.Warn("vector index does not match the configured model; vector search unavailable until rebuilt",
+	detail := err.Error() + "; if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild"
+	logger.Warn("vector index does not match configured embedding settings; vector search unavailable",
 		"detail", detail)
 	apiServer.SetVectorStale(detail)
+}
+
+// embedScopeDriftDetail is the operator-facing explanation for a latched
+// scope-drift stale: what changed and how to recover.
+func embedScopeDriftDetail(resolved, initialized vector.BuildScope) string {
+	return fmt.Sprintf(
+		"the configured embedding scope now resolves to %q but vector search was initialized with %q; restart the daemon to reinitialize, then run `msgvault embeddings build --full-rebuild` if the new scope is intended",
+		resolved.Fingerprint(), initialized.Fingerprint())
+}
+
+// embedScopeDriftCheck is the daemon's preflight scope-drift check: it
+// re-resolves the durable account configuration against the open store and
+// reports a stale-latching detail when the scope has drifted OR become
+// deterministically unresolvable (a configured account removed or
+// ambiguous). Transient resolution failures (a busy database) pass through
+// as errors so the preflight logs and retries them instead of latching.
+func embedScopeDriftCheck(s *store.Store, initialized vector.BuildScope) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) {
+		resolved, err := configuredEmbedBuildScope(s)
+		if errors.Is(err, vector.ErrScopeUnresolvable) {
+			return err.Error() + "; fix [vector.embed.scope] accounts and restart the daemon", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if resolved.Fingerprint() == initialized.Fingerprint() {
+			return "", nil
+		}
+		return embedScopeDriftDetail(resolved, initialized), nil
+	}
 }
 
 // registerEmbedJob wires the embed worker into the scheduler (cron-driven
@@ -174,8 +210,16 @@ type embedJobRegistrar interface {
 	SetEmbedJob(job *scheduler.EmbedJob, schedule string, runAfterSync bool) error
 }
 
-func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Store) error {
+func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Store, apiServer *api.Server) error {
 	embedJob := newSchedulerEmbedJob(vf, s)
+	embedJob.ResolveBuildScope = func() (vector.BuildScope, error) {
+		return configuredEmbedBuildScope(s)
+	}
+	// Scope drift also has to reach searchers, not just the log: the
+	// installed components still match the active generation's
+	// fingerprint, so without this latch the API keeps reporting
+	// "ready" while serving the wrongly-scoped index.
+	embedJob.OnScopeDrift = apiServer.SetVectorScopeDrift
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
 		return fmt.Errorf("register embed job: %w", err)

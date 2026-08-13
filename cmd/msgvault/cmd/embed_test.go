@@ -333,7 +333,7 @@ func TestFillCoverageUsesEmbeddingScope(t *testing.T) {
 	cfg.Vector.Embed.Scope.MessageTypes = []string{"sms"}
 
 	row := embeddingGenerationRow{ID: 2}
-	require.NoError(fillCoverage(t.Context(), &row))
+	require.NoError(fillCoverage(t.Context(), cfg.Vector.Embed.Scope.BuildScope(), &row))
 
 	assert.Equal(int64(1), row.LiveCount)
 	assert.Equal(int64(0), row.MissingCount)

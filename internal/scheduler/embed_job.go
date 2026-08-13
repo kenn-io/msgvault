@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ type EmbedCoverage interface {
 }
 
 type ScopedEmbedCoverage interface {
-	MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string) (int64, error)
+	MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (int64, error)
 }
 
 // Compile-time check that the production worker satisfies EmbedRunner.
@@ -126,6 +127,25 @@ type EmbedJob struct {
 	// worker scans for this generation. Empty means the full live corpus.
 	BuildScope vector.BuildScope
 
+	// ResolveBuildScope re-resolves the durable embedding scope immediately
+	// before each scheduled run. If it differs from BuildScope, Run fails
+	// closed: the worker and backend were initialized with the old scope and
+	// must be reinitialized before any embedding can resume. This prevents a
+	// reused database source ID from being treated as the formerly configured
+	// account.
+	ResolveBuildScope func() (vector.BuildScope, error)
+
+	// OnScopeDrift is invoked (once per Run that detects it) when
+	// ResolveBuildScope returns a scope different from BuildScope, or fails
+	// deterministically (vector.ErrScopeUnresolvable — a configured account
+	// removed or ambiguous). The daemon wires this to the API server's
+	// stale latch so searches stop reporting "ready" against components
+	// initialized with the old scope — the active generation still matches
+	// the startup fingerprint, so without this signal nothing else would
+	// flag the drift. Transient resolution failures do not trigger it.
+	// May be nil.
+	OnScopeDrift func(detail string)
+
 	// Now returns the current time; overridable in tests to drive the
 	// backstop interval deterministically. nil uses time.Now.
 	Now func() time.Time
@@ -169,6 +189,34 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 	defer j.running.Unlock()
+
+	if j.ResolveBuildScope != nil {
+		resolved, err := j.ResolveBuildScope()
+		if err != nil {
+			log.Error("embed run skipped: configured scope could not be resolved", "error", err)
+			// A deterministic failure (a configured account removed or
+			// ambiguous — vector.ErrScopeUnresolvable) cannot heal on retry
+			// and means the initialized scope no longer matches the
+			// configuration, so it must latch searches stale like a scope
+			// change. Transient failures only skip the run.
+			if j.OnScopeDrift != nil && errors.Is(err, vector.ErrScopeUnresolvable) {
+				j.OnScopeDrift(err.Error() + "; fix [vector.embed.scope] accounts and restart the daemon")
+			}
+			return
+		}
+		configured := vector.NewBuildScope(j.BuildScope.MessageTypes, j.BuildScope.SourceIDs)
+		if resolved.Fingerprint() != configured.Fingerprint() {
+			log.Error("embed run skipped: configured scope changed; reinitialize vector features and rebuild before embedding",
+				"configured_scope", resolved.Fingerprint(),
+				"initialized_scope", configured.Fingerprint())
+			if j.OnScopeDrift != nil {
+				j.OnScopeDrift(fmt.Sprintf(
+					"the configured embedding scope now resolves to %q but vector search was initialized with %q; restart the daemon to reinitialize, then run `msgvault embeddings build --full-rebuild` if the new scope is intended",
+					resolved.Fingerprint(), configured.Fingerprint()))
+			}
+			return
+		}
+	}
 
 	if _, err := j.Worker.ReclaimStale(ctx); err != nil {
 		if jobctx.YieldedToWaiter(ctx) {
@@ -329,12 +377,12 @@ func (j *EmbedJob) activateBuilding(
 }
 
 func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID) (int64, error) {
-	scope := vector.NewBuildScope(j.BuildScope.MessageTypes)
+	scope := vector.NewBuildScope(j.BuildScope.MessageTypes, j.BuildScope.SourceIDs)
 	if scope.IsEmpty() {
 		return j.Store.MissingCount(ctx, int64(target))
 	}
 	if scoped, ok := j.Store.(ScopedEmbedCoverage); ok {
-		return scoped.MissingCountScoped(ctx, int64(target), scope.MessageTypes)
+		return scoped.MissingCountScoped(ctx, int64(target), scope.MessageTypes, scope.SourceIDs)
 	}
 	return 0, errors.New("embed coverage store does not support scoped missing counts")
 }

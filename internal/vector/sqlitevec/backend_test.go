@@ -446,7 +446,7 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		Path:       filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension:  768,
 		MainDB:     main,
-		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
+		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}, nil),
 	})
 	require.NoError(
 		err, "Open")

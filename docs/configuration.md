@@ -133,6 +133,9 @@ collapse_whitespace = true
 [vector.embed.scope]
 # Empty means embed the full archive. Set this for partial generations.
 message_types = ["sms", "mms"]
+# Use stable account identifiers, not numeric source IDs. This keeps a scoped
+# generation usable after a daemon restart.
+# accounts = ["you@work.example"]
 
 [[synctech_sms.sources]]
 name = "phone-backups"
@@ -615,7 +618,7 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
 
-The index generation fingerprint includes the model, dimension, preprocessing settings, `max_input_chars`, and embedding policy. Changing those settings triggers a stale-index error on the next vector/hybrid query until you run `msgvault embeddings build --full-rebuild`.
+The index generation fingerprint includes the model, dimension, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`
 
@@ -657,6 +660,20 @@ a scoped index must include a compatible `message_type` filter, such as
 `msgvault search "release planning" --mode hybrid --message-type teams`; an
 unscoped vector/hybrid query returns `index_scope_mismatch` instead of using the
 partial index as if it covered the full archive.
+
+| Key | Default | Description |
+|---|---|---|
+| `message_types` | `[]` (all types) | Embed only messages of these types. |
+| `accounts` | `[]` (all accounts) | Embed only these accounts' messages, by canonical account identifier (display names are rejected here — they are not stable identities for a privacy boundary). Resolved to source IDs at startup; an unknown identifier fails vector initialization (or the CLI command). The daemon's scheduled embeds honor this scope, so it also acts as a privacy boundary: unlisted accounts' text is never sent to the embedding endpoint. |
+
+`accounts` and `message_types` compose (both filters apply). The CLI flags
+`--account`/`--collection` on `msgvault embeddings build`/`resume` override
+`accounts` for a single run. Either scope dimension is part of the generation
+fingerprint: changing it requires `msgvault embeddings build --full-rebuild`,
+and because the fingerprint records archive-local source IDs, re-adding an
+account under a new source ID also requires a rebuild. Account-scoped indexes
+do not gate search the way message-type scopes do: out-of-scope accounts
+simply have no vector matches and rank on BM25 alone in hybrid mode.
 
 #### `[vector.embed.schedule]`
 
