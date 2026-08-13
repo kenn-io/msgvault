@@ -589,6 +589,8 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			tmpDir := setupTestSQLiteEmpty(t)
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -596,20 +598,20 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			createFakeParquet(t, analyticsDir)
 
 			state, err := query.ReadCacheSyncState(analyticsDir)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			state.PublishedAt = tt.publishedAt
 			stateData, err := json.Marshal(state)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
+			requirements.NoError(err)
+			requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
 
 			db, err := sql.Open("sqlite3", dbPath)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = db.Exec(`
 				INSERT INTO messages (id, source_id, source_message_id, sent_at)
 				VALUES (1, 1, 'new-message', ?)
 			`, now)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
+			requirements.NoError(err)
+			requirements.NoError(db.Close())
 
 			savedCfg := cfg
 			cfg = &config.Config{
@@ -639,15 +641,15 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 
 			err = rebuildCacheAfterScheduledSync(context.Background(), "test-source")
 			if tt.buildErr != nil {
-				require.ErrorIs(t, err, tt.buildErr)
+				requirements.ErrorIs(err, tt.buildErr)
 			} else {
-				require.NoError(t, err)
+				requirements.NoError(err)
 			}
-			assert.Equal(t, tt.wantBuilds, builds)
+			assertions.Equal(tt.wantBuilds, builds)
 
 			after, err := query.ReadCacheSyncState(analyticsDir)
-			require.NoError(t, err)
-			assert.Equal(t, tt.publishedAt, after.PublishedAt)
+			requirements.NoError(err)
+			assertions.Equal(tt.publishedAt, after.PublishedAt)
 		})
 	}
 }
