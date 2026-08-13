@@ -2074,7 +2074,6 @@ func runBuildCacheSubprocessCommand(cmd *exec.Cmd, stderrWriter io.Writer) error
 	return nil
 }
 
-var runBuildCacheSubprocess = buildCacheSubprocess
 var runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
 	return buildCacheSubprocessMode(ctx, buildCacheModeScheduledAuto)
 }
