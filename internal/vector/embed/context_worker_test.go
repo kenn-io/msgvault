@@ -2052,7 +2052,7 @@ func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t 
 		Scan(&start, &end, &truncated))
 	assert.Zero(t, start)
 	assert.True(t, truncated, "stored chunk must be flagged truncated")
-	assert.Greater(t, end, 0)
+	assert.Positive(t, end)
 	assert.Less(t, end, utf8.RuneCountInString(body),
 		"stored span must end within the embedded truncated prefix")
 
