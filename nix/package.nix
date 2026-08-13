@@ -7,6 +7,7 @@
   nodejs,
   runCommand,
   sqlite,
+  writeText,
 }:
 let
   version = "0.19.3";
@@ -18,6 +19,47 @@ let
     hash = "sha256-XV7CuqMC+jlhaWQyXzcDukqnF73Lycy2Kueb7rMhxz8=";
   };
 
+  # bun's shim linking is unreliable inside the nix sandbox: install
+  # succeeds but node_modules/.bin ends up with an incomplete subset of
+  # shims (observed: esbuild and openapi-typescript missing while acorn
+  # and js-yaml exist). Recreate any missing shims from package.json bin
+  # fields so the web build does not depend on bun's linker.
+  relinkBunBins = writeText "relink-bun-bins.js" ''
+    const fs = require('fs');
+    const path = require('path');
+    const nm = path.resolve('web/node_modules');
+    const binDir = path.join(nm, '.bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const pkgDirs = [];
+    for (const entry of fs.readdirSync(nm)) {
+      if (entry === '.bin') continue;
+      if (entry.startsWith('@')) {
+        for (const scoped of fs.readdirSync(path.join(nm, entry))) {
+          pkgDirs.push(path.join(nm, entry, scoped));
+        }
+      } else {
+        pkgDirs.push(path.join(nm, entry));
+      }
+    }
+    let created = 0;
+    for (const dir of pkgDirs) {
+      let pkg;
+      try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
+      catch { continue; }
+      let bins = pkg.bin;
+      if (!bins) continue;
+      if (typeof bins === 'string') bins = { [pkg.name.split('/').pop()]: bins };
+      for (const [name, rel] of Object.entries(bins)) {
+        const shim = path.join(binDir, name);
+        const target = path.join(dir, rel);
+        if (fs.existsSync(shim) || !fs.existsSync(target)) continue;
+        fs.chmodSync(target, 0o755);
+        fs.symlinkSync(path.relative(binDir, target), shim);
+        created++;
+      }
+    }
+    console.log("relink-bun-bins: created " + created + " missing bin shims");
+  '';
 in
 buildGoModule {
   pname = "msgvault";
@@ -84,15 +126,7 @@ buildGoModule {
   };
 
   preBuild = ''
-    echo "cache entry:"; stat -c '%F' "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1"
-    stat -c '%N %F' "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1/bin/cli.js" || true
-    echo "nm pkg:"; find web/node_modules/openapi-typescript -maxdepth 2 2>&1 | head -6
-    stat -c '%N %F' web/node_modules/openapi-typescript/bin/cli.js 2>&1 || true
-    stat -c '%N %F' web/node_modules/openapi-typescript/package.json 2>&1 || true
-    echo "dotbin:"; stat -c '%F' web/node_modules/.bin 2>&1 || true
-    ls web/node_modules/.bin 2>&1 | head -4 || true
-    echo "kit-ui:"; stat -c '%N %F' web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
-    echo "DIAGNOSTIC HALT"; exit 1
+    node ${relinkBunBins}
     bun run --cwd web generate
     bun run --cwd web build
     mkdir -p internal/web/dist
