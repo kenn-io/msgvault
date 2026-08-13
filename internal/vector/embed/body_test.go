@@ -17,17 +17,18 @@ func TestBodyTextForEmbedding(t *testing.T) {
 }
 
 func TestHydrationBodyText_MatchesPerFamilyAssembly(t *testing.T) {
+	assert := assert.New(t)
 	// Chat chunks were assembled with the whitespace-aware HTML fallback;
 	// every other family stored offsets against plain BodyTextForEmbedding.
-	assert.Equal(t, "hello",
+	assert.Equal("hello",
 		HydrationBodyText("beeper", " \n\t", "<p>hello</p>"),
 		"chat hydration must apply the whitespace-aware HTML fallback")
-	assert.Equal(t, " \n\t",
+	assert.Equal(" \n\t",
 		HydrationBodyText("email", " \n\t", "<p>hello</p>"),
 		"non-chat hydration must keep the plain derivation its offsets used")
-	assert.Equal(t, "plain",
+	assert.Equal("plain",
 		HydrationBodyText("beeper", "plain", "<p>hello</p>"))
-	assert.Equal(t, "hello",
+	assert.Equal("hello",
 		HydrationBodyText("meeting_transcript", "", "<p>hello</p>"),
 		"empty body_text falls back to HTML in both derivations")
 }
