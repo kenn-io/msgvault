@@ -83,7 +83,8 @@ type RelatedResolution struct {
 	Review       *RelationshipReview `json:"review,omitempty"`
 }
 
-// Status returns the staged review status, or empty for an automatic edge.
+// Status returns the occurrence's recorded decision, or empty when no review
+// row accompanies the resolution.
 func (r RelatedResolution) Status() RelationshipReviewStatus {
 	if r.Review == nil {
 		return ""
@@ -124,10 +125,12 @@ func (s *Store) ResolvePersonByVCardUIDContext(ctx context.Context, uid string) 
 // ResolveRelatedValueContext automatically links only an exact UID plus a
 // recognized relationship type. All other inputs remain durable reviews.
 //
-// An occurrence that was already reviewed keeps its decision: a rejection
-// never links on re-import, a pending review is accepted together with the
-// new edge, and an accepted review whose edge was deleted since is not
-// resurrected.
+// Every occurrence lands in the review ledger exactly once: automatic links
+// are recorded as already-accepted rows, and everything else stages as
+// pending. An occurrence that was already decided keeps its decision: a
+// rejection never links on re-import, a pending review is accepted together
+// with the new edge, and an accepted review whose edge was deleted since is
+// not resurrected.
 func (s *Store) ResolveRelatedValueContext(ctx context.Context, in RelatedImport) (*RelatedResolution, error) {
 	source, err := ParseProvenance(string(in.Source))
 	if err != nil {
@@ -254,7 +257,8 @@ func (s *Store) resolveMatchedRelatedValue(
 		}
 		resolution = &RelatedResolution{Relationship: edge}
 		if review == nil {
-			return nil
+			resolution.Review, err = s.recordResolvedOccurrenceTx(ctx, tx, in, matchedPersonID, edge.ID, validatedActor)
+			return err
 		}
 		if _, err := s.claimRelationshipReviewTx(ctx, tx, review.ID, RelationshipReviewAccepted, validatedActor); err != nil {
 			return err
@@ -269,6 +273,38 @@ func (s *Store) resolveMatchedRelatedValue(
 		return nil, err
 	}
 	return resolution, nil
+}
+
+// recordResolvedOccurrenceTx persists a first-seen occurrence that resolved
+// automatically as an already-accepted review, so the decision ledger covers
+// automatic links too: deleting the edge leaves a durable tombstone that
+// stops re-import from resurrecting it.
+func (s *Store) recordResolvedOccurrenceTx(
+	ctx context.Context, tx *loggedTx, in RelatedImport, matchedPersonID, edgeID int64, actor string,
+) (*RelationshipReview, error) {
+	var insertedID int64
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		INSERT INTO person_relationship_reviews (
+			person_id, raw_related_value, raw_related_type, value_kind, matched_person_id,
+			status, accepted_relationship_id, source, source_ref, vcard_property, vcard_group,
+			vcard_prop_id, vcard_pid, vcard_altid, created_by, reviewed_by, reviewed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+		ON CONFLICT DO NOTHING
+		RETURNING id`, s.dialect.Now()),
+		in.PersonID, in.RawValue, in.RawType, string(in.ValueKind), matchedPersonID,
+		string(RelationshipReviewAccepted), edgeID, string(in.Source), normalizeNullableText(in.SourceRef),
+		nullableVCardText(in.VCardIdentity.Property), nullableVCardPointer(in.VCardIdentity.Group),
+		nullableVCardPointer(in.VCardIdentity.PropID), nullableVCardText(strings.Join(in.VCardIdentity.PID, ",")),
+		nullableVCardPointer(in.VCardIdentity.AltID), actor, actor,
+	).Scan(&insertedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A concurrent import recorded the same occurrence first.
+		return s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("record resolved relationship occurrence: %w", err)
+	}
+	return s.relationshipReviewTx(ctx, tx, insertedID)
 }
 
 // settledRelatedDecisionTx returns the standing decision for an occurrence

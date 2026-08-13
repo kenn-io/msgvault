@@ -506,3 +506,45 @@ func TestResolveRelatedValueAcceptsPendingReviewWhenOccurrenceBecomesResolvable(
 	require.NoError(err)
 	assert.Empty(views)
 }
+
+func TestResolveRelatedValueRecordsAutomaticAcceptanceAndKeepsDeletionDurable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+
+	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "friend",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system"}
+	first, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(first.Relationship)
+
+	// The automatic link is recorded in the decision ledger like a human
+	// acceptance, so the occurrence has one durable decision row.
+	require.NotNil(first.Review)
+	assert.Equal(store.RelationshipReviewAccepted, first.Review.Status)
+	require.NotNil(first.Review.MatchedPersonID)
+	assert.Equal(bobID, *first.Review.MatchedPersonID)
+	require.NotNil(first.Review.AcceptedRelationshipID)
+	assert.Equal(first.Relationship.ID, *first.Review.AcceptedRelationshipID)
+	require.NotNil(first.Review.ReviewedBy)
+	assert.Equal("system", *first.Review.ReviewedBy)
+
+	// Deleting the imported edge must stick: the accepted row's cleared
+	// edge pointer is the tombstone that stops re-import resurrection.
+	edge, err := f.Store.GetPersonRelationshipContext(ctx, first.Relationship.ID)
+	require.NoError(err)
+	require.NoError(f.Store.DeletePersonRelationshipContext(ctx, edge.ID, edge.Revision))
+	again, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	assert.Nil(again.Relationship)
+	require.NotNil(again.Review)
+	assert.Equal(first.Review.ID, again.Review.ID)
+	assert.Nil(again.Review.AcceptedRelationshipID)
+	views, err := f.Store.ListPersonRelationshipsContext(ctx, aliceID, store.PersonRelationshipListOptions{})
+	require.NoError(err)
+	assert.Empty(views, "deleting an automatically imported relationship is durable")
+}

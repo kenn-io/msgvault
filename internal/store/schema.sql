@@ -838,9 +838,11 @@ CREATE INDEX IF NOT EXISTS idx_person_relationships_target_active
 CREATE INDEX IF NOT EXISTS idx_person_relationships_type
     ON person_relationships(relationship_type_id);
 
--- Imported vCard RELATED values that did not automatically resolve to a
--- curated person relationship. Exact UID is the only automatic identity
--- match; all other imported assertions stay here for a human decision.
+-- Decision ledger for imported vCard RELATED occurrences. Exact UID plus a
+-- recognized type is the only automatic match and is recorded here as an
+-- already-accepted row; every other imported assertion stays pending for a
+-- human decision. Decisions are durable across re-import: rejections never
+-- link, and an accepted row whose edge was deleted is not resurrected.
 CREATE TABLE IF NOT EXISTS person_relationship_reviews (
     id                       INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id                INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
