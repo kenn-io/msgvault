@@ -23,9 +23,16 @@ const (
 	// Bounds one chat message's body: body_text is truncated to this many
 	// characters in SQL (prefix-stable), and the preprocessed canonical text
 	// is capped to this many runes in chatMembers — which is what actually
-	// bounds the HTML path, since body_html must ship whole to keep
+	// bounds the HTML path, since accepted body_html must ship whole to keep
 	// HTML-to-text canonicalization identical to search-time hydration.
 	chatMessageBodyMaxChars = 16 * 1024
+	// chatHTMLBodySkipChars bounds the raw HTML a chat row may ship for
+	// canonicalization. Because HTML cannot be truncated prefix-stably, a
+	// body over this limit is skipped outright (shipped empty, flagged
+	// truncated): it owns no chunks, so no stored offset can ever reference
+	// it. A chat message with over a million characters of HTML is a paste
+	// blob or import artifact with no retrieval value.
+	chatHTMLBodySkipChars = 1 << 20
 )
 
 // ChatWindowAssembler resolves complete desired Beeper windows from persisted

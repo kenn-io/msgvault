@@ -435,10 +435,14 @@ func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
 func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 	// body_text is truncated in SQL: plain-text truncation is prefix-stable,
 	// so stored offsets still reconstruct identical excerpts against the full
-	// text. body_html ships whole — HTML stripping is NOT prefix-stable, so a
-	// raw-HTML cut could leak markup into embeddings and desynchronize stored
-	// offsets from search-time canonicalization. The canonical-text cap for
-	// the HTML path is applied after Preprocess in chatMembers.
+	// text. body_html ships whole up to chatHTMLBodySkipChars — HTML
+	// stripping is NOT prefix-stable, so a raw-HTML cut could leak markup
+	// into embeddings and desynchronize stored offsets from search-time
+	// canonicalization. Bodies over that bound ship empty instead: the row
+	// then owns no chunks, so hydration never sees it and no offset can
+	// desynchronize, and one pathological import cannot stall assembly. The
+	// canonical-text cap for accepted HTML is applied after Preprocess in
+	// chatMembers.
 	bodyText := fmt.Sprintf(`SUBSTR(COALESCE(mb.body_text, ''), 1, %d)`, chatMessageBodyMaxChars)
 	// Plain TRIM strips only spaces; trim the full ASCII whitespace set so a
 	// tab/newline-padded body_text still falls back to body_html. The Go-side
@@ -448,11 +452,12 @@ func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 		bodyText = fmt.Sprintf(`LEFT(COALESCE(mb.body_text, ''), %d)`, chatMessageBodyMaxChars)
 		blankText = `NULLIF(BTRIM(COALESCE(mb.body_text, ''), E' \t\n\r'), '') IS NULL`
 	}
-	bodyHTML := `CASE WHEN ` + blankText + ` THEN COALESCE(mb.body_html, '') ELSE '' END`
+	bodyHTML := fmt.Sprintf(`CASE WHEN %s AND LENGTH(COALESCE(mb.body_html, '')) <= %d
+		THEN COALESCE(mb.body_html, '') ELSE '' END`, blankText, chatHTMLBodySkipChars)
 	bodyTruncated := fmt.Sprintf(`CASE
-		WHEN %s THEN 1 = 0
+		WHEN %s THEN LENGTH(COALESCE(mb.body_html, '')) > %d
 		ELSE LENGTH(COALESCE(mb.body_text, '')) > %d
-	END`, blankText, chatMessageBodyMaxChars)
+	END`, blankText, chatHTMLBodySkipChars, chatMessageBodyMaxChars)
 	return fmt.Sprintf(`
 		SELECT m.id, m.conversation_id, COALESCE(m.message_type, ''),
 		       COALESCE(m.subject, ''), %s, %s,

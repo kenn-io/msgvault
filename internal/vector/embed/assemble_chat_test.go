@@ -254,6 +254,38 @@ func TestSourceSnapshot_ChatHTMLCanonicalizesBeforeTruncation(t *testing.T) {
 		"assembly must canonicalize the same full source search-time hydration uses")
 }
 
+func TestSourceSnapshot_ChatOversizedHTMLIsSkippedNotTruncated(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 100})
+	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	oversized := "<p>" + strings.Repeat("x", chatHTMLBodySkipChars) + "</p>"
+	overID := f.seed("html-oversized", day.Format(time.RFC3339), "Alice", "placeholder")
+	require.NoError(f.store.UpsertMessageBody(overID,
+		sql.NullString{String: " ", Valid: true}, sql.NullString{String: oversized, Valid: true}))
+	accepted := "<p>small html body</p>"
+	okID := f.seed("html-accepted", day.Add(time.Minute).Format(time.RFC3339), "Alice", "placeholder")
+	require.NoError(f.store.UpsertMessageBody(okID,
+		sql.NullString{String: " ", Valid: true}, sql.NullString{String: accepted, Valid: true}))
+	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
+	require.NoError(err)
+	byID := make(map[int64]AssemblyMessage)
+	for _, id := range []int64{overID, okID} {
+		rows, err := snapshot.ChatMessages(t.Context(), chatMessageContextScope(f.conversationID, day, id).selector)
+		require.NoError(err)
+		for _, row := range rows {
+			byID[row.ID] = row
+		}
+	}
+	require.NoError(snapshot.Close())
+	require.Len(byID, 2)
+	assert.Empty(byID[overID].Body,
+		"oversized HTML must be skipped whole — a raw prefix cut would not be canonicalization-stable")
+	assert.True(byID[overID].BodyTruncated, "the skip must be flagged, not silent")
+	assert.Equal("small html body", strings.TrimSpace(byID[okID].Body))
+	assert.False(byID[okID].BodyTruncated)
+}
+
 func TestSourceSnapshot_ChatMessagesUseHTMLWhenBodyTextIsWhitespace(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
