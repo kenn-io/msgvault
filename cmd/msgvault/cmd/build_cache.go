@@ -33,6 +33,7 @@ import (
 var fullRebuild bool
 var buildCacheAutoFlag bool
 var buildCacheDerivedOnlyFlag bool
+var scheduledCacheBuildNow = time.Now
 
 const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 
@@ -2211,6 +2212,18 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	if !staleness.NeedsBuild {
 		return nil
 	}
+	if remaining, throttle := scheduledCacheBuildDelay(
+		staleness,
+		cfg.Analytics.MinRebuildInterval,
+		scheduledCacheBuildNow(),
+	); throttle {
+		logger.Info("skipping cache rebuild after sync: minimum interval not elapsed",
+			"identifier", identifier,
+			"min_rebuild_interval", cfg.Analytics.MinRebuildInterval.String(),
+			"published_at", staleness.PublishedAt,
+			"remaining", remaining.String())
+		return nil
+	}
 	logger.Info("rebuilding cache after sync",
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
@@ -2220,6 +2233,24 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	}
 	logger.Info("cache build completed")
 	return nil
+}
+
+func scheduledCacheBuildDelay(
+	staleness cacheStaleness,
+	interval time.Duration,
+	now time.Time,
+) (time.Duration, bool) {
+	if interval <= 0 || !staleness.HasUsablePublication || staleness.PublishedAt.IsZero() {
+		return 0, false
+	}
+	if staleness.PublishedAt.After(now.Add(interval)) {
+		return 0, false
+	}
+	eligibleAt := staleness.PublishedAt.Add(interval)
+	if !eligibleAt.After(now) {
+		return 0, false
+	}
+	return eligibleAt.Sub(now), true
 }
 
 func init() {

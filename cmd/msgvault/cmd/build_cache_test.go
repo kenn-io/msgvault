@@ -2783,6 +2783,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		name       string
 		setup      func(t *testing.T, dbPath, analyticsDir string)
 		wantBuild  bool
+		wantUsable bool
 		wantReason string
 	}{
 		{
@@ -2794,7 +2795,8 @@ func TestCacheNeedsBuild(t *testing.T) {
 				writeSyncState(t, analyticsDir, 0)
 				createFakeParquet(t, analyticsDir)
 			},
-			wantBuild: false,
+			wantBuild:  false,
+			wantUsable: true,
 		},
 		{
 			name: "NoStateFile_NoParquet_NeedsBuild",
@@ -2829,6 +2831,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild:  true,
+			wantUsable: true,
 			wantReason: "5 new messages",
 		},
 		{
@@ -2844,7 +2847,8 @@ func TestCacheNeedsBuild(t *testing.T) {
 				writeSyncState(t, analyticsDir, 10)
 				createFakeParquet(t, analyticsDir)
 			},
-			wantBuild: false,
+			wantBuild:  false,
+			wantUsable: true,
 		},
 		{
 			name: "HasState_EmptyParquetDir_NeedsBuild",
@@ -2875,7 +2879,8 @@ func TestCacheNeedsBuild(t *testing.T) {
 				writeSyncState(t, analyticsDir, 0)
 				createFakeParquet(t, analyticsDir)
 			},
-			wantBuild: false,
+			wantBuild:  false,
+			wantUsable: true,
 		},
 		{
 			name: "CalendarOnly_NoMessagesParquet_NoRebuild",
@@ -2892,7 +2897,8 @@ func TestCacheNeedsBuild(t *testing.T) {
 				writeSyncState(t, analyticsDir, 10)
 				createFakeParquet(t, analyticsDir)
 			},
-			wantBuild: false,
+			wantBuild:  false,
+			wantUsable: true,
 		},
 		{
 			name: "SourceDeletedAndDedupHiddenSinceBuild_NeedsBuild",
@@ -2914,6 +2920,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild:  true,
+			wantUsable: true,
 			wantReason: "1 deletions",
 		},
 		{
@@ -2975,6 +2982,8 @@ func TestCacheNeedsBuild(t *testing.T) {
 
 			got := cacheNeedsBuild(dbPath, analyticsDir)
 			assert.Equal(t, tt.wantBuild, got.NeedsBuild, "cacheNeedsBuild() build (reason: %q)", got.Reason)
+			assert.Equal(t, tt.wantUsable, got.HasUsablePublication,
+				"cacheNeedsBuild() usable publication (reason: %q)", got.Reason)
 			if tt.wantReason != "" {
 				assert.Equal(t, tt.wantReason, got.Reason, "cacheNeedsBuild() reason")
 			}
@@ -2996,6 +3005,7 @@ func TestCacheNeedsBuild_DriftedPublicationForcesFullRebuild(t *testing.T) {
 	got := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(got.NeedsBuild)
 	assert.True(got.FullRebuild)
+	assert.False(got.HasUsablePublication)
 	assert.Contains(got.Reason, "drift")
 }
 

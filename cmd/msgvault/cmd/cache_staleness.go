@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
@@ -13,9 +14,14 @@ import (
 // cacheStaleness describes why the analytics cache needs a rebuild.
 type cacheStaleness struct {
 	NeedsBuild bool
-	HasNew     bool // new messages since last build
-	HasDeleted bool // deletions since last build
-	HasUpdated bool // updates or additions within the cached ID boundary require repair
+	// HasUsablePublication distinguishes ordinary data drift, which may be
+	// throttled after a scheduled sync, from cache recovery conditions that
+	// must rebuild immediately. PublishedAt is valid only when this is true.
+	HasUsablePublication bool
+	PublishedAt          time.Time
+	HasNew               bool // new messages since last build
+	HasDeleted           bool // deletions since last build
+	HasUpdated           bool // updates or additions within the cached ID boundary require repair
 	// HasIdentityDrift signals participant_links or account_identities
 	// changed since the last build. Also set whenever
 	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
@@ -194,7 +200,10 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	// Collect staleness signals without short-circuiting so a mixed
 	// add+delete sync correctly triggers a full rebuild.
 	var reasons []string
-	result := cacheStaleness{}
+	result := cacheStaleness{
+		HasUsablePublication: true,
+		PublishedAt:          state.PublishedAt,
+	}
 
 	if maxLiveID > state.LastMessageID {
 		newCount := maxLiveID - state.LastMessageID

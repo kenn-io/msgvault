@@ -476,6 +476,182 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 	assert.Zero(builds, "disabled auto_build_cache must not start a cache build")
 }
 
+func TestScheduledCacheBuildDelay(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		staleness    cacheStaleness
+		interval     time.Duration
+		wantDelay    time.Duration
+		wantThrottle bool
+	}{
+		{
+			name: "disabled interval",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-time.Minute),
+			},
+		},
+		{
+			name: "unusable publication",
+			staleness: cacheStaleness{
+				PublishedAt: now.Add(-time.Minute),
+			},
+			interval: 6 * time.Hour,
+		},
+		{
+			name: "recent publication",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    5 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "elapsed interval",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-6 * time.Hour),
+			},
+			interval: 6 * time.Hour,
+		},
+		{
+			name: "small future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    7 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "maximum future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(6 * time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    12 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "large future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(6*time.Hour + time.Nanosecond),
+			},
+			interval: 6 * time.Hour,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			delay, throttle := scheduledCacheBuildDelay(tt.staleness, tt.interval, now)
+			assert.Equal(t, tt.wantThrottle, throttle)
+			assert.Equal(t, tt.wantDelay, delay)
+		})
+	}
+}
+
+func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	sentinel := errors.New("cache build sentinel")
+	tests := []struct {
+		name        string
+		publishedAt time.Time
+		buildErr    error
+		wantBuilds  int
+	}{
+		{
+			name:        "recent publication suppresses build",
+			publishedAt: now.Add(-time.Hour),
+		},
+		{
+			name:        "elapsed interval permits build",
+			publishedAt: now.Add(-7 * time.Hour),
+			wantBuilds:  1,
+		},
+		{
+			name:        "large future skew permits repair build",
+			publishedAt: now.Add(7 * time.Hour),
+			wantBuilds:  1,
+		},
+		{
+			name:        "failed build does not advance publication",
+			publishedAt: now.Add(-7 * time.Hour),
+			buildErr:    sentinel,
+			wantBuilds:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := setupTestSQLiteEmpty(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			writeSyncStateAt(t, analyticsDir, 0, now.Add(-24*time.Hour))
+			createFakeParquet(t, analyticsDir)
+
+			state, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(t, err)
+			state.PublishedAt = tt.publishedAt
+			stateData, err := json.Marshal(state)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
+
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(t, err)
+			_, err = db.Exec(`
+				INSERT INTO messages (id, source_id, source_message_id, sent_at)
+				VALUES (1, 1, 'new-message', ?)
+			`, now)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			savedCfg := cfg
+			cfg = &config.Config{
+				HomeDir: tmpDir,
+				Data: config.DataConfig{
+					DataDir:     tmpDir,
+					DatabaseURL: dbPath,
+				},
+				Analytics: config.AnalyticsConfig{
+					AutoBuildCache:     true,
+					MinRebuildInterval: 6 * time.Hour,
+				},
+			}
+			t.Cleanup(func() { cfg = savedCfg })
+
+			oldNow := scheduledCacheBuildNow
+			scheduledCacheBuildNow = func() time.Time { return now }
+			t.Cleanup(func() { scheduledCacheBuildNow = oldNow })
+
+			builds := 0
+			oldRunBuild := runBuildCacheSubprocess
+			runBuildCacheSubprocess = func(context.Context, bool, bool) error {
+				builds++
+				return tt.buildErr
+			}
+			t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+
+			err = rebuildCacheAfterScheduledSync(context.Background(), "test-source")
+			if tt.buildErr != nil {
+				require.ErrorIs(t, err, tt.buildErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantBuilds, builds)
+
+			after, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(t, err)
+			assert.Equal(t, tt.publishedAt, after.PublishedAt)
+		})
+	}
+}
+
 func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
