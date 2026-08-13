@@ -127,6 +127,11 @@ buildGoModule {
 
   preBuild = ''
     node ${relinkBunBins}
+    # The flake disables bun2nix's shebang patching, so installed scripts
+    # keep interpreters like #!/usr/bin/env node. The Linux sandbox has no
+    # /usr/bin/env, and posix_spawn on such a script fails with ENOENT even
+    # though the file exists. Patch the installed tree instead.
+    patchShebangs web/node_modules
     bun run --cwd web generate
     bun run --cwd web build
     mkdir -p internal/web/dist
