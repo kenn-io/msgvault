@@ -43,11 +43,12 @@ type ChatConfig struct {
 
 // AnalyticsConfig controls daemon-side analytics engine selection.
 type AnalyticsConfig struct {
-	Engine             string `toml:"engine"`               // auto, sql, or duckdb
-	AutoBuildCache     bool   `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
-	BuilderMemoryLimit string `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
-	BuilderThreads     int    `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
-	BuilderTempLimit   string `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
+	Engine             string        `toml:"engine"`               // auto, sql, or duckdb
+	AutoBuildCache     bool          `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
+	MinRebuildInterval time.Duration `toml:"min_rebuild_interval"` // Minimum age before a scheduled sync can rebuild a usable stale cache
+	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
+	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
 }
 
 const (
@@ -165,6 +166,10 @@ func (a *AnalyticsConfig) Validate() error {
 	}
 	if a.BuilderThreads < 0 {
 		return fmt.Errorf("invalid [analytics] builder_threads %d: must be zero or positive", a.BuilderThreads)
+	}
+	if a.MinRebuildInterval < 0 {
+		return fmt.Errorf("invalid [analytics] min_rebuild_interval %q: must be zero or positive",
+			a.MinRebuildInterval.String())
 	}
 	return nil
 }

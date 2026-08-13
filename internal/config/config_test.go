@@ -32,9 +32,44 @@ func TestAnalyticsConfigDefaults(t *testing.T) {
 
 	assertions.Equal(AnalyticsEngineAuto, cfg.Analytics.Engine)
 	assertions.True(cfg.Analytics.AutoBuildCache)
+	assertions.Zero(cfg.Analytics.MinRebuildInterval)
 	assertions.Empty(cfg.Analytics.BuilderMemoryLimit)
 	assertions.Zero(cfg.Analytics.BuilderThreads)
 	assertions.Empty(cfg.Analytics.BuilderTempLimit)
+}
+
+func TestLoadWithAnalyticsMinRebuildInterval(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{name: "positive", value: `"6h"`, want: 6 * time.Hour},
+		{name: "zero", value: `"0s"`, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			content := "[analytics]\nmin_rebuild_interval = " + tt.value + "\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(content), 0o600))
+
+			cfg, err := Load(configPath, "")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.Analytics.MinRebuildInterval)
+		})
+	}
+}
+
+func TestLoadRejectsNegativeAnalyticsMinRebuildInterval(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(
+		"[analytics]\nmin_rebuild_interval = \"-1m\"\n",
+	), 0o600))
+
+	_, err := Load(configPath, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid [analytics] min_rebuild_interval")
 }
 
 func TestLoadWithAnalyticsBuilderResourceLimits(t *testing.T) {
