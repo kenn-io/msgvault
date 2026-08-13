@@ -251,11 +251,11 @@ func (s *Store) resolveMatchedOccurrenceTx(
 	matchedPersonID int64, relationshipType RelationshipType, actor string,
 ) (*RelatedResolution, error) {
 	if review == nil {
-		staged, err := s.insertAcceptedOccurrenceTx(ctx, tx, in, matchedPersonID, actor)
+		staged, claimed, err := s.insertAcceptedOccurrenceTx(ctx, tx, in, matchedPersonID, actor)
 		if err != nil {
 			return nil, err
 		}
-		if staged == nil {
+		if !claimed {
 			committed, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
 			if err != nil {
 				return nil, err
@@ -344,13 +344,13 @@ func (s *Store) createMatchedRelatedEdgeTx(
 
 // insertAcceptedOccurrenceTx claims a first-seen occurrence by inserting its
 // accepted ledger row before the edge exists; the caller records the edge id
-// in the same transaction. Returns nil when a concurrent transaction owns
-// the occurrence row, in which case that row's committed status governs.
+// in the same transaction. claimed is false when a concurrent transaction
+// owns the occurrence row, in which case that row's committed status governs.
 func (s *Store) insertAcceptedOccurrenceTx(
 	ctx context.Context, tx *loggedTx, in RelatedImport, matchedPersonID int64, actor string,
-) (*RelationshipReview, error) {
+) (review *RelationshipReview, claimed bool, err error) {
 	var insertedID int64
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO person_relationship_reviews (
 			person_id, raw_related_value, raw_related_type, value_kind, matched_person_id,
 			status, source, source_ref, vcard_property, vcard_group,
@@ -365,12 +365,16 @@ func (s *Store) insertAcceptedOccurrenceTx(
 		nullableVCardPointer(in.VCardIdentity.AltID), actor, actor,
 	).Scan(&insertedID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("record resolved relationship occurrence: %w", err)
+		return nil, false, fmt.Errorf("record resolved relationship occurrence: %w", err)
 	}
-	return s.relationshipReviewTx(ctx, tx, insertedID)
+	review, err = s.relationshipReviewTx(ctx, tx, insertedID)
+	if err != nil {
+		return nil, false, err
+	}
+	return review, true, nil
 }
 
 // settledRelatedDecisionTx returns the standing decision for an occurrence
