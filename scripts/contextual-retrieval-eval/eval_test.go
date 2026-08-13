@@ -781,6 +781,46 @@ func TestBlindWorkflow_BindsHashesProvenanceAndANNHybridUnion(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 }
 
+func TestBlindWorkflow_ScoresBothANNAndHybridRankingsFromFiles(t *testing.T) {
+	run := evaluationRun{
+		Report:         EvaluationReport{CorpusHash: "corpus-a", QueryHash: "query-a"},
+		Rankings:       map[string]map[string][]string{ArmNestedContext4: {"chat-001": {"chat-001-doc-a"}}},
+		HybridRankings: map[string]map[string][]string{ArmNestedContext4: {"chat-001": {"chat-001-doc-b"}}},
+		Queries:        map[string]string{"chat-001": "Which synthetic decision was recorded?"},
+		Sources: map[string]poolSource{
+			"chat-001-doc-a": {Excerpt: "Context window A. Confirmed action.", MessageID: 11, ChunkID: "answer-a", DocumentID: "window-a"},
+			"chat-001-doc-b": {Excerpt: "Context window B. Confirmed action.", MessageID: 12, ChunkID: "answer-b", DocumentID: "window-b"},
+		},
+	}
+	_, private, err := buildBlindBundle(run)
+	require.NoError(t, err)
+	grades := blindGrades{SchemaVersion: 1, CorpusHash: "corpus-a", QueryHash: "query-a", PoolHash: private.PoolHash,
+		Judgments: []blindScenarioJudgment{{ScenarioID: "chat-001", Grades: map[string]int{}}}}
+	for handle, candidate := range private.Handles {
+		grade := 1
+		if candidate.SourceID == "chat-001-doc-b" {
+			grade = 3
+		}
+		grades.Judgments[0].Grades[handle] = grade
+	}
+	dir := t.TempDir()
+	write := func(name string, value any) string {
+		payload, err := json.Marshal(value)
+		require.NoError(t, err)
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, payload, 0o600))
+		return path
+	}
+	report, err := scoreBlindFiles(write("manifest.json", run), write("private.json", private), write("grades.json", grades))
+	require.NoError(t, err)
+	ann := report.ByArm[ArmNestedContext4]["chat-001"]
+	hybrid, ok := report.HybridByArm[ArmNestedContext4]["chat-001"]
+	require.True(t, ok, "returned blind judgments must also score hybrid rankings")
+	assert.Positive(t, ann.NDCGAt10)
+	assert.Greater(t, hybrid.NDCGAt10, ann.NDCGAt10,
+		"the hybrid ranking placed the grade-3 candidate first and must outscore the ANN ranking")
+}
+
 func TestOldContext4Chunks_UseProductionOverlapPolicy(t *testing.T) {
 	scenario := Scenario{ID: "transcript-001", Family: familyTranscript, Query: "cobalt launch decision", ContextOnly: true,
 		PositiveID: "transcript-001-doc-a", HardNegativeID: "transcript-001-doc-b"}

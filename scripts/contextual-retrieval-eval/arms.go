@@ -614,9 +614,9 @@ const (
 	ArmStructuredSingleton  = "S-c4"
 	ArmNestedContext4       = "N-c4"
 
-	oldProductionModel    = "voyage-4-large"
-	context4Model         = "voyage-context-4"
-	evaluationDimension   = 1024
+	oldProductionModel   = "voyage-4-large"
+	context4Model        = "voyage-context-4"
+	evaluationDimension  = 1024
 	evaluationChunkRunes = 32768
 	// evaluationDocumentMax must equal the production document byte cap
 	// (contextualDocumentUTF8Limit in cmd/msgvault/cmd/serve_vector.go) so the

@@ -330,6 +330,7 @@ type blindScoreReport struct {
 	SchemaVersion  int                                  `json:"schema_version"`
 	JudgmentSource string                               `json:"judgment_source"`
 	ByArm          map[string]map[string]RankingMetrics `json:"by_arm"`
+	HybridByArm    map[string]map[string]RankingMetrics `json:"hybrid_by_arm"`
 }
 
 func scoreBlindFiles(manifestPath, privatePath, gradesPath string) (blindScoreReport, error) {
@@ -355,19 +356,33 @@ func scoreBlindFiles(manifestPath, privatePath, gradesPath string) (blindScoreRe
 	if err != nil {
 		return blindScoreReport{}, err
 	}
-	report := blindScoreReport{SchemaVersion: 1, JudgmentSource: "returned_blind_judgments",
-		ByArm: make(map[string]map[string]RankingMetrics)}
-	for arm, scenarios := range run.Rankings {
-		report.ByArm[arm] = make(map[string]RankingMetrics)
+	// The blind pool unions ANN and hybrid top-20 candidates, so returned
+	// judgments must produce metrics for both ranking families.
+	report := blindScoreReport{SchemaVersion: 1, JudgmentSource: "returned_blind_judgments"}
+	if report.ByArm, err = scoreBlindRankings(run.Rankings, judgments); err != nil {
+		return blindScoreReport{}, err
+	}
+	if report.HybridByArm, err = scoreBlindRankings(run.HybridRankings, judgments); err != nil {
+		return blindScoreReport{}, err
+	}
+	return report, nil
+}
+
+func scoreBlindRankings(
+	rankings map[string]map[string][]string, judgments map[string]Judgment,
+) (map[string]map[string]RankingMetrics, error) {
+	scored := make(map[string]map[string]RankingMetrics, len(rankings))
+	for arm, scenarios := range rankings {
+		scored[arm] = make(map[string]RankingMetrics, len(scenarios))
 		for scenarioID, ranking := range scenarios {
 			judgment, ok := judgments[scenarioID]
 			if !ok {
-				return blindScoreReport{}, fmt.Errorf("blind judgments missing scenario %q", scenarioID)
+				return nil, fmt.Errorf("blind judgments missing scenario %q", scenarioID)
 			}
-			report.ByArm[arm][scenarioID] = scoreRanking(ranking, nil, nil, judgment)
+			scored[arm][scenarioID] = scoreRanking(ranking, nil, nil, judgment)
 		}
 	}
-	return report, nil
+	return scored, nil
 }
 
 func readJSONFile(path string, target any) error {
