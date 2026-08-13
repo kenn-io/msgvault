@@ -215,10 +215,8 @@ func TestRelationshipReviewAcceptRollbackAndRejectDurability(t *testing.T) {
 	staged, err := f.Store.ResolveRelatedValueContext(ctx, in)
 	require.NoError(err)
 	require.NotNil(staged.Review)
-	_, err = f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: aliceID, TargetPersonID: bobID, TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "user"})
-	require.NoError(err)
-	_, err = f.Store.AcceptRelationshipReviewContext(ctx, staged.Review.ID, "friend", bobID, "user")
-	require.ErrorIs(err, store.ErrPersonRelationshipDuplicate)
+	_, err = f.Store.AcceptRelationshipReviewContext(ctx, staged.Review.ID, "no-such-type", bobID, "user")
+	require.ErrorIs(err, store.ErrRelationshipTypeNotFound)
 	reviews, err := f.Store.ListRelationshipReviewsContext(ctx, store.RelationshipReviewListOptions{})
 	require.NoError(err)
 	require.Len(reviews, 1)
@@ -633,4 +631,38 @@ func TestResolveRelatedValueConcurrentFirstImportsShareOneDecision(t *testing.T)
 	require.NoError(err)
 	require.Len(reviews, 1, "the occurrence must own exactly one ledger row")
 	require.NotNil(reviews[0].AcceptedRelationshipID)
+}
+
+func TestAcceptRelationshipReviewAttachesToExistingActiveEdge(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+
+	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: "Bob from the gym", RawType: "friend",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(staged.Review)
+
+	existing, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
+		SourcePersonID: aliceID, TargetPersonID: bobID, TypeSlug: "friend",
+		Source: store.ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+
+	// The relationship the review asserts already exists; acceptance must
+	// attach to it instead of failing on the duplicate, matching automatic
+	// resolution behavior.
+	edge, err := f.Store.AcceptRelationshipReviewContext(ctx, staged.Review.ID, "friend", bobID, "user")
+	require.NoError(err)
+	assert.Equal(existing.ID, edge.ID)
+	reviews, err := f.Store.ListRelationshipReviewsContext(ctx, store.RelationshipReviewListOptions{PersonID: aliceID})
+	require.NoError(err)
+	require.Len(reviews, 1)
+	assert.Equal(store.RelationshipReviewAccepted, reviews[0].Status)
+	require.NotNil(reviews[0].AcceptedRelationshipID)
+	assert.Equal(existing.ID, *reviews[0].AcceptedRelationshipID)
 }

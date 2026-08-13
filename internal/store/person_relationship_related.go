@@ -228,18 +228,48 @@ func (s *Store) resolveMatchedRelatedValue(
 	relationshipType RelationshipType, actor string,
 ) (*RelatedResolution, error) {
 	var resolution *RelatedResolution
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		review, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
-		if err != nil && !errors.Is(err, ErrRelationshipReviewNotFound) {
+	err := s.retryRelatedOnBusy(ctx, func() error {
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			review, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+			if err != nil && !errors.Is(err, ErrRelationshipReviewNotFound) {
+				return err
+			}
+			resolution, err = s.resolveMatchedOccurrenceTx(ctx, tx, in, review, matchedPersonID, relationshipType, actor)
 			return err
-		}
-		resolution, err = s.resolveMatchedOccurrenceTx(ctx, tx, in, review, matchedPersonID, relationshipType, actor)
-		return err
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
 	return resolution, nil
+}
+
+// retryRelatedOnBusy re-runs a whole resolution transaction when the database
+// reports a busy or serialization failure. SQLite begins deferred
+// transactions, so a transaction that read the occurrence ledger before its
+// first write can fail its lock upgrade with SQLITE_BUSY_SNAPSHOT when a
+// concurrent resolver commits first; a fresh attempt takes a new snapshot
+// that observes the winner's decision. The wrapped operations are idempotent
+// by construction (ON CONFLICT occurrence claims, duplicate edge reuse), so
+// re-execution is safe.
+func (s *Store) retryRelatedOnBusy(ctx context.Context, fn func() error) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := range maxAttempts {
+		err = fn()
+		if err == nil || !s.dialect.IsBusyError(err) {
+			return err
+		}
+		// Immediate re-runs can all land inside the winning transaction's
+		// still-open window on a loaded machine; a short growing pause lets
+		// it commit so the next snapshot observes its decision.
+		select {
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return fmt.Errorf("resolve RELATED occurrence: gave up after %d attempts on busy: %w", maxAttempts, err)
 }
 
 // resolveMatchedOccurrenceTx dispatches on the occurrence's ledger state;
@@ -323,6 +353,18 @@ func (s *Store) createMatchedRelatedEdgeTx(
 	if err != nil {
 		return nil, err
 	}
+	return s.addOrReuseActivePersonRelationshipTx(ctx, tx, input, validatedActor, notes)
+}
+
+// addOrReuseActivePersonRelationshipTx inserts the canonical edge for input,
+// returning the existing active edge instead when it is already present. The
+// insert runs under a savepoint because PostgreSQL aborts a transaction whose
+// statement raised a unique violation, and the caller's transaction must
+// survive to look up the existing edge.
+func (s *Store) addOrReuseActivePersonRelationshipTx(
+	ctx context.Context, tx *loggedTx, input PersonRelationshipInput,
+	validatedActor string, notes sql.NullString,
+) (*PersonRelationship, error) {
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT matched_related_edge`); err != nil {
 		return nil, fmt.Errorf("create relationship savepoint: %w", err)
 	}
@@ -331,7 +373,7 @@ func (s *Store) createMatchedRelatedEdgeTx(
 		if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matched_related_edge`); rollbackErr != nil {
 			return nil, fmt.Errorf("roll back relationship savepoint: %w", rollbackErr)
 		}
-		return s.activePersonRelationshipTx(ctx, tx, matchedPersonID, in.PersonID, relationshipType.Slug)
+		return s.activePersonRelationshipTx(ctx, tx, input.SourcePersonID, input.TargetPersonID, input.TypeSlug)
 	}
 	if err != nil {
 		return nil, err
@@ -419,7 +461,17 @@ func (s *Store) activePersonRelationshipTx(ctx context.Context, tx *loggedTx, so
 
 func (s *Store) stageRelationshipReview(ctx context.Context, in RelatedImport, matchedPersonID int64, personMatched bool, actor string) (*RelationshipReview, error) {
 	var review *RelationshipReview
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.retryRelatedOnBusy(ctx, func() error {
+		return s.stageRelationshipReviewOnce(ctx, in, matchedPersonID, personMatched, actor, &review)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return review, nil
+}
+
+func (s *Store) stageRelationshipReviewOnce(ctx context.Context, in RelatedImport, matchedPersonID int64, personMatched bool, actor string, review **RelationshipReview) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.requirePersonsExistTx(ctx, tx, in.PersonID); err != nil {
 			return err
 		}
@@ -439,19 +491,15 @@ func (s *Store) stageRelationshipReview(ctx context.Context, in RelatedImport, m
 			nullableVCardPointer(in.VCardIdentity.AltID), actor,
 		).Scan(&insertedID)
 		if err == nil {
-			review, err = s.relationshipReviewTx(ctx, tx, insertedID)
+			*review, err = s.relationshipReviewTx(ctx, tx, insertedID)
 			return err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("stage relationship review: %w", err)
 		}
-		review, err = s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+		*review, err = s.relationshipReviewByOccurrenceTx(ctx, tx, in)
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	return review, nil
 }
 
 func (s *Store) ListRelationshipReviewsContext(ctx context.Context, opts RelationshipReviewListOptions) ([]RelationshipReview, error) {
@@ -485,9 +533,10 @@ func (s *Store) ListRelationshipReviewsContext(ctx context.Context, opts Relatio
 	return reviews, nil
 }
 
-// AcceptRelationshipReviewContext claims the pending row, writes its edge,
-// and records that edge ID in one transaction. Any edge failure rolls the
-// conditional claim back, so review and edge can never diverge.
+// AcceptRelationshipReviewContext claims the pending row, writes its edge
+// (attaching to an already-existing active edge instead of failing on the
+// duplicate), and records that edge ID in one transaction. Any edge failure
+// rolls the conditional claim back, so review and edge can never diverge.
 //
 // relatedPersonID is the person the reviewer resolved the RELATED value to.
 // Like automatic resolution, acceptance materializes the card subject's
@@ -512,7 +561,11 @@ func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, t
 		if txErr != nil {
 			return txErr
 		}
-		edge, txErr = s.addPersonRelationshipTx(ctx, tx, input, validatedActor, notes)
+		// The asserted relationship may already exist as an active edge (for
+		// example, added manually while the review sat pending). Acceptance
+		// attaches to it instead of failing on the duplicate, matching
+		// automatic resolution.
+		edge, txErr = s.addOrReuseActivePersonRelationshipTx(ctx, tx, input, validatedActor, notes)
 		if txErr != nil {
 			return txErr
 		}
