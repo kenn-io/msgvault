@@ -84,6 +84,15 @@ buildGoModule {
   };
 
   preBuild = ''
+    echo "cache entry:"; stat -c '%F' "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1"
+    stat -c '%N %F' "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1/bin/cli.js" || true
+    echo "nm pkg:"; find web/node_modules/openapi-typescript -maxdepth 2 2>&1 | head -6
+    stat -c '%N %F' web/node_modules/openapi-typescript/bin/cli.js 2>&1 || true
+    stat -c '%N %F' web/node_modules/openapi-typescript/package.json 2>&1 || true
+    echo "dotbin:"; stat -c '%F' web/node_modules/.bin 2>&1 || true
+    ls web/node_modules/.bin 2>&1 | head -4 || true
+    echo "kit-ui:"; stat -c '%N %F' web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
+    echo "DIAGNOSTIC HALT"; exit 1
     bun run --cwd web generate
     bun run --cwd web build
     mkdir -p internal/web/dist
