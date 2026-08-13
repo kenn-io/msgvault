@@ -392,7 +392,7 @@ func TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody(t *testing.T) 
 	assert.Equal(1, f.client.Documents(), "only the in-scope chat document reaches the client")
 	_, err = f.backend.GetDocument(context.Background(), f.gen,
 		fmt.Sprintf("message:%d", excludedMail))
-	assert.Error(err, "excluded ordinary message must publish no document")
+	require.Error(err, "excluded ordinary message must publish no document")
 	_ = excludedChat
 	_ = included
 
@@ -409,7 +409,7 @@ func TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody(t *testing.T) 
 	assert.Equal(1, f.client.Documents(), "journal drain must add no excluded documents")
 	_, err = f.backend.GetDocument(context.Background(), f.gen,
 		fmt.Sprintf("message:%d", journalMail))
-	assert.Error(err, "journal-delivered excluded message must publish no document")
+	require.Error(err, "journal-delivered excluded message must publish no document")
 	_ = journalChat
 }
 
