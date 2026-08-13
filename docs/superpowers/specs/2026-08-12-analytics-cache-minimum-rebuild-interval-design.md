@@ -79,10 +79,12 @@ only after a successful marker-last publication, and cannot be extended by a
 failed build.
 
 The age check uses an injectable clock in the small decision helper so tests do
-not sleep or mutate filesystem timestamps. A publication timestamp in the
-future is treated as recent and is throttled until the configured interval has
-elapsed from that timestamp. This conservative behavior avoids a rebuild loop
-when the host clock moves backward.
+not sleep or mutate filesystem timestamps. Future timestamps use bounded
+conservatism: a publication up to one configured interval ahead is treated as
+recent, but a timestamp farther ahead is untrusted and bypasses the throttle.
+The resulting rebuild restamps `PublishedAt` with the current clock, so a large
+clock correction repairs itself in one pass instead of suppressing automatic
+maintenance for an unbounded period.
 
 ### Throttle eligibility
 
@@ -167,7 +169,9 @@ Post-sync refresh tests cover:
 - a recent valid publication suppresses the build;
 - an interval that has elapsed permits the build;
 - a failed build does not create or advance throttle state;
-- a future publication timestamp is suppressed conservatively;
+- a future publication timestamp within one interval is suppressed;
+- a future publication timestamp beyond one interval bypasses throttling and
+  repairs the marker;
 - every unusable-cache readiness condition bypasses throttling; and
 - `auto_build_cache = false` remains a no-op.
 
