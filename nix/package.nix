@@ -7,7 +7,6 @@
   nodejs,
   runCommand,
   sqlite,
-  writeText,
 }:
 let
   version = "0.19.3";
@@ -19,46 +18,6 @@ let
     hash = "sha256-XV7CuqMC+jlhaWQyXzcDukqnF73Lycy2Kueb7rMhxz8=";
   };
 
-  # bun's bin linking has proven unreliable inside the nix sandbox on
-  # GitHub-hosted runners (install succeeds but node_modules/.bin ends up
-  # missing entries). Recreate any missing shims from package.json bin
-  # fields so the web build does not depend on bun's linker.
-  relinkBunBins = writeText "relink-bun-bins.js" ''
-    const fs = require('fs');
-    const path = require('path');
-    const nm = path.resolve('web/node_modules');
-    const binDir = path.join(nm, '.bin');
-    fs.mkdirSync(binDir, { recursive: true });
-    const pkgDirs = [];
-    for (const entry of fs.readdirSync(nm)) {
-      if (entry === '.bin') continue;
-      if (entry.startsWith('@')) {
-        for (const scoped of fs.readdirSync(path.join(nm, entry))) {
-          pkgDirs.push(path.join(nm, entry, scoped));
-        }
-      } else {
-        pkgDirs.push(path.join(nm, entry));
-      }
-    }
-    let created = 0;
-    for (const dir of pkgDirs) {
-      let pkg;
-      try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
-      catch { continue; }
-      let bins = pkg.bin;
-      if (!bins) continue;
-      if (typeof bins === 'string') bins = { [pkg.name.split('/').pop()]: bins };
-      for (const [name, rel] of Object.entries(bins)) {
-        const shim = path.join(binDir, name);
-        const target = path.join(dir, rel);
-        if (fs.existsSync(shim) || !fs.existsSync(target)) continue;
-        fs.chmodSync(target, 0o755);
-        fs.symlinkSync(path.relative(binDir, target), shim);
-        created++;
-      }
-    }
-    console.log("relink-bun-bins: created " + created + " missing bin shims");
-  '';
 in
 buildGoModule {
   pname = "msgvault";
@@ -77,10 +36,12 @@ buildGoModule {
   # FailedToOpenSocket. Add the exact entry bun expects, including the
   # `.bun-tag` marker bun writes when it extracts a GitHub tarball itself.
   #
-  # The entry must be a plain directory of regular files (or one top-level
-  # symlink). Merging it via symlinkJoin/lndir turns every file into a
-  # symlink, and bun's copyfile backend then silently installs an empty
-  # package.
+  # Every cache entry must be a plain directory of regular files: bun's
+  # copyfile backend silently installs empty packages from entries whose
+  # files are symlinks — the shape symlinkJoin/lndir produces (and what
+  # fetchBunDeps emits). bun run masks this by resolving modules straight
+  # from the cache, so only direct node_modules consumers (CSS @import,
+  # spawning node_modules/.bin) fail. Dereference everything with cp -RL.
   bunDeps =
     let
       base = bun2nix.fetchBunDeps {
@@ -95,7 +56,7 @@ buildGoModule {
     in
     runCommand "msgvault-bun-deps" { } ''
       mkdir -p "$out/share/bun-cache"
-      cp -R ${base}/share/bun-cache/. "$out/share/bun-cache/"
+      cp -RL ${base}/share/bun-cache/. "$out/share/bun-cache/"
       chmod -R u+w "$out/share/bun-cache"
       dest="$out/share/bun-cache/@GH@kenn-io-kit-ui-1e9dc7d@@@1"
       cp -R ${kitUiSrc} "$dest"
@@ -123,15 +84,6 @@ buildGoModule {
   };
 
   preBuild = ''
-    node ${relinkBunBins}
-    echo "=== diagnostics ==="
-    echo "nm entries: $(ls web/node_modules | wc -l), .bin entries: $(ls web/node_modules/.bin 2>/dev/null | wc -l)"
-    echo "openapi-typescript contents:"; find web/node_modules/openapi-typescript -mindepth 1 -maxdepth 2 2>&1 | head -8 || true
-    echo "cache entry contents:"; find "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1/" -mindepth 1 -maxdepth 2 2>&1 | head -8 || true
-    echo "kit-ui theme.css:"; ls web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
-    echo "vite pkg present:"; ls web/node_modules/vite/package.json 2>&1 || true
-    echo "=== end diagnostics ==="
-
     bun run --cwd web generate
     bun run --cwd web build
     mkdir -p internal/web/dist
