@@ -329,6 +329,112 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	)
 }
 
+func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMatches(
+	t *testing.T,
+) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "phone_unique_observations.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "InitSchema")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy non-unique idx")
+
+	insertParticipant := func(phone, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	winner := insertParticipant("+15555550123", "Winner")
+	loser := insertParticipant("+15555550123", "Loser")
+	third, err := st.EnsureParticipant("third@example.org", "Third", "example.org")
+	require.NoError(err, "insert third participant")
+	source, err := st.GetOrCreateSource("beeper", "phone-dedupe-observations")
+	require.NoError(err, "create observation source")
+
+	matchedProviderID := "provider-before-dedupe"
+	winnerProviderID := "different-winner-provider"
+	input := ParticipantContactObservationInput{
+		SourceID: &source.ID, AddressKind: ContactAddressEmail,
+		OriginalValue: "shared@example.org",
+		Envelope:      ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+	}
+	input.ProviderUserID = &matchedProviderID
+	loserObservation, err := st.RecordContactObservationContext(t.Context(), loser, input)
+	require.NoError(err, "record loser observation")
+	input.ProviderUserID = &winnerProviderID
+	_, err = st.RecordContactObservationContext(t.Context(), winner, input)
+	require.NoError(err, "record winner observation")
+	input.ProviderUserID = &matchedProviderID
+	_, err = st.RecordContactObservationContext(t.Context(), third, input)
+	require.NoError(err, "record third observation")
+
+	observationCandidate, _, err := st.UpsertIdentityMatchCandidateContext(
+		t.Context(), IdentityMatchCandidateInput{
+			LeftKind:  IdentityMatchObservation,
+			LeftID:    loserObservation.Observation.Envelope.ID,
+			RightKind: IdentityMatchParticipant, RightID: third,
+			Basis: IdentityMatchDisplayName, State: IdentityMatchStateCandidate,
+			Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+		},
+	)
+	require.NoError(err, "create observation-endpoint candidate")
+	stableCandidate, _, err := st.UpsertIdentityMatchCandidateContext(
+		t.Context(), IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: loser,
+			RightKind: IdentityMatchParticipant, RightID: third,
+			Basis: IdentityMatchStableProviderID, NormalizedValue: &matchedProviderID,
+			State:  IdentityMatchStateCandidate,
+			Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+		},
+	)
+	require.NoError(err, "create stable-provider candidate")
+	_, _, err = st.AcceptIdentityMatchCandidateContext(
+		t.Context(), stableCandidate.ID, "system", nil,
+	)
+	require.NoError(err, "accept stable-provider candidate")
+
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
+		"ensureParticipantsPhoneUniqueIndex")
+
+	var observationOwner int64
+	err = st.db.QueryRow(`
+		SELECT participant_id FROM participant_contact_observations WHERE id = ?`,
+		loserObservation.Observation.Envelope.ID,
+	).Scan(&observationOwner)
+	assert.NoError(err, "absorbed observation must survive the participant delete")
+	assert.Equal(winner, observationOwner, "absorbed observation must point to the winner")
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), observationCandidate.ID)
+	assert.NoError(err, "candidate observation endpoint must remain valid")
+
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), stableCandidate.ID)
+	assert.ErrorIs(err, ErrIdentityMatchNotFound,
+		"system match without a current provider pair must be withdrawn")
+	lo, hi := normalizeEdge(winner, third)
+	var linkCount int
+	require.NoError(st.db.QueryRow(`
+		SELECT COUNT(*) FROM participant_links
+		WHERE participant_a = ? AND participant_b = ?`, lo, hi,
+	).Scan(&linkCount), "count surviving identity link")
+	assert.Zero(linkCount, "unsupported automated link must be withdrawn")
+}
+
 // TestInitSchema_LegacyPhoneDedupeAddsParticipantLinkOwnershipColumn covers
 // an archive whose participant_links table predates identity-match ownership.
 // The phone-index migration runs before the general legacy-column loop, but

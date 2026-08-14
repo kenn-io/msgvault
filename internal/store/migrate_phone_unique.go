@@ -256,6 +256,14 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
+	if err := s.lockParticipantObservationMergeTx(ctx, tx, loser, winner); err != nil {
+		return fmt.Errorf(
+			"lock participant observations (loser=%d, winner=%d): %w",
+			loser,
+			winner,
+			err,
+		)
+	}
 	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type).
 	// Deliberately NOT the envelope-aware collision rule MergeParticipants
 	// uses: this one-shot migration runs before the legacy ADD COLUMN loop in
@@ -355,9 +363,18 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 		return fmt.Errorf("repoint participant_identifiers (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 
-	// (6) Repoint identity candidates and link edges before the delete below.
-	// Candidate rows intentionally have no participant foreign keys, so leaving
-	// loser in either endpoint would create a durable dangling decision.
+	// (6) Repoint observations, identity candidates, and link edges before the
+	// delete below. Candidate rows intentionally have no participant foreign
+	// keys, while observations cascade with the participant, so both layers must
+	// name the survivor before their support is reconciled.
+	if err := s.rewriteObservationsForMergeTx(ctx, tx, loser, winner); err != nil {
+		return fmt.Errorf(
+			"rewrite participant observations (loser=%d, winner=%d): %w",
+			loser,
+			winner,
+			err,
+		)
+	}
 	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("load participant links (loser=%d, winner=%d): %w", loser, winner, err)
@@ -371,6 +388,14 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	// profiles can be created, so there are no person bindings to re-point.
 	if err := s.rewriteLinksForMergeContext(ctx, tx, loser, winner); err != nil {
 		return fmt.Errorf("rewrite participant links (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+		return fmt.Errorf(
+			"reconcile observation identity matches (loser=%d, winner=%d): %w",
+			loser,
+			winner,
+			err,
+		)
 	}
 	// Bump unconditionally, even when the merge touched no link edges: see
 	// the matching comment in MergeParticipants (messages.go).
