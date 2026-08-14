@@ -1377,7 +1377,7 @@ func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
 	before, err := st.GetIdentityMatchCandidateContext(ctx, outcome.Suggested[0])
 	require.NoError(err, "first read")
 
-	// A later run, fresh caches: the same evidence must not be inserted twice.
+	// A later run, fresh caches: the store must converge the same evidence row.
 	second := newObservationRecorder(st)
 	secondMatcher := newIdentityMatcher(st)
 	captureAndMatch(t, second, secondMatcher, alsoAlice, &User{
@@ -1386,8 +1386,7 @@ func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
 
 	after, err := st.GetIdentityMatchCandidateContext(ctx, outcome.Suggested[0])
 	require.NoError(err, "second read")
-	assert.Len(after.Evidence, len(before.Evidence),
-		"AddIdentityMatchEvidence is insert-only, so the matcher must not re-add")
+	assert.Len(after.Evidence, len(before.Evidence))
 }
 
 func TestConversationMembershipEvidenceTracksConversationSources(t *testing.T) {

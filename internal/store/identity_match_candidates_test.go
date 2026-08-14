@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,73 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := storetest.New(t)
+	st := fixture.Store
+	ctx := t.Context()
+	secondSource, err := st.GetOrCreateSource("beeper", "second-account")
+	require.NoError(err)
+	left, err := st.EnsureParticipantByIdentifier("beeper", "evidence-left", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("beeper", "evidence-right", "Right")
+	require.NoError(err)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("provider-user"),
+		State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+
+	type result struct {
+		evidence *store.IdentityMatchEvidence
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, sourceID := range []int64{fixture.Source.ID, secondSource.ID} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			evidence, addErr := st.AddIdentityMatchEvidenceContext(
+				ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+					EvidenceKind: "stable_provider_id",
+					Detail:       new("provider-user"),
+					Source:       store.ProvenanceArchiveObservation,
+					SourceID:     &sourceID,
+				})
+			results <- result{evidence: evidence, err: addErr}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var evidenceIDs []int64
+	for call := range results {
+		require.NoError(call.err)
+		require.NotNil(call.evidence)
+		evidenceIDs = append(evidenceIDs, call.evidence.ID)
+	}
+	require.Len(evidenceIDs, 2)
+	assert.Equal(evidenceIDs[0], evidenceIDs[1],
+		"identical evidence writers should receive the same row")
+
+	loaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Len(loaded.Evidence, 1)
+	var supportCount int
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`
+		SELECT COUNT(*) FROM identity_match_evidence_sources WHERE evidence_id = ?`),
+		evidenceIDs[0]).Scan(&supportCount))
+	assert.Equal(2, supportCount,
+		"the converged evidence row should retain both source supports")
+}
 
 func TestUsernameOnlyCandidateCannotBeAcceptedWithoutCorroboration(t *testing.T) {
 	require := require.New(t)

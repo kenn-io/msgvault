@@ -4,6 +4,7 @@
   bun2nix,
   gitignoreSource,
   nodejs,
+  runCommand,
   sqlite,
 }:
 let
@@ -18,7 +19,18 @@ buildGoModule {
   vendorHash = "sha256-jnmrZBb8rZChl/UvwMeMDjcIBj6Oyi7lmk9+jg8NnjY=";
   proxyVendor = true;
 
-  bunDeps = bun2nix.fetchBunDeps { bunNix = ../web/bun.nix; };
+  # Bun's copyfile backend can install incomplete packages when fetchBunDeps'
+  # cache entries are backed by symlinks. Materialize the cache as regular
+  # files before the sandboxed install consumes it.
+  bunDeps =
+    let
+      base = bun2nix.fetchBunDeps { bunNix = ../web/bun.nix; };
+    in
+    runCommand "msgvault-bun-deps" { } ''
+      mkdir -p "$out/share/bun-cache"
+      cp -RL ${base}/share/bun-cache/. "$out/share/bun-cache/"
+      chmod -R u+w "$out/share/bun-cache"
+    '';
   bunRoot = "web";
   bunInstallFlags = [
     "--linker=hoisted"

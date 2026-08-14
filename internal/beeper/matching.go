@@ -607,53 +607,27 @@ func (m *identityMatcher) addEvidenceWithReference(
 		return nil
 	}
 	sourceIDs := uniqueSourceIDs(sourceID, additionalSourceIDs...)
-	existing, err := m.store.GetIdentityMatchCandidateContext(ctx, candidate.ID)
-	if err != nil {
-		return err
-	}
-	for _, evidence := range existing.Evidence {
-		if evidence.EvidenceKind == kind && derefString(evidence.EvidenceRef) == reference &&
-			derefString(evidence.Detail) == detail {
-			for _, supportingSourceID := range sourceIDs {
-				if err := m.store.AttachIdentityMatchEvidenceSourceContext(
-					ctx, evidence.ID, supportingSourceID,
-				); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-	}
 	value := detail
 	var evidenceReference *string
 	if reference != "" {
 		evidenceReference = &reference
 	}
-	var firstSourceID *int64
-	if len(sourceIDs) > 0 {
-		firstSourceID = &sourceIDs[0]
+	input := store.IdentityMatchEvidenceInput{
+		EvidenceKind: kind,
+		EvidenceRef:  evidenceReference,
+		Detail:       &value,
+		Source:       store.ProvenanceArchiveObservation,
 	}
-	evidence, err := m.store.AddIdentityMatchEvidenceContext(
-		ctx, candidate.ID, store.IdentityMatchEvidenceInput{
-			EvidenceKind: kind,
-			EvidenceRef:  evidenceReference,
-			Detail:       &value,
-			Source:       store.ProvenanceArchiveObservation,
-			SourceID:     firstSourceID,
-		})
-	if err != nil {
+	if len(sourceIDs) == 0 {
+		_, err := m.store.AddIdentityMatchEvidenceContext(ctx, candidate.ID, input)
 		return err
 	}
-	if len(sourceIDs) > 1 {
-		// AddIdentityMatchEvidenceContext records the first source with the
-		// evidence row. Attach every remaining observation source so cleanup
-		// does not depend on which observation happened to trigger matching.
-		for _, supportingSourceID := range sourceIDs[1:] {
-			if err := m.store.AttachIdentityMatchEvidenceSourceContext(
-				ctx, evidence.ID, supportingSourceID,
-			); err != nil {
-				return err
-			}
+	for _, supportingSourceID := range sourceIDs {
+		input.SourceID = &supportingSourceID
+		if _, err := m.store.AddIdentityMatchEvidenceContext(
+			ctx, candidate.ID, input,
+		); err != nil {
+			return err
 		}
 	}
 	return nil
