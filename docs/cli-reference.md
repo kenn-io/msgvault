@@ -1481,8 +1481,15 @@ msgvault embeddings build [flags]
 |---|---|
 | `--full-rebuild` | Create a new index generation and rebuild from scratch. The new generation is activated atomically once coverage reaches zero. Same-model rebuilds keep serving the previous active generation in the meantime, but active-generation top-ups are frozen until activation; model or dimension changes return `index_stale` for vector/hybrid search until the new generation activates. |
 | `--yes` | Skip the confirmation prompt that `--full-rebuild` otherwise requires. |
+| `--account <identifier>` | Limit embedding to this account, by identifier or display name — numeric source IDs are rejected (repeatable). Overrides `[vector.embed.scope] accounts` for this run; configured `message_types` still apply. After activating this one-off scope, add the equivalent accounts to config and restart the daemon before searching. |
+| `--collection <name>` | Limit embedding to this collection's accounts (repeatable). Can be combined with `--account`; the scope is the union. This is a one-run override; persist the resolved accounts in config before restarting the daemon. |
 
-Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured model, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
+Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured embedding settings, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
+
+The account scope is part of the generation fingerprint, so building with a
+different `--account`/`--collection` set than the active generation requires
+`--full-rebuild`, exactly like changing the model. See
+[Scoped Generations](/usage/vector-search/#scoped-generations).
 
 ### embeddings resume
 
@@ -1490,7 +1497,7 @@ Without `--full-rebuild`, the command is incremental: it resumes any in-flight r
 msgvault embeddings resume
 ```
 
-Continue embedding work and finish the current generation. If a generation matching the configured model is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild.
+Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
 
 ### embeddings list
 

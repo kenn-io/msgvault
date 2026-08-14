@@ -80,6 +80,11 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   'vector.embed.schedule.cron': entry('search', 'Embedding schedule', 'Cron schedule for background embedding.'),
   'vector.embed.schedule.run_after_sync': entry('search', 'Embed after sync', 'Run embedding after a successful source sync.'),
   'vector.embed.scope.message_types': entry('search', 'Embedded message types', 'Optional message-type scope.'),
+  'vector.embed.scope.accounts': entry(
+    'search',
+    'Embedded accounts',
+    'Optional account scope; only listed accounts are embedded.'
+  ),
   'vector.search.rrf_k': entry('search', 'RRF constant', 'Reciprocal rank fusion constant.'),
   'vector.search.k_per_signal': entry('search', 'Candidates per signal', 'Candidate count contributed by each hybrid signal.'),
   'vector.search.subject_boost': entry('search', 'Subject boost', 'Hybrid ranking weight for subject matches.'),

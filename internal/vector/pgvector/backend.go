@@ -95,7 +95,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	}
 	b := &Backend{
 		db:    opts.DB,
-		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes),
+		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
 	}
 	if !opts.SkipMigrate {
 		// serve / build / search: full migrate incl. CREATE EXTENSION (the
@@ -264,21 +264,61 @@ func isUniqueViolation(err error) bool {
 // ActivateGeneration (in-tx, single-DB on PG) and Stats. The $N ordinal
 // of the generation id is supplied by the caller.
 func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (string, []any) {
+	where, args := b.missingForGenWhere(genArg, firstScopeArg)
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM messages
+		 WHERE %s
+	)`, where), args
+}
+
+// missingForGenWhere is the scope-aware predicate for messages that still
+// need embedding for a generation. Keep Stats and ActivateGeneration on this
+// shared predicate so source-scoped generations never report the full corpus
+// as pending.
+func (b *Backend) missingForGenWhere(genArg string, firstScopeArg int) (string, []any) {
+	where, args := b.liveScopeWhere(firstScopeArg)
+	return fmt.Sprintf("(embed_gen IS NULL OR embed_gen <> %s) AND %s", genArg, where), args
+}
+
+// liveScopeWhere is the predicate for live messages inside the backend's
+// build scope — the generation's embedding universe. Shared by the
+// coverage gate (missingForGenWhere) and the empty-scope activation guard
+// so both always agree on what "in scope" means. Scope placeholders are
+// numbered from firstScopeArg.
+func (b *Backend) liveScopeWhere(firstScopeArg int) (string, []any) {
 	where := store.LiveMessagesWhere("", true)
-	args := make([]any, 0, len(b.scope.MessageTypes))
-	if !b.scope.IsEmpty() {
+	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
+	nextArg := firstScopeArg
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
-			placeholders[i] = "$" + strconv.Itoa(firstScopeArg+i)
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
 	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
+	}
+	return where, args
+}
+
+// liveInScopeExistsClause is the empty-scope activation guard predicate:
+// true when at least one live message falls inside the backend's build
+// scope. Scope placeholders are numbered from firstScopeArg.
+func (b *Backend) liveInScopeExistsClause(firstScopeArg int) (string, []any) {
+	where, args := b.liveScopeWhere(firstScopeArg)
 	return fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM messages
-		 WHERE (embed_gen IS NULL OR embed_gen <> %s)
-		   AND %s
-	)`, genArg, where), args
+		 WHERE %s
+	)`, where), args
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -357,6 +397,26 @@ func (b *Backend) activateGeneration(
 		}
 	}
 
+	// Deterministic empty-scope gate BEFORE the demote: the demote path
+	// below deletes the previous active generation's embeddings, which is
+	// corpus-sized. The rollback keeps the data safe, but the scheduler
+	// retries activation every tick (an empty scope trivially satisfies
+	// its missing==0 gate), so checking after the DELETE would turn each
+	// retry into a corpus-sized DELETE + rollback of lock and WAL churn.
+	// The gated promote below re-asserts the same predicate atomically to
+	// cover a message vanishing between this read and the flip.
+	if !force && len(b.scope.SourceIDs) > 0 {
+		var live bool
+		liveClause, liveArgs := b.liveInScopeExistsClause(1)
+		if err := tx.QueryRowContext(ctx,
+			`SELECT `+liveClause, liveArgs...).Scan(&live); err != nil {
+			return fmt.Errorf("check live messages in build scope for generation %d: %w", gen, err)
+		}
+		if !live {
+			return refuseActivateEmptyScopeError(gen)
+		}
+	}
+
 	// Demote the current active generation and capture its id in a single
 	// statement via RETURNING, so the id whose embeddings we delete below is
 	// provably the row this UPDATE retired (no separate non-locking SELECT that
@@ -389,12 +449,20 @@ func (b *Backend) activateGeneration(
 	// (missing==0) is the real gate.
 	missingClause, missingArgs := b.missingForGenExistsClause("$3", 5)
 	args := append([]any{now, now, int64(gen), force}, missingArgs...)
-	res, err := tx.ExecContext(ctx,
-		`UPDATE index_generations
+	promote := `UPDATE index_generations
 		    SET state = 'active', activated_at = $1, completed_at = COALESCE(completed_at, $2)
 		  WHERE id = $3 AND state = 'building'
-		    AND ($4 OR NOT `+missingClause+`)`,
-		args...)
+		    AND ($4 OR NOT ` + missingClause + `)`
+	// Empty-scope guard: a source scope matching no live messages trivially
+	// satisfies the no-missing gate, so the promote additionally requires at
+	// least one live in-scope message (unless force). Folded into the gated
+	// UPDATE so it is atomic with the state flip, like the coverage gate.
+	if len(b.scope.SourceIDs) > 0 {
+		liveClause, liveArgs := b.liveInScopeExistsClause(5 + len(missingArgs))
+		promote += ` AND ($4 OR ` + liveClause + `)`
+		args = append(args, liveArgs...)
+	}
+	res, err := tx.ExecContext(ctx, promote, args...)
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
@@ -439,11 +507,29 @@ func (b *Backend) activateGateError(ctx context.Context, tx *sql.Tx, gen vector.
 	if missing && !force {
 		return fmt.Errorf("generation %d still has messages needing embedding; run `msgvault embeddings resume` or pass --force", gen)
 	}
+	if !force && len(b.scope.SourceIDs) > 0 {
+		var live bool
+		liveClause, liveArgs := b.liveInScopeExistsClause(1)
+		if err := tx.QueryRowContext(ctx,
+			`SELECT `+liveClause, liveArgs...).Scan(&live); err != nil {
+			return fmt.Errorf("check live messages in build scope for generation %d: %w", gen, err)
+		}
+		if !live {
+			return refuseActivateEmptyScopeError(gen)
+		}
+	}
 	// Gen reads as building with full coverage yet the gated UPDATE still
 	// matched no rows: a concurrent transaction must have flipped its state
 	// between the promote and this re-read. Surface it rather than reporting a
 	// phantom gate.
 	return fmt.Errorf("activate generation %d: gated promote affected no rows (state=%q)", gen, state)
+}
+
+// refuseActivateEmptyScopeError is the shared refusal for a source scope
+// matching no live messages, returned by both the pre-demote gate and the
+// gated-promote fallback so the two report identically.
+func refuseActivateEmptyScopeError(gen vector.GenerationID) error {
+	return fmt.Errorf("generation %d: %w; sync the scoped account(s) or fix [vector.embed.scope], or pass --force", gen, vector.ErrRefuseActivateEmptyScope)
 }
 
 // RetireGeneration marks the given generation as retired and DELETEs its
@@ -1268,11 +1354,11 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	// generation, so it reports 0 — the StatsView consumer sums per-gen
 	// pending across the active/building generations anyway.
 	if gen != 0 {
+		pendingWhere, pendingArgs := b.missingForGenWhere("$1", 2)
+		pendingArgs = append([]any{int64(gen)}, pendingArgs...)
 		if err := b.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM messages
-			  WHERE (embed_gen IS NULL OR embed_gen <> $1)
-			    AND `+store.LiveMessagesWhere("", true),
-			int64(gen)).Scan(&s.PendingCount); err != nil {
+			`SELECT COUNT(*) FROM messages WHERE `+pendingWhere,
+			pendingArgs...).Scan(&s.PendingCount); err != nil {
 			return s, fmt.Errorf("count missing: %w", err)
 		}
 	}
@@ -1313,13 +1399,24 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		    AND m.embed_gen = $1
 		    AND ` + store.LiveMessagesWhere("m", true)
 	args := []any{int64(gen)}
-	if !b.scope.IsEmpty() {
+	nextArg := 2
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
-			placeholders[i] = "$" + strconv.Itoa(2+i)
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND m.message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND m.source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	var n int64
 	if err := b.db.QueryRowContext(ctx,

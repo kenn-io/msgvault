@@ -382,7 +382,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 // TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint
 // regression-guards the precedence bug where pickEmbedGeneration
 // targeted an existing active generation even when a building
-// generation for the configured model was in flight. The user
+// generation for the configured embedding settings was in flight. The user
 // expectation is that `msgvault embeddings build` drains the in-progress build
 // (so it can be activated) rather than continuing to top up the old
 // active generation.
@@ -467,7 +467,7 @@ func TestPickEmbedGeneration_ContextualRejectsWrongGenerationFingerprint(t *test
 // TestPickEmbedGeneration_StaleActivePlusMatchingBuilding covers the
 // "stale active + matching building" combination R51a calls out: an
 // older active generation exists with a fingerprint that no longer
-// matches the configured model, and a newer building generation
+// matches the configured embedding settings, and a newer building generation
 // matches. The configured-model build must be drained instead of the
 // stale active one being topped up — otherwise the new build stays
 // stuck in `building` indefinitely.

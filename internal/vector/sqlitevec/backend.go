@@ -83,7 +83,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		path:     opts.Path,
 		mainPath: opts.MainPath,
 		dim:      opts.Dimension,
-		scope:    vector.NewBuildScope(opts.BuildScope.MessageTypes),
+		scope:    vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
 		readOnly: opts.ReadOnly,
 	}
 	// Orphaned-stamp reset (vectors.db-recreate safety): clear embed_gen for
@@ -292,9 +292,19 @@ func (b *Backend) hasMissingForGen(ctx context.Context, gen vector.GenerationID)
 }
 
 func (b *Backend) missingCoverageWhere(gen int64) (string, []any) {
-	where := "(embed_gen IS NULL OR embed_gen <> ?) AND " + store.LiveMessagesWhere("", true)
-	args := []any{gen}
-	if !b.scope.IsEmpty() {
+	liveWhere, liveArgs := b.liveScopeWhere()
+	return "(embed_gen IS NULL OR embed_gen <> ?) AND " + liveWhere,
+		append([]any{gen}, liveArgs...)
+}
+
+// liveScopeWhere is the predicate for live messages inside the backend's
+// build scope — the generation's embedding universe. Shared by the
+// coverage gate (missingCoverageWhere) and the empty-scope activation
+// guard so both always agree on what "in scope" means.
+func (b *Backend) liveScopeWhere() (string, []any) {
+	where := store.LiveMessagesWhere("", true)
+	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
 			placeholders[i] = "?"
@@ -302,7 +312,31 @@ func (b *Backend) missingCoverageWhere(gen int64) (string, []any) {
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
 	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
+	}
 	return where, args
+}
+
+// hasLiveInScope reports whether any live message falls inside the
+// backend's build scope.
+func (b *Backend) hasLiveInScope(ctx context.Context) (bool, error) {
+	where, args := b.liveScopeWhere()
+	var exists int
+	err := b.mainDB.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM messages
+			 WHERE `+where+`
+		)`, args...).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check live messages in build scope: %w", err)
+	}
+	return exists == 1, nil
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -341,6 +375,20 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 		}
 		if missing {
 			return fmt.Errorf("generation %d still has messages needing embedding; run `msgvault embeddings resume` or pass --force", gen)
+		}
+		// Empty-scope guard: a source scope matching no live messages
+		// trivially satisfies the no-missing gate, so without this check
+		// every non-forced path (CLI drain, scheduler, `embeddings
+		// activate`) would swap in an empty index and retire the serving
+		// generation.
+		if len(b.scope.SourceIDs) > 0 {
+			live, err := b.hasLiveInScope(ctx)
+			if err != nil {
+				return err
+			}
+			if !live {
+				return fmt.Errorf("generation %d: %w; sync the scoped account(s) or fix [vector.embed.scope], or pass --force", gen, vector.ErrRefuseActivateEmptyScope)
+			}
 		}
 	}
 
@@ -454,6 +502,23 @@ func (b *Backend) ActivateGenerationIfConverged(
 	}
 	if missing != 0 {
 		return fmt.Errorf("%w: generation %d still has messages needing embedding", vector.ErrGenerationNotConverged, gen)
+	}
+	// Empty-scope guard, mirroring ActivateGeneration: a source scope
+	// matching no live messages trivially satisfies both the convergence
+	// and the no-missing gates, and activating would demote the serving
+	// generation in favor of an empty index. The fused connection sees the
+	// main schema, so the same live-scope predicate runs inside this
+	// transaction, before the demote.
+	if len(b.scope.SourceIDs) > 0 {
+		liveWhere, liveArgs := b.liveScopeWhere()
+		var live int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM messages WHERE `+liveWhere+`)`, liveArgs...).Scan(&live); err != nil {
+			return fmt.Errorf("check live messages in build scope for generation %d: %w", gen, err)
+		}
+		if live == 0 {
+			return fmt.Errorf("generation %d: %w; sync the scoped account(s) or fix [vector.embed.scope], or pass --force", gen, vector.ErrRefuseActivateEmptyScope)
+		}
 	}
 
 	now := time.Now().Unix()
@@ -1571,13 +1636,21 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		    AND embed_gen = ?
 		    AND ` + store.LiveMessagesWhere("", true)
 	args := []any{string(blob), int64(gen)}
-	if !b.scope.IsEmpty() {
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	var n int64
 	if err := b.mainDB.QueryRowContext(ctx,

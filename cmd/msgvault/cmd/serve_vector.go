@@ -47,7 +47,7 @@ type legacyConvergenceChecker struct {
 }
 
 func (c *legacyConvergenceChecker) CheckConvergence(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
-	missing, err := c.store.MissingCountScoped(ctx, int64(gen), c.scope.MessageTypes)
+	missing, err := c.store.MissingCountScoped(ctx, int64(gen), c.scope.MessageTypes, c.scope.SourceIDs)
 	if err != nil {
 		return scheduler.ConvergenceResult{}, fmt.Errorf("message coverage: %w", err)
 	}
@@ -243,6 +243,18 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	if err := cfg.Vector.Validate(); err != nil {
 		return nil, fmt.Errorf("vector config: %w", err)
 	}
+	// Resolve [vector.embed.scope] accounts to source IDs before any
+	// consumer derives a build scope or generation fingerprint from the
+	// config (backend coverage gates, the embed worker/job, the hybrid
+	// engine's expected fingerprint). Unknown accounts fail vector init
+	// loudly rather than silently embedding the full corpus. The resolved
+	// config is a local copy: this runs on the daemon's background init
+	// goroutine while HTTP handlers may already be reading the global cfg,
+	// so the global must stay unmutated.
+	vecCfg, err := resolvedVectorConfig(mainStore)
+	if err != nil {
+		return nil, fmt.Errorf("vector embed scope: %w", err)
+	}
 	mainDB := mainStore.DB()
 
 	// Resolve the dialect once from the main DSN. The worker is
@@ -270,8 +282,8 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		// live alongside messages, so there is no separate vectors.db.
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:          mainDB,
-			Dimension:   cfg.Vector.Embeddings.Dimension,
-			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
+			Dimension:   vecCfg.Embeddings.Dimension,
+			BuildScope:  vecCfg.Embed.Scope.BuildScope(),
 			SkipMigrate: readOnly,
 			// ReadOnly MUST track readOnly here: this is the MCP read-only
 			// path (store.OpenReadOnly). When set, Open performs no writes —
@@ -282,7 +294,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			// pre-installed by an admin and CREATE EXTENSION would fail
 			// for the msgvault role; SkipExtensionCreate lets schema +
 			// index DDL still run. Ignored when SkipMigrate (readOnly).
-			SkipExtension: cfg.Vector.SkipExtensionCreate,
+			SkipExtension: vecCfg.SkipExtensionCreate,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open pgvector backend: %w", err)
@@ -294,16 +306,16 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		if err := sqlitevec.RegisterExtension(); err != nil {
 			return nil, fmt.Errorf("register sqlite-vec: %w", err)
 		}
-		vecPath := cfg.Vector.DBPath
+		vecPath := vecCfg.DBPath
 		if vecPath == "" {
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
 			Path:       vecPath,
 			MainPath:   mainPath,
-			Dimension:  cfg.Vector.Embeddings.Dimension,
+			Dimension:  vecCfg.Embeddings.Dimension,
 			MainDB:     mainDB,
-			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
+			BuildScope: vecCfg.Embed.Scope.BuildScope(),
 			// Honor the read-only signal on SQLite too: when mainDB is a
 			// query-only handle (MCP), skip the embed_gen upgrade backfill,
 			// which would write through it. Migrate still runs (vectors.db
@@ -318,7 +330,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		closeFn = sb.Close
 	}
 
-	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
+	runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
 		Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
 		Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
 	})
@@ -328,16 +340,16 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 
 	engine := hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
-		ExpectedFingerprint: cfg.Vector.GenerationFingerprint(),
-		RRFK:                cfg.Vector.Search.RRFK,
-		KPerSignal:          cfg.Vector.Search.KPerSignal,
-		SubjectBoost:        cfg.Vector.Search.SubjectBoost,
+		ExpectedFingerprint: vecCfg.GenerationFingerprint(),
+		RRFK:                vecCfg.Search.RRFK,
+		KPerSignal:          vecCfg.Search.KPerSignal,
+		SubjectBoost:        vecCfg.Search.SubjectBoost,
 		// BuildFilter's participant/label lookups run against mainDB with ?
 		// placeholders. On PG those must become $N or pgx rejects them, so
 		// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
 		// carries the dialect's Rebind. SQLite's Rebind is identity.
 		Rebind:     dialect.Rebind,
-		BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
+		BuildScope: vecCfg.Embed.Scope.BuildScope(),
 	})
 
 	// No sync-time enqueue: newly-persisted messages get embed_gen = NULL
@@ -348,7 +360,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		HybridEngine: engine,
 		Runner:       runtime.Runner,
 		Convergence:  runtime.Convergence,
-		Cfg:          cfg.Vector,
+		Cfg:          vecCfg,
 		Close:        closeFn,
 	}, nil
 }

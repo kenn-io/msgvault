@@ -281,8 +281,8 @@ func translateVectorErr(err error) *toolResult {
 		)
 	case errors.Is(err, vector.ErrIndexStale):
 		return toolErrorResult(
-			"index_stale: the vector index does not match the configured model; " +
-				"run `msgvault embeddings build --full-rebuild`",
+			"index_stale: the vector index does not match configured embedding settings; " +
+				"align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`",
 		)
 	case errors.Is(err, vector.ErrIndexBuilding):
 		return toolErrorResult(
@@ -1040,7 +1040,7 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 		f.SourceIDs = []int64{*srcID}
 	}
 	if messageType, _ := args["message_type"].(string); messageType != "" {
-		f.MessageTypes = vector.NewBuildScope([]string{messageType}).MessageTypes
+		f.MessageTypes = vector.NewBuildScope([]string{messageType}, nil).MessageTypes
 	}
 
 	if v, ok := args["has_attachment"].(bool); ok && v {
