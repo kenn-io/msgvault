@@ -193,11 +193,6 @@ func (s *Server) handleRejectIdentityMatchCandidate(w http.ResponseWriter, r *ht
 		s.writeIdentityMatchError(w, err)
 		return
 	}
-	beforeRevision, err := matches.IdentityRevision()
-	if err != nil {
-		s.writeIdentityMatchError(w, err)
-		return
-	}
 	candidate, err := matches.DecideIdentityMatchCandidateContext(
 		r.Context(), id, store.IdentityMatchStateRejected, "user", request.Notes)
 	if err != nil {
@@ -209,19 +204,15 @@ func (s *Server) handleRejectIdentityMatchCandidate(w http.ResponseWriter, r *ht
 		s.writeIdentityMatchError(w, err)
 		return
 	}
-	cacheState := identityCacheStateReady
-	if afterRevision != beforeRevision {
-		// A rejection of a previous system acceptance can remove the exact
-		// automated edge owned by this candidate. Only that edge mutation
-		// changes identity_revision and requires the synchronous cache refresh;
-		// a preserved manual edge must not trigger one.
-		cacheState = s.refreshIdentityCacheState(r.Context())
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, IdentityMatchRejectResponse{
 		Candidate:        *candidate,
 		IdentityRevision: afterRevision,
-		CacheState:       cacheState,
+		// RefreshIdentityDatasets is staleness-aware and skips publication
+		// when the persisted cache already has this identity revision. Always
+		// consulting it also lets a no-op retry repair a previously failed
+		// refresh instead of incorrectly reporting the stale cache as ready.
+		CacheState: s.refreshIdentityCacheState(r.Context()),
 	})
 }
 

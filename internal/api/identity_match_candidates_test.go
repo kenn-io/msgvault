@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -131,8 +132,8 @@ func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
 	assert.Zero(rejected.IdentityRevision,
 		"state-only rejection does not change the identity revision")
 	assert.Equal(identityCacheStateReady, rejected.CacheState)
-	assert.Zero(st.refreshCalls,
-		"state-only rejection must not refresh an unchanged identity cache")
+	assert.Equal(1, st.refreshCalls,
+		"state-only rejection must still verify that the cache is current")
 	assert.False(linkedParticipants(t, st, alice, bob), "rejecting must not link anyone")
 
 	listed := personRequest(t, srv, http.MethodGet,
@@ -175,7 +176,38 @@ func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.
 		"rejecting an automated match must remove its direct identity edge")
 }
 
-func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutRefreshing(t *testing.T) {
+func TestRejectAcceptedSystemIdentityMatchRetryRepairsStaleCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, _, _ := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
+
+	_, _, err := st.AcceptIdentityMatchCandidateContext(
+		context.Background(), candidate.ID, "system", nil,
+	)
+	require.NoError(err, "system acceptance")
+	st.refreshErr = errors.New("cache refresh unavailable")
+
+	first := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), nil, "")
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var firstBody IdentityMatchRejectResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstBody), first.Body.String())
+	assert.Equal(identityCacheStateStale, firstBody.CacheState)
+	assert.Equal(1, st.refreshCalls)
+
+	second := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), nil, "")
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+	var secondBody IdentityMatchRejectResponse
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &secondBody), second.Body.String())
+	assert.Equal(firstBody.IdentityRevision, secondBody.IdentityRevision,
+		"retrying the decision must not mutate identity state again")
+	assert.Equal(identityCacheStateStale, secondBody.CacheState,
+		"retry must not report ready while the cache refresh still fails")
+	assert.Equal(2, st.refreshCalls,
+		"retry must re-attempt the stale cache refresh without re-mutating")
+}
+
+func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutBumpingRevision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -197,8 +229,8 @@ func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutRefreshing(t
 	assert.Equal(before, body.IdentityRevision,
 		"preserving a pre-existing manual edge must not bump the revision")
 	assert.Equal(identityCacheStateReady, body.CacheState)
-	assert.Zero(st.refreshCalls,
-		"preserving a pre-existing manual edge must not refresh the identity cache")
+	assert.Equal(1, st.refreshCalls,
+		"unchanged identity state must still verify that the cache is current")
 	assert.True(linkedParticipants(t, st, alice, bob),
 		"manual edge must survive rejection")
 }
