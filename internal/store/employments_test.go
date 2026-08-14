@@ -290,10 +290,12 @@ func TestEmploymentColumnChecksAreEnforcedBySQL(t *testing.T) {
 			require.NoError(insert(t, fmt.Sprintf("Accepted %d", i), test.columns, test.args...))
 		})
 	}
-	t.Run("rejects an unknown provenance", func(t *testing.T) {
+	t.Run("accepts an unknown provenance at the database boundary", func(t *testing.T) {
+		// The vocabulary is validated in Go, not frozen into a schema CHECK
+		// that existing archives could never extend without a table rebuild.
 		title := "Unknown Source"
 		_, err := st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO employments (person_id, organization_id, title, title_normalized, source) VALUES (?, ?, ?, ?, ?)`), person.ID, organization.ID, title, store.NormalizeEmploymentTitle(&title), "guessed")
-		req.Error(err)
+		req.NoError(err)
 	})
 	t.Run("rejects a confidence on declared data", func(t *testing.T) {
 		title := "Declared Confidence"

@@ -260,11 +260,10 @@ func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
 		{"end month range", "sibling", alice, bob, nil, nil, nil, 2019, 13, nil, "user", nil},
 		{"end year range", "spouse", alice, bob, nil, nil, nil, 0, nil, nil, "user", nil},
 		{"end day range", "kin", alice, bob, nil, nil, nil, 2019, 4, 32, "user", nil},
-		{"bad provenance", "date", alice, bob, nil, nil, nil, nil, nil, nil, "guess", nil},
 		{"declared confidence", "sweetheart", alice, bob, nil, nil, nil, nil, nil, nil, "user", 0.5},
 		{"confidence range", "parent", alice, bob, nil, nil, nil, nil, nil, nil, "enrichment", 1.5},
 	}
-	require.Len(tests, 14)
+	require.Len(tests, 13)
 	seen := make(map[string]struct{}, len(tests))
 	for _, test := range tests {
 		seen[test.typeSlug] = struct{}{}

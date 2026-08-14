@@ -161,7 +161,11 @@ func TestAttributeSchemaAllowsOnlyOneCurrentValuePerOrdinal(t *testing.T) {
 		"value_text, ordinal, active_from", "other slot", 1, from.Add(time.Hour)))
 }
 
-func TestAttributeSchemaAcceptsExactlyTheProvenanceVocabulary(t *testing.T) {
+// The provenance vocabulary is validated at the Go boundary, not frozen into
+// a schema CHECK: a database enum cannot be extended on existing archives
+// without a table rebuild, the same compatibility-ceiling problem the
+// communication-services catalog deliberately avoids.
+func TestAttributeSchemaProvenanceVocabularyIsOpenAtTheDatabase(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "provenance_probe")
@@ -180,7 +184,14 @@ func TestAttributeSchemaAcceptsExactlyTheProvenanceVocabulary(t *testing.T) {
 		    (person_id, definition_id, ordinal, value_text, source)
 		VALUES (?, ?, ?, ?, ?)
 	`), person, definition, len(store.AllProvenances), "alice", "guessed")
-	require.Error(t, err, "a source outside the vocabulary must be rejected")
+	require.NoError(t, err,
+		"the database accepts future provenance values; the Go boundary validates them")
+	_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+		PersonID: person, DefinitionSlug: "provenance_probe",
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: new("alice")},
+		Source: store.Provenance("guessed"),
+	})
+	require.Error(t, err, "the store boundary still rejects unknown provenance")
 }
 
 func TestAttributeSchemaRefusesDeletingADefinitionThatHasValues(t *testing.T) {

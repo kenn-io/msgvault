@@ -818,9 +818,6 @@ CREATE TABLE IF NOT EXISTS person_relationships (
     CHECK (end_day IS NULL OR end_month IS NOT NULL),
     CHECK (start_month IS NULL OR start_year IS NOT NULL),
     CHECK (end_month IS NULL OR end_year IS NOT NULL),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system')),
     CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
            AND source NOT IN ('user', 'carddav_import', 'vcard_import')))
 );
@@ -864,10 +861,7 @@ CREATE TABLE IF NOT EXISTS person_relationship_reviews (
     reviewed_at              DATETIME,
     created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK (matched_person_id IS NULL OR matched_person_id <> person_id),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system'))
+    CHECK (matched_person_id IS NULL OR matched_person_id <> person_id)
 );
 
 -- One review per parsed property occurrence. COALESCE makes the nullable
@@ -962,9 +956,6 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     confidence        REAL,
     actor             TEXT,
     CHECK (ordinal >= 0),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system')),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
     CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
@@ -1029,9 +1020,6 @@ CREATE TABLE IF NOT EXISTS organization_attribute_values (
     confidence        REAL,
     actor             TEXT,
     CHECK (ordinal >= 0),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system')),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
     CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
@@ -1099,9 +1087,7 @@ CREATE TABLE IF NOT EXISTS person_names (
     vcard_prop_id         TEXT,
     vcard_pid             TEXT,
     vcard_altid           TEXT,
-    source                TEXT NOT NULL
-        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source                TEXT NOT NULL,
     source_ref            TEXT,
     confidence            REAL
         CHECK (confidence IS NULL
@@ -1144,9 +1130,7 @@ CREATE TABLE IF NOT EXISTS person_contact_points (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL
-        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL
         CHECK (confidence IS NULL
@@ -1201,10 +1185,7 @@ CREATE TABLE IF NOT EXISTS person_addresses (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1245,10 +1226,7 @@ CREATE TABLE IF NOT EXISTS person_dates (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1287,10 +1265,7 @@ CREATE TABLE IF NOT EXISTS person_categories (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1332,10 +1307,7 @@ CREATE TABLE IF NOT EXISTS person_media (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1381,10 +1353,7 @@ CREATE TABLE IF NOT EXISTS participant_contact_observations (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1428,10 +1397,7 @@ CREATE TABLE IF NOT EXISTS identity_match_candidates (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
     )),
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     observation_conflict_origin TEXT CHECK (
         observation_conflict_origin IN ('generated', 'promoted')
@@ -1462,10 +1428,7 @@ CREATE TABLE IF NOT EXISTS identity_match_evidence (
     evidence_kind TEXT NOT NULL,
     evidence_ref TEXT,
     detail TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_candidate
@@ -1553,10 +1516,7 @@ CREATE TABLE IF NOT EXISTS organization_names (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1588,10 +1548,7 @@ CREATE TABLE IF NOT EXISTS organization_identifiers (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1626,10 +1583,7 @@ CREATE TABLE IF NOT EXISTS organization_addresses (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1662,10 +1616,7 @@ CREATE TABLE IF NOT EXISTS organization_contact_points (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1693,10 +1644,7 @@ CREATE TABLE IF NOT EXISTS organization_categories (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1721,10 +1669,7 @@ CREATE TABLE IF NOT EXISTS organization_media (
     type_label TEXT, type_tokens TEXT,
     vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
     vcard_pid TEXT, vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1764,9 +1709,7 @@ CREATE TABLE IF NOT EXISTS employments (
     end_day          INTEGER,
     is_current       INTEGER NOT NULL DEFAULT 1,
     is_primary       INTEGER NOT NULL DEFAULT 0,
-    source           TEXT NOT NULL DEFAULT 'user'
-        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source           TEXT NOT NULL DEFAULT 'user',
     source_ref       TEXT,
     confidence       REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import'))),
