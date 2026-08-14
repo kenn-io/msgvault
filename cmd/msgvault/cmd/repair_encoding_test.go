@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
@@ -238,4 +241,85 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	assert.Equal(1, stats.convSourceIDs, "convSourceIDs")
 	assert.Equal(1, stats.emailAddrs, "emailAddrs")
 	assert.Equal(1, stats.domains, "domains")
+}
+
+func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
+		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now')),
+		       (2, 'gmail', 'alice@example.com', datetime('now'), datetime('now'))`, gcal.SourceType)
+	require.NoError(err, "insert sources")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', datetime('now'), datetime('now')),
+		       (2, 2, 'email-conversation', 'email_thread', 'Email', datetime('now'), datetime('now'))`,
+		gcal.ConversationType)
+	require.NoError(err, "insert conversations")
+
+	canonicalBody := strings.Repeat("a", 198) + "\u2014after-boundary"
+	bodyPtr := func(value string) *string { return &value }
+	rows := []struct {
+		id           int64
+		conversation int64
+		source       int64
+		messageType  string
+		snippet      string
+		body         *string
+	}{
+		{10, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("a", 198) + "\xe2\x80", &canonicalBody},
+		{20, 2, 2, "email", "mail\xff", bodyPtr("email canonical body")},
+		{30, 1, 1, gcal.MessageTypeCalendarEvent, "missing\xff", nil},
+		{40, 1, 1, gcal.MessageTypeCalendarEvent, "invalid-body\xff", bodyPtr("body\xff")},
+		{50, 1, 1, gcal.MessageTypeCalendarEvent, "keep existing preview", &canonicalBody},
+		{60, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("a", 198) + "\xe2", &canonicalBody},
+		{70, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("b", 198) + "\xe2\x80", &canonicalBody},
+	}
+	for _, row := range rows {
+		_, execErr := db.Exec(`INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
+			VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1000)`,
+			row.id, row.conversation, row.source, fmt.Sprintf("repair-%d", row.id), row.messageType, row.snippet)
+		require.NoError(execErr, "insert message %d", row.id)
+		if row.body != nil {
+			_, execErr = db.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, row.id, *row.body)
+			require.NoError(execErr, "insert body %d", row.id)
+		}
+	}
+
+	stats := &repairStats{}
+	reembedNeededIDs, err := repairMessageFields(st, stats)
+	require.NoError(err, "repair message fields")
+
+	got := make(map[int64]string)
+	resultRows, err := db.Query(`SELECT id, snippet FROM messages WHERE id IN (10, 20, 30, 40, 50, 60, 70)`)
+	require.NoError(err, "query repaired snippets")
+	defer func() { assert.NoError(resultRows.Close()) }()
+	for resultRows.Next() {
+		var id int64
+		var snippet string
+		require.NoError(resultRows.Scan(&id, &snippet), "scan repaired snippet")
+		got[id] = snippet
+	}
+	require.NoError(resultRows.Err(), "iterate repaired snippets")
+
+	assert.Equal(strings.Repeat("a", 198), got[10], "calendar snippet derives from intact canonical body")
+	assert.Equal(textutil.EnsureUTF8("mail\xff"), got[20], "non-calendar snippet retains generic repair")
+	assert.Equal(textutil.EnsureUTF8("missing\xff"), got[30], "missing calendar body retains generic repair")
+	assert.Equal(textutil.EnsureUTF8("invalid-body\xff"), got[40], "invalid calendar body retains generic repair")
+	assert.Equal("keep existing preview", got[50], "valid calendar snippet is not backfilled")
+	assert.Equal(textutil.EnsureUTF8(strings.Repeat("a", 198)+"\xe2"), got[60],
+		"wrong-length calendar snippet retains generic repair")
+	assert.Equal(textutil.EnsureUTF8(strings.Repeat("b", 198)+"\xe2\x80"), got[70],
+		"200-byte non-prefix calendar snippet retains generic repair")
+	for id, snippet := range got {
+		assert.True(utf8.ValidString(snippet), "message %d snippet must be valid UTF-8", id)
+	}
+	assert.Equal(6, stats.snippets, "only invalid snippets count as repaired")
+	assert.Contains(reembedNeededIDs, int64(40), "invalid body repair still requests re-embedding")
+	assert.NotContains(reembedNeededIDs, int64(10), "snippet-only regeneration does not request re-embedding")
 }

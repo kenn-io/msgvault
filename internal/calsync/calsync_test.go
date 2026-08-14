@@ -860,7 +860,7 @@ func TestSnippet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
-			got := snippet(tt.body)
+			got := Snippet(tt.body)
 
 			assert.Equal(tt.want, got)
 			assert.LessOrEqual(len(got), maxSnippetBytes)

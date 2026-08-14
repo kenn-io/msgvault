@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/duckdbutil"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
@@ -1162,4 +1164,53 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 	repaired := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.False(repaired.NeedsBuild,
 		"incremental build must clear identifier drift (reason: %q)", repaired.Reason)
+}
+
+func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	dbPath := cfg.DatabaseDSN()
+	st, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(st.InitSchema(), "initialize schema")
+	_, err = st.DB().Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
+	require.NoError(err, "insert calendar source")
+	_, err = st.DB().Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'repair-calendar-conversation', ?, 'Calendar', datetime('now'), datetime('now'))`,
+		gcal.ConversationType)
+	require.NoError(err, "insert calendar conversation")
+
+	canonicalBody := strings.Repeat("a", 198) + "\u2014after-boundary"
+	brokenSnippet := strings.Repeat("a", 198) + "\xe2\x80"
+	_, err = st.DB().Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
+		VALUES (1, 1, 1, ?, ?, ?, datetime('now'), 1000)`,
+		cacheCalendarBoundaryEventID, gcal.MessageTypeCalendarEvent, brokenSnippet)
+	require.NoError(err, "insert damaged calendar message")
+	_, err = st.DB().Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (1, ?)`, canonicalBody)
+	require.NoError(err, "insert canonical calendar body")
+	require.NoError(st.Close(), "close fixture store")
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	require.NoError(runRepairEncodingLocal(cmd), "run local encoding repair")
+
+	st, err = store.Open(dbPath)
+	require.NoError(err, "reopen repaired store")
+	defer func() { assert.NoError(st.Close()) }()
+	var stored string
+	require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE id = 1`).Scan(&stored),
+		"read repaired SQLite snippet")
+	want := strings.Repeat("a", 198)
+	assert.Equal(want, stored, "normal repair stores the canonical preview")
+	assert.Equal(want, readCalendarBoundarySnippet(t, cfg.AnalyticsDir()),
+		"normal repair full rebuild republishes the canonical preview")
 }

@@ -124,7 +124,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		IsFromMe:                fromMe,
 		IdentityDerivedIsFromMe: identityFromMe,
 		Subject:                 sql.NullString{String: subject, Valid: subject != ""},
-		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
+		Snippet:                 sql.NullString{String: Snippet(body), Valid: body != ""},
 		SizeEstimate:            int64(len(body)),
 	})
 	if err != nil {
@@ -363,8 +363,8 @@ func whenLine(ev gcal.Event) string {
 	return "When: " + start.Format("2006-01-02 15:04")
 }
 
-// snippet returns a trimmed preview of at most 200 bytes without splitting valid UTF-8.
-func snippet(body string) string {
+// Snippet returns a trimmed calendar-event preview of at most 200 bytes without splitting valid UTF-8.
+func Snippet(body string) string {
 	const maxSnippetBytes = 200
 	body = strings.TrimSpace(body)
 	if len(body) <= maxSnippetBytes {

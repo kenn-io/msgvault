@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/calsync"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -271,7 +273,7 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 
 	// Query all messages with their raw data
 	rows, err := db.Query(`
-		SELECT m.id, m.subject, mb.body_text, mb.body_html, m.snippet,
+		SELECT m.id, m.message_type, m.subject, mb.body_text, mb.body_html, m.snippet,
 		       mr.raw_data, mr.compression
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
@@ -370,11 +372,12 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 
 	for rows.Next() {
 		var id int64
+		var messageType string
 		var subject, bodyText, bodyHTML, snippet sql.NullString
 		var rawData []byte
 		var compression sql.NullString
 
-		if err := rows.Scan(&id, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
+		if err := rows.Scan(&id, &messageType, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
 			logger.Warn("skipping message row with scan error", "error", err)
 			stats.skippedRows++
 			continue
@@ -433,9 +436,17 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			stats.bodyHTMLs++
 		}
 
-		// Snippet (from Gmail API, not in raw MIME)
+		// Only the exact historical body[:200] signature can be reconstructed from
+		// canonical body text. Every other case retains the generic repair.
 		if snippet.Valid && !utf8.ValidString(snippet.String) {
-			repair.newSnippet = sql.NullString{String: textutil.EnsureUTF8(snippet.String), Valid: true}
+			repairedSnippet := textutil.EnsureUTF8(snippet.String)
+			if messageType == gcal.MessageTypeCalendarEvent &&
+				len(snippet.String) == 200 &&
+				bodyText.Valid && utf8.ValidString(bodyText.String) &&
+				strings.HasPrefix(bodyText.String, snippet.String) {
+				repairedSnippet = calsync.Snippet(bodyText.String)
+			}
+			repair.newSnippet = sql.NullString{String: repairedSnippet, Valid: true}
 			needsRepair = true
 			stats.snippets++
 		}
