@@ -50,11 +50,11 @@ func init() {
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeAttributes, "include-attributes", false,
-		"copy person attribute definitions and all current/history values; may expose sensitive values and provenance metadata",
+		"copy person and organization attribute definitions and all current/history values; may expose sensitive values and provenance metadata",
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeProfiles, "include-profiles", false,
-		"copy structured profile values, history, media, contact observations, relationships, and provenance; may expose sensitive personal data",
+		"copy structured profile values, history, media, contact observations, relationships, employment history with referenced organizations (their profiles, contacts, and media), and provenance; may expose sensitive personal data",
 	)
 	_ = createSubsetCmd.MarkFlagRequired("output")
 	_ = createSubsetCmd.MarkFlagRequired("rows")
@@ -101,11 +101,11 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	)
 	if subsetIncludeAttributes {
 		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-attributes copies every included person's current and historical attribute values, including sensitive content, provenance references, and actor metadata.")
+			"WARNING: --include-attributes copies every included person's and referenced organization's current and historical attribute values, including sensitive content, provenance references, and actor metadata.")
 	}
 	if subsetIncludeProfiles {
 		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata.")
+			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata, plus their employment history and the referenced organizations' profiles, contacts, and media.")
 	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,
@@ -126,6 +126,10 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Conversations: %d\n", result.Conversations)
 	fmt.Printf("Participants:  %d\n", result.Participants)
 	fmt.Printf("Labels:        %d\n", result.Labels)
+	if subsetIncludeProfiles {
+		fmt.Printf("Organizations: %d\n", result.Organizations)
+		fmt.Printf("Employments:   %d\n", result.Employments)
+	}
 	fmt.Printf("Database size: %s\n", formatSize(result.DBSize))
 
 	if int64(subsetRows) > result.Messages {

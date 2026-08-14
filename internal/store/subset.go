@@ -19,6 +19,8 @@ type CopyResult struct {
 	Participants  int64
 	Labels        int64
 	Sources       int64
+	Organizations int64
+	Employments   int64
 	DBSize        int64
 	Elapsed       time.Duration
 }
@@ -485,7 +487,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		if err := copySubsetRelationships(tx); err != nil {
 			return nil, err
 		}
-		if err := copyEmploymentData(tx); err != nil {
+		if err := copyEmploymentData(tx, result); err != nil {
 			return nil, err
 		}
 	}
@@ -1075,7 +1077,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 // same IncludeProfiles opt-in as structured person profiles. Employments
 // cannot reference merged organizations, so the copied organizations never
 // need a merge-redirect closure.
-func copyEmploymentData(tx *sql.Tx) error {
+func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
 	hasEmployments, err := sourceTableExists(tx, "employments")
 	if err != nil {
 		return fmt.Errorf("check employment schema: %w", err)
@@ -1083,11 +1085,15 @@ func copyEmploymentData(tx *sql.Tx) error {
 	if !hasEmployments {
 		return nil
 	}
-	if _, err := copyByName(tx, "organizations", `id IN (
+	organizationsCopied, err := copyByName(tx, "organizations", `id IN (
 			SELECT DISTINCT organization_id FROM src.employments
 			WHERE person_id IN (SELECT id FROM persons)
-		)`); err != nil {
+		)`)
+	if err != nil {
 		return fmt.Errorf("copy organizations: %w", err)
+	}
+	if result.Organizations, err = organizationsCopied.RowsAffected(); err != nil {
+		return fmt.Errorf("organizations rows affected: %w", err)
 	}
 	for _, table := range []string{
 		"organization_names", "organization_identifiers",
@@ -1103,9 +1109,13 @@ func copyEmploymentData(tx *sql.Tx) error {
 		`organization_id IN (SELECT id FROM organizations)`); err != nil {
 		return fmt.Errorf("copy organization_contact_points: %w", err)
 	}
-	if _, err := copyByName(tx, "employments",
-		`person_id IN (SELECT id FROM persons)`); err != nil {
+	employmentsCopied, err := copyByName(tx, "employments",
+		`person_id IN (SELECT id FROM persons)`)
+	if err != nil {
 		return fmt.Errorf("copy employments: %w", err)
+	}
+	if result.Employments, err = employmentsCopied.RowsAffected(); err != nil {
+		return fmt.Errorf("employments rows affected: %w", err)
 	}
 	return nil
 }

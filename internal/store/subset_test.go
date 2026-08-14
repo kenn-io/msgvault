@@ -2468,10 +2468,14 @@ func TestCopySubset_ProfilesIncludeEmploymentsAndOrganizations(t *testing.T) {
 	require.NoError(source.Close())
 
 	dstDir := filepath.Join(t.TempDir(), "dst")
-	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+	copied, err := CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
 		IncludeProfiles: true, IncludeAttributes: true,
 	})
 	require.NoError(err)
+	assert.Equal(int64(1), copied.Organizations,
+		"the result reports exported organizations for auditing")
+	assert.Equal(int64(1), copied.Employments,
+		"the result reports exported employments for auditing")
 	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = destination.Close() })
