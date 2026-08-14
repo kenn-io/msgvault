@@ -14,6 +14,10 @@ const (
 	postgresParticipantLinkIdentityMatchCandidateMigration  = `ALTER TABLE participant_links ADD COLUMN IF NOT EXISTS identity_match_candidate_id BIGINT`
 	sqliteIdentityMatchObservationConflictOriginMigration   = `ALTER TABLE identity_match_candidates ADD COLUMN observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`
 	postgresIdentityMatchObservationConflictOriginMigration = `ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`
+	sqliteIdentityMatchPreConflictStateMigration            = `ALTER TABLE identity_match_candidates ADD COLUMN pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`
+	postgresIdentityMatchPreConflictStateMigration          = `ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`
+	sqliteIdentityMatchApplicationPendingMigration          = `ALTER TABLE identity_match_candidates ADD COLUMN application_pending BOOLEAN NOT NULL DEFAULT TRUE`
+	postgresIdentityMatchApplicationPendingMigration        = `ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS application_pending BOOLEAN NOT NULL DEFAULT TRUE`
 	sqliteIdentityMatchCandidateSourcesMigration            = `CREATE TABLE IF NOT EXISTS identity_match_candidate_sources (
 		candidate_id INTEGER NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
 		source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -76,9 +80,9 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
 		return nil
 	}
 	// Candidate reconciliation below uses the final merge implementation,
-	// which reads and preserves both the participant-link owner and
-	// observation_conflict_origin. The normal legacy column loop runs after
-	// this older phone-index migration, so install both prerequisites early.
+	// which reads and preserves the participant-link owner and candidate merge
+	// state. The normal legacy column loop runs after this older phone-index
+	// migration, so install every merge prerequisite early.
 	// This matters only for a resumed or manually replayed upgrade that already
 	// has identity-match rows or link edges.
 	if err := s.ensureIdentityMatchCandidateMergeColumns(ctx); err != nil {
@@ -120,6 +124,8 @@ func (s *Store) ensureIdentityMatchCandidateMergeColumns(ctx context.Context) er
 	migrations := []string{
 		sqliteParticipantLinkIdentityMatchCandidateMigration,
 		sqliteIdentityMatchObservationConflictOriginMigration,
+		sqliteIdentityMatchPreConflictStateMigration,
+		sqliteIdentityMatchApplicationPendingMigration,
 		sqliteIdentityMatchCandidateSourcesMigration,
 		sqliteIdentityMatchEvidenceSourcesMigration,
 		sqliteIdentityMatchCandidateSourcesConservativeMigration,
@@ -129,6 +135,8 @@ func (s *Store) ensureIdentityMatchCandidateMergeColumns(ctx context.Context) er
 		migrations = []string{
 			postgresParticipantLinkIdentityMatchCandidateMigration,
 			postgresIdentityMatchObservationConflictOriginMigration,
+			postgresIdentityMatchPreConflictStateMigration,
+			postgresIdentityMatchApplicationPendingMigration,
 			postgresIdentityMatchCandidateSourcesMigration,
 			postgresIdentityMatchEvidenceSourcesMigration,
 			postgresIdentityMatchCandidateSourcesConservativeMigration,

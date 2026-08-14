@@ -56,11 +56,15 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		    WHERE phone_number IS NOT NULL
 	`)
 	require.NoError(err, "create legacy non-unique idx")
-	_, err = st.db.Exec(`
-		ALTER TABLE identity_match_candidates
-		DROP COLUMN observation_conflict_origin
-	`)
-	require.NoError(err, "restore candidate table before the final merge column")
+	_, err = st.db.Exec(`DROP INDEX idx_identity_match_candidates_application_pending`)
+	require.NoError(err, "drop index on post-legacy candidate column")
+	for _, column := range []string{
+		"observation_conflict_origin", "pre_conflict_state", "application_pending",
+	} {
+		_, err = st.db.Exec(`
+			ALTER TABLE identity_match_candidates DROP COLUMN ` + column)
+		require.NoError(err, "restore candidate table before merge column %s", column)
+	}
 
 	// Seed two duplicate-phone participants directly (the public API
 	// no longer allows this, which is exactly the bug the unique
