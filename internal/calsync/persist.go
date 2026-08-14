@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
@@ -362,12 +363,17 @@ func whenLine(ev gcal.Event) string {
 	return "When: " + start.Format("2006-01-02 15:04")
 }
 
-// snippet is a short preview derived from the body.
+// snippet returns a trimmed preview of at most 200 bytes without splitting valid UTF-8.
 func snippet(body string) string {
-	const maxSnippetLength = 200
+	const maxSnippetBytes = 200
 	body = strings.TrimSpace(body)
-	if len(body) <= maxSnippetLength {
+	if len(body) <= maxSnippetBytes {
 		return body
 	}
-	return body[:maxSnippetLength]
+
+	end := maxSnippetBytes
+	for end > 0 && !utf8.RuneStart(body[end]) {
+		end--
+	}
+	return body[:end]
 }
