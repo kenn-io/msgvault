@@ -186,6 +186,7 @@ type repairStats struct {
 	filenames     int
 	convTitles    int
 	convSourceIDs int
+	convPreviews  int
 	emailAddrs    int
 	domains       int
 	skippedRows   int
@@ -206,6 +207,13 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 		return nil, err
 	}
 
+	// Repair denormalized conversation previews after all message snippets so
+	// each preview is derived once from the final message state. This also
+	// catches previews stranded by a repair run from an older version.
+	if err := repairConversationPreviews(s, stats); err != nil {
+		return nil, err
+	}
+
 	// Repair display names in participants and message_recipients
 	if err := repairDisplayNames(s, stats); err != nil {
 		return nil, err
@@ -219,7 +227,7 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	// Summary
 	total := stats.subjects + stats.bodyTexts + stats.bodyHTMLs + stats.snippets +
 		stats.displayNames + stats.labels + stats.filenames + stats.convTitles +
-		stats.convSourceIDs + stats.emailAddrs + stats.domains
+		stats.convSourceIDs + stats.convPreviews + stats.emailAddrs + stats.domains
 	if total == 0 {
 		fmt.Println("No encoding repairs needed.")
 		return nil, nil
@@ -252,6 +260,9 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	}
 	if stats.convSourceIDs > 0 {
 		fmt.Printf("  Conv src IDs:  %d\n", stats.convSourceIDs)
+	}
+	if stats.convPreviews > 0 {
+		fmt.Printf("  Conv previews: %d\n", stats.convPreviews)
 	}
 	if stats.emailAddrs > 0 {
 		fmt.Printf("  Email addrs:   %d\n", stats.emailAddrs)
@@ -623,6 +634,63 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 	}
 
 	return totalRepaired, nil
+}
+
+// repairConversationPreviews recomputes invalid denormalized previews from
+// the final message state. The compare-and-set store update preserves a
+// preview changed after this scan and makes a failed run safe to retry.
+func repairConversationPreviews(s *store.Store, stats *repairStats) error {
+	fmt.Println("Scanning conversations.last_message_preview for invalid UTF-8...")
+
+	type previewRepair struct {
+		id       int64
+		expected string
+	}
+	repairs, err := func() ([]previewRepair, error) {
+		rows, err := s.DB().Query(`SELECT id, last_message_preview
+			FROM conversations WHERE last_message_preview IS NOT NULL`)
+		if err != nil {
+			return nil, fmt.Errorf("query conversation previews: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		var repairs []previewRepair
+		for rows.Next() {
+			var repair previewRepair
+			if err := rows.Scan(&repair.id, &repair.expected); err != nil {
+				logger.Warn("skipping row with scan error", "table", tableConversations,
+					"column", "last_message_preview", "error", err)
+				stats.skippedRows++
+				continue
+			}
+			if !utf8.ValidString(repair.expected) {
+				repairs = append(repairs, repair)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate conversation previews: %w", err)
+		}
+		return repairs, nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	repaired := 0
+	for _, repair := range repairs {
+		updated, err := s.RecomputeConversationPreviewIfMatches(repair.id, repair.expected)
+		if err != nil {
+			return err
+		}
+		if updated {
+			stats.convPreviews++
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		fmt.Printf("Repaired %d conversations.last_message_preview values\n", repaired)
+	}
+	return nil
 }
 
 // repairOtherStrings repairs other string fields that could have encoding issues.

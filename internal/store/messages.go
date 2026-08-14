@@ -2698,6 +2698,11 @@ func (s *Store) backfillFTSBatchContext(
 	return affected, err
 }
 
+const latestConversationPreviewSubquery = `(SELECT snippet FROM messages
+	WHERE conversation_id = conversations.id
+	ORDER BY COALESCE(sent_at, received_at, internal_date) DESC, id DESC
+	LIMIT 1)`
+
 // RecomputeConversationStats updates the denormalized stats columns on all conversations
 // belonging to the given source. It recomputes message_count, participant_count,
 // last_message_at, and last_message_preview from the current table state.
@@ -2742,18 +2747,31 @@ func (s *Store) recomputeConversationStatsContext(ctx context.Context, whereClau
 				FROM messages
 				WHERE conversation_id = conversations.id
 			),
-			last_message_preview = (
-				SELECT snippet FROM messages
-				WHERE conversation_id = conversations.id
-				ORDER BY COALESCE(sent_at, received_at, internal_date) DESC, id DESC
-				LIMIT 1
-			)
+			last_message_preview = %s
 		WHERE %s
-	`, whereClause), arg)
+	`, latestConversationPreviewSubquery, whereClause), arg)
 	if err != nil {
 		return fmt.Errorf("recompute conversation stats: %w", err)
 	}
 	return nil
+}
+
+// RecomputeConversationPreviewIfMatches refreshes one denormalized preview
+// from current message state only if it still equals expected. It returns
+// whether the guarded row was updated.
+func (s *Store) RecomputeConversationPreviewIfMatches(conversationID int64, expected string) (bool, error) {
+	result, err := s.db.Exec(s.Rebind(fmt.Sprintf(`UPDATE conversations
+		SET last_message_preview = %s
+		WHERE id = ? AND last_message_preview = ?`, latestConversationPreviewSubquery)),
+		conversationID, expected)
+	if err != nil {
+		return false, fmt.Errorf("recompute conversation preview: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read recomputed conversation preview count: %w", err)
+	}
+	return updated > 0, nil
 }
 
 // ForEachTeamsHostedContentBody invokes fn with (messageID, bodyHTML) for every
