@@ -309,7 +309,11 @@ func (s *Store) prepareOrganizationProfileContext(
 		row := &prepared.input.ContactPoints[i]
 		row.ScopeKind = trimmedOrNil(row.ScopeKind)
 		row.ScopeValue = trimmedOrNil(row.ScopeValue)
-		if !row.AddressKind.Valid() || strings.TrimSpace(row.OriginalValue) == "" {
+		if !row.AddressKind.Exportable() {
+			return nil, fmt.Errorf("%w: contact_points[%d].address_kind %q is not exportable",
+				ErrOrganizationInvalid, i, row.AddressKind)
+		}
+		if strings.TrimSpace(row.OriginalValue) == "" {
 			return nil, fmt.Errorf("%w: contact_points[%d].value_original is required",
 				ErrOrganizationInvalid, i)
 		}

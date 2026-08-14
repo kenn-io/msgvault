@@ -159,6 +159,31 @@ func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
 	require.ErrorIs(err, store.ErrInvalidProvenance)
 }
 
+func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testing.T) {
+	require := require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(
+		ctx, store.OrganizationInput{Name: "Example Org"})
+	require.NoError(err)
+
+	_, err = st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision, store.OrganizationProfileInput{
+			ContactPoints: []store.OrganizationContactPointInput{{
+				AddressKind:   store.ContactAddressProviderIdentity,
+				OriginalValue: "provider:opaque-identity",
+				Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			}},
+		})
+	require.ErrorIs(err, store.ErrOrganizationInvalid)
+	require.ErrorContains(err, "address_kind \"provider_identity\" is not exportable")
+
+	profile, err := st.GetOrganizationProfileContext(ctx, organization.ID, false)
+	require.NoError(err)
+	require.Empty(profile.ContactPoints)
+	require.Equal(organization.Revision, profile.Organization.Revision)
+}
+
 func TestRemovingFutureOrganizationProfileRowRetractsWithoutInvalidWorldInterval(
 	t *testing.T,
 ) {

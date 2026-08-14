@@ -418,11 +418,11 @@ func (s *Store) AddIdentityMatchEvidenceContext(
 		detail := stringValue(input.Detail)
 		err := tx.QueryRowContext(ctx, `SELECT id FROM identity_match_evidence
 			WHERE candidate_id = ? AND evidence_kind = ?
-			  AND (evidence_ref = ? OR (evidence_ref IS NULL AND ? IS NULL))
-			  AND (detail = ? OR (detail IS NULL AND ? IS NULL))
+			  AND evidence_ref IS NOT DISTINCT FROM ?
+			  AND detail IS NOT DISTINCT FROM ?
 			  AND source = ?
 			ORDER BY id LIMIT 1`,
-			candidateID, kind, evidenceRef, evidenceRef, detail, detail, input.Source,
+			candidateID, kind, evidenceRef, detail, input.Source,
 		).Scan(&id)
 		inserted := false
 		if errors.Is(err, sql.ErrNoRows) {

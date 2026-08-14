@@ -106,6 +106,13 @@ func (k ContactAddressKind) Valid() bool {
 	}
 }
 
+// Exportable reports whether a contact kind belongs in a curated profile.
+// Provider identities remain valid importer evidence, but they are opaque
+// matching keys rather than contact points that profiles may publish.
+func (k ContactAddressKind) Exportable() bool {
+	return k.Valid() && k != ContactAddressProviderIdentity
+}
+
 var serviceSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 var seededCommunicationServices = []CommunicationServiceInput{

@@ -418,13 +418,13 @@ func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMa
 		SELECT participant_id FROM participant_contact_observations WHERE id = ?`,
 		loserObservation.Observation.Envelope.ID,
 	).Scan(&observationOwner)
-	assert.NoError(err, "absorbed observation must survive the participant delete")
+	require.NoError(err, "absorbed observation must survive the participant delete")
 	assert.Equal(winner, observationOwner, "absorbed observation must point to the winner")
 	_, err = st.GetIdentityMatchCandidateContext(t.Context(), observationCandidate.ID)
-	assert.NoError(err, "candidate observation endpoint must remain valid")
+	require.NoError(err, "candidate observation endpoint must remain valid")
 
 	_, err = st.GetIdentityMatchCandidateContext(t.Context(), stableCandidate.ID)
-	assert.ErrorIs(err, ErrIdentityMatchNotFound,
+	require.ErrorIs(err, ErrIdentityMatchNotFound,
 		"system match without a current provider pair must be withdrawn")
 	lo, hi := normalizeEdge(winner, third)
 	var linkCount int

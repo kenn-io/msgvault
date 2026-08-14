@@ -40,9 +40,7 @@ func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
 	results := make(chan result, 2)
 	var wg sync.WaitGroup
 	for _, sourceID := range []int64{fixture.Source.ID, secondSource.ID} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			evidence, addErr := st.AddIdentityMatchEvidenceContext(
 				ctx, candidate.ID, store.IdentityMatchEvidenceInput{
@@ -52,7 +50,7 @@ func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
 					SourceID:     &sourceID,
 				})
 			results <- result{evidence: evidence, err: addErr}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

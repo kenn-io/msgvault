@@ -154,10 +154,10 @@ func (s *Store) addPersonContactPointTx(
 	personID int64,
 	input PersonContactPointInput,
 ) (*PersonContactPoint, error) {
-	if input.AddressKind == ContactAddressProviderIdentity {
-		return nil, ErrProviderIdentityNotExportable
-	}
-	if !input.AddressKind.Valid() {
+	if !input.AddressKind.Exportable() {
+		if input.AddressKind.Valid() {
+			return nil, ErrProviderIdentityNotExportable
+		}
 		return nil, ErrInvalidContactAddressKind
 	}
 	if strings.TrimSpace(input.OriginalValue) == "" {
