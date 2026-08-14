@@ -3230,6 +3230,156 @@ func (o *LinkIdentityParticipantsRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// ListIdentityMatchCandidatesRequestOptions is the options needed to make a request to ListIdentityMatchCandidates.
+type ListIdentityMatchCandidatesRequestOptions struct {
+	Query *ListIdentityMatchCandidatesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListIdentityMatchCandidatesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListIdentityMatchCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListIdentityMatchCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListIdentityMatchCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListIdentityMatchCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AcceptIdentityMatchCandidateRequestOptions is the options needed to make a request to AcceptIdentityMatchCandidate.
+type AcceptIdentityMatchCandidateRequestOptions struct {
+	PathParams *AcceptIdentityMatchCandidatePath
+	Body       *AcceptIdentityMatchCandidateBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *AcceptIdentityMatchCandidateRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AcceptIdentityMatchCandidateRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *AcceptIdentityMatchCandidateRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AcceptIdentityMatchCandidateRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AcceptIdentityMatchCandidateRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RejectIdentityMatchCandidateRequestOptions is the options needed to make a request to RejectIdentityMatchCandidate.
+type RejectIdentityMatchCandidateRequestOptions struct {
+	PathParams *RejectIdentityMatchCandidatePath
+	Body       *RejectIdentityMatchCandidateBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *RejectIdentityMatchCandidateRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RejectIdentityMatchCandidateRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *RejectIdentityMatchCandidateRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RejectIdentityMatchCandidateRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RejectIdentityMatchCandidateRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UnlinkIdentityParticipantsRequestOptions is the options needed to make a request to UnlinkIdentityParticipants.
 type UnlinkIdentityParticipantsRequestOptions struct {
 	Body *UnlinkIdentityParticipantsBody

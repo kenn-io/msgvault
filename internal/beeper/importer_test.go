@@ -205,6 +205,85 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 	assert.EqualValues(43, added)
 }
 
+func TestImportScopesFallbackUserIDsByAccount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	for _, accountID := range []string{"account-a", "account-b"} {
+		messageID := "message-" + accountID
+		f.addChat(&fakeChat{
+			ID: "!same-user-" + accountID, AccountID: accountID,
+			Network: "Telegram", Title: "Same user ID", Type: "single",
+			LastActivity: base,
+			Participants: []map[string]any{
+				{"id": "@same:beeper.local", "fullName": "Same ID"},
+			},
+			Msgs: []fakeMsg{{
+				ID: messageID, SortKey: 1, Timestamp: base,
+				Text: "account-specific", SenderID: "@same:beeper.local",
+				SenderName: "Same ID",
+				Mentions:   []string{"@same:beeper.local"},
+				Reactions: []map[string]any{{
+					"id": "@same:beeper.local", "participantID": "@same:beeper.local",
+					"reactionKey": "👍", "emoji": true,
+				}},
+			}},
+		})
+	}
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "account-a"})
+	require.NoError(err)
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "account-b"})
+	require.NoError(err)
+
+	var participantCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM participant_identifiers
+		 WHERE identifier_type = 'beeper'`,
+	).Scan(&participantCount))
+	assert.Equal(2, participantCount,
+		"the same raw Beeper ID must resolve to one durable identifier per account")
+
+	var senderCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(DISTINCT sender_id) FROM messages
+		 WHERE source_message_id IN ('message-account-a', 'message-account-b')`,
+	).Scan(&senderCount))
+	assert.Equal(2, senderCount,
+		"sender, mention, and reaction resolution must use the account-scoped ID")
+	var mentionCount, reactionCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(DISTINCT participant_id) FROM message_recipients
+		 WHERE recipient_type = 'mention'`,
+	).Scan(&mentionCount))
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(DISTINCT participant_id) FROM reactions`,
+	).Scan(&reactionCount))
+	assert.Equal(2, mentionCount)
+	assert.Equal(2, reactionCount)
+
+	rows, err := st.DB().Query(st.Rebind(
+		`SELECT identifier_value FROM participant_identifiers
+		 WHERE identifier_type = 'beeper' ORDER BY identifier_value`,
+	))
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(rows.Close()) })
+	var identifiers []string
+	for rows.Next() {
+		var identifier string
+		require.NoError(rows.Scan(&identifier))
+		identifiers = append(identifiers, identifier)
+	}
+	require.NoError(rows.Err())
+	require.Len(identifiers, 2)
+	assert.Contains(identifiers[0], "account-a")
+	assert.Contains(identifiers[1], "account-b")
+}
+
 func TestImportSecondRunIncremental(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

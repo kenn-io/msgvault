@@ -190,7 +190,10 @@ import (
 // bump): existing endpoints and response fields are unchanged.
 // 1.40.0 adds organization profiles, employment history, and their typed
 // attribute, projection, and lifecycle routes.
-const APISchemaVersion = "1.40.0"
+// 1.41.0 adds list, accept, and reject routes for reviewable identity match
+// candidates. Additive (minor bump): existing person, source-identity, and
+// meeting-import routes keep their current contracts.
+const APISchemaVersion = "1.41.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -80,6 +80,10 @@ type SearchFilesBody = FileSearchHTTPRequest
 
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
+type AcceptIdentityMatchCandidateBody = DecideIdentityMatchRequest
+
+type RejectIdentityMatchCandidateBody = DecideIdentityMatchRequest
+
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest

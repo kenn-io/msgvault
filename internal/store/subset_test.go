@@ -149,6 +149,34 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 	return dbPath
 }
 
+func seedAcceptedSubsetParticipantLink(t *testing.T, srcDB string) int64 {
+	t.Helper()
+	st, err := Open(srcDB)
+	require.NoError(t, err, "open source store")
+	defer func() { _ = st.Close() }()
+
+	candidate, created, err := st.UpsertIdentityMatchCandidateContext(
+		context.Background(), IdentityMatchCandidateInput{
+			LeftKind:        IdentityMatchParticipant,
+			LeftID:          2,
+			RightKind:       IdentityMatchParticipant,
+			RightID:         3,
+			Basis:           IdentityMatchStableProviderID,
+			NormalizedValue: new("subset-provider-id"),
+			State:           IdentityMatchStateCandidate,
+			Source:          ProvenanceArchiveObservation,
+		},
+	)
+	require.NoError(t, err, "create identity match candidate")
+	require.True(t, created, "identity match candidate must be new")
+	accepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		context.Background(), candidate.ID, "system", nil,
+	)
+	require.NoError(t, err, "accept identity match candidate")
+	require.Equal(t, IdentityMatchStateAccepted, accepted.State)
+	return accepted.ID
+}
+
 func TestCopySubset_Basic(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -412,6 +440,10 @@ func TestCopySubsetRemapsParticipantIdentifierServicesWithoutProfiles(t *testing
 		SET service_id = ?, scope_kind = 'account', scope_value = 'synthetic-account'
 		WHERE participant_id = 2`, sourceServiceID)
 	require.NoError(err)
+	_, err = source.db.Exec(`INSERT INTO communication_service_discoveries (
+		service_id, provider, discovery_kind
+	) VALUES (?, 'beeper', 'routing_fallback')`, sourceServiceID)
+	require.NoError(err)
 	require.NoError(source.Close())
 
 	dstDir := filepath.Join(t.TempDir(), "dst")
@@ -431,6 +463,10 @@ func TestCopySubsetRemapsParticipantIdentifierServicesWithoutProfiles(t *testing
 	assert.Equal(copiedService.ID, identifierServiceID)
 	assert.NotEqual(sourceServiceID, identifierServiceID,
 		"the destination service ID must be resolved from its immutable slug")
+	discovered, err := destination.IsCommunicationServiceDiscoveredContext(
+		ctx, copiedService.ID, "beeper", "routing_fallback")
+	require.NoError(err)
+	assert.True(discovered, "subset copies must preserve importer provenance")
 }
 
 func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T) {
@@ -580,6 +616,273 @@ func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T
 	).Scan(&leakedProfileLabels))
 	assert.Zero(leakedProfileLabels,
 		"profile-only provenance must not broaden message label selection")
+}
+
+func TestCopySubsetPreservesIdentityMatchSourceSupport(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	supportSource, err := source.GetOrCreateSource("beeper", "support-only")
+	require.NoError(err)
+	candidate, created, err := source.UpsertIdentityMatchCandidateContext(
+		ctx, IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: 2,
+			RightKind: IdentityMatchParticipant, RightID: 3,
+			Basis:           IdentityMatchStableProviderID,
+			NormalizedValue: new("subset-supported-provider"),
+			State:           IdentityMatchStateCandidate,
+			Source:          ProvenanceArchiveObservation,
+			SourceID:        &supportSource.ID,
+		},
+	)
+	require.NoError(err)
+	require.True(created)
+	evidence, err := source.AddIdentityMatchEvidenceContext(
+		ctx, candidate.ID, IdentityMatchEvidenceInput{
+			EvidenceKind: "stable_provider_id",
+			Detail:       new("subset-supported-provider"),
+			Source:       ProvenanceArchiveObservation,
+			SourceID:     &supportSource.ID,
+		},
+	)
+	require.NoError(err)
+	for participantID, originalValue := range map[int64]string{
+		2: "bob@subset.example",
+		3: "charlie@subset.example",
+	} {
+		_, err = source.RecordContactObservationContext(
+			ctx, participantID, ParticipantContactObservationInput{
+				SourceID:       &supportSource.ID,
+				AddressKind:    ContactAddressEmail,
+				ProviderUserID: new("subset-supported-provider"),
+				OriginalValue:  originalValue,
+				Envelope:       ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+			},
+		)
+		require.NoError(err)
+	}
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	copiedSource, err := destination.GetSourceByID(supportSource.ID)
+	require.NoError(err, "support-only source must be copied before support rows")
+	assert.Equal("support-only", copiedSource.Identifier)
+	var candidateSupport, evidenceSupport int
+	require.NoError(destination.DB().QueryRow(`SELECT COUNT(*)
+		FROM identity_match_candidate_sources
+		WHERE candidate_id = ? AND source_id = ?`, candidate.ID, supportSource.ID).
+		Scan(&candidateSupport))
+	require.NoError(destination.DB().QueryRow(`SELECT COUNT(*)
+		FROM identity_match_evidence_sources
+		WHERE evidence_id = ? AND source_id = ?`, evidence.ID, supportSource.ID).
+		Scan(&evidenceSupport))
+	assert.Equal(1, candidateSupport)
+	assert.Equal(1, evidenceSupport)
+
+	// Removing the selected message source must not erase profile matches that
+	// are still supported by the copied support-only source.
+	require.NoError(destination.RemoveSource(1))
+	reloaded, err := destination.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(IdentityMatchStateCandidate, reloaded.State)
+	require.Len(reloaded.Evidence, 1)
+	assert.Equal(evidence.ID, reloaded.Evidence[0].ID)
+}
+
+func TestCopySubsetOmitsConservativeIdentitySourceMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	supportSource, err := source.GetOrCreateSource("beeper", "exact-support")
+	require.NoError(err)
+	legacySource, err := source.GetOrCreateSource("beeper", "legacy-private")
+	require.NoError(err)
+	_, err = source.DB().Exec(
+		`UPDATE sources SET sync_config = ? WHERE id = ?`,
+		`{"account_email":"excluded@example.invalid","sync_token":"synthetic"}`,
+		legacySource.ID,
+	)
+	require.NoError(err)
+	candidate, _, err := source.UpsertIdentityMatchCandidateContext(
+		ctx, IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: 2,
+			RightKind: IdentityMatchParticipant, RightID: 3,
+			Basis:           IdentityMatchStableProviderID,
+			NormalizedValue: new("subset-conservative-provider"),
+			State:           IdentityMatchStateCandidate,
+			Source:          ProvenanceArchiveObservation,
+			SourceID:        &supportSource.ID,
+		},
+	)
+	require.NoError(err)
+	evidence, err := source.AddIdentityMatchEvidenceContext(
+		ctx, candidate.ID, IdentityMatchEvidenceInput{
+			EvidenceKind: "stable_provider_id",
+			Detail:       new("subset-conservative-provider"),
+			Source:       ProvenanceArchiveObservation,
+			SourceID:     &supportSource.ID,
+		},
+	)
+	require.NoError(err)
+	_, err = source.DB().Exec(
+		`INSERT INTO identity_match_candidate_sources
+			(candidate_id, source_id, is_conservative) VALUES (?, ?, TRUE)`,
+		candidate.ID, legacySource.ID,
+	)
+	require.NoError(err)
+	_, err = source.DB().Exec(
+		`INSERT INTO identity_match_evidence_sources
+			(evidence_id, source_id, is_conservative) VALUES (?, ?, TRUE)`,
+		evidence.ID, legacySource.ID,
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	var leakedSource, leakedAccountMetadata int
+	require.NoError(destination.DB().QueryRow(
+		destination.Rebind(`SELECT COUNT(*) FROM sources WHERE id = ?`),
+		legacySource.ID,
+	).Scan(&leakedSource))
+	require.NoError(destination.DB().QueryRow(
+		`SELECT COUNT(*) FROM sources WHERE sync_config LIKE '%excluded@example.invalid%'`,
+	).Scan(&leakedAccountMetadata))
+	assert.Zero(leakedSource,
+		"conservative legacy support must not copy the excluded source row")
+	assert.Zero(leakedAccountMetadata,
+		"excluded source account metadata must remain absent from the subset")
+
+	var copiedLegacyCandidateSupport, copiedLegacyEvidenceSupport int
+	require.NoError(destination.DB().QueryRow(destination.Rebind(`
+		SELECT COUNT(*) FROM identity_match_candidate_sources
+		WHERE candidate_id = ? AND source_id = ?
+	`), candidate.ID, legacySource.ID).Scan(&copiedLegacyCandidateSupport))
+	require.NoError(destination.DB().QueryRow(destination.Rebind(`
+		SELECT COUNT(*) FROM identity_match_evidence_sources
+		WHERE evidence_id = ? AND source_id = ?
+	`), evidence.ID, legacySource.ID).Scan(&copiedLegacyEvidenceSupport))
+	assert.Zero(copiedLegacyCandidateSupport,
+		"conservative candidate support must not become an export dependency")
+	assert.Zero(copiedLegacyEvidenceSupport,
+		"conservative evidence support must not become an export dependency")
+}
+
+func TestCopySubsetPreservesConservativeSupportForIncludedSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	unrelatedSource, err := source.GetOrCreateSource("beeper", "unrelated-exact-support")
+	require.NoError(err)
+	selectedSourceID := int64(1)
+	normalized := "subset-upgraded-provider"
+	candidate, _, err := source.UpsertIdentityMatchCandidateContext(
+		ctx, IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: 2,
+			RightKind: IdentityMatchParticipant, RightID: 3,
+			Basis:           IdentityMatchStableProviderID,
+			NormalizedValue: &normalized,
+			State:           IdentityMatchStateCandidate,
+			Source:          ProvenanceArchiveObservation,
+			SourceID:        &unrelatedSource.ID,
+		},
+	)
+	require.NoError(err)
+	evidence, err := source.AddIdentityMatchEvidenceContext(
+		ctx, candidate.ID, IdentityMatchEvidenceInput{
+			EvidenceKind: "stable_provider_id", Detail: &normalized,
+			Source: ProvenanceArchiveObservation, SourceID: &unrelatedSource.ID,
+		},
+	)
+	require.NoError(err)
+	for participantID, originalValue := range map[int64]string{
+		2: "bob@upgraded-subset.example",
+		3: "charlie@upgraded-subset.example",
+	} {
+		_, err = source.RecordContactObservationContext(
+			ctx, participantID, ParticipantContactObservationInput{
+				SourceID:       &selectedSourceID,
+				AddressKind:    ContactAddressEmail,
+				ProviderUserID: &normalized,
+				OriginalValue:  originalValue,
+				Envelope:       ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+			},
+		)
+		require.NoError(err)
+	}
+	_, _, err = source.AcceptIdentityMatchCandidateContext(
+		ctx, candidate.ID, string(ProvenanceSystem), nil,
+	)
+	require.NoError(err)
+	_, err = source.DB().Exec(
+		`INSERT INTO identity_match_candidate_sources
+			(candidate_id, source_id, is_conservative) VALUES (?, ?, TRUE)`,
+		candidate.ID, selectedSourceID,
+	)
+	require.NoError(err)
+	_, err = source.DB().Exec(
+		`INSERT INTO identity_match_evidence_sources
+			(evidence_id, source_id, is_conservative) VALUES (?, ?, TRUE)`,
+		evidence.ID, selectedSourceID,
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	var candidateSupport, evidenceSupport int
+	require.NoError(destination.DB().QueryRow(`SELECT COUNT(*)
+		FROM identity_match_candidate_sources
+		WHERE candidate_id = ? AND source_id = ? AND is_conservative = TRUE`,
+		candidate.ID, selectedSourceID).Scan(&candidateSupport))
+	require.NoError(destination.DB().QueryRow(`SELECT COUNT(*)
+		FROM identity_match_evidence_sources
+		WHERE evidence_id = ? AND source_id = ? AND is_conservative = TRUE`,
+		evidence.ID, selectedSourceID).Scan(&evidenceSupport))
+	assert.Equal(1, candidateSupport)
+	assert.Equal(1, evidenceSupport)
+
+	require.NoError(destination.RemoveSource(unrelatedSource.ID))
+	reloaded, err := destination.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(IdentityMatchStateAccepted, reloaded.State)
+	require.Len(reloaded.Evidence, 1)
+	assert.Equal(evidence.ID, reloaded.Evidence[0].ID)
+	var linkCount int
+	require.NoError(destination.DB().QueryRow(`SELECT COUNT(*) FROM participant_links
+		WHERE participant_a = 2 AND participant_b = 3`).Scan(&linkCount))
+	assert.Equal(1, linkCount)
 }
 
 func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
@@ -2267,6 +2570,114 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 	).Scan(&title, &convType), "read copied conversation")
 	assert.Equal("Thread 1", title, "conversations.title")
 	assert.Equal("email_thread", convType, "conversations.conversation_type")
+}
+
+// TestCopySubset_UpgradedParticipantLinkColumnOrder covers an upgraded source
+// whose identity-match ownership column was appended after created_at by an
+// ALTER TABLE migration. The destination is fresh, so its declaration order
+// differs. Copying by explicit column names must preserve both values.
+func TestCopySubset_UpgradedParticipantLinkColumnOrder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+
+	st, err := Open(srcDB)
+	require.NoError(err, "open source for participant link upgrade")
+	_, err = st.DB().Exec(`
+		ALTER TABLE participant_links DROP COLUMN identity_match_candidate_id;
+		ALTER TABLE participant_links ADD COLUMN identity_match_candidate_id INTEGER;
+	`)
+	require.NoError(err, "append participant link ownership column")
+	require.NoError(st.Close(), "close upgraded source")
+
+	candidateID := seedAcceptedSubsetParticipantLink(t, srcDB)
+	sourceDB, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source for timestamp check")
+	var sourceCreatedAt string
+	require.NoError(sourceDB.QueryRow(`
+		SELECT created_at FROM participant_links
+		WHERE participant_a = 2 AND participant_b = 3
+	`).Scan(&sourceCreatedAt), "read source participant link timestamp")
+	require.NoError(sourceDB.Close(), "close source timestamp check")
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err, "copy upgraded participant links")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open copied database")
+	defer func() { _ = dstDB.Close() }()
+
+	var owner sql.NullInt64
+	var createdAt string
+	require.NoError(dstDB.QueryRow(`
+		SELECT identity_match_candidate_id, created_at
+		FROM participant_links
+		WHERE participant_a = 2 AND participant_b = 3
+	`).Scan(&owner, &createdAt), "read copied participant link")
+	require.True(owner.Valid, "copied participant link ownership")
+	assert.Equal(candidateID, owner.Int64, "identity match candidate owner")
+	assert.Equal(sourceCreatedAt, createdAt, "participant link created_at")
+}
+
+func TestCopySubset_ExcludesParticipantLinkOwnershipWithoutProfiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	candidateID := seedAcceptedSubsetParticipantLink(t, srcDB)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	_, err := CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{})
+	require.NoError(err, "copy without profiles")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open copied database")
+	defer func() { _ = dstDB.Close() }()
+
+	var owner sql.NullInt64
+	require.NoError(dstDB.QueryRow(`
+		SELECT identity_match_candidate_id
+		FROM participant_links
+		WHERE participant_a = 2 AND participant_b = 3
+	`).Scan(&owner), "read profile-free participant link")
+	assert.False(owner.Valid, "profile-free copies must not retain candidate ownership")
+
+	var copiedCandidates int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM identity_match_candidates WHERE id = ?`, candidateID,
+	).Scan(&copiedCandidates), "count omitted identity match candidate")
+	assert.Zero(copiedCandidates, "profile-free copies omit candidate metadata")
+}
+
+func TestCopySubset_PreservesParticipantLinkOwnershipWithProfiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	candidateID := seedAcceptedSubsetParticipantLink(t, srcDB)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	_, err := CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err, "copy with profiles")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open copied database")
+	defer func() { _ = dstDB.Close() }()
+
+	var owner sql.NullInt64
+	var state string
+	require.NoError(dstDB.QueryRow(`
+		SELECT link.identity_match_candidate_id, candidate.state
+		FROM participant_links link
+		JOIN identity_match_candidates candidate
+		  ON candidate.id = link.identity_match_candidate_id
+		WHERE link.participant_a = 2 AND link.participant_b = 3
+	`).Scan(&owner, &state), "read profile-preserving participant link")
+	require.True(owner.Valid, "profile-preserving copies retain candidate ownership")
+	assert.Equal(candidateID, owner.Int64, "identity match candidate owner")
+	assert.Equal(string(IdentityMatchStateAccepted), state, "copied candidate state")
 }
 
 // TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress covers a

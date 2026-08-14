@@ -1384,6 +1384,10 @@ func (c CreateSavedViewRequest) Validate() error {
 	return errors
 }
 
+type DecideIdentityMatchRequest struct {
+	Notes *string `json:"notes,omitempty"`
+}
+
 type DeepSearchResponse struct {
 	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
 	Count        int64               `json:"count"`
@@ -2981,6 +2985,148 @@ func (i IdentityLinkResponse) Validate() error {
 	if v, ok := any(i.CacheState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("CacheState", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchAcceptResponse struct {
+	CacheState       IdentityMatchAcceptResponseCacheState `json:"cache_state" validate:"required"`
+	Candidate        IdentityMatchCandidate                `json:"candidate"`
+	IdentityRevision int64                                 `json:"identity_revision"`
+}
+
+func (i IdentityMatchAcceptResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.CacheState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CacheState", err)
+		}
+	}
+	if v, ok := any(i.Candidate).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Candidate", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchCandidate struct {
+	Basis           string                  `json:"basis" validate:"required"`
+	Confidence      *float64                `json:"confidence,omitempty"`
+	CreatedAt       time.Time               `json:"created_at" validate:"required"`
+	DecidedAt       *time.Time              `json:"decided_at,omitempty"`
+	DecidedBy       *string                 `json:"decided_by,omitempty"`
+	Evidence        []IdentityMatchEvidence `json:"evidence,omitempty" validate:"required"`
+	ID              int64                   `json:"id"`
+	LeftID          int64                   `json:"left_id"`
+	LeftKind        string                  `json:"left_kind" validate:"required"`
+	NormalizedValue *string                 `json:"normalized_value,omitempty"`
+	Notes           *string                 `json:"notes,omitempty"`
+	RightID         int64                   `json:"right_id"`
+	RightKind       string                  `json:"right_kind" validate:"required"`
+	ScopeKind       *string                 `json:"scope_kind,omitempty"`
+	ScopeValue      *string                 `json:"scope_value,omitempty"`
+	ServiceSlug     *string                 `json:"service_slug,omitempty"`
+	Source          string                  `json:"source" validate:"required"`
+	SourceRef       *string                 `json:"source_ref,omitempty"`
+	State           string                  `json:"state" validate:"required"`
+	UpdatedAt       time.Time               `json:"updated_at" validate:"required"`
+}
+
+func (i IdentityMatchCandidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Basis, "required"); err != nil {
+		errors = errors.Append("Basis", err)
+	}
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	for i, item := range i.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.LeftKind, "required"); err != nil {
+		errors = errors.Append("LeftKind", err)
+	}
+	if err := typesValidator.Var(i.RightKind, "required"); err != nil {
+		errors = errors.Append("RightKind", err)
+	}
+	if err := typesValidator.Var(i.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if err := typesValidator.Var(i.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if err := typesValidator.Var(i.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchCandidatesResponse struct {
+	Candidates []IdentityMatchCandidate `json:"candidates,omitempty" validate:"required"`
+	Limit      int64                    `json:"limit"`
+	Offset     int64                    `json:"offset"`
+}
+
+func (i IdentityMatchCandidatesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range i.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchEvidence struct {
+	CandidateID  int64     `json:"candidate_id"`
+	CreatedAt    time.Time `json:"created_at" validate:"required"`
+	Detail       *string   `json:"detail,omitempty"`
+	EvidenceKind string    `json:"evidence_kind" validate:"required"`
+	EvidenceRef  *string   `json:"evidence_ref,omitempty"`
+	ID           int64     `json:"id"`
+	Source       string    `json:"source" validate:"required"`
+}
+
+func (i IdentityMatchEvidence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IdentityMatchRejectResponse struct {
+	CacheState       IdentityMatchRejectResponseCacheState `json:"cache_state" validate:"required"`
+	Candidate        IdentityMatchCandidate                `json:"candidate"`
+	IdentityRevision int64                                 `json:"identity_revision"`
+}
+
+func (i IdentityMatchRejectResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.CacheState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CacheState", err)
+		}
+	}
+	if v, ok := any(i.Candidate).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Candidate", err)
 		}
 	}
 	if len(errors) == 0 {

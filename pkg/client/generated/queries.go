@@ -290,6 +290,17 @@ type ListDeletionsQuery struct {
 	Status *string `json:"status,omitempty"`
 }
 
+type ListIdentityMatchCandidatesQuery struct {
+	// State Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values
+	State *string `json:"state,omitempty"`
+
+	// Limit Maximum candidates to return (default 100, max 500)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based candidate offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

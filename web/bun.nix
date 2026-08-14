@@ -109,13 +109,9 @@
     url = "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz";
     hash = "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==";
   };
-  "@kenn-io/kit-ui@github:kenn-io/kit-ui#1e9dc7d" = fetchurl {
-    url = "https://registry.npmjs.org/@kenn-io/kit-ui/-/kit-ui-github:kenn-io/kit-ui#1e9dc7d.tgz";
-    hash = "sha512-u0oMlxMAo2UUz1USWbp0LsJUwAop59GyG0NxCNygJvqm7+QST31jq5eVLBFHjtnY015mr0u0HO5tFbSFQMHcTA==";
-  };
   "@lucide/svelte@1.25.0" = fetchurl {
     url = "https://registry.npmjs.org/@lucide/svelte/-/svelte-1.25.0.tgz";
-    hash = "sha512:0cz3787nkrgyrqdmzybggzx91qkyxlkmwhx8aa788r063c36gvaz8biszwk3ck41253j6sgb5255x0vcsgjnds5m9kib3xw7rsbxndz";
+    hash = "sha512-v9m+dD68jxVnqkU3K59mG/RSRFlPGzmKCGSyMfnXcaGv9jODDQMyQkcp1CGvk3Y/cUj9v7f8rw1n//K0B53xGQ==";
   };
   "@napi-rs/canvas-android-arm64@0.1.100" = fetchurl {
     url = "https://registry.npmjs.org/@napi-rs/canvas-android-arm64/-/canvas-android-arm64-0.1.100.tgz";
@@ -897,6 +893,11 @@
     url = "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz";
     hash = "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==";
   };
+  "tarball:https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz" =
+    builtins.fetchTarball {
+      url = "https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz";
+      sha256 = "sha256-XV7CuqMC+jlhaWQyXzcDukqnF73Lycy2Kueb7rMhxz8=";
+    };
   "tinybench@2.9.0" = fetchurl {
     url = "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz";
     hash = "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==";

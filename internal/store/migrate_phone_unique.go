@@ -6,7 +6,43 @@ import (
 	"fmt"
 )
 
-const migrationPhoneUniqueIndex = "participants_phone_unique_index"
+const (
+	migrationPhoneUniqueIndex = "participants_phone_unique_index"
+
+	identityMatchObservationConflictOriginMigrationDesc     = "identity_match_candidates.observation_conflict_origin"
+	sqliteParticipantLinkIdentityMatchCandidateMigration    = `ALTER TABLE participant_links ADD COLUMN identity_match_candidate_id INTEGER`
+	postgresParticipantLinkIdentityMatchCandidateMigration  = `ALTER TABLE participant_links ADD COLUMN IF NOT EXISTS identity_match_candidate_id BIGINT`
+	sqliteIdentityMatchObservationConflictOriginMigration   = `ALTER TABLE identity_match_candidates ADD COLUMN observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`
+	postgresIdentityMatchObservationConflictOriginMigration = `ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`
+	sqliteIdentityMatchCandidateSourcesMigration            = `CREATE TABLE IF NOT EXISTS identity_match_candidate_sources (
+		candidate_id INTEGER NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+		source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+		is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (candidate_id, source_id)
+	)`
+	postgresIdentityMatchCandidateSourcesMigration = `CREATE TABLE IF NOT EXISTS identity_match_candidate_sources (
+		candidate_id BIGINT NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+		source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+		is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (candidate_id, source_id)
+	)`
+	sqliteIdentityMatchEvidenceSourcesMigration = `CREATE TABLE IF NOT EXISTS identity_match_evidence_sources (
+		evidence_id INTEGER NOT NULL REFERENCES identity_match_evidence(id) ON DELETE CASCADE,
+		source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+		is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (evidence_id, source_id)
+	)`
+	postgresIdentityMatchEvidenceSourcesMigration = `CREATE TABLE IF NOT EXISTS identity_match_evidence_sources (
+		evidence_id BIGINT NOT NULL REFERENCES identity_match_evidence(id) ON DELETE CASCADE,
+		source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+		is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (evidence_id, source_id)
+	)`
+	sqliteIdentityMatchCandidateSourcesConservativeMigration   = `ALTER TABLE identity_match_candidate_sources ADD COLUMN is_conservative BOOLEAN NOT NULL DEFAULT TRUE`
+	postgresIdentityMatchCandidateSourcesConservativeMigration = `ALTER TABLE identity_match_candidate_sources ADD COLUMN IF NOT EXISTS is_conservative BOOLEAN NOT NULL DEFAULT TRUE`
+	sqliteIdentityMatchEvidenceSourcesConservativeMigration    = `ALTER TABLE identity_match_evidence_sources ADD COLUMN is_conservative BOOLEAN NOT NULL DEFAULT TRUE`
+	postgresIdentityMatchEvidenceSourcesConservativeMigration  = `ALTER TABLE identity_match_evidence_sources ADD COLUMN IF NOT EXISTS is_conservative BOOLEAN NOT NULL DEFAULT TRUE`
+)
 
 // ensureParticipantsPhoneUniqueIndex upgrades legacy databases whose
 // idx_participants_phone was created as a non-unique partial index
@@ -39,6 +75,15 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
 	if applied {
 		return nil
 	}
+	// Candidate reconciliation below uses the final merge implementation,
+	// which reads and preserves both the participant-link owner and
+	// observation_conflict_origin. The normal legacy column loop runs after
+	// this older phone-index migration, so install both prerequisites early.
+	// This matters only for a resumed or manually replayed upgrade that already
+	// has identity-match rows or link edges.
+	if err := s.ensureIdentityMatchCandidateMergeColumns(ctx); err != nil {
+		return err
+	}
 
 	// Route the whole migration (dedupe + DROP + CREATE UNIQUE INDEX) through
 	// ONE runMaintenance transaction, mirroring the attachment unique-index
@@ -69,6 +114,60 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
 	}
 
 	return s.MarkMigrationAppliedContext(ctx, migrationPhoneUniqueIndex)
+}
+
+func (s *Store) ensureIdentityMatchCandidateMergeColumns(ctx context.Context) error {
+	migrations := []string{
+		sqliteParticipantLinkIdentityMatchCandidateMigration,
+		sqliteIdentityMatchObservationConflictOriginMigration,
+		sqliteIdentityMatchCandidateSourcesMigration,
+		sqliteIdentityMatchEvidenceSourcesMigration,
+		sqliteIdentityMatchCandidateSourcesConservativeMigration,
+		sqliteIdentityMatchEvidenceSourcesConservativeMigration,
+	}
+	if s.IsPostgreSQL() {
+		migrations = []string{
+			postgresParticipantLinkIdentityMatchCandidateMigration,
+			postgresIdentityMatchObservationConflictOriginMigration,
+			postgresIdentityMatchCandidateSourcesMigration,
+			postgresIdentityMatchEvidenceSourcesMigration,
+			postgresIdentityMatchCandidateSourcesConservativeMigration,
+			postgresIdentityMatchEvidenceSourcesConservativeMigration,
+		}
+	}
+	for _, migrationSQL := range migrations {
+		if _, err := s.db.ExecContext(ctx, migrationSQL); err != nil &&
+			!s.dialect.IsDuplicateColumnError(err) {
+			return fmt.Errorf("prepare identity match merge columns: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureIdentityMatchCandidateSourceSupportColumns upgrades support tables
+// before the legacy support backfill runs. Rows from an older archive have no
+// recoverable source provenance, so the new marker defaults them to
+// conservative support; fresh writer rows keep the FALSE default.
+func (s *Store) ensureIdentityMatchCandidateSourceSupportColumns(
+	ctx context.Context,
+) error {
+	migrations := []string{
+		sqliteIdentityMatchCandidateSourcesConservativeMigration,
+		sqliteIdentityMatchEvidenceSourcesConservativeMigration,
+	}
+	if s.IsPostgreSQL() {
+		migrations = []string{
+			postgresIdentityMatchCandidateSourcesConservativeMigration,
+			postgresIdentityMatchEvidenceSourcesConservativeMigration,
+		}
+	}
+	for _, migrationSQL := range migrations {
+		if _, err := s.db.ExecContext(ctx, migrationSQL); err != nil &&
+			!s.dialect.IsDuplicateColumnError(err) {
+			return fmt.Errorf("prepare identity match source support provenance: %w", err)
+		}
+	}
+	return nil
 }
 
 // dedupeParticipantsByPhone merges rows that share a non-null
@@ -248,8 +347,18 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 		return fmt.Errorf("repoint participant_identifiers (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 
-	// (6) Repoint (and, if needed, restructure) any link edges referencing
-	// loser before the delete below drops them via ON DELETE CASCADE.
+	// (6) Repoint identity candidates and link edges before the delete below.
+	// Candidate rows intentionally have no participant foreign keys, so leaving
+	// loser in either endpoint would create a durable dangling decision.
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("load participant links (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	if err := s.rewriteIdentityMatchCandidatesForMergeTx(
+		ctx, tx, loser, winner, edges,
+	); err != nil {
+		return fmt.Errorf("rewrite identity match candidates (loser=%d, winner=%d): %w", loser, winner, err)
+	}
 	// This one-shot legacy migration runs during schema setup before person
 	// profiles can be created, so there are no person bindings to re-point.
 	if err := s.rewriteLinksForMergeContext(ctx, tx, loser, winner); err != nil {

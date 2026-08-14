@@ -66,6 +66,71 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 	assert.Equal("@signal_uuid:beeper.local", identifierValue)
 }
 
+func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	rawID := "@signal_legacy:beeper.local"
+
+	legacy, err := st.EnsureParticipantByIdentifier(
+		participantIdentifierType, rawID, "Legacy User",
+	)
+	require.NoError(err)
+
+	resolver := newParticipantResolver(st, "account-a")
+	resolved, err := resolver.resolveID(rawID, "Legacy User")
+	require.NoError(err)
+	assert.Equal(legacy, resolved,
+		"the first scoped import must retain the legacy participant and its history")
+
+	scopedID := providerFallbackUserID("account-a", rawID)
+	owner, _, err := st.ParticipantByIdentifier(participantIdentifierType, scopedID)
+	require.NoError(err)
+	assert.Equal(legacy, owner, "the scoped key must be attached to the legacy participant")
+	legacyOwner, _, err := st.ParticipantByIdentifier(participantIdentifierType, rawID)
+	require.NoError(err)
+	assert.Zero(legacyOwner, "the reusable legacy key must be consumed by the first account")
+
+	secondResolver := newParticipantResolver(st, "account-b")
+	second, err := secondResolver.resolveID(rawID, "Legacy User")
+	require.NoError(err)
+	assert.NotEqual(legacy, second,
+		"a second account with the same raw ID must not reuse the first account's participant")
+	secondOwner, _, err := st.ParticipantByIdentifier(
+		participantIdentifierType, providerFallbackUserID("account-b", rawID),
+	)
+	require.NoError(err)
+	assert.Equal(second, secondOwner)
+
+	var participants int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants`).Scan(&participants))
+	assert.Equal(2, participants, "the second account must get an isolated participant")
+}
+
+func TestResolveIDRejectsAmbiguousLegacyIdentifier(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	rawID := "@signal_ambiguous:beeper.local"
+
+	legacy, err := st.EnsureParticipantByIdentifier(
+		participantIdentifierType, rawID, "Legacy User",
+	)
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(
+		legacy, participantIdentifierType, providerFallbackUserID("account-a", rawID),
+	))
+
+	resolver := newParticipantResolver(st, "account-b")
+	resolved, err := resolver.resolveID(rawID, "Legacy User")
+	require.NoError(err)
+	assert.NotEqual(legacy, resolved,
+		"an unscoped key with an existing scoped owner must not be adopted")
+	legacyOwner, _, err := st.ParticipantByIdentifier(participantIdentifierType, rawID)
+	require.NoError(err)
+	assert.Zero(legacyOwner, "ambiguous legacy ownership must be removed")
+}
+
 func TestResolveUserLadderIsExclusive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

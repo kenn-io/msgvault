@@ -292,6 +292,9 @@ func (s *Store) RemoveSourceSerialized(
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, conn); err != nil {
 		return hadActiveSync, 0, err
 	}
+	if err := s.recomputeUnsupportedGeneratedIdentityMatchesConnContext(ctx, conn); err != nil {
+		return hadActiveSync, 0, err
+	}
 
 	const deleteChunkSize = 500
 	for start := 0; start < len(uniquePackedHashes); start += deleteChunkSize {
@@ -386,7 +389,448 @@ func (s *Store) removeSourceExec(
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
 	}
+	if err := s.recomputeUnsupportedGeneratedIdentityMatchesTxContext(ctx, tx); err != nil {
+		return err
+	}
 	return nil
+}
+
+// sourceIdentityQuery returns the common edgeRows shape used by *loggedTx and
+// *sql.Conn. RemoveSourceSerialized owns the latter directly on a pinned
+// connection.
+type sourceIdentityQuery func(context.Context, string, ...any) (edgeRows, error)
+type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
+
+// currentCandidateObservationPairSQL verifies the conjunctive observation
+// behind Beeper's generated participant matches. It deliberately derives the
+// pair from current observations instead of persisted source associations, so
+// legacy rows, alternate observations, and participant-merge rewrites all use
+// the same truth at cleanup time. The correlated candidate alias is `c`.
+const currentCandidateObservationPairSQL = `EXISTS (
+	SELECT 1
+	FROM participant_contact_observations observation_left
+	JOIN participant_contact_observations observation_right ON TRUE
+	WHERE observation_left.participant_id = c.left_id
+	  AND observation_right.participant_id = c.right_id
+	  AND observation_left.active_until IS NULL
+	  AND observation_left.superseded_at IS NULL
+	  AND observation_right.active_until IS NULL
+	  AND observation_right.superseded_at IS NULL
+	  AND (
+		(c.basis = 'stable_provider_id'
+		 AND observation_left.provider_user_id = c.normalized_value
+		 AND observation_right.provider_user_id = c.normalized_value)
+		OR
+		(c.basis = 'service_scope_username'
+		 AND c.observation_conflict_origin IS NULL
+		 AND observation_left.address_kind = 'username'
+		 AND observation_right.address_kind = 'username'
+		 AND observation_left.service_id = c.service_id
+		 AND observation_right.service_id = c.service_id
+		 AND observation_left.normalized_value = c.normalized_value
+		 AND observation_right.normalized_value = c.normalized_value
+		 AND NOT (
+			((observation_left.scope_kind IS NULL AND observation_right.scope_kind IS NULL) OR
+			 (observation_left.scope_kind IS NOT NULL AND observation_right.scope_kind IS NOT NULL AND
+			  observation_left.scope_kind = observation_right.scope_kind))
+			AND
+			((observation_left.scope_value IS NULL AND observation_right.scope_value IS NULL) OR
+			 (observation_left.scope_value IS NOT NULL AND observation_right.scope_value IS NOT NULL AND
+			  observation_left.scope_value = observation_right.scope_value))
+		 ))
+	  )
+)`
+
+func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesTxContext(
+	ctx context.Context, tx *loggedTx,
+) error {
+	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
+		ctx,
+		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+			return tx.QueryContext(ctx, query, args...)
+		},
+		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
+			return tx.ExecContext(ctx, query, args...)
+		},
+		true,
+	)
+}
+
+func (s *Store) recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(
+	ctx context.Context, tx *loggedTx,
+) error {
+	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
+		ctx,
+		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+			return tx.QueryContext(ctx, query, args...)
+		},
+		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
+			return tx.ExecContext(ctx, query, args...)
+		},
+		false,
+	)
+}
+
+func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesConnContext(
+	ctx context.Context, conn *sql.Conn,
+) error {
+	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
+		ctx,
+		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+			//nolint:rowserrcheck // Ownership transfers to the shared iterator, which checks Err after iteration.
+			return conn.QueryContext(ctx, s.dialect.Rebind(query), args...)
+		},
+		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
+			return conn.ExecContext(ctx, s.dialect.Rebind(query), args...)
+		},
+		true,
+	)
+}
+
+// recomputeUnsupportedGeneratedIdentityMatches removes generated identity
+// suggestions and evidence whose source or current-observation support
+// disappeared. A system decision is withdrawn with its owned direct edge
+// before the candidate is removed; an explicit user decision remains durable
+// even when all of its archive support is gone. Generated Beeper matches
+// verify both current endpoint observations because a flat source union cannot
+// express that conjunction.
+func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
+	ctx context.Context, query sourceIdentityQuery, exec sourceIdentityExec,
+	removeRowsWithoutSourceSupport bool,
+) error {
+	var evidenceSourceUnsupportedSQL, candidateSourceUnsupportedSQL string
+	if removeRowsWithoutSourceSupport {
+		evidenceSourceUnsupportedSQL = `NOT EXISTS (
+				SELECT 1 FROM identity_match_evidence_sources es
+				WHERE es.evidence_id = identity_match_evidence.id
+			) OR `
+		candidateSourceUnsupportedSQL = `NOT EXISTS (
+				SELECT 1 FROM identity_match_candidate_sources cs
+				WHERE cs.candidate_id = c.id
+			) OR `
+	} else {
+		// Observation mutations must not turn into a global legacy cleanup.
+		// Limit reconciliation to generated rows that carry archive support;
+		// source removal separately handles rows that lose that support.
+		evidenceSourceUnsupportedSQL = `EXISTS (
+				SELECT 1 FROM identity_match_evidence_sources es
+				WHERE es.evidence_id = identity_match_evidence.id
+			) AND `
+		candidateSourceUnsupportedSQL = `EXISTS (
+				SELECT 1 FROM identity_match_candidate_sources cs
+				WHERE cs.candidate_id = c.id
+			) AND `
+	}
+	// Generated evidence is stale when its observation pair disappears. Source
+	// removal also drops evidence without any remaining source support. Preserve
+	// an explicit candidate decision, not its stale archive explanation rows.
+	if _, err := exec(ctx, `DELETE FROM identity_match_evidence
+		WHERE source IN ('archive_observation', 'extraction', 'enrichment')
+		  AND (
+			`+evidenceSourceUnsupportedSQL+`EXISTS (
+				SELECT 1 FROM identity_match_candidates c
+				WHERE c.id = identity_match_evidence.candidate_id
+				  AND c.left_kind = 'participant' AND c.right_kind = 'participant'
+				  AND c.observation_conflict_origin IS NULL
+				  AND (
+					(identity_match_evidence.evidence_kind = 'stable_provider_id'
+					 AND c.basis = 'stable_provider_id'
+					 AND NOT EXISTS (
+						SELECT 1
+						FROM participant_contact_observations observation_left
+						JOIN participant_contact_observations observation_right ON TRUE
+						WHERE observation_left.participant_id = c.left_id
+						  AND observation_right.participant_id = c.right_id
+						  AND observation_left.active_until IS NULL
+						  AND observation_left.superseded_at IS NULL
+						  AND observation_right.active_until IS NULL
+						  AND observation_right.superseded_at IS NULL
+						  AND observation_left.provider_user_id = c.normalized_value
+						  AND observation_right.provider_user_id = c.normalized_value
+						  AND identity_match_evidence.detail = c.normalized_value
+					 ))
+					OR
+					(identity_match_evidence.evidence_kind = 'service_scope_username'
+					 AND c.basis = 'service_scope_username'
+					 AND NOT EXISTS (
+						SELECT 1
+						FROM participant_contact_observations observation_left
+						JOIN participant_contact_observations observation_right ON TRUE
+						JOIN communication_services service ON service.id = c.service_id
+						WHERE observation_left.participant_id = c.left_id
+						  AND observation_right.participant_id = c.right_id
+						  AND observation_left.active_until IS NULL
+						  AND observation_left.superseded_at IS NULL
+						  AND observation_right.active_until IS NULL
+						  AND observation_right.superseded_at IS NULL
+						  AND observation_left.address_kind = 'username'
+						  AND observation_right.address_kind = 'username'
+						  AND observation_left.service_id = c.service_id
+						  AND observation_right.service_id = c.service_id
+						  AND observation_left.normalized_value = c.normalized_value
+						  AND observation_right.normalized_value = c.normalized_value
+						  AND NOT (
+							((observation_left.scope_kind IS NULL AND observation_right.scope_kind IS NULL) OR
+							 (observation_left.scope_kind IS NOT NULL AND observation_right.scope_kind IS NOT NULL AND
+							  observation_left.scope_kind = observation_right.scope_kind))
+							AND
+							((observation_left.scope_value IS NULL AND observation_right.scope_value IS NULL) OR
+							 (observation_left.scope_value IS NOT NULL AND observation_right.scope_value IS NOT NULL AND
+							  observation_left.scope_value = observation_right.scope_value))
+						  )
+						  AND identity_match_evidence.detail IN (
+							service.slug || '/' || c.normalized_value || ' across ' ||
+								COALESCE(observation_left.scope_value, '') || ' and ' ||
+								COALESCE(observation_right.scope_value, ''),
+							service.slug || '/' || c.normalized_value || ' across ' ||
+								COALESCE(observation_right.scope_value, '') || ' and ' ||
+								COALESCE(observation_left.scope_value, '')
+						  )
+					 ))
+					OR
+					(identity_match_evidence.evidence_kind IN ('phone', 'email')
+					 AND c.basis IN ('stable_provider_id', 'service_scope_username')
+					 AND NOT EXISTS (
+						SELECT 1
+						FROM participant_contact_observations observation_left
+						JOIN participant_contact_observations observation_right ON TRUE
+						WHERE observation_left.participant_id = c.left_id
+						  AND observation_right.participant_id = c.right_id
+						  AND observation_left.active_until IS NULL
+						  AND observation_left.superseded_at IS NULL
+						  AND observation_right.active_until IS NULL
+						  AND observation_right.superseded_at IS NULL
+						  AND observation_left.address_kind = identity_match_evidence.evidence_kind
+						  AND observation_right.address_kind = identity_match_evidence.evidence_kind
+						  AND observation_left.normalized_value = identity_match_evidence.detail
+						  AND observation_right.normalized_value = identity_match_evidence.detail
+					 ))
+				  )
+			)
+		  )`); err != nil {
+		return fmt.Errorf("delete unsupported identity match evidence: %w", err)
+	}
+
+	rows, err := query(ctx, `SELECT c.id, c.left_kind, c.left_id,
+		c.right_kind, c.right_id
+		FROM identity_match_candidates c
+		WHERE c.source IN ('archive_observation', 'extraction', 'enrichment')
+		  AND (c.decided_by IS NULL OR c.decided_by <> ?)
+		  AND c.observation_conflict_origin IS NULL
+		  AND (
+			`+candidateSourceUnsupportedSQL+`(
+				c.left_kind = 'participant' AND c.right_kind = 'participant'
+				AND c.basis IN ('stable_provider_id', 'service_scope_username')
+				AND NOT `+currentCandidateObservationPairSQL+`
+			)
+		  )
+		ORDER BY c.id`, string(ProvenanceUser))
+	if err != nil {
+		return fmt.Errorf("list unsupported identity matches: %w", err)
+	}
+	type unsupportedCandidate struct {
+		id                  int64
+		leftKind, rightKind IdentityMatchEndpointKind
+		leftID, rightID     int64
+	}
+	unsupported := make([]unsupportedCandidate, 0)
+	for rows.Next() {
+		var candidate unsupportedCandidate
+		if err := rows.Scan(
+			&candidate.id, &candidate.leftKind, &candidate.leftID,
+			&candidate.rightKind, &candidate.rightID,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan unsupported identity match: %w", err)
+		}
+		unsupported = append(unsupported, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate unsupported identity matches: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close unsupported identity matches: %w", err)
+	}
+	unsupportedIDs := make(map[int64]struct{}, len(unsupported))
+	for _, candidate := range unsupported {
+		unsupportedIDs[candidate.id] = struct{}{}
+	}
+	originalRows, err := query(ctx,
+		`SELECT participant_a, participant_b FROM participant_links`)
+	if err != nil {
+		return fmt.Errorf("list participant links before source cleanup: %w", err)
+	}
+	originalEdges, err := scanLinkEdges(originalRows)
+	if err != nil {
+		return fmt.Errorf("scan participant links before source cleanup: %w", err)
+	}
+
+	type replacementOwner struct {
+		candidateID int64
+		manual      bool
+	}
+	replacements := make(map[linkEdge]replacementOwner)
+	rows, err = query(ctx, `SELECT id, left_id, right_id, decided_by
+		FROM identity_match_candidates
+		WHERE left_kind = ? AND right_kind = ? AND state = ?
+		ORDER BY id`, IdentityMatchParticipant, IdentityMatchParticipant,
+		IdentityMatchStateAccepted)
+	if err != nil {
+		return fmt.Errorf("list supported accepted identity matches: %w", err)
+	}
+	for rows.Next() {
+		var id, leftID, rightID int64
+		var decidedBy sql.NullString
+		if err := rows.Scan(&id, &leftID, &rightID, &decidedBy); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan supported accepted identity match: %w", err)
+		}
+		if _, unsupported := unsupportedIDs[id]; unsupported {
+			continue
+		}
+		lo, hi := normalizeEdge(leftID, rightID)
+		pair := linkEdge{a: lo, b: hi}
+		current, exists := replacements[pair]
+		if decidedBy.String == string(ProvenanceUser) {
+			replacements[pair] = replacementOwner{manual: true}
+		} else if !exists || (!current.manual && id < current.candidateID) {
+			replacements[pair] = replacementOwner{candidateID: id}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate supported accepted identity matches: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close supported accepted identity matches: %w", err)
+	}
+
+	identityChanged := false
+	for _, candidate := range unsupported {
+		if candidate.leftKind == IdentityMatchParticipant &&
+			candidate.rightKind == IdentityMatchParticipant {
+			lo, hi := normalizeEdge(candidate.leftID, candidate.rightID)
+			pair := linkEdge{a: lo, b: hi}
+			var result sql.Result
+			if replacement, supported := replacements[pair]; supported && replacement.manual {
+				result, err = exec(ctx, `UPDATE participant_links
+					SET identity_match_candidate_id = NULL
+					WHERE participant_a = ? AND participant_b = ?
+					  AND identity_match_candidate_id = ?`, lo, hi, candidate.id)
+			} else if supported {
+				result, err = exec(ctx, `UPDATE participant_links
+					SET identity_match_candidate_id = ?
+					WHERE participant_a = ? AND participant_b = ?
+					  AND identity_match_candidate_id = ?`,
+					replacement.candidateID, lo, hi, candidate.id)
+			} else {
+				result, err = exec(ctx, `DELETE FROM participant_links
+					WHERE participant_a = ? AND participant_b = ?
+					  AND identity_match_candidate_id = ?`, lo, hi, candidate.id)
+			}
+			if err != nil {
+				return fmt.Errorf("withdraw unsupported identity match link %d: %w", candidate.id, err)
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count withdrawn identity match link %d: %w", candidate.id, err)
+			}
+			identityChanged = identityChanged || changed > 0
+		}
+		if _, err := exec(ctx,
+			`DELETE FROM identity_match_candidates WHERE id = ?`, candidate.id,
+		); err != nil {
+			return fmt.Errorf("delete unsupported identity match %d: %w", candidate.id, err)
+		}
+	}
+	reapplied, err := reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
+		ctx, query, exec, originalEdges,
+	)
+	if err != nil {
+		return err
+	}
+	identityChanged = identityChanged || reapplied
+	if !identityChanged {
+		return nil
+	}
+	if _, err := exec(ctx, s.dialect.InsertOrIgnore(
+		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`,
+	), identityRevisionKey); err != nil {
+		return fmt.Errorf("seed identity revision after source cleanup: %w", err)
+	}
+	if _, err := exec(ctx, `UPDATE archive_metadata
+		SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+		WHERE key = ?`, identityRevisionKey); err != nil {
+		return fmt.Errorf("bump identity revision after source cleanup: %w", err)
+	}
+	return nil
+}
+
+// reapplyAcceptedIdentityMatchesAfterSourceCleanupContext restores accepted
+// assertions that were previously redundant through an owned edge removed by
+// cleanup. Only pairs connected before cleanup are eligible, so this does not
+// act as a general recovery pass or create a new durable-person union.
+func reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
+	ctx context.Context,
+	query sourceIdentityQuery,
+	exec sourceIdentityExec,
+	originalEdges []linkEdge,
+) (bool, error) {
+	rows, err := query(ctx,
+		`SELECT participant_a, participant_b FROM participant_links`)
+	if err != nil {
+		return false, fmt.Errorf("list participant links after source cleanup: %w", err)
+	}
+	currentEdges, err := scanLinkEdges(rows)
+	if err != nil {
+		return false, fmt.Errorf("scan participant links after source cleanup: %w", err)
+	}
+	rows, err = query(ctx, `SELECT id, left_id, right_id
+		FROM identity_match_candidates
+		WHERE state = ? AND left_kind = ? AND right_kind = ?
+		ORDER BY id`, IdentityMatchStateAccepted,
+		IdentityMatchParticipant, IdentityMatchParticipant)
+	if err != nil {
+		return false, fmt.Errorf("list accepted identity matches after source cleanup: %w", err)
+	}
+	type acceptedPair struct{ id, left, right int64 }
+	accepted := make([]acceptedPair, 0)
+	for rows.Next() {
+		var candidate acceptedPair
+		if err := rows.Scan(&candidate.id, &candidate.left, &candidate.right); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan accepted identity match after source cleanup: %w", err)
+		}
+		accepted = append(accepted, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate accepted identity matches after source cleanup: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close accepted identity matches after source cleanup: %w", err)
+	}
+
+	changed := false
+	for _, candidate := range accepted {
+		if _, wasConnected := componentOf(candidate.left, originalEdges)[candidate.right]; !wasConnected {
+			continue
+		}
+		if _, connected := componentOf(candidate.left, currentEdges)[candidate.right]; connected {
+			continue
+		}
+		lo, hi := normalizeEdge(candidate.left, candidate.right)
+		if _, err := exec(ctx, `INSERT INTO participant_links
+			(participant_a, participant_b, identity_match_candidate_id)
+			VALUES (?, ?, ?)`, lo, hi, candidate.id); err != nil {
+			return false, fmt.Errorf("reapply accepted identity match %d after source cleanup: %w",
+				candidate.id, err)
+		}
+		currentEdges = append(currentEdges, linkEdge{a: lo, b: hi})
+		changed = true
+	}
+	return changed, nil
 }
 
 // deleteSourceObservationIdentityCandidatesContext removes generated

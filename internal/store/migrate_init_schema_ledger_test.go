@@ -33,6 +33,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 
 	for _, name := range []string{
 		migrationAttachmentsContentHashUnique,
+		migrationIdentityMatchSourceSupport,
 		migrationMessageAttributionProvenance,
 		migrationMessagesLastModifiedBackfill,
 		migrationMessagesContentChangedAtBackfill,

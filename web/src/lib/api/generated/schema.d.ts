@@ -1180,6 +1180,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/identity/match-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List reviewable identity match candidates
+         * @description Candidates are evidence-backed suggestions, never applied links. Only a repeated stable provider or Beeper user ID is confirmed automatically; a username, phone, email, display name, or shared conversation is evidence and waits for an explicit decision.
+         */
+        get: operations["listIdentityMatchCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity/match-candidates/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept an identity match candidate
+         * @description Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
+         */
+        post: operations["acceptIdentityMatchCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity/match-candidates/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject an identity match candidate
+         * @description A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
+         */
+        post: operations["rejectIdentityMatchCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/identity/unlinks": {
         parameters: {
             query?: never;
@@ -3096,6 +3156,9 @@ export interface components {
             /** Format: int64 */
             schema_version: number;
         };
+        DecideIdentityMatchRequest: {
+            notes?: string;
+        };
         DeepSearchResponse: {
             body_contexts?: components["schemas"]["BodySearchContext"][] | null;
             /** Format: int64 */
@@ -3781,6 +3844,78 @@ export interface components {
         IdentityLinkResponse: {
             /** @enum {string} */
             cache_state: "ready" | "stale";
+            /** Format: int64 */
+            identity_revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchAcceptResponse: {
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            candidate: components["schemas"]["IdentityMatchCandidate"];
+            /** Format: int64 */
+            identity_revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchCandidate: {
+            basis: string;
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+            decided_by?: string;
+            evidence: components["schemas"]["IdentityMatchEvidence"][] | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            left_id: number;
+            left_kind: string;
+            normalized_value?: string;
+            notes?: string;
+            /** Format: int64 */
+            right_id: number;
+            right_kind: string;
+            scope_kind?: string;
+            scope_value?: string;
+            service_slug?: string;
+            source: string;
+            source_ref?: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchCandidatesResponse: {
+            candidates: components["schemas"]["IdentityMatchCandidate"][] | null;
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchEvidence: {
+            /** Format: int64 */
+            candidate_id: number;
+            /** Format: date-time */
+            created_at: string;
+            detail?: string;
+            evidence_kind: string;
+            evidence_ref?: string;
+            /** Format: int64 */
+            id: number;
+            source: string;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchRejectResponse: {
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            candidate: components["schemas"]["IdentityMatchCandidate"];
             /** Format: int64 */
             identity_revision: number;
         } & {
@@ -9775,6 +9910,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityLinkResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listIdentityMatchCandidates: {
+        parameters: {
+            query?: {
+                /** @description Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values */
+                state?: string;
+                /** @description Maximum candidates to return (default 100, max 500) */
+                limit?: number;
+                /** @description Zero-based candidate offset */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchCandidatesResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    acceptIdentityMatchCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identity match candidate ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DecideIdentityMatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchAcceptResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rejectIdentityMatchCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identity match candidate ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DecideIdentityMatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchRejectResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

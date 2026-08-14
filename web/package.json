@@ -14,7 +14,7 @@
     "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#1e9dc7d45525a471040b72b894432c4956542c38",
+    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz",
     "@tanstack/svelte-virtual": "3.13.32",
     "dompurify": "3.4.11",
     "openapi-fetch": "0.17.0",

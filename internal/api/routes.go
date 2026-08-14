@@ -232,6 +232,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerRelationshipRoutes(apiV1)
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
+	s.registerIdentityMatchRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
@@ -613,6 +614,16 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			params = append(params, param("X-Request-Id", "header", "string", "Browser-generated retry-stable request ID", true))
 		}
 		return params
+	case "listIdentityMatchCandidates":
+		return []*huma.Param{
+			queryStringParam("state",
+				"Candidate state filter (candidate, accepted, rejected, conflict); "+
+					"repeat or comma-separate for multiple values", false),
+			queryIntegerParam("limit", "Maximum candidates to return (default 100, max 500)"),
+			queryIntegerParam("offset", "Zero-based candidate offset"),
+		}
+	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate":
+		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
 		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}
 	case "unlinkMessageTask":

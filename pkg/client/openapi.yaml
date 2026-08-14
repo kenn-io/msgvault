@@ -1589,6 +1589,12 @@ components:
         - canonical_state
         - schema_version
       type: object
+    DecideIdentityMatchRequest:
+      additionalProperties: false
+      properties:
+        notes:
+          type: string
+      type: object
     DeepSearchResponse:
       properties:
         body_contexts:
@@ -3231,6 +3237,149 @@ components:
           format: int64
           type: integer
       required:
+        - identity_revision
+        - cache_state
+      type: object
+    IdentityMatchAcceptResponse:
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        candidate:
+          $ref: "#/components/schemas/IdentityMatchCandidate"
+        identity_revision:
+          format: int64
+          type: integer
+      required:
+        - candidate
+        - identity_revision
+        - cache_state
+      type: object
+    IdentityMatchCandidate:
+      properties:
+        basis:
+          type: string
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        decided_at:
+          format: date-time
+          type: string
+        decided_by:
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/IdentityMatchEvidence"
+          nullable: true
+          type: array
+        id:
+          format: int64
+          type: integer
+        left_id:
+          format: int64
+          type: integer
+        left_kind:
+          type: string
+        normalized_value:
+          type: string
+        notes:
+          type: string
+        right_id:
+          format: int64
+          type: integer
+        right_kind:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        source:
+          type: string
+        source_ref:
+          type: string
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - left_kind
+        - left_id
+        - right_kind
+        - right_id
+        - basis
+        - state
+        - source
+        - evidence
+        - created_at
+        - updated_at
+      type: object
+    IdentityMatchCandidatesResponse:
+      properties:
+        candidates:
+          items:
+            $ref: "#/components/schemas/IdentityMatchCandidate"
+          nullable: true
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - candidates
+        - limit
+        - offset
+      type: object
+    IdentityMatchEvidence:
+      properties:
+        candidate_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        detail:
+          type: string
+        evidence_kind:
+          type: string
+        evidence_ref:
+          type: string
+        id:
+          format: int64
+          type: integer
+        source:
+          type: string
+      required:
+        - id
+        - candidate_id
+        - evidence_kind
+        - source
+        - created_at
+      type: object
+    IdentityMatchRejectResponse:
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        candidate:
+          $ref: "#/components/schemas/IdentityMatchCandidate"
+        identity_revision:
+          format: int64
+          type: integer
+      required:
+        - candidate
         - identity_revision
         - cache_state
       type: object
@@ -7446,7 +7595,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.40.0
+  version: 1.41.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -10990,6 +11139,158 @@ paths:
       security:
         - apiKey: []
       summary: Assert two participants are the same person
+      tags:
+        - API
+  /api/v1/identity/match-candidates:
+    get:
+      description: Candidates are evidence-backed suggestions, never applied links. Only a repeated stable provider or Beeper user ID is confirmed automatically; a username, phone, email, display name, or shared conversation is evidence and waits for an explicit decision.
+      operationId: listIdentityMatchCandidates
+      parameters:
+        - description: Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values
+          in: query
+          name: state
+          schema:
+            type: string
+        - description: Maximum candidates to return (default 100, max 500)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based candidate offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchCandidatesResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List reviewable identity match candidates
+      tags:
+        - API
+  /api/v1/identity/match-candidates/{id}/accept:
+    post:
+      description: Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
+      operationId: acceptIdentityMatchCandidate
+      parameters:
+        - description: Identity match candidate ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchAcceptResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Accept an identity match candidate
+      tags:
+        - API
+  /api/v1/identity/match-candidates/{id}/reject:
+    post:
+      description: A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
+      operationId: rejectIdentityMatchCandidate
+      parameters:
+        - description: Identity match candidate ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchRejectResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Reject an identity match candidate
       tags:
         - API
   /api/v1/identity/unlinks:

@@ -38,16 +38,23 @@ type fakeMsg struct {
 }
 
 type fakeChat struct {
-	ID           string
-	AccountID    string
-	Network      string
-	Title        string
-	Type         string // "single" | "group"
-	LastActivity time.Time
-	Participants []map[string]any
+	ID        string
+	AccountID string
+	// SearchAccountID controls which requested account returns this chat while
+	// AccountID remains the payload value. It lets importer tests model a
+	// response whose account field is empty or inconsistent.
+	SearchAccountID string
+	Network         string
+	Title           string
+	Type            string // "single" | "group"
+	LastActivity    time.Time
+	Participants    []map[string]any
 	// ParticipantsTruncated makes the search listing report hasMore=true so
 	// the importer fetches the chat detail for the full list.
 	ParticipantsTruncated bool
+	// ParticipantListingLimit controls how many participants a truncated search
+	// result exposes. Zero keeps the historical one-participant fixture default.
+	ParticipantListingLimit int
 	// StuckHead emulates a misbehaving live API whose direction=after pages
 	// re-serve the head with a non-advancing cursor.
 	StuckHead bool
@@ -307,7 +314,11 @@ func (f *fakeBeeper) writeChatSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	var matched []*fakeChat
 	for _, ch := range f.chats {
-		if accountID != "" && ch.AccountID != accountID {
+		filterAccountID := ch.AccountID
+		if ch.SearchAccountID != "" {
+			filterAccountID = ch.SearchAccountID
+		}
+		if accountID != "" && filterAccountID != accountID {
 			continue
 		}
 		if !after.IsZero() && !ch.LastActivity.After(after) {
@@ -365,7 +376,11 @@ func (f *fakeBeeper) chatJSON(ch *fakeChat, listing bool) map[string]any {
 	parts := ch.Participants
 	hasMore := false
 	if listing && ch.ParticipantsTruncated {
-		parts = parts[:1]
+		limit := ch.ParticipantListingLimit
+		if limit <= 0 || limit > len(parts) {
+			limit = 1
+		}
+		parts = parts[:limit]
 		hasMore = true
 	}
 	if parts == nil {

@@ -23,7 +23,59 @@ const (
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
 	migrationMessageWatermarkTriggers         = "message_watermark_triggers_v1"
 	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
+	migrationIdentityMatchSourceSupport       = "identity_match_source_support_v1"
 )
+
+// backfillLegacyIdentityMatchSourceSupport gives pre-support-table generated
+// candidates and evidence a conservative source marker. Their exact source is
+// not recoverable from the old rows, so each row that has no support records is
+// attached to every source that exists during the upgrade. The marker keeps
+// those associations from becoming subset-export dependencies. This prevents
+// the removal of one unrelated source from deleting legacy review state while
+// keeping unknown provenance out of shared archives. New rows always record
+// their exact support through the normal writers.
+func (s *Store) backfillLegacyIdentityMatchSourceSupport(
+	ctx context.Context, tx *loggedTx,
+) error {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`
+		INSERT OR IGNORE INTO identity_match_candidate_sources
+			(candidate_id, source_id, is_conservative)
+		SELECT candidate.id, source.id, TRUE
+		FROM (
+			SELECT candidate.id
+			FROM identity_match_candidates candidate
+			LEFT JOIN identity_match_candidate_sources support
+			  ON support.candidate_id = candidate.id
+			WHERE candidate.source IN ('archive_observation', 'extraction', 'enrichment')
+			GROUP BY candidate.id
+			HAVING COUNT(support.source_id) = 0
+		) candidate
+		CROSS JOIN sources source
+	`)); err != nil {
+		return fmt.Errorf("backfill legacy identity match candidate support: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`
+		INSERT OR IGNORE INTO identity_match_evidence_sources
+			(evidence_id, source_id, is_conservative)
+		SELECT evidence.id, source.id, TRUE
+		FROM (
+			SELECT evidence.id
+			FROM identity_match_evidence evidence
+			LEFT JOIN identity_match_evidence_sources support
+			  ON support.evidence_id = evidence.id
+			WHERE evidence.source IN ('archive_observation', 'extraction', 'enrichment')
+			GROUP BY evidence.id
+			HAVING COUNT(support.source_id) = 0
+		) evidence
+		CROSS JOIN sources source
+	`)); err != nil {
+		return fmt.Errorf("backfill legacy identity match evidence support: %w", err)
+	}
+	return nil
+}
 
 func backfillLegacyMessageAttributionProvenance(
 	ctx context.Context,

@@ -83,6 +83,39 @@ func TestUnknownServiceIsRegisteredWithoutASchemaMigration(t *testing.T) {
 	assert.Equal("example-bridge", resolved.Slug)
 }
 
+func TestCommunicationServiceDiscoveryProvenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	input := store.CommunicationServiceInput{
+		Slug:                 "discovered-example",
+		DisplayLabel:         "Discovered Example",
+		ScopePolicy:          store.ScopePolicyOptional,
+		Normalization:        store.NormalizationNone,
+		NormalizationVersion: 1,
+	}
+
+	service, created, err := st.EnsureDiscoveredCommunicationServiceContext(
+		ctx, input, "beeper", "routing_fallback")
+	require.NoError(err, "create discovered service")
+	require.True(created)
+	resolved, discovered, err := st.ResolveCommunicationServiceDiscoveryContext(
+		ctx, service.Slug, "beeper", "routing_fallback")
+	require.NoError(err, "read discovery marker")
+	assert.Equal(service.ID, resolved.ID)
+	assert.True(discovered)
+
+	input.DisplayLabel = "Configured Example"
+	_, err = st.UpdateCommunicationServiceContext(ctx, service.ID, input)
+	require.NoError(err, "configure discovered service")
+	resolved, discovered, err = st.ResolveCommunicationServiceDiscoveryContext(
+		ctx, service.Slug, "beeper", "routing_fallback")
+	require.NoError(err, "read cleared discovery marker")
+	assert.Equal(service.ID, resolved.ID)
+	assert.False(discovered, "an explicit edit must claim the service")
+}
+
 func TestServiceSeedIsIdempotentAndPreservesUserEdits(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

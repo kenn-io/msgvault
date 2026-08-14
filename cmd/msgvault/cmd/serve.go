@@ -1095,6 +1095,7 @@ var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
+var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
@@ -1868,6 +1869,35 @@ func (a *storeAPIAdapter) LinkParticipants(participantA, participantB int64) (in
 
 func (a *storeAPIAdapter) UnlinkParticipants(participantA, participantB int64) (int64, error) {
 	return a.store.UnlinkParticipants(participantA, participantB)
+}
+
+func (a *storeAPIAdapter) IdentityRevision() (int64, error) {
+	return a.store.IdentityRevision()
+}
+
+func (a *storeAPIAdapter) ListIdentityMatchCandidatesContext(
+	ctx context.Context, states []store.IdentityMatchState, limit, offset int,
+) ([]store.IdentityMatchCandidate, error) {
+	return a.store.ListIdentityMatchCandidatesContext(ctx, states, limit, offset)
+}
+
+func (a *storeAPIAdapter) GetIdentityMatchCandidateContext(
+	ctx context.Context, candidateID int64,
+) (*store.IdentityMatchCandidate, error) {
+	return a.store.GetIdentityMatchCandidateContext(ctx, candidateID)
+}
+
+func (a *storeAPIAdapter) AcceptIdentityMatchCandidateContext(
+	ctx context.Context, candidateID int64, decidedBy string, notes *string,
+) (*store.IdentityMatchCandidate, int64, error) {
+	return a.store.AcceptIdentityMatchCandidateContext(ctx, candidateID, decidedBy, notes)
+}
+
+func (a *storeAPIAdapter) DecideIdentityMatchCandidateContext(
+	ctx context.Context, candidateID int64, state store.IdentityMatchState,
+	decidedBy string, notes *string,
+) (*store.IdentityMatchCandidate, error) {
+	return a.store.DecideIdentityMatchCandidateContext(ctx, candidateID, state, decidedBy, notes)
 }
 
 func (a *storeAPIAdapter) CreatePersonFromParticipantContext(

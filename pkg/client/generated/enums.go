@@ -430,6 +430,40 @@ func (i IdentityLinkResponseCacheState) Validate() error {
 	}
 }
 
+type IdentityMatchAcceptResponseCacheState string
+
+const (
+	IdentityMatchAcceptResponseCacheStateReady IdentityMatchAcceptResponseCacheState = "ready"
+	IdentityMatchAcceptResponseCacheStateStale IdentityMatchAcceptResponseCacheState = "stale"
+)
+
+// Validate checks if the IdentityMatchAcceptResponseCacheState value is valid
+func (i IdentityMatchAcceptResponseCacheState) Validate() error {
+	switch i {
+	case IdentityMatchAcceptResponseCacheStateReady, IdentityMatchAcceptResponseCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityMatchAcceptResponseCacheState value, got: %v", i))
+	}
+}
+
+type IdentityMatchRejectResponseCacheState string
+
+const (
+	IdentityMatchRejectResponseCacheStateReady IdentityMatchRejectResponseCacheState = "ready"
+	IdentityMatchRejectResponseCacheStateStale IdentityMatchRejectResponseCacheState = "stale"
+)
+
+// Validate checks if the IdentityMatchRejectResponseCacheState value is valid
+func (i IdentityMatchRejectResponseCacheState) Validate() error {
+	switch i {
+	case IdentityMatchRejectResponseCacheStateReady, IdentityMatchRejectResponseCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityMatchRejectResponseCacheState value, got: %v", i))
+	}
+}
+
 type IdentitySearchSortDirection string
 
 const (

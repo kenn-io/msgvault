@@ -5,7 +5,7 @@
     "": {
       "name": "msgvault-web",
       "dependencies": {
-        "@kenn-io/kit-ui": "github:kenn-io/kit-ui#1e9dc7d45525a471040b72b894432c4956542c38",
+        "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz",
         "@tanstack/svelte-virtual": "3.13.32",
         "dompurify": "3.4.11",
         "openapi-fetch": "0.17.0",
@@ -78,7 +78,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@kenn-io/kit-ui": ["@kenn-io/kit-ui@github:kenn-io/kit-ui#1e9dc7d", { "peerDependencies": { "@lucide/svelte": ">=1.0.0", "dompurify": "^3.2.0", "marked": "^18.0.0", "shiki": "^4.0.0", "svelte": "^5.29.0" }, "bin": { "kit-ui-check": "./bin/kit-ui-check.mjs" } }, "kenn-io-kit-ui-1e9dc7d", "sha512-u0oMlxMAo2UUz1USWbp0LsJUwAop59GyG0NxCNygJvqm7+QST31jq5eVLBFHjtnY015mr0u0HO5tFbSFQMHcTA=="],
+    "@kenn-io/kit-ui": ["@kenn-io/kit-ui@https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz", { "peerDependencies": { "@lucide/svelte": ">=1.0.0", "dompurify": "^3.2.0", "marked": "^18.0.0", "shiki": "^4.0.0", "svelte": "^5.29.0" }, "bin": { "kit-ui-check": "./bin/kit-ui-check.mjs" } }, "sha512-690hAL6NHvtflP0ZLHTGuTmBUAceG4hthOIFqn7MNvBhoV+I20oCtaP+cuOfppqSE0ynd4xEWvwHuOvKGhUNZA=="],
 
     "@lucide/svelte": ["@lucide/svelte@1.25.0", "", { "peerDependencies": { "svelte": "^5" } }, "sha512-v9m+dD68jxVnqkU3K59mG/RSRFlPGzmKCGSyMfnXcaGv9jODDQMyQkcp1CGvk3Y/cUj9v7f8rw1n//K0B53xGQ=="],
 

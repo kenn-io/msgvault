@@ -3170,12 +3170,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 			return err
 		}
 		if err := s.rewriteIdentityMatchCandidatesForMergeTx(
-			context.Background(), tx, oldID, newID,
-		); err != nil {
-			return err
-		}
-		if err := s.deleteUnsupportedObservationIdentityConflictsContext(
-			context.Background(), tx,
+			context.Background(), tx, oldID, newID, edges,
 		); err != nil {
 			return err
 		}
@@ -3189,6 +3184,14 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		// Repoint (and, if needed, restructure) any link edges referencing
 		// oldID before the delete below drops them via ON DELETE CASCADE.
 		if err := s.rewriteLinksForMerge(tx, oldID, newID); err != nil {
+			return err
+		}
+		// Candidate and link endpoints must both reference the survivor before
+		// unsupported generated matches are withdrawn. Otherwise an owned link
+		// can evade cleanup because it still names the absorbed participant.
+		if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
+			context.Background(), tx,
+		); err != nil {
 			return err
 		}
 		// Bump unconditionally, even when the merge touched no link edges:
@@ -3227,6 +3230,120 @@ func (s *Store) ParticipantByIdentifier(identifierType, identifierValue string) 
 		return 0, false, nil
 	}
 	return id, hasPhone, err
+}
+
+// AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier
+// to a scoped value. The legacy value is consumed on success, so another
+// account cannot claim the same unscoped identifier after the first account
+// adopts it. If the legacy owner already has a scoped identifier in the
+// supplied namespace, the legacy row is removed and no participant is
+// returned: its ownership is ambiguous and must not be reused.
+//
+// scopedPrefix is a provider-owned namespace marker (for example, "beeper:")
+// used only to distinguish account-scoped identifiers from other identifiers
+// of the same type, such as a phone value. The identity lock serializes this
+// migration with other participant-identifier writers and source cleanup.
+func (s *Store) AdoptLegacyParticipantIdentifier(
+	identifierType, legacyValue, scopedValue, scopedPrefix string,
+) (int64, error) {
+	identifierType = strings.TrimSpace(identifierType)
+	legacyValue = strings.TrimSpace(legacyValue)
+	scopedValue = strings.TrimSpace(scopedValue)
+	scopedPrefix = strings.TrimSpace(scopedPrefix)
+	if identifierType == "" || legacyValue == "" || scopedValue == "" {
+		return 0, errors.New("legacy participant identifier values are required")
+	}
+	if legacyValue == scopedValue {
+		return 0, nil
+	}
+
+	var adoptedID int64
+	err := s.withTx(func(tx *loggedTx) error {
+		// Fast path for the common case where a concurrent import already
+		// created the scoped identifier.
+		var currentID int64
+		lookupErr := tx.QueryRow(`
+			SELECT participant_id FROM participant_identifiers
+			WHERE identifier_type = ? AND identifier_value = ?
+		`, identifierType, scopedValue).Scan(&currentID)
+		if lookupErr == nil {
+			return nil
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return fmt.Errorf("lookup scoped participant identifier: %w", lookupErr)
+		}
+
+		// The write path must take the identity lock before touching
+		// participant_identifiers. Re-check all rows after the lock because
+		// another identity mutation may have completed while this call waited.
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		lookupErr = tx.QueryRow(`
+			SELECT participant_id FROM participant_identifiers
+			WHERE identifier_type = ? AND identifier_value = ?
+		`, identifierType, scopedValue).Scan(&currentID)
+		if lookupErr == nil {
+			return nil
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return fmt.Errorf("recheck scoped participant identifier: %w", lookupErr)
+		}
+
+		var legacyID int64
+		lookup := `SELECT participant_id FROM participant_identifiers
+			WHERE identifier_type = ? AND identifier_value = ?` + s.dialect.SelectForUpdate()
+		lookupErr = tx.QueryRow(lookup, identifierType, legacyValue).Scan(&legacyID)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil
+		}
+		if lookupErr != nil {
+			return fmt.Errorf("lookup legacy participant identifier: %w", lookupErr)
+		}
+
+		// A legacy participant may also own a phone identifier of the same
+		// type. Only a second value in the provider's scoped namespace makes
+		// the raw value ambiguous.
+		var hasScoped bool
+		if scopedPrefix != "" {
+			if err := tx.QueryRow(`
+				SELECT EXISTS (
+					SELECT 1 FROM participant_identifiers
+					WHERE participant_id = ? AND identifier_type = ?
+					  AND identifier_value <> ? AND identifier_value LIKE ?
+				)
+			`, legacyID, identifierType, legacyValue, scopedPrefix+"%").Scan(&hasScoped); err != nil {
+				return fmt.Errorf("check legacy participant scoped identifiers: %w", err)
+			}
+		}
+		if hasScoped {
+			if _, err := tx.Exec(`DELETE FROM participant_identifiers
+				WHERE identifier_type = ? AND identifier_value = ?`,
+				identifierType, legacyValue); err != nil {
+				return fmt.Errorf("remove ambiguous legacy participant identifier: %w", err)
+			}
+			if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		if _, err := tx.Exec(`UPDATE participant_identifiers
+			SET identifier_value = ?
+			WHERE identifier_type = ? AND identifier_value = ?`,
+			scopedValue, identifierType, legacyValue); err != nil {
+			return fmt.Errorf("migrate legacy participant identifier: %w", err)
+		}
+		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+			return err
+		}
+		adoptedID = legacyID
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return adoptedID, nil
 }
 
 // SetParticipantIdentifier points identifier (type, value) at participantID,

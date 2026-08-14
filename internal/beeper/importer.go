@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.kenn.io/msgvault/internal/rederive"
@@ -89,13 +90,25 @@ type Importer struct {
 	store  *store.Store
 	client *Client
 	res    *participantResolver
+	// obs captures the addresses Beeper exposes for each participant. It is
+	// enrichment beside the resolution ladder, never a replacement for it.
+	obs *observationRecorder
+	// matcher turns observations into reviewable identity match candidates.
+	// Only a repeated stable provider/Beeper ID resolves automatically.
+	matcher *identityMatcher
 	// lastCheckpoint throttles checkpoint flushes (see checkpointMinInterval).
 	lastCheckpoint time.Time
 }
 
 // NewImporter creates an Importer backed by the given store and Beeper client.
 func NewImporter(s *store.Store, c *Client) *Importer {
-	return &Importer{store: s, client: c, res: newParticipantResolver(s)}
+	return &Importer{
+		store:   s,
+		client:  c,
+		res:     newParticipantResolver(s),
+		obs:     newObservationRecorder(s),
+		matcher: newIdentityMatcher(s),
+	}
 }
 
 // loadResumeState rebuilds the sync state for a source: the last successful
@@ -125,6 +138,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if opts.AccountID == "" {
 		return nil, errors.New("beeper account ID required")
 	}
+	// The CLI and scheduler reuse one Importer across Beeper accounts. These
+	// caches only suppress repeated work inside one account import; carrying
+	// them into the next account can hide source-specific observations and
+	// matching work.
+	// The selected import account is authoritative for all Beeper user-ID
+	// fallback identifiers, including message senders, mentions, and
+	// reactions. Do not use the account field echoed in a remote chat payload.
+	imp.res = newParticipantResolver(imp.store, opts.AccountID)
+	imp.obs = newObservationRecorder(imp.store)
+	imp.matcher = newIdentityMatcher(imp.store)
 	src, err := imp.store.GetOrCreateSource(sourceTypeBeeper, opts.AccountID)
 	if err != nil {
 		return nil, err
@@ -177,6 +200,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// messages still exist unchanged before trusting stored cursors.
 	if err = imp.verifyAnchors(ctx, syncID, src.ID, state); err != nil {
 		return sum, err
+	}
+	// Accepting a match and applying its participant link are two
+	// transactions, so a crash between them can leave an accepted match
+	// unlinked. Finish those first; a contested pair must not block a sync.
+	if applied, aerr := imp.store.ApplyAcceptedIdentityMatchesContext(ctx, 0); aerr != nil {
+		sum.IdentityReplayErrors++
+		sum.Errors++
+		slog.Warn("re-applying accepted identity matches failed", "error", aerr)
+	} else if applied > 0 {
+		slog.Info("applied accepted identity matches", "count", applied)
 	}
 
 	// A tail scan must see every chat, not just recently-active ones: a chat
@@ -336,7 +369,9 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // incrementally extends the chat's messages. Returns the number of messages
 // processed for this chat.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (int64, error) {
-	convID, membershipComplete, err := imp.ensureConversation(ctx, syncID, sourceID, ch, sum)
+	convID, membershipComplete, err := imp.ensureConversation(
+		ctx, syncID, sourceID, ch, opts.AccountID, sum,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -392,7 +427,9 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 // ensureConversation upserts the conversation row and its membership,
 // fetching the full participant list when the search listing truncated it
 // (chat search returns at most 20 participants per chat).
-func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID int64, ch *Chat, sum *ImportSummary) (int64, bool, error) {
+func (imp *Importer) ensureConversation(
+	ctx context.Context, syncID, sourceID int64, ch *Chat, accountID string, sum *ImportSummary,
+) (int64, bool, error) {
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
@@ -414,6 +451,19 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 		return 0, false, err
 	}
 	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
+	type resolvedMember struct {
+		participantID int64
+		user          *User
+	}
+	resolvedMembers := make([]resolvedMember, 0, len(detail.Participants.Items))
+	var bridgePrefix string
+	if membershipComplete {
+		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
+	}
+	// Keep the resolver tied to the import option, not to any account value
+	// echoed by the remote chat payload. This also covers direct callers of
+	// ensureConversation that do not go through Import's cache reset.
+	imp.res.accountID = accountID
 	for i := range detail.Participants.Items {
 		p := &detail.Participants.Items[i]
 		pid, rerr := imp.res.resolveUser(&p.User)
@@ -428,6 +478,7 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 			role = "admin"
 		}
 		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: role})
+		resolvedMembers = append(resolvedMembers, resolvedMember{participantID: pid, user: &p.User})
 	}
 	if membershipComplete {
 		if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
@@ -439,6 +490,17 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 				sum.Errors++
 			}
 		}
+	}
+	// Membership must be visible before matching. The chat participant list is
+	// the only place Beeper hands us a person's phone, email, and username
+	// together, and matching those observations gathers shared-conversation
+	// evidence immediately. Recording observations first would omit this chat
+	// from every candidate created on its first import.
+	for _, member := range resolvedMembers {
+		imp.captureObservations(
+			ctx, member.participantID, member.user, detail,
+			sourceID, accountID, bridgePrefix, sum,
+		)
 	}
 	return convID, membershipComplete, nil
 }
@@ -522,6 +584,48 @@ func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *Impo
 	cc.cs.Done = false
 	sum.ChatsReopened++
 	return true, nil
+}
+
+// captureObservations records the addresses observed on one chat participant.
+// Capture is enrichment, not archive integrity: failures are logged and
+// counted on the run, never fatal, so a hostile payload or unavailable service
+// catalog cannot stop messages being archived.
+func (imp *Importer) captureObservations(
+	ctx context.Context,
+	participantID int64,
+	u *User,
+	ch *Chat,
+	sourceID int64,
+	accountID string,
+	bridgePrefix string,
+	sum *ImportSummary,
+) {
+	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
+		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
+		BridgePrefix: bridgePrefix,
+	})
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("beeper observation capture failed",
+			"participant_id", participantID, "beeper_user_id", u.ID, "error", err)
+		sum.Errors++
+	}
+	for _, result := range results {
+		if result.Created {
+			sum.ObservationsRecorded++
+		}
+		outcome, merr := imp.matcher.match(ctx, participantID, result)
+		if merr != nil {
+			if ctx.Err() == nil {
+				slog.Warn("beeper identity matching failed",
+					"participant_id", participantID, "beeper_user_id", u.ID, "error", merr)
+				sum.Errors++
+			}
+			continue
+		}
+		sum.IdentityAutoResolved += int64(len(outcome.AutoResolved))
+		sum.IdentityCandidates += int64(len(outcome.Suggested))
+		sum.IdentityConflicts += int64(len(outcome.Conflicts))
+	}
 }
 
 // recentIDWindow remembers the message IDs of the last few pages of a

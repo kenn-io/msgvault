@@ -606,8 +606,12 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS service_id BIGINT REFERENCES communication_services(id) ON DELETE SET NULL`, "pi_service_id"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_kind TEXT`, "pi_scope_kind"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_value TEXT`, "pi_scope_value"},
-		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
+		{postgresParticipantLinkIdentityMatchCandidateMigration, "participant_links.identity_match_candidate_id"},
+		{postgresIdentityMatchObservationConflictOriginMigration, identityMatchObservationConflictOriginMigrationDesc},
+		{postgresIdentityMatchCandidateSourcesMigration, "identity_match_candidate_sources"},
+		{postgresIdentityMatchEvidenceSourcesMigration, "identity_match_evidence_sources"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
+		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS application_pending BOOLEAN NOT NULL DEFAULT TRUE`, "identity_match_candidates.application_pending"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
@@ -1236,7 +1240,8 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
-	"participant_contact_observations", "identity_match_candidates", "identity_match_evidence",
+	"participant_contact_observations", "identity_match_candidates", "identity_match_candidate_sources",
+	"identity_match_evidence", "identity_match_evidence_sources",
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.

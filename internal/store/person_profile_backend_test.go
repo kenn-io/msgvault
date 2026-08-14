@@ -106,7 +106,7 @@ func TestProfileTableColumnsMatchOnTheConfiguredBackend(t *testing.T) {
 				"id", "left_kind", "left_id", "right_kind", "right_id", "basis",
 				"service_id", "scope_kind", "scope_value", "normalized_value",
 				"state", "confidence", "source", "source_ref", "observation_conflict_origin",
-				"pre_conflict_state",
+				"pre_conflict_state", "application_pending",
 				"decided_by", "decided_at", "notes", "created_at", "updated_at",
 			},
 		},
@@ -145,7 +145,15 @@ func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *test
 	st := storetest.New(t).Store
 	ctx := t.Context()
 
-	for _, column := range []string{"observation_conflict_origin", "pre_conflict_state"} {
+	for _, column := range []string{
+		"observation_conflict_origin", "pre_conflict_state", "application_pending",
+	} {
+		if column == "application_pending" {
+			_, err := st.DB().ExecContext(ctx,
+				"DROP INDEX idx_identity_match_candidates_application_pending",
+			)
+			require.NoError(err)
+		}
 		_, err := st.DB().ExecContext(
 			ctx, "ALTER TABLE identity_match_candidates DROP COLUMN "+column,
 		)
@@ -156,6 +164,7 @@ func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *test
 	columns := liveTableColumns(t, st, "identity_match_candidates")
 	assert.Contains(columns, "observation_conflict_origin")
 	assert.Contains(columns, "pre_conflict_state")
+	assert.Contains(columns, "application_pending")
 }
 
 func TestProfileReadsSucceedOnTheConfiguredBackend(t *testing.T) {

@@ -436,10 +436,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		result.Participants += identityMates
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO participant_links SELECT * FROM src.participant_links
-		WHERE participant_a IN (SELECT id FROM participants)
-		  AND participant_b IN (SELECT id FROM participants)`); err != nil {
+	if err := copyParticipantLinks(tx, options.IncludeProfiles); err != nil {
 		return nil, fmt.Errorf("copy participant_links: %w", err)
 	}
 
@@ -764,6 +761,36 @@ type subsetServiceReference struct {
 	where string
 }
 
+// copyParticipantLinks copies the link forest by name. The identity-match
+// ownership column was added to upgraded databases after created_at, while a
+// fresh schema declares it before created_at; a positional copy would swap
+// those values. Ownership is profile metadata, so omit it when profiles are
+// not requested even if the source has the column.
+func copyParticipantLinks(tx *sql.Tx, includeProfiles bool) error {
+	hasCandidateOwner, err := sourceColumnExists(
+		tx, "participant_links", "identity_match_candidate_id",
+	)
+	if err != nil {
+		return err
+	}
+	ownerExpression := "NULL"
+	if includeProfiles && hasCandidateOwner {
+		ownerExpression = "source_row.identity_match_candidate_id"
+	}
+	_, err = tx.Exec(fmt.Sprintf(`
+		INSERT INTO participant_links (
+			participant_a, participant_b, identity_match_candidate_id, created_at
+		)
+		SELECT source_row.participant_a, source_row.participant_b, %s,
+		       source_row.created_at
+		FROM src.participant_links source_row
+		WHERE source_row.participant_a IN (SELECT id FROM participants)
+		  AND source_row.participant_b IN (SELECT id FROM participants)`,
+		ownerExpression,
+	))
+	return err
+}
+
 const subsetSourceIdentityMatchCandidateWhere = `(
 	(left_kind = 'participant' AND left_id IN (SELECT id FROM participants))
 	OR (left_kind = 'person' AND left_id IN (SELECT id FROM persons))
@@ -923,6 +950,22 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			  ON service_map.source_id = alias.service_id
 			ON CONFLICT(alias) DO UPDATE SET service_id = excluded.service_id`); err != nil {
 			return fmt.Errorf("copy communication service aliases: %w", err)
+		}
+	}
+	hasDiscoveries, err := sourceTableExists(tx, "communication_service_discoveries")
+	if err != nil {
+		return fmt.Errorf("check communication service discovery schema: %w", err)
+	}
+	if hasDiscoveries {
+		if _, err := tx.Exec(`INSERT INTO communication_service_discoveries (
+				service_id, provider, discovery_kind
+			)
+			SELECT service_map.destination_id, discovery.provider, discovery.discovery_kind
+			FROM src.communication_service_discoveries discovery
+			JOIN selected_profile_service_map service_map
+			  ON service_map.source_id = discovery.service_id
+			ON CONFLICT(service_id, provider, discovery_kind) DO NOTHING`); err != nil {
+			return fmt.Errorf("copy communication service discoveries: %w", err)
 		}
 	}
 	return nil
@@ -1179,6 +1222,65 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			if _, err := copyByName(tx, "identity_match_evidence",
 				`candidate_id IN (SELECT id FROM identity_match_candidates)`); err != nil {
 				return 0, fmt.Errorf("copy identity_match_evidence: %w", err)
+			}
+		}
+
+		supportTables := []struct {
+			table      string
+			ownerTable string
+			ownerKey   string
+		}{
+			{
+				table: "identity_match_candidate_sources", ownerTable: "identity_match_candidates",
+				ownerKey: "candidate_id",
+			},
+			{
+				table: "identity_match_evidence_sources", ownerTable: "identity_match_evidence",
+				ownerKey: "evidence_id",
+			},
+		}
+		for _, support := range supportTables {
+			hasSupport, err := sourceTableExists(tx, support.table)
+			if err != nil {
+				return 0, fmt.Errorf("check %s schema: %w", support.table, err)
+			}
+			if !hasSupport {
+				continue
+			}
+			// Archives upgraded before source-support provenance existed
+			// carry conservative associations to every source. They keep
+			// source-removal cleanup safe, but must not pull unrelated source
+			// metadata into a shared subset. Explicit rows may expand the
+			// subset's source set; conservative rows are retained only when
+			// their source is already present for another reason.
+			hasConservativeMarker, err := sourceColumnExists(
+				tx, support.table, "is_conservative",
+			)
+			if err != nil {
+				return 0, fmt.Errorf("check %s provenance schema: %w", support.table, err)
+			}
+			if !hasConservativeMarker {
+				continue
+			}
+			ownerWhere := support.ownerKey + ` IN (SELECT id FROM ` + support.ownerTable + `)`
+			explicitSupportWhere := ownerWhere + `
+				AND is_conservative = FALSE`
+			sourceResult, err := copyByName(tx, "sources", `id IN (
+				SELECT source_id FROM src.`+support.table+`
+				WHERE `+explicitSupportWhere+`
+			) AND id NOT IN (SELECT id FROM sources)`)
+			if err != nil {
+				return 0, fmt.Errorf("copy %s sources: %w", support.table, err)
+			}
+			copiedSources, err := sourceResult.RowsAffected()
+			if err != nil {
+				return 0, fmt.Errorf("%s sources rows affected: %w", support.table, err)
+			}
+			extraSources += copiedSources
+			if _, err := copyByName(tx, support.table,
+				ownerWhere+`
+					 AND source_id IN (SELECT id FROM sources)`); err != nil {
+				return 0, fmt.Errorf("copy %s: %w", support.table, err)
 			}
 		}
 	}

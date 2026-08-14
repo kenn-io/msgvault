@@ -969,6 +969,26 @@ type LinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type LinkIdentityParticipantsErrorResponse = ErrorResponse
 
+type ListIdentityMatchCandidatesResponse = IdentityMatchCandidatesResponse
+
+type ListIdentityMatchCandidatesErrorResponse = ErrorResponse
+
+type AcceptIdentityMatchCandidateResponse = IdentityMatchAcceptResponse
+
+type AcceptIdentityMatchCandidateErrorResponse = ErrorResponse
+
+type AcceptIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+
+type AcceptIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
+
+type RejectIdentityMatchCandidateResponse = IdentityMatchRejectResponse
+
+type RejectIdentityMatchCandidateErrorResponse = ErrorResponse
+
+type RejectIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+
+type RejectIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
+
 type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
@@ -2580,6 +2600,34 @@ type LinkIdentityParticipantsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *LinkIdentityParticipantsResponse
+}
+
+type ListIdentityMatchCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListIdentityMatchCandidatesResponse
+	JSON503      *ListIdentityMatchCandidatesErrorResponse
+}
+
+type AcceptIdentityMatchCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *AcceptIdentityMatchCandidateResponse
+	JSON404      *AcceptIdentityMatchCandidateErrorResponse
+	JSON409      *AcceptIdentityMatchCandidateErrorResponseJSON
+	JSON503      *AcceptIdentityMatchCandidateErrorResponseJSON503
+}
+
+type RejectIdentityMatchCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RejectIdentityMatchCandidateResponse
+	JSON404      *RejectIdentityMatchCandidateErrorResponse
+	JSON409      *RejectIdentityMatchCandidateErrorResponseJSON
+	JSON503      *RejectIdentityMatchCandidateErrorResponseJSON503
 }
 
 type UnlinkIdentityParticipantsResp struct {

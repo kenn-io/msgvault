@@ -38,10 +38,13 @@ type ParticipantContactObservationInput struct {
 }
 
 type RecordContactObservationResult struct {
-	Observation *ParticipantContactObservation `json:"observation"`
-	Created     bool                           `json:"created"`
-	Conflicting bool                           `json:"conflicting"`
-	CandidateID *int64                         `json:"candidate_id,omitempty"`
+	Observation  *ParticipantContactObservation `json:"observation"`
+	Created      bool                           `json:"created"`
+	Conflicting  bool                           `json:"conflicting"`
+	CandidateIDs []int64                        `json:"candidate_ids,omitempty"`
+	// CandidateID is the first conflict candidate, retained for callers that
+	// predate complete conflict-graph reporting.
+	CandidateID *int64 `json:"candidate_id,omitempty"`
 }
 
 var ErrObservationValueMissing = errors.New("participant contact observation requires a non-empty value")
@@ -165,17 +168,28 @@ func (s *Store) RecordContactObservationContext(
 	if err := ValidateServiceScope(service, input.ScopeKind, input.ScopeValue); err != nil {
 		return nil, err
 	}
-	normalized, err := NormalizeServiceValue(service, input.AddressKind, input.OriginalValue)
-	if err != nil {
-		return nil, err
-	}
 	normalization := fallbackContactNormalization(input.AddressKind)
 	normalizationVersion := 1
+	var normalized string
+	if input.AddressKind == ContactAddressProviderIdentity {
+		// Provider identities are opaque, exact evidence. They are not user
+		// addresses, so a service's phone/email/username normalization must not
+		// lowercase, strip, or reject the synthetic key.
+		normalized = input.OriginalValue
+	} else {
+		var err error
+		normalized, err = NormalizeServiceValue(service, input.AddressKind, input.OriginalValue)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var serviceID any
 	if hasService {
 		serviceID = service.ID
-		normalization = service.Normalization
-		normalizationVersion = service.NormalizationVersion
+		if input.AddressKind != ContactAddressProviderIdentity {
+			normalization = service.Normalization
+			normalizationVersion = service.NormalizationVersion
+		}
 	}
 	result := &RecordContactObservationResult{}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -252,7 +266,7 @@ func (s *Store) RecordContactObservationContext(
 				if err != nil {
 					return err
 				}
-				if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+				if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
 					ctx, tx,
 				); err != nil {
 					return err
@@ -312,7 +326,7 @@ func (s *Store) RecordContactObservationContext(
 			if providerContradicted {
 				// Conflicts generated against the superseded provider binding may
 				// no longer be supported by any current observation pair.
-				if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+				if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
 					ctx, tx,
 				); err != nil {
 					return err
@@ -344,6 +358,7 @@ func (s *Store) RecordContactObservationContext(
 				Basis: basis, ServiceSlug: input.ServiceSlug, ScopeKind: input.ScopeKind,
 				ScopeValue: input.ScopeValue, NormalizedValue: &normalized,
 				State: IdentityMatchStateConflict, Source: ProvenanceArchiveObservation,
+				SourceRef: input.Envelope.SourceRef, SourceID: input.SourceID,
 			}
 			candidate, _, err := s.upsertIdentityMatchCandidateTx(
 				ctx, tx, candidateInput, leftKind, leftID, rightKind, rightID, serviceID, true,
@@ -351,6 +366,7 @@ func (s *Store) RecordContactObservationContext(
 			if err != nil {
 				return err
 			}
+			result.CandidateIDs = append(result.CandidateIDs, candidate.ID)
 			if result.CandidateID == nil {
 				result.CandidateID = &candidate.ID
 			}
@@ -469,13 +485,26 @@ func (s *Store) SupersedeParticipantObservationContext(
 		if changed == 0 {
 			return ErrProfileValueNotFound
 		}
-		if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+		if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
 			ctx, tx,
 		); err != nil {
 			return err
 		}
 		return s.bumpParticipantIdentifierRevision(tx)
 	})
+}
+
+// reconcileCurrentObservationIdentityMatchesTxContext applies every cleanup
+// rule whose truth depends on the current participant observations. Generated
+// conflicts are demoted first so a promoted stable-ID or cross-scope candidate
+// can be evaluated in its restored state by the general match cleanup.
+func (s *Store) reconcileCurrentObservationIdentityMatchesTxContext(
+	ctx context.Context, tx *loggedTx,
+) error {
+	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
+		return err
+	}
+	return s.recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(ctx, tx)
 }
 
 // deleteUnsupportedObservationIdentityConflictsContext removes generated
@@ -566,6 +595,14 @@ func (s *Store) queryParticipantObservationsContext(
 	if err != nil {
 		return nil, fmt.Errorf("query participant observations: %w", err)
 	}
+	return scanParticipantContactObservations(rows)
+}
+
+// scanParticipantContactObservations drains participantObservationSelect rows,
+// closing them before returning.
+func scanParticipantContactObservations(
+	rows *loggedRows,
+) ([]ParticipantContactObservation, error) {
 	defer func() { _ = rows.Close() }()
 	observations := make([]ParticipantContactObservation, 0)
 	for rows.Next() {
@@ -664,6 +701,8 @@ func findConflictingObservationParticipantIDsTx(
 
 func identityMatchBasisForAddressKind(kind ContactAddressKind) IdentityMatchBasis {
 	switch kind {
+	case ContactAddressProviderIdentity:
+		return IdentityMatchStableProviderID
 	case ContactAddressEmail:
 		return IdentityMatchEmail
 	case ContactAddressPhone:

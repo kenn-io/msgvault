@@ -19,7 +19,7 @@ type Account struct {
 }
 
 // User identifies a person on a network. Only fields the importer consumes
-// are modelled; the archived raw JSON preserves everything else.
+// are modelled; Raw preserves everything else.
 type User struct {
 	ID          string `json:"id"` // Matrix-style user ID, e.g. "@signal_<uuid>:beeper.local"
 	Username    string `json:"username"`
@@ -27,6 +27,23 @@ type User struct {
 	Email       string `json:"email"`
 	FullName    string `json:"fullName"`
 	IsSelf      bool   `json:"isSelf"`
+	// Raw holds the exact original JSON for this user object, captured during
+	// decode (see UnmarshalJSON). The documented providerID field is read from
+	// it (providerNativeUserID) without modelling every network's extra field.
+	Raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes a User while retaining the exact original bytes in
+// Raw.
+func (u *User) UnmarshalJSON(b []byte) error {
+	type alias User // avoid recursion into this method
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*u = User(a)
+	u.Raw = append(json.RawMessage(nil), b...)
+	return nil
 }
 
 // Participant is a chat member: a User plus membership metadata.
@@ -34,6 +51,27 @@ type Participant struct {
 	User
 
 	IsAdmin bool `json:"isAdmin"`
+}
+
+// UnmarshalJSON decodes a Participant explicitly. It cannot delegate to a
+// `type alias Participant` shim the way User and Message do: method promotion
+// from the embedded User means the alias ALSO carries User.UnmarshalJSON, so
+// json would decode only the User fields and silently drop isAdmin. Decoding
+// the membership fields separately and handing the same bytes to the User
+// decoder keeps both halves, and leaves Raw holding the whole participant
+// object (isAdmin and any unmodelled provider key included).
+func (p *Participant) UnmarshalJSON(b []byte) error {
+	var membership struct {
+		IsAdmin bool `json:"isAdmin"`
+	}
+	if err := json.Unmarshal(b, &membership); err != nil {
+		return err
+	}
+	if err := p.User.UnmarshalJSON(b); err != nil {
+		return err
+	}
+	p.IsAdmin = membership.IsAdmin
+	return nil
 }
 
 // ChatParticipants wraps the (possibly truncated) participant list of a chat.
@@ -189,6 +227,21 @@ type ImportSummary struct {
 	// rederive.RunIfStale). Both are zero once an archive has caught up.
 	BodiesRepaired      int64
 	AttachmentsRetagged int64
+	// ObservationsRecorded counts participant contact observations created
+	// this run. A re-observed address creates no row, so a steady-state
+	// incremental sync reports zero.
+	ObservationsRecorded int64
+	// IdentityAutoResolved counts links a repeated stable provider/Beeper ID
+	// resolved automatically this run. IdentityCandidates counts suggestions
+	// left for review, and IdentityConflicts counts collisions recorded as
+	// conflicts. A suggestion or conflict never changes an identity cluster.
+	IdentityAutoResolved int64
+	IdentityCandidates   int64
+	IdentityConflicts    int64
+	// IdentityReplayErrors counts accepted identity matches that could not be
+	// re-applied because the participant-link store was unavailable. Contested
+	// pairs are recorded as conflicts by the store and are not counted here.
+	IdentityReplayErrors int64
 	// AttachmentsDownloaded counts media stored this run;
 	// AttachmentsPending counts failed/deferred downloads that left a
 	// retry marker (see backfill-beeper-media).

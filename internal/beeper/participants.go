@@ -9,8 +9,9 @@ import (
 )
 
 // participantIdentifierType namespaces Beeper user IDs in
-// participant_identifiers. The IDs are Beeper-local Matrix-style IDs
-// (@x:beeper.local), not federated Matrix IDs.
+// participant_identifiers. The payload IDs are Beeper-local Matrix-style IDs
+// (@x:beeper.local), not federated Matrix IDs; importer writes use the
+// account-scoped providerFallbackUserID form below.
 const participantIdentifierType = "beeper"
 
 // participantResolver resolves Beeper users to msgvault participant IDs,
@@ -38,21 +39,51 @@ type richEntry struct {
 }
 
 type participantResolver struct {
-	store    *store.Store
-	rich     map[string]richEntry // phone/email-based resolutions
-	fallback map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	store *store.Store
+	// accountID is the authoritative Beeper account selected by the import.
+	// Beeper user IDs are only unique inside that account, so every persisted
+	// fallback identifier and every run-local cache key must carry it.
+	accountID string
+	rich      map[string]richEntry // phone/email-based resolutions
+	fallback  map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
 }
 
-func newParticipantResolver(s *store.Store) *participantResolver {
-	return &participantResolver{store: s, rich: map[string]richEntry{}, fallback: map[string]int64{}}
+func newParticipantResolver(s *store.Store, accountIDs ...string) *participantResolver {
+	accountID := ""
+	if len(accountIDs) > 0 {
+		accountID = strings.TrimSpace(accountIDs[0])
+	}
+	return &participantResolver{
+		store:     s,
+		accountID: accountID,
+		rich:      map[string]richEntry{},
+		fallback:  map[string]int64{},
+	}
+}
+
+// identifierForUser returns the durable participant identifier for one
+// Beeper user. The account-scoped form is required for bare IDs: Beeper can
+// legitimately return the same raw ID for two accounts. Keep the unscoped
+// form for resolver instances created by older callers that do not have an
+// import account (and for compatibility with existing archives/tests).
+func (r *participantResolver) identifierForUser(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || r.accountID == "" {
+		return userID
+	}
+	return providerFallbackUserID(r.accountID, userID)
 }
 
 func (r *participantResolver) resolveUser(u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil
 	}
+	identifier := r.identifierForUser(u.ID)
+	if _, err := r.adoptLegacyIdentifier(u.ID, identifier); err != nil {
+		return 0, err
+	}
 	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
-	if e, ok := r.rich[u.ID]; ok && (e.byPhone || !hasPhone) {
+	if e, ok := r.rich[identifier]; ok && (e.byPhone || !hasPhone) {
 		return e.pid, nil
 	}
 	switch {
@@ -64,7 +95,7 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 		// Upgrading an earlier email-based resolution: both rows are the
 		// same Beeper user, so fold the email participant's history into the
 		// phone one (which dedupes with SMS/WhatsApp archives).
-		if e, ok := r.rich[u.ID]; ok && e.pid != pid {
+		if e, ok := r.rich[identifier]; ok && e.pid != pid {
 			if err := r.store.MergeParticipants(e.pid, pid); err != nil {
 				if !errors.Is(err, store.ErrPersonBindingConflict) {
 					return 0, err
@@ -73,33 +104,33 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
 			}
 		}
-		return pid, r.recordRich(u.ID, pid, true)
+		return pid, r.recordRich(identifier, pid, true)
 	case strings.Contains(u.Email, "@"):
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
 		// participant instead of re-pointing the identifier to a weaker row.
-		prev, hasPhone, err := r.store.ParticipantByIdentifier(participantIdentifierType, u.ID)
+		prev, hasPhone, err := r.store.ParticipantByIdentifier(participantIdentifierType, identifier)
 		if err != nil {
 			return 0, err
 		}
 		if prev != 0 && hasPhone {
-			r.rich[u.ID] = richEntry{pid: prev, byPhone: true}
-			delete(r.fallback, u.ID)
+			r.rich[identifier] = richEntry{pid: prev, byPhone: true}
+			delete(r.fallback, identifier)
 			return prev, nil
 		}
 		pid, err := r.byEmail(u.Email, u.FullName)
 		if err != nil {
 			return 0, err
 		}
-		return pid, r.recordRich(u.ID, pid, false)
+		return pid, r.recordRich(identifier, pid, false)
 	default:
 		return r.resolveID(u.ID, u.FullName)
 	}
 }
 
-// recordRich caches a phone/email-based resolution and persists the Beeper
-// user ID as an identifier of that participant, so later runs (fresh caches)
-// resolve bare sender IDs to the same person. When a weak (bare-ID-only)
+// recordRich caches a phone/email-based resolution and persists the scoped
+// Beeper user ID as an identifier of that participant, so later runs (fresh
+// caches) resolve bare sender IDs to the same person. When a weak (bare-ID-only)
 // participant already owns the identifier, its history — messages, reactions,
 // membership — is merged into the rich participant rather than left split.
 func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool) error {
@@ -135,18 +166,39 @@ func (r *participantResolver) resolveID(userID, displayName string) (int64, erro
 	if userID == "" {
 		return 0, nil
 	}
-	if e, ok := r.rich[userID]; ok {
+	identifier := r.identifierForUser(userID)
+	if e, ok := r.rich[identifier]; ok {
 		return e.pid, nil
 	}
-	if pid, ok := r.fallback[userID]; ok {
+	if pid, ok := r.fallback[identifier]; ok {
 		return pid, nil
 	}
-	pid, err := r.store.EnsureParticipantByIdentifier(participantIdentifierType, userID, displayName)
+	if pid, err := r.adoptLegacyIdentifier(userID, identifier); err != nil {
+		return 0, err
+	} else if pid != 0 {
+		r.fallback[identifier] = pid
+		return pid, nil
+	}
+	pid, err := r.store.EnsureParticipantByIdentifier(participantIdentifierType, identifier, displayName)
 	if err != nil {
 		return 0, err
 	}
-	r.fallback[userID] = pid
+	r.fallback[identifier] = pid
 	return pid, nil
+}
+
+// adoptLegacyIdentifier upgrades an existing unscoped Beeper identifier in
+// place. Older archives persisted the raw payload ID. When an account-scoped
+// resolver first sees that user, keep the participant and its message history
+// and attach the new durable key before any fallback participant is created.
+func (r *participantResolver) adoptLegacyIdentifier(userID, identifier string) (int64, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || identifier == userID {
+		return 0, nil
+	}
+	return r.store.AdoptLegacyParticipantIdentifier(
+		participantIdentifierType, userID, identifier, beeperProviderPrefix+":",
+	)
 }
 
 func (r *participantResolver) byEmail(email, displayName string) (int64, error) {

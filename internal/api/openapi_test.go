@@ -36,7 +36,7 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "1.40.0", APISchemaVersion,
+	assert.Equal(t, "1.41.0", APISchemaVersion,
 		"organization and employment routes are an additive schema release")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -315,8 +315,8 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.40.0", APISchemaVersion,
-		"structured profiles are additive to the attribute schema release")
+	assert.Equal("1.41.0", APISchemaVersion,
+		"identity match review preserves the structured profile contract")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
@@ -389,8 +389,8 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.40.0", APISchemaVersion,
-		"raw profile media content is an additive schema release")
+	assert.Equal("1.41.0", APISchemaVersion,
+		"identity match review preserves the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/persons/{id}/profile/media/{media_id}/content"]
 	require.NotNil(path)
@@ -413,6 +413,40 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	}
 }
 
+func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	assertions.Equal("1.41.0", APISchemaVersion,
+		"identity match review routes are the additive 1.41.0 schema release")
+
+	doc := OpenAPIDocument()
+	list := doc.Paths["/api/v1/identity/match-candidates"]
+	requirements.NotNil(list, "identity match candidate list path")
+	requirements.NotNil(list.Get, "identity match candidate list operation")
+	assertions.Equal("listIdentityMatchCandidates", list.Get.OperationID)
+
+	for path, operationID := range map[string]string{
+		"/api/v1/identity/match-candidates/{id}/accept": "acceptIdentityMatchCandidate",
+		"/api/v1/identity/match-candidates/{id}/reject": "rejectIdentityMatchCandidate",
+	} {
+		item := doc.Paths[path]
+		requirements.NotNil(item, path)
+		requirements.NotNil(item.Post, path)
+		assertions.Equal(operationID, item.Post.OperationID, path)
+		requirements.NotNil(item.Post.RequestBody, path)
+		assertions.False(item.Post.RequestBody.Required,
+			path+" decision notes are optional and the runtime accepts an empty request body")
+	}
+
+	// The release is additive. Keep the source-identity route that shipped
+	// before identity match review.
+	sourceIdentities := doc.Paths["/api/v1/sources/{source_id}/identities"]
+	requirements.NotNil(sourceIdentities, "source identity path")
+	requirements.NotNil(sourceIdentities.Get, "source identity list operation")
+	assertions.Equal("listSourceIdentities", sourceIdentities.Get.OperationID)
+}
+
 func TestOpenAPIMeetingImportContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -423,8 +457,8 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
 	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
 	// person relationships added in 1.39.0, and organizations and employments
-	// added in 1.40.0 did not touch it.
-	assert.Equal("1.40.0", APISchemaVersion, "meeting import is an additive schema release")
+	// added in 1.40.0 and identity match review added in 1.41.0 did not touch it.
+	assert.Equal("1.41.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
