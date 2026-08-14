@@ -886,6 +886,64 @@ func scanIdentityMatchCandidateMergeRows(
 	return candidates, rows.Err()
 }
 
+func recordIdentityMatchCandidateRedirectTx(
+	ctx context.Context,
+	tx *loggedTx,
+	retiredCandidateID, survivingCandidateID int64,
+	endpointsCollapsed bool,
+) error {
+	if retiredCandidateID <= 0 || endpointsCollapsed == (survivingCandidateID > 0) {
+		return errors.New("invalid identity match candidate redirect")
+	}
+	var survivor any
+	if survivingCandidateID > 0 {
+		survivor = survivingCandidateID
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidate_redirects
+		SET surviving_candidate_id = ?, endpoints_collapsed = ?
+		WHERE surviving_candidate_id = ?`,
+		survivor, endpointsCollapsed, retiredCandidateID,
+	); err != nil {
+		return fmt.Errorf("repoint identity match candidate redirects: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_match_candidate_redirects (
+		retired_candidate_id, surviving_candidate_id, endpoints_collapsed
+	) VALUES (?, ?, ?)
+	ON CONFLICT (retired_candidate_id) DO UPDATE SET
+		surviving_candidate_id = excluded.surviving_candidate_id,
+		endpoints_collapsed = excluded.endpoints_collapsed`,
+		retiredCandidateID, survivor, endpointsCollapsed,
+	); err != nil {
+		return fmt.Errorf("record identity match candidate redirect: %w", err)
+	}
+	return nil
+}
+
+func identityMatchCandidateRedirectTx(
+	ctx context.Context, tx *loggedTx, retiredCandidateID int64,
+) (survivingCandidateID int64, endpointsCollapsed, found bool, err error) {
+	var survivor sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT
+		surviving_candidate_id, endpoints_collapsed
+		FROM identity_match_candidate_redirects
+		WHERE retired_candidate_id = ?`, retiredCandidateID,
+	).Scan(&survivor, &endpointsCollapsed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, false, nil
+	}
+	if err != nil {
+		return 0, false, false,
+			fmt.Errorf("load identity match candidate redirect: %w", err)
+	}
+	if endpointsCollapsed {
+		return 0, true, true, nil
+	}
+	if !survivor.Valid || survivor.Int64 <= 0 {
+		return 0, false, false, errors.New("identity match candidate redirect has no survivor")
+	}
+	return survivor.Int64, false, true, nil
+}
+
 func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 	ctx context.Context, tx *loggedTx, oldID, newID int64, edges []linkEdge,
 ) error {
@@ -926,6 +984,11 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 				`UPDATE participant_links SET identity_match_candidate_id = NULL
 				 WHERE identity_match_candidate_id = ?`, candidate.ID); err != nil {
 				return fmt.Errorf("clear owner of self-link candidate: %w", err)
+			}
+			if err := recordIdentityMatchCandidateRedirectTx(
+				ctx, tx, candidate.ID, 0, true,
+			); err != nil {
+				return err
 			}
 			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM identity_match_candidates WHERE id = ?`, candidate.ID,
@@ -1034,6 +1097,11 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 			SET identity_match_candidate_id = ?
 			WHERE identity_match_candidate_id = ?`, winner.ID, loser.ID); err != nil {
 			return fmt.Errorf("move identity match link ownership: %w", err)
+		}
+		if err := recordIdentityMatchCandidateRedirectTx(
+			ctx, tx, loser.ID, winner.ID, false,
+		); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM identity_match_candidates WHERE id = ?`, loser.ID,

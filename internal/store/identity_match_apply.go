@@ -23,8 +23,9 @@ var ErrIdentityMatchNotAccepted = errors.New(
 	"identity match candidate is no longer accepted")
 
 var (
-	errIdentityMatchSnapshotStale = errors.New("identity match candidate snapshot is stale")
-	errIdentityMatchCandidateGone = errors.New("identity match candidate was removed by a participant merge")
+	errIdentityMatchSnapshotStale      = errors.New("identity match candidate snapshot is stale")
+	errIdentityMatchEndpointsCollapsed = errors.New("identity match candidate endpoints collapsed")
+	errIdentityMatchAlreadyConnected   = errors.New("identity match candidate endpoints are already connected")
 )
 
 // GetIdentityMatchCandidateContext loads one candidate with its evidence.
@@ -141,7 +142,35 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 			func(ctx context.Context, tx *loggedTx) error {
 				loaded, loadErr := getIdentityMatchCandidateWithoutEvidenceTx(ctx, tx, current.ID)
 				if errors.Is(loadErr, ErrIdentityMatchNotFound) {
-					return errIdentityMatchCandidateGone
+					survivingID, collapsed, found, redirectErr :=
+						identityMatchCandidateRedirectTx(ctx, tx, current.ID)
+					if redirectErr != nil {
+						return redirectErr
+					}
+					if collapsed {
+						return errIdentityMatchEndpointsCollapsed
+					}
+					if found {
+						loaded, loadErr = getIdentityMatchCandidateWithoutEvidenceTx(
+							ctx, tx, survivingID)
+						if loadErr != nil {
+							return loadErr
+						}
+						loaded.Evidence, loadErr = loadCandidateEvidenceTx(ctx, tx, survivingID)
+						if loadErr != nil {
+							return loadErr
+						}
+						refreshed = loaded
+						return errIdentityMatchSnapshotStale
+					}
+					edges, edgeErr := s.loadLinkEdgesTxContext(ctx, tx)
+					if edgeErr != nil {
+						return edgeErr
+					}
+					if _, connected := componentOf(current.LeftID, edges)[current.RightID]; connected {
+						return errIdentityMatchAlreadyConnected
+					}
+					return loadErr
 				}
 				if loadErr != nil {
 					return loadErr
@@ -172,10 +201,11 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 	}
 	switch {
 	case err == nil:
-	case errors.Is(err, errIdentityMatchCandidateGone):
-		// MergeParticipants removed a candidate that collapsed into a
-		// self-link. The merge already established the identity relation and
-		// bumped the revision, so accepted-match recovery has nothing to add.
+	case errors.Is(err, errIdentityMatchEndpointsCollapsed),
+		errors.Is(err, errIdentityMatchAlreadyConnected):
+		// A merge record confirms that the endpoints became one participant,
+		// or the current graph confirms that another identity edge already
+		// satisfies the assertion. No candidate deletion is otherwise success.
 		revision, err = readIdentityRevisionContext(ctx, s.db)
 		if err != nil {
 			return nil, 0, false, err
@@ -190,7 +220,7 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 	case errors.Is(err, ErrPersonBindingConflict):
 		conflictNote := "accepted match spans two durable person profiles; not applied"
 		if _, decideErr := s.DecideIdentityMatchCandidateContext(
-			ctx, accepted.ID, IdentityMatchStateConflict, decidedBy, &conflictNote,
+			ctx, current.ID, IdentityMatchStateConflict, decidedBy, &conflictNote,
 		); decideErr != nil {
 			return nil, 0, false, errors.Join(err, decideErr)
 		}

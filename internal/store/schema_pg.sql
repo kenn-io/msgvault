@@ -1500,6 +1500,20 @@ CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value
     ON identity_match_candidates(basis, normalized_value)
     WHERE normalized_value IS NOT NULL;
 
+-- A participant merge can collapse duplicate candidates while an accepted
+-- application is waiting for the identity lock. Record the exact survivor,
+-- or a confirmed endpoint collapse, so that waiter can finish safely.
+CREATE TABLE IF NOT EXISTS identity_match_candidate_redirects (
+    retired_candidate_id BIGINT PRIMARY KEY,
+    surviving_candidate_id BIGINT REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    endpoints_collapsed BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK ((endpoints_collapsed = TRUE AND surviving_candidate_id IS NULL) OR
+           (endpoints_collapsed = FALSE AND surviving_candidate_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidate_redirects_survivor
+    ON identity_match_candidate_redirects(surviving_candidate_id)
+    WHERE surviving_candidate_id IS NOT NULL;
+
 -- Generated identity candidates may be supported by observations from more
 -- than one archive source. Keeping the support rows separate from the
 -- candidate's display source lets source removal recompute stale suggestions
