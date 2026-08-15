@@ -20,6 +20,12 @@ All notable changes to msgvault, grouped by release.
   empty one, and the daemon marks vector search stale when the configured
   accounts resolve to a different source set than it was started with.
 
+**Bug fixes**
+
+- Everything and Files now page narrow analytical metadata before enriching
+  participant details, preventing default listings on multi-million-message
+  archives from exhausting the interactive DuckDB memory budget.
+
 ---
 
 ## 0.19.3

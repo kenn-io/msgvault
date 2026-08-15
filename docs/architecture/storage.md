@@ -157,6 +157,12 @@ this on the default SQLite backend with denormalized Parquet files queried by
 an embedded DuckDB engine, delivering aggregate queries hundreds of times
 faster than SQLite.
 
+Ungrouped Everything and Files listings page a scalar message or attachment
+population before resolving participant lists for the returned rows. Exact
+totals use separate narrow scans. This page-before-enrichment boundary keeps
+multi-million-message listings inside the daemon's interactive DuckDB memory
+budget without changing cache format or query semantics.
+
 The Parquet cache is disposable and can be rebuilt at any time. The daemon
 starts HTTP health and API routing before analytics cache maintenance, and
 aggregate views never trigger a build mid-session. With
