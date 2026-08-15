@@ -337,7 +337,7 @@ Review the rendered Markdown diff, then use the `kenn:commit` workflow with subj
 docs: record bounded analytical listings
 ```
 
-### Task 4: Verify and open the generic pull request
+### Task 4: Verify, run the review fixer, and open the generic pull request
 
 **Files:**
 - No production files expected.
@@ -384,7 +384,14 @@ Then run the `kenn:scrub-private-data` workflow over the complete branch diff.
 Expected: a clean worktree, no whitespace errors, only the intended
 query/tests/docs commits, and no private or personal data in public artifacts.
 
-- [ ] **Step 4: Push and open the pull request**
+- [ ] **Step 4: Run the requested automated review-fix pass**
+
+Invoke `$roborev-fix` against the completed, verified branch. Address every
+material open finding, run the affected tests, commit any resulting fixes, and
+confirm the original review jobs are closed. Re-run the focused query package
+tests after the review fixes.
+
+- [ ] **Step 5: Push and open the pull request**
 
 Push `fix/analytical-query-reliability` and open a concise PR titled:
 
