@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-09"
+last_edited: "2026-08-15"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -25,8 +25,11 @@ while the cache is built or opened, then switch to DuckDB after success. A
 failed automatic build or open keeps the daemon on live SQL. With
 `engine = "duckdb"`, analytics remain unavailable until the required cache is
 ready, so analytics routes return `503` during initialization; the daemon does
-not fall back to SQL. Set `auto_build_cache = false` to skip automatic startup
-maintenance.
+not fall back to SQL. Cache-dependent routes also return a structured `503`
+while automatic cache maintenance is active. Its `readiness` field lets clients
+distinguish transient `building` state from an unavailable cache and retry
+without requiring user action. Set `auto_build_cache = false` to skip automatic
+startup maintenance.
 
 ## Quick Start
 

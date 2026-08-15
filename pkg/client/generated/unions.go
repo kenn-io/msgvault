@@ -272,6 +272,24 @@ func (s *SearchDomains_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
+type GetDomain_ErrorResponse_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetDomain_ErrorResponse_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type SearchDomainFiles_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
@@ -464,6 +482,24 @@ func (s *SearchPeople_ErrorResponse_503_AnyOf) Validate() error {
 	}
 	if s.IsB() {
 		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetPerson_ErrorResponse_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetPerson_ErrorResponse_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
 			return v.Validate()
 		}
 	}

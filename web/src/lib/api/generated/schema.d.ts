@@ -9281,6 +9281,15 @@ export interface operations {
                     "application/json": components["schemas"]["DomainSummary"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Error */
             default: {
                 headers: {
@@ -12368,6 +12377,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonSummary"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

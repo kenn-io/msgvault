@@ -34,9 +34,13 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
+func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
+	assert.Equal(t, "1.43.0", APISchemaVersion)
+}
+
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "1.42.0", APISchemaVersion,
+	assert.Equal(t, "1.43.0", APISchemaVersion,
 		"organization and employment routes are an additive schema release")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -315,7 +319,7 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.42.0", APISchemaVersion,
+	assert.Equal("1.43.0", APISchemaVersion,
 		"activity and identity match review preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -389,7 +393,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.42.0", APISchemaVersion,
+	assert.Equal("1.43.0", APISchemaVersion,
 		"activity and identity match review preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/persons/{id}/profile/media/{media_id}/content"]
@@ -417,7 +421,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("1.42.0", APISchemaVersion,
+	assertions.Equal("1.43.0", APISchemaVersion,
 		"activity routes follow the additive identity match review schema release")
 
 	doc := OpenAPIDocument()
@@ -458,8 +462,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
 	// person relationships added in 1.39.0, organizations and employments
 	// added in 1.40.0, identity match review added in 1.41.0, and dated activity
-	// routes added in 1.42.0 did not touch it.
-	assert.Equal("1.42.0", APISchemaVersion, "meeting import is an additive schema release")
+	// routes added in 1.42.0 and cache-readiness responses added in 1.43.0 did
+	// not touch it.
+	assert.Equal("1.43.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -740,6 +745,33 @@ func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
 	readiness := schema.Properties["readiness"]
 	requirements.NotNil(readiness)
 	assertions.ElementsMatch([]any{"absent", "building", "interrupted", "stale_schema", "drifted"}, readiness.Enum)
+}
+
+func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T) {
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		for _, path := range []string{"/api/v1/people/{id}", "/api/v1/domains/{domain}"} {
+			response := document.Paths[path].Get.Responses[httpStatusKey(http.StatusServiceUnavailable)]
+			require.NotNil(t, response, path)
+			media := response.Content[applicationJSONMediaType]
+			require.NotNil(t, media, path)
+			require.NotNil(t, media.Schema, path)
+			require.Len(t, media.Schema.AnyOf, 2, path)
+			assert.ElementsMatch(t, []string{
+				"#/components/schemas/ExploreCacheUnavailableResponse",
+				"#/components/schemas/ErrorResponse",
+			}, []string{media.Schema.AnyOf[0].Ref, media.Schema.AnyOf[1].Ref}, path)
+		}
+	}
+}
+
+func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
+	for name, responseType := range map[string]reflect.Type{
+		"get person": reflect.TypeFor[generated.GetPersonResp](),
+		"get domain": reflect.TypeFor[generated.GetDomainResp](),
+	} {
+		_, ok := responseType.FieldByName("JSON503")
+		assert.True(t, ok, "%s response must expose JSON503", name)
+	}
 }
 
 func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {

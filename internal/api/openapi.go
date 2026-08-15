@@ -195,7 +195,10 @@ import (
 // meeting-import routes keep their current contracts.
 // 1.42.0 adds the dated activity and daily-note route families. Existing
 // profile, meeting, media, and other API contracts remain unchanged.
-const APISchemaVersion = "1.42.0"
+// 1.43.0 adds structured analytical-cache readiness responses, including the
+// transient building state, to cache-dependent coverage and detail routes.
+// Additive (minor bump): existing success responses remain unchanged.
+const APISchemaVersion = "1.43.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

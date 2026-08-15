@@ -495,7 +495,47 @@ func (s *SearchDomainsErrorResponseJSON503) UnmarshalJSON(data []byte) error {
 
 type GetDomainResponse = DomainSummary
 
-type GetDomainErrorResponse = ErrorResponse
+type GetDomainErrorResponse struct {
+	GetDomain_ErrorResponse_AnyOf *GetDomain_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r GetDomainErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (g GetDomainErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetDomain_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetDomain_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetDomainErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetDomain_ErrorResponse_AnyOf == nil {
+		g.GetDomain_ErrorResponse_AnyOf = &GetDomain_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetDomain_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("GetDomain_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type SearchDomainFilesResponse = FileSearchHTTPResponse
 
@@ -1291,7 +1331,47 @@ func (s *SearchPeopleErrorResponseJSON503) UnmarshalJSON(data []byte) error {
 
 type GetPersonResponse = PersonSummary
 
-type GetPersonErrorResponse = ErrorResponse
+type GetPersonErrorResponse struct {
+	GetPerson_ErrorResponse_AnyOf *GetPerson_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r GetPersonErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (g GetPersonErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetPerson_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetPerson_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetPersonErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetPerson_ErrorResponse_AnyOf == nil {
+		g.GetPerson_ErrorResponse_AnyOf = &GetPerson_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetPerson_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("GetPerson_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type SearchPersonFilesResponse = FileSearchHTTPResponse
 
@@ -2558,6 +2638,7 @@ type GetDomainResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetDomainResponse
+	JSON503      *GetDomainErrorResponse
 }
 
 type SearchDomainFilesResp struct {
@@ -3108,6 +3189,7 @@ type GetPersonResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetPersonResponse
+	JSON503      *GetPersonErrorResponse
 }
 
 type SearchPersonFilesResp struct {

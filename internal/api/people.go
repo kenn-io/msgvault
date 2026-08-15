@@ -74,7 +74,7 @@ func (s *Server) registerPeopleRoutes(api huma.API) {
 	registerExploreRoute[IdentitySearchHTTPRequest, PersonSearchHTTPResponse](
 		api, "searchPeople", "/people/search", "Search analytical people", s.handleSearchPeople,
 	)
-	registerAPIV1RawHumaJSONRoute[query.PersonSummary](
+	registerAnalyticalDetailRoute[query.PersonSummary](
 		api, "getPerson", http.MethodGet, "/people/{id}", "Get one analytical person", s.handleGetPerson,
 	)
 	registerExploreRoute[ExploreHTTPRequest, PersonContextSummaryHTTPResponse](
@@ -86,7 +86,7 @@ func (s *Server) registerPeopleRoutes(api huma.API) {
 	registerExploreRoute[IdentitySearchHTTPRequest, DomainSearchHTTPResponse](
 		api, "searchDomains", "/domains/search", "Search analytical domains", s.handleSearchDomains,
 	)
-	registerAPIV1RawHumaJSONRoute[query.DomainSummary](
+	registerAnalyticalDetailRoute[query.DomainSummary](
 		api, "getDomain", http.MethodGet, "/domains/{domain}", "Get one analytical domain", s.handleGetDomain,
 	)
 	registerExploreRoute[ExploreHTTPRequest, DomainContextSummaryHTTPResponse](
@@ -95,6 +95,17 @@ func (s *Server) registerPeopleRoutes(api huma.API) {
 	registerExploreRoute[ExploreHTTPRequest, ExploreHTTPResponse](
 		api, "getDomainTimeline", "/domains/{domain}/timeline", "Get one domain's canonical activity timeline", s.handleDomainTimeline,
 	)
+}
+
+func registerAnalyticalDetailRoute[Resp any](
+	api huma.API,
+	operationID, method, path, summary string,
+	handler http.HandlerFunc,
+) {
+	op := rawAPIV1Operation(operationID, method, path, summary)
+	op.Responses = jsonResponsesFor[Resp](api)
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
+	registerRawHumaRoute(api, op, handler)
 }
 
 func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
