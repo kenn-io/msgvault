@@ -224,16 +224,17 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg            *config.Config
-	store          MessageStore
-	analyticsState atomic.Pointer[analyticsEngineState]
-	savedViewStore SavedViewStore
-	sqlQueryRunner SQLQueryRunner
-	shutdownToken  string
-	shutdownFunc   func()
-	scheduler      SyncScheduler
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	cfg                           *config.Config
+	store                         MessageStore
+	analyticsState                atomic.Pointer[analyticsEngineState]
+	analyticsInitializationActive atomic.Bool
+	savedViewStore                SavedViewStore
+	sqlQueryRunner                SQLQueryRunner
+	shutdownToken                 string
+	shutdownFunc                  func()
+	scheduler                     SyncScheduler
+	logger                        *slog.Logger
+	requestTimeout                time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -451,6 +452,11 @@ type ServerOptions struct {
 	// aggregate views run on the cache or live SQL. The daemon may replace the
 	// engine and mode at runtime. Empty omits the field.
 	AnalyticsMode string
+	// AnalyticsInitializationActive reports that cache selection, build, or
+	// open work is already scheduled. Set it before the listener is exposed so
+	// the first request cannot mistake active initialization for a terminal
+	// SQL fallback.
+	AnalyticsInitializationActive bool
 	// SPAHandler overrides the embedded browser application handler. Nil uses
 	// internal/web.Handler and is the production default. Tests may inject a
 	// handler built over an in-memory filesystem.
@@ -525,6 +531,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		started:                  make(chan struct{}),
 	}
 	s.analyticsState.Store(&analyticsEngineState{engine: opts.Engine, mode: opts.AnalyticsMode})
+	s.analyticsInitializationActive.Store(opts.AnalyticsInitializationActive)
 	if s.taskIdentityResolver == nil {
 		s.taskIdentityResolver = s.resolveTaskMessageIdentity
 	}
@@ -840,6 +847,20 @@ func (s *Server) AnalyticsMode() string {
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
 	s.analyticsState.Store(&analyticsEngineState{engine: engine, mode: mode})
+}
+
+// SetAnalyticsInitializationActive reports whether the daemon is still
+// selecting, building, or opening the analytical cache. It is separate from
+// AnalyticsMode because auto mode keeps serving SQL-backed routes while that
+// work runs.
+func (s *Server) SetAnalyticsInitializationActive(active bool) {
+	s.analyticsInitializationActive.Store(active)
+}
+
+// AnalyticsInitializationActive reports whether background cache
+// initialization is still in progress.
+func (s *Server) AnalyticsInitializationActive() bool {
+	return s.analyticsInitializationActive.Load()
 }
 
 // CloseAnalyticsEngine closes and clears the current engine after the daemon

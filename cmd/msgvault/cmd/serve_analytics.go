@@ -193,8 +193,10 @@ func startDaemonAnalyticsInitializer(
 	tracker scheduler.WorkTracker,
 ) *daemonAnalyticsInitHandle {
 	h := newDaemonAnalyticsInitHandle()
+	apiServer.SetAnalyticsInitializationActive(true)
 	go func() {
 		defer close(h.done)
+		defer apiServer.SetAnalyticsInitializationActive(false)
 		if tracker != nil {
 			release, ok := tracker.BeginWorkContext(ctx)
 			close(h.started)

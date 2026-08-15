@@ -75,7 +75,55 @@ describe('FilesWorkspace', () => {
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  it('retries a building analytical cache and renders files when it becomes ready', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      calls += 1;
+      if (calls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+        readiness: 'building', recovery_action: ''
+      }, { status: 503 });
+      return Response.json(response());
+    });
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
+    expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await screen.findByText('fixture.pdf')).toBeDefined();
+    expect(calls).toBe(2);
+
+    rendered.unmount();
+    vi.useRealTimers();
+  });
+
+  it('cancels cache-readiness polling when the Files workspace is destroyed', async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchFn).toHaveBeenCalledOnce();
+
+    rendered.unmount();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it('requests a bounded canonical page and commits stable sortable headers', async () => {
     const requests: Request[] = [];

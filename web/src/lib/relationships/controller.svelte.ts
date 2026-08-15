@@ -65,7 +65,7 @@ export class RelationshipsController {
    * in `listPageRequest`; null when the last page has been reached. */
   listCursor = $state<string | null>(null);
   listTotalCount = $state<number | null>(null);
-  degraded = $state<'cache_unavailable' | null>(null);
+  degraded = $state<ExploreCacheUnavailable | null>(null);
 
   target = $state<string | null>(null);
   /** Fingerprint of the predicate `target` was last opened with — lets a
@@ -92,6 +92,7 @@ export class RelationshipsController {
   private readonly client: APIClient;
   private readonly timezone: () => string;
   private listAbort: AbortController | undefined;
+  private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private detailAbort: AbortController | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
@@ -111,6 +112,7 @@ export class RelationshipsController {
   }
 
   async loadList(predicate: ExplorePredicate): Promise<void> {
+    this.clearCacheBuildRetry();
     this.listAbort?.abort();
     const controller = new AbortController();
     this.listAbort = controller;
@@ -246,7 +248,15 @@ export class RelationshipsController {
     this.listCursor = null;
     this.listRows = [];
     if (res.status === 503 && isCacheUnavailable(error)) {
-      this.degraded = 'cache_unavailable';
+      this.degraded = error;
+      if (error.readiness === 'building') {
+        this.cacheBuildRetry = setTimeout(() => {
+          this.cacheBuildRetry = undefined;
+          if (generation === this.listGeneration && !signal.aborted && this.lastListPredicate) {
+            void this.loadList(this.lastListPredicate);
+          }
+        }, 1_000);
+      }
       return;
     }
     this.listError = errorMessage(error, res.status);
@@ -533,8 +543,15 @@ export class RelationshipsController {
   }
 
   destroy(): void {
+    this.clearCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
+  }
+
+  private clearCacheBuildRetry(): void {
+    if (this.cacheBuildRetry === undefined) return;
+    clearTimeout(this.cacheBuildRetry);
+    this.cacheBuildRetry = undefined;
   }
 }
 

@@ -297,9 +297,53 @@ describe('RelationshipsController.loadList', () => {
 
     await expect(controller.loadList({ filters: [], presentation: 'table' })).resolves.toBeUndefined();
 
-    expect(controller.degraded).toBe('cache_unavailable');
+    expect(controller.degraded?.readiness).toBe('stale_schema');
     expect(controller.listError).toBeNull();
     expect(controller.listLoading).toBe(false);
+  });
+
+  it('retries relationship ranking while the analytical cache is building', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      calls += 1;
+      if (calls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+        readiness: 'building', recovery_action: ''
+      }, { status: 503 });
+      return Response.json({
+        rows: [relationshipRow(11, 'Recovered Person')], total_count: 1,
+        cache_revision: 'cache-rel', identity_revision: 1
+      });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.degraded?.readiness).toBe('building');
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(controller.listRows).toEqual([relationshipRow(11, 'Recovered Person')]);
+    expect(controller.degraded).toBeNull();
+    expect(calls).toBe(2);
+
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
+  it('cancels relationship cache-readiness polling when destroyed', async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.loadList({ filters: [], presentation: 'table' });
+    controller.destroy();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 });
 

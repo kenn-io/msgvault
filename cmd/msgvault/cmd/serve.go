@@ -540,15 +540,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			return runDaemonSQLQuery(ctx, cfg, s, apiServer.QueryEngineForRequest(ctx), sql)
 		},
-		ShutdownToken: ownership.shutdownToken,
-		ShutdownFunc:  cancel,
-		Scheduler:     schedAdapter,
-		Logger:        logger,
-		DaemonVersion: Version,
-		AnalyticsMode: analyticsMode,
-		IdleTracker:   idleTracker,
-		OperationGate: operationGate,
-		BlobStore:     blobStore,
+		ShutdownToken:                 ownership.shutdownToken,
+		ShutdownFunc:                  cancel,
+		Scheduler:                     schedAdapter,
+		Logger:                        logger,
+		DaemonVersion:                 Version,
+		AnalyticsMode:                 analyticsMode,
+		AnalyticsInitializationActive: analyticsAsync,
+		IdleTracker:                   idleTracker,
+		OperationGate:                 operationGate,
+		BlobStore:                     blobStore,
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
 	if cfg.Vector.Enabled {

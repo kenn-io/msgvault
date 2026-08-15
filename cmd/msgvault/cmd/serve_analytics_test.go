@@ -77,10 +77,47 @@ func TestStartDaemonAnalyticsInitializerAutoInstallsDuckDB(t *testing.T) {
 	)
 	require.True(h.WaitContext(context.Background()))
 	require.NoError(h.Err())
+	assert.False(srv.AnalyticsInitializationActive())
 	assert.True(h.Swapped())
 	assert.Equal(api.AnalyticsModeDuckDB, srv.AnalyticsMode())
 	assert.IsType(&query.DuckDBEngine{}, srv.QueryEngine())
 	require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
+}
+
+func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	started := make(chan struct{})
+	release := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+		close(started)
+		select {
+		case <-release:
+			_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), false)
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+
+	initial := query.NewEngine(s.DB(), false)
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: c, Engine: initial, AnalyticsMode: api.AnalyticsModeSQLFallback, Logger: slog.Default(),
+	})
+	h := startDaemonAnalyticsInitializer(
+		context.Background(), c, s, startupCacheBuildIntentNone, srv, nil, nil,
+	)
+	<-started
+	assertions.True(srv.AnalyticsInitializationActive())
+
+	close(release)
+	requirements.True(h.WaitContext(context.Background()))
+	requirements.NoError(h.Err())
+	assertions.False(srv.AnalyticsInitializationActive())
+	requirements.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
 }
 
 func TestStartDaemonAnalyticsInitializerDuckDBFailureDoesNotInstallSQLFallback(t *testing.T) {

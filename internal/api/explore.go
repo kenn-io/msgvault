@@ -1889,7 +1889,7 @@ type ExploreCacheUnavailableResponse struct {
 }
 
 func (s *Server) writeExploreUnavailable(w http.ResponseWriter, readiness query.CacheReadiness) {
-	if s.AnalyticsMode() == AnalyticsModeInitializing {
+	if s.AnalyticsMode() == AnalyticsModeInitializing || s.AnalyticsInitializationActive() {
 		writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
 			Error: "analytical_cache_unavailable", Message: "The analytical cache is being prepared",
 			Readiness: query.CacheReadiness("building"),

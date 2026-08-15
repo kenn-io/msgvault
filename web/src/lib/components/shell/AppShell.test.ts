@@ -352,6 +352,23 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('keeps the default Relationships landing while the analytical cache is building', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByText('Preparing relationship ranking…')).toBeDefined();
+    expect(state.current.workspace).toBe('relationships');
+    expect(screen.queryByRole('main', { name: 'Everything' })).toBeNull();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
 
   it('a committed replace for the landing fallback keeps Back from resurrecting the degraded hub', async () => {
     window.history.replaceState(null, '', '/');
