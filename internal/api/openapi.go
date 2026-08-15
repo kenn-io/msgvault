@@ -587,6 +587,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if unavailable := schemas["ExploreCacheUnavailableResponse"]; unavailable != nil {
+		if recoveryAction := unavailable.Properties["recovery_action"]; recoveryAction != nil {
+			if recoveryAction.Extensions == nil {
+				recoveryAction.Extensions = map[string]any{}
+			}
+			recoveryAction.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
 	setEnumNames := func(schema *huma.Schema, enumNames []any) {
 		if schema == nil {
 			return

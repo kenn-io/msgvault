@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestExploreRejectsUnknownFilterDimension(t *testing.T) {
@@ -71,6 +72,9 @@ func TestExploreReportsTransientCacheInitialization(t *testing.T) {
 	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
 	assertions.Equal("The analytical cache is being prepared", body.Message)
 	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+	var generatedBody generated.ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &generatedBody))
+	requirements.NoError(generatedBody.Validate(), "the generated client must accept the server's building response")
 }
 
 func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T) {

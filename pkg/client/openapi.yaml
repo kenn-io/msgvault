@@ -2432,6 +2432,8 @@ components:
             - ExploreCacheUnavailableResponseReadinessDrifted
         recovery_action:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
       required:
         - error
         - message

@@ -58,18 +58,42 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}
 	}
-	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
-	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
-	start := bytes.Index(result, startMarker)
+	const cacheUnavailableType = "ExploreCacheUnavailableResponse"
+	cacheValidatorStart := []byte("func (e " + cacheUnavailableType + ") Validate() error {")
+	start := bytes.Index(result, cacheValidatorStart)
 	if start < 0 {
-		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
 	}
 	endOffset := bytes.Index(result[start:], []byte("\n}\n"))
 	if endOffset < 0 {
-		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
 	}
 	end := start + endOffset
 	validator := result[start:end]
+	requiredRecoveryAction := []byte("\tif err := typesValidator.Var(e.RecoveryAction, \"required\"); err != nil {\n\t\terrors = errors.Append(\"RecoveryAction\", err)\n\t}\n")
+	switch bytes.Count(validator, requiredRecoveryAction) {
+	case 1:
+		rewritten := bytes.Replace(validator, requiredRecoveryAction, nil, 1)
+		result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
+	case 0:
+		if !bytes.Contains(result, []byte("RecoveryAction string")) {
+			return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
+		}
+	default:
+		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
+	}
+	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
+	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
+	start = bytes.Index(result, startMarker)
+	if start < 0 {
+		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+	}
+	endOffset = bytes.Index(result[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+	}
+	end = start + endOffset
+	validator = result[start:end]
 	generatedPersonIDValidation := []byte(`	for i, item := range c.PersonIds {
 		if err := typesValidator.Var(item, "omitempty,gte=1"); err != nil {
 			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)

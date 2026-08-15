@@ -2128,7 +2128,7 @@ type ExploreCacheUnavailableResponse struct {
 	ErrorData      string                                   `json:"error" validate:"required"`
 	Message        string                                   `json:"message" validate:"required"`
 	Readiness      ExploreCacheUnavailableResponseReadiness `json:"readiness" validate:"required"`
-	RecoveryAction string                                   `json:"recovery_action" validate:"required"`
+	RecoveryAction string                                   `json:"recovery_action" validate:"omitempty"`
 }
 
 func (e ExploreCacheUnavailableResponse) Validate() error {
@@ -2143,9 +2143,6 @@ func (e ExploreCacheUnavailableResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Readiness", err)
 		}
-	}
-	if err := typesValidator.Var(e.RecoveryAction, "required"); err != nil {
-		errors = errors.Append("RecoveryAction", err)
 	}
 	if len(errors) == 0 {
 		return nil

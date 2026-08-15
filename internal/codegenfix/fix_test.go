@@ -16,6 +16,7 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), "if f.MimeType != nil")
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
+	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
 	assertions.Contains(string(got), "JSON json.RawMessage")
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
@@ -83,6 +84,13 @@ func generatedValidatorFixture() string {
 	return `type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
+type ExploreCacheUnavailableResponse struct {
+	RecoveryAction string ` + "`json:\"recovery_action\" validate:\"omitempty\"`" + `
+}
+func (e ExploreCacheUnavailableResponse) Validate() error {
+	var errors runtime.ValidationErrors
+` + exploreCacheRecoveryActionRequiredValidatorBlock() + `
+}
 func (e ExploreGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
@@ -94,6 +102,13 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
+`
+}
+
+func exploreCacheRecoveryActionRequiredValidatorBlock() string {
+	return `	if err := typesValidator.Var(e.RecoveryAction, "required"); err != nil {
+		errors = errors.Append("RecoveryAction", err)
+	}
 `
 }
 
