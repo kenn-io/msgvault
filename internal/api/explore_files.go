@@ -78,14 +78,14 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 	predicate.query.Search = searchSpec
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.ExploreFiles(r.Context(), query.ExploreFilesRequest{
 		Explore: predicate.query, Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {

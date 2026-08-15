@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -85,6 +87,26 @@ func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T)
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
 	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+}
+
+func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeSQLFallback
+	opts.AnalyticsInitializationActive = true
+	srv := NewServerWithOptions(opts)
+	snapshot := srv.currentAnalyticsState()
+	srv.SetAnalyticsInitializationActive(false)
+
+	response := httptest.NewRecorder()
+	ctx := context.WithValue(context.Background(), analyticsEngineContextKey{}, snapshot)
+	srv.writeExploreUnavailable(ctx, response, query.CacheAbsent)
+
+	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
 }
 
 func TestExploreServerStateBoundsAndExpiresTransientCapabilities(t *testing.T) {

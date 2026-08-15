@@ -81,14 +81,14 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.Relationships(r.Context(), query.RelationshipsRequest{
 		Context: analyticalContext, ShowAll: request.ShowAll, Limit: request.Limit, Offset: offset, Now: decayDate,
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {
@@ -199,12 +199,12 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	canonicalID, err := analyzer.ResolveCanonicalParticipant(r.Context(), participantID)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 		Limit: request.Limit, Offset: offset,
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {

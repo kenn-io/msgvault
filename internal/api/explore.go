@@ -300,12 +300,12 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := explorer.Explore(r.Context(), prepared.query)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if snapshotID != "" {
@@ -488,7 +488,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
@@ -497,7 +497,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {
@@ -559,12 +559,12 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 	engine := s.queryEngineForContext(r.Context())
 	analyzer, ok := engine.(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if selection.CacheRevision != stats.CacheRevision {
@@ -669,7 +669,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	request.RowKeys = slices.Compact(request.RowKeys)
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	state := s.exploreState
@@ -681,7 +681,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		Explore: predicate.query, IncludedKeys: []string{},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	cacheRequest := predicate.request
@@ -707,7 +707,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		Explore: matchRequest, RowKeys: request.RowKeys,
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	state.putMatchCounts(cacheKey, result.Counts)
@@ -1860,14 +1860,14 @@ func decodeExploreJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
+func (s *Server) writeExploreError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unavailable *query.CacheUnavailableError
 	if errors.As(err, &unavailable) || errors.Is(err, query.ErrCacheUnavailable) {
 		readiness := query.CacheInterrupted
 		if unavailable != nil {
 			readiness = unavailable.Readiness
 		}
-		s.writeExploreUnavailable(w, readiness)
+		s.writeExploreUnavailable(ctx, w, readiness)
 		return
 	}
 	if errors.Is(err, query.ErrInvalidExploreRequest) {
@@ -1888,8 +1888,12 @@ type ExploreCacheUnavailableResponse struct {
 	RecoveryAction string               `json:"recovery_action"`
 }
 
-func (s *Server) writeExploreUnavailable(w http.ResponseWriter, readiness query.CacheReadiness) {
-	if s.AnalyticsMode() == AnalyticsModeInitializing || s.AnalyticsInitializationActive() {
+func (s *Server) writeExploreUnavailable(
+	ctx context.Context,
+	w http.ResponseWriter,
+	readiness query.CacheReadiness,
+) {
+	if s.analyticsCacheInitializingForContext(ctx) {
 		writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
 			Error: "analytical_cache_unavailable", Message: "The analytical cache is being prepared",
 			Readiness: query.CacheReadiness("building"),

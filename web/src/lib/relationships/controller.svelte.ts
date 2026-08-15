@@ -94,6 +94,7 @@ export class RelationshipsController {
   private listAbort: AbortController | undefined;
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private detailAbort: AbortController | undefined;
+  private detailCacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
   private listPageRequest: ListPageRequest | undefined;
@@ -263,6 +264,7 @@ export class RelationshipsController {
   }
 
   async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
+    this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
     const controller = new AbortController();
     this.detailAbort = controller;
@@ -319,9 +321,13 @@ export class RelationshipsController {
       const base = personResponse.data;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
-      if (!base) this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
+      if (!base && !this.handleDetailCacheBuilding(
+        personResponse.error, personResponse.response.status, generation, signal
+      )) this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
       if (summaryResponse && !summaryResponse.data) {
-        this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+        if (!this.handleDetailCacheBuilding(
+          summaryResponse.error, summaryResponse.response.status, generation, signal
+        )) this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
       }
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
@@ -348,9 +354,13 @@ export class RelationshipsController {
       const base = detailResponse.data;
       if (base) this.detail = summary ? { ...base, ...summary } : base;
       else if (summary) this.detail = summary;
-      if (!base) this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
+      if (!base && !this.handleDetailCacheBuilding(
+        detailResponse.error, detailResponse.response.status, generation, signal
+      )) this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
       if (summaryResponse && !summaryResponse.data) {
-        this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+        if (!this.handleDetailCacheBuilding(
+          summaryResponse.error, summaryResponse.response.status, generation, signal
+        )) this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
       }
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
@@ -366,6 +376,7 @@ export class RelationshipsController {
    * bumps the generation counter so a late response cannot resurrect it.
    */
   clearTarget(): void {
+    this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
     this.detailAbort = undefined;
     ++this.detailGeneration;
@@ -422,6 +433,7 @@ export class RelationshipsController {
       if (signal.aborted || generation !== this.detailGeneration) return;
       const { data, error, response: res } = response;
       if (!data) {
+        if (this.handleDetailCacheBuilding(error, res.status, generation, signal)) return;
         if (cursor && res.status === 409 && isErrorCode(error, 'cursor_invalidated')) {
           this.timelineRows = [];
           this.timelineCursor = null;
@@ -466,6 +478,7 @@ export class RelationshipsController {
       if (signal.aborted || generation !== this.detailGeneration) return;
       const { data, error, response: res } = response;
       if (!data) {
+        if (this.handleDetailCacheBuilding(error, res.status, generation, signal)) return;
         // The domain timeline forwards to the explore engine, whose cursor
         // invalidation surfaces as 409 archive_revision_changed (unlike the
         // cluster timeline's cursor_invalidated): restart from page 1 the
@@ -544,6 +557,7 @@ export class RelationshipsController {
 
   destroy(): void {
     this.clearCacheBuildRetry();
+    this.clearDetailCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
   }
@@ -552,6 +566,34 @@ export class RelationshipsController {
     if (this.cacheBuildRetry === undefined) return;
     clearTimeout(this.cacheBuildRetry);
     this.cacheBuildRetry = undefined;
+  }
+
+  private handleDetailCacheBuilding(
+    error: unknown,
+    status: number,
+    generation: number,
+    signal: AbortSignal
+  ): boolean {
+    if (signal.aborted || generation !== this.detailGeneration || status !== 503 ||
+      !isCacheUnavailable(error) || error.readiness !== 'building') return false;
+    this.timelineError = error.message;
+    if (this.detailCacheBuildRetry === undefined && this.target && this.lastPredicate) {
+      const target = this.target;
+      const predicate = this.lastPredicate;
+      this.detailCacheBuildRetry = setTimeout(() => {
+        this.detailCacheBuildRetry = undefined;
+        if (generation === this.detailGeneration && !signal.aborted) {
+          void this.openTarget(target, predicate);
+        }
+      }, 1_000);
+    }
+    return true;
+  }
+
+  private clearDetailCacheBuildRetry(): void {
+    if (this.detailCacheBuildRetry === undefined) return;
+    clearTimeout(this.detailCacheBuildRetry);
+    this.detailCacheBuildRetry = undefined;
   }
 }
 

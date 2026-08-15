@@ -78,7 +78,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	response := SearchCoverageResponse{
@@ -109,7 +109,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		Explore: query.ExploreRequest{Context: ctx}, IncludedKeys: []string{},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	contextHash := searchCoverageContextHash(ctx)
@@ -141,7 +141,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	currentStatus, _, current, _ := resolveSearchCoverageGeneration(

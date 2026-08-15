@@ -216,25 +216,25 @@ type AttachmentBlobStore interface {
 type fastmailIdentityInventory = provideridentity.Inventory
 
 type analyticsEngineState struct {
-	engine query.Engine
-	mode   string
+	engine                        query.Engine
+	mode                          string
+	analyticsInitializationActive bool
 }
 
 type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg                           *config.Config
-	store                         MessageStore
-	analyticsState                atomic.Pointer[analyticsEngineState]
-	analyticsInitializationActive atomic.Bool
-	savedViewStore                SavedViewStore
-	sqlQueryRunner                SQLQueryRunner
-	shutdownToken                 string
-	shutdownFunc                  func()
-	scheduler                     SyncScheduler
-	logger                        *slog.Logger
-	requestTimeout                time.Duration
+	cfg            *config.Config
+	store          MessageStore
+	analyticsState atomic.Pointer[analyticsEngineState]
+	savedViewStore SavedViewStore
+	sqlQueryRunner SQLQueryRunner
+	shutdownToken  string
+	shutdownFunc   func()
+	scheduler      SyncScheduler
+	logger         *slog.Logger
+	requestTimeout time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -530,8 +530,10 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		fastmailInventoryFactory: fastmailInventoryFactory,
 		started:                  make(chan struct{}),
 	}
-	s.analyticsState.Store(&analyticsEngineState{engine: opts.Engine, mode: opts.AnalyticsMode})
-	s.analyticsInitializationActive.Store(opts.AnalyticsInitializationActive)
+	s.analyticsState.Store(&analyticsEngineState{
+		engine: opts.Engine, mode: opts.AnalyticsMode,
+		analyticsInitializationActive: opts.AnalyticsInitializationActive,
+	})
 	if s.taskIdentityResolver == nil {
 		s.taskIdentityResolver = s.resolveTaskMessageIdentity
 	}
@@ -814,6 +816,11 @@ func (s *Server) analyticsInitializingForContext(ctx context.Context) bool {
 	return s.analyticsModeForContext(ctx) == AnalyticsModeInitializing
 }
 
+func (s *Server) analyticsCacheInitializingForContext(ctx context.Context) bool {
+	state := s.analyticsStateForContext(ctx)
+	return state != nil && (state.mode == AnalyticsModeInitializing || state.analyticsInitializationActive)
+}
+
 // QueryEngine returns the analytics engine currently serving API queries.
 // The daemon uses it when a request must follow a runtime engine swap.
 func (s *Server) QueryEngine() query.Engine {
@@ -846,7 +853,16 @@ func (s *Server) AnalyticsMode() string {
 // daemon-owned engines remain live until HTTP shutdown and background workers
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
-	s.analyticsState.Store(&analyticsEngineState{engine: engine, mode: mode})
+	for {
+		current := s.currentAnalyticsState()
+		next := &analyticsEngineState{engine: engine, mode: mode}
+		if current != nil {
+			next.analyticsInitializationActive = current.analyticsInitializationActive
+		}
+		if s.analyticsState.CompareAndSwap(current, next) {
+			return
+		}
+	}
 }
 
 // SetAnalyticsInitializationActive reports whether the daemon is still
@@ -854,13 +870,24 @@ func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
 // AnalyticsMode because auto mode keeps serving SQL-backed routes while that
 // work runs.
 func (s *Server) SetAnalyticsInitializationActive(active bool) {
-	s.analyticsInitializationActive.Store(active)
+	for {
+		current := s.currentAnalyticsState()
+		next := &analyticsEngineState{analyticsInitializationActive: active}
+		if current != nil {
+			next.engine = current.engine
+			next.mode = current.mode
+		}
+		if s.analyticsState.CompareAndSwap(current, next) {
+			return
+		}
+	}
 }
 
 // AnalyticsInitializationActive reports whether background cache
 // initialization is still in progress.
 func (s *Server) AnalyticsInitializationActive() bool {
-	return s.analyticsInitializationActive.Load()
+	state := s.currentAnalyticsState()
+	return state != nil && state.analyticsInitializationActive
 }
 
 // CloseAnalyticsEngine closes and clears the current engine after the daemon

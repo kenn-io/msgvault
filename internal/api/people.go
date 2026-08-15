@@ -105,7 +105,7 @@ func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.SearchPeople(r.Context(), query.PersonSearchRequest{
@@ -114,7 +114,7 @@ func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
 		Page: query.PageSpec{Limit: request.Limit, Offset: prepared.offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" && prepared.cursor.Revision != result.CacheRevision {
@@ -138,7 +138,7 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.SearchDomains(r.Context(), query.DomainSearchRequest{
@@ -147,7 +147,7 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 		Page: query.PageSpec{Limit: request.Limit, Offset: prepared.offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" && prepared.cursor.Revision != result.CacheRevision {
@@ -234,13 +234,13 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	members := s.clusterMemberIDs(id)
 	person, err := analyzer.GetPerson(r.Context(), id, query.Context{}, members)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if person == nil {
@@ -335,7 +335,7 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	// Scope the summary to the whole identity cluster so alias-owned
@@ -343,7 +343,7 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 	// search for the same identity.
 	result, err := analyzer.GetPersonSummary(r.Context(), id, explore, s.clusterMemberIDs(id))
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if result == nil || len(result.Rows) == 0 {
@@ -361,12 +361,12 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.GetDomain(r.Context(), domain, query.Context{})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if result == nil {
@@ -387,12 +387,12 @@ func (s *Server) handleDomainContextSummary(w http.ResponseWriter, r *http.Reque
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		s.writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.GetDomainSummary(r.Context(), domain, explore)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if result == nil || len(result.Rows) == 0 {

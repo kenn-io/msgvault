@@ -725,6 +725,43 @@ describe('RelationshipsController text-query consistency', () => {
 });
 
 describe('RelationshipsController.openTarget', () => {
+  it('recovers a deep-linked cluster detail after cache initialization finishes', async () => {
+    vi.useFakeTimers();
+    const calls = new Map<string, number>();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      const count = (calls.get(path) ?? 0) + 1;
+      calls.set(path, count);
+      if (count === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+        readiness: 'building', recovery_action: ''
+      }, { status: 503 });
+      if (path === '/api/v1/people/12') return Response.json(person(12));
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({
+          canonical_id: 12, identity_revision: 3, rows: [timelineRow('recovered')],
+          total_count: 1, cache_revision: 'cache-rel'
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    expect(controller.detail).toBeNull();
+    expect(controller.timelineRows).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(controller.detail).toEqual(person(12)));
+    expect(controller.timelineRows).toEqual([timelineRow('recovered')]);
+    expect(calls.get('/api/v1/people/12')).toBe(2);
+    expect(calls.get('/api/v1/relationships/12/timeline')).toBe(2);
+
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
   it("opens a cluster target's person header and cluster timeline, storing canonical_id + identity_revision", async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1463,6 +1500,23 @@ describe('RelationshipsController.clearTarget', () => {
 });
 
 describe('RelationshipsController abort/destroy', () => {
+  it('cancels a pending deep-link cache retry when destroyed', async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    controller.destroy();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
   it('destroy() aborts the in-flight list load and detail load AbortControllers', async () => {
     const signals: AbortSignal[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
