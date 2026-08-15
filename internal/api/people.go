@@ -105,7 +105,7 @@ func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.SearchPeople(r.Context(), query.PersonSearchRequest{
@@ -138,7 +138,7 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.SearchDomains(r.Context(), query.DomainSearchRequest{
@@ -234,7 +234,7 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	members := s.clusterMemberIDs(id)
@@ -335,7 +335,7 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	// Scope the summary to the whole identity cluster so alias-owned
@@ -361,7 +361,7 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.GetDomain(r.Context(), domain, query.Context{})
@@ -387,7 +387,7 @@ func (s *Server) handleDomainContextSummary(w http.ResponseWriter, r *http.Reque
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.GetDomainSummary(r.Context(), domain, explore)

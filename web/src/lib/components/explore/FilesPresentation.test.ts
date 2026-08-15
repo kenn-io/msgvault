@@ -22,6 +22,23 @@ function file(index: number): ExploreFileFact {
 }
 
 describe('FilesPresentation', () => {
+  it('reports cache initialization and waits for automatic recovery', () => {
+    render(FilesPresentation, {
+      files: [],
+      unavailable: {
+        error: 'analytical_cache_unavailable',
+        message: 'The analytical cache is being prepared',
+        readiness: 'building',
+        recovery_action: ''
+      }
+    });
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Preparing analytical cache');
+    expect(alert.textContent).toContain('This view will refresh automatically.');
+    expect(screen.queryByRole('button', { name: 'Retry cache check' })).toBeNull();
+  });
+
   it('virtualizes a large loaded slice and implements bounded table navigation', async () => {
     const files = Array.from({ length: 1_000 }, (_, index) => file(index + 1));
     const onActiveKey = vi.fn();

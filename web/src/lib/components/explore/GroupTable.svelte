@@ -300,10 +300,14 @@
     <div class="group-body" role="rowgroup">
       {#if unavailable}
         <div role="row"><div role="gridcell" aria-colspan="5"><div class="group-cache-unavailable" role="alert">
-        <strong>Analytical cache unavailable</strong>
+        <strong>{unavailable.readiness === 'building' ? 'Preparing analytical cache' : 'Analytical cache unavailable'}</strong>
         <span>{unavailable.message}</span>
-        <span>Rebuild it with <code>{unavailable.recovery_action}</code>, then retry.</span>
-        <div><Button label="Retry cache check" tone="info" surface="outline" onclick={() => onRetry?.()} /></div>
+        {#if unavailable.readiness === 'building'}
+          <span>This view will refresh automatically.</span>
+        {:else}
+          <span>Rebuild it with <code>{unavailable.recovery_action}</code>, then retry.</span>
+          <div><Button label="Retry cache check" tone="info" surface="outline" onclick={() => onRetry?.()} /></div>
+        {/if}
         </div></div></div>
       {:else if error}
         <div role="row"><div role="gridcell" aria-colspan="5"><div class="group-request-error" role="alert">

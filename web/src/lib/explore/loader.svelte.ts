@@ -42,6 +42,7 @@ const NO_PROGRESS_NOTICE = 'Pagination stopped because the next page made no row
 const REVISION_CHANGED_NOTICE = 'Results changed while loading another page. Reload this view.';
 export const END_PAUSE_NOTICE =
   'End paused loading to keep the table responsive; press End again to continue or refine the filters.';
+const CACHE_BUILD_RETRY_DELAY_MS = 1_000;
 
 function samePageAuthority(
   next: Pick<ExploreResult, 'cacheRevision' | 'searchProvenance' | 'candidateSnapshotId'>,
@@ -97,6 +98,7 @@ export class ExploreLoader {
   private seenCursors = new Set<string>();
   private restorationCycleCompleted = false;
   private selectionFingerprint = '';
+  private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   #retryRevision = $state(0);
 
   constructor(client: APIClient, state: ExploreState, callbacks: ExploreLoaderCallbacks) {
@@ -118,6 +120,7 @@ export class ExploreLoader {
   }
 
   private runLoad(requestFingerprint: string): void {
+    this.clearCacheBuildRetry();
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
     void this.#retryRevision;
@@ -199,6 +202,14 @@ export class ExploreLoader {
           this.fileFacts = [];
           this.result = undefined;
           this.unavailable = loaded.unavailable;
+          if (loaded.unavailable.readiness === 'building') {
+            this.cacheBuildRetry = setTimeout(() => {
+              this.cacheBuildRetry = undefined;
+              if (generation === this.requestGeneration && !controller.signal.aborted) {
+                this.#retryRevision += 1;
+              }
+            }, CACHE_BUILD_RETRY_DELAY_MS);
+          }
           return;
         }
         if (this.pageKind === 'entries') {
@@ -461,11 +472,19 @@ export class ExploreLoader {
   /** Forces a fresh load of the current predicate (e.g. a named retry
    * action after a failed request), without changing any URL state. */
   retry = (): void => {
+    this.clearCacheBuildRetry();
     this.#retryRevision += 1;
   };
 
   destroy = (): void => {
+    this.clearCacheBuildRetry();
     this.requestGeneration += 1;
     this.requestController?.abort();
   };
+
+  private clearCacheBuildRetry(): void {
+    if (this.cacheBuildRetry === undefined) return;
+    clearTimeout(this.cacheBuildRetry);
+    this.cacheBuildRetry = undefined;
+  }
 }

@@ -274,6 +274,43 @@ describe('ExploreLoader', () => {
     state.destroy();
   });
 
+  it('automatically retries the initial view when the analytical cache finishes building', async () => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let calls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return Response.json({
+          error: 'analytical_cache_unavailable',
+          message: 'The analytical cache is being prepared',
+          readiness: 'building',
+          recovery_action: ''
+        }, { status: 503 });
+      }
+      return Response.json(exploreResponse({ rows: [entry(1)] }));
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
+      expect(loader.unavailable?.readiness).toBe('building');
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      flushSync();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(calls).toBe(2);
+      expect(loader.rows.map((row) => row.key)).toEqual(['message:1']);
+      expect(loader.unavailable).toBeUndefined();
+    } finally {
+      cleanup();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps loaded groups and retries the same grouped cursor after a failure', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let cursorCalls = 0;

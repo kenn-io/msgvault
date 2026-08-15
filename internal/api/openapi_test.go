@@ -739,7 +739,7 @@ func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
 	requirements.NotNil(schema)
 	readiness := schema.Properties["readiness"]
 	requirements.NotNil(readiness)
-	assertions.ElementsMatch([]any{"absent", "interrupted", "stale_schema", "drifted"}, readiness.Enum)
+	assertions.ElementsMatch([]any{"absent", "building", "interrupted", "stale_schema", "drifted"}, readiness.Enum)
 }
 
 func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {

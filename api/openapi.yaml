@@ -2557,6 +2557,7 @@ components:
         readiness:
           enum:
             - absent
+            - building
             - interrupted
             - stale_schema
             - drifted

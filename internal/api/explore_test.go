@@ -54,6 +54,23 @@ func TestExploreUnavailableReturnsNamedReadinessAndRecovery(t *testing.T) {
 	assertions.NotEmpty(body.RecoveryAction)
 }
 
+func TestExploreReportsTransientCacheInitialization(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeInitializing
+	srv := NewServerWithOptions(opts)
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{}`)
+	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Equal("analytical_cache_unavailable", body.Error)
+	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
+	assertions.Equal("The analytical cache is being prepared", body.Message)
+	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+}
+
 func TestExploreServerStateBoundsAndExpiresTransientCapabilities(t *testing.T) {
 	assertions := assert.New(t)
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)

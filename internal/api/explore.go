@@ -300,7 +300,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := explorer.Explore(r.Context(), prepared.query)
@@ -488,7 +488,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
@@ -559,7 +559,7 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 	engine := s.queryEngineForContext(r.Context())
 	analyzer, ok := engine.(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
@@ -669,7 +669,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	request.RowKeys = slices.Compact(request.RowKeys)
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	state := s.exploreState
@@ -1867,7 +1867,7 @@ func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
 		if unavailable != nil {
 			readiness = unavailable.Readiness
 		}
-		writeExploreUnavailable(w, readiness)
+		s.writeExploreUnavailable(w, readiness)
 		return
 	}
 	if errors.Is(err, query.ErrInvalidExploreRequest) {
@@ -1884,11 +1884,18 @@ func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
 type ExploreCacheUnavailableResponse struct {
 	Error          string               `json:"error"`
 	Message        string               `json:"message"`
-	Readiness      query.CacheReadiness `json:"readiness" enum:"absent,interrupted,stale_schema,drifted"`
+	Readiness      query.CacheReadiness `json:"readiness" enum:"absent,building,interrupted,stale_schema,drifted"`
 	RecoveryAction string               `json:"recovery_action"`
 }
 
-func writeExploreUnavailable(w http.ResponseWriter, readiness query.CacheReadiness) {
+func (s *Server) writeExploreUnavailable(w http.ResponseWriter, readiness query.CacheReadiness) {
+	if s.AnalyticsMode() == AnalyticsModeInitializing {
+		writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
+			Error: "analytical_cache_unavailable", Message: "The analytical cache is being prepared",
+			Readiness: query.CacheReadiness("building"),
+		})
+		return
+	}
 	writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
 		Error: "analytical_cache_unavailable", Message: "The committed analytical cache is unavailable",
 		Readiness: readiness, RecoveryAction: "Run msgvault build-cache --full-rebuild and retry",

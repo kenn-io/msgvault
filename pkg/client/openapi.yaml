@@ -2419,12 +2419,14 @@ components:
         readiness:
           enum:
             - absent
+            - building
             - interrupted
             - stale_schema
             - drifted
           type: string
           x-enum-names:
             - ExploreCacheUnavailableResponseReadinessAbsent
+            - ExploreCacheUnavailableResponseReadinessBuilding
             - ExploreCacheUnavailableResponseReadinessInterrupted
             - ExploreCacheUnavailableResponseReadinessStaleSchema
             - ExploreCacheUnavailableResponseReadinessDrifted

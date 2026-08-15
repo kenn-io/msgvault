@@ -160,6 +160,7 @@ type ExploreCacheUnavailableResponseReadiness string
 
 const (
 	ExploreCacheUnavailableResponseReadinessAbsent      ExploreCacheUnavailableResponseReadiness = "absent"
+	ExploreCacheUnavailableResponseReadinessBuilding    ExploreCacheUnavailableResponseReadiness = "building"
 	ExploreCacheUnavailableResponseReadinessDrifted     ExploreCacheUnavailableResponseReadiness = "drifted"
 	ExploreCacheUnavailableResponseReadinessInterrupted ExploreCacheUnavailableResponseReadiness = "interrupted"
 	ExploreCacheUnavailableResponseReadinessStaleSchema ExploreCacheUnavailableResponseReadiness = "stale_schema"
@@ -168,7 +169,7 @@ const (
 // Validate checks if the ExploreCacheUnavailableResponseReadiness value is valid
 func (e ExploreCacheUnavailableResponseReadiness) Validate() error {
 	switch e {
-	case ExploreCacheUnavailableResponseReadinessAbsent, ExploreCacheUnavailableResponseReadinessDrifted, ExploreCacheUnavailableResponseReadinessInterrupted, ExploreCacheUnavailableResponseReadinessStaleSchema:
+	case ExploreCacheUnavailableResponseReadinessAbsent, ExploreCacheUnavailableResponseReadinessBuilding, ExploreCacheUnavailableResponseReadinessDrifted, ExploreCacheUnavailableResponseReadinessInterrupted, ExploreCacheUnavailableResponseReadinessStaleSchema:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreCacheUnavailableResponseReadiness value, got: %v", e))

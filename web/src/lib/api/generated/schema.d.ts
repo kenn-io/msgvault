@@ -3647,7 +3647,7 @@ export interface components {
             error: string;
             message: string;
             /** @enum {string} */
-            readiness: "absent" | "interrupted" | "stale_schema" | "drifted";
+            readiness: "absent" | "building" | "interrupted" | "stale_schema" | "drifted";
             recovery_action: string;
         } & {
             [key: string]: unknown;

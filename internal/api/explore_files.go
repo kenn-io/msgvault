@@ -78,7 +78,7 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 	predicate.query.Search = searchSpec
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.ExploreFiles(r.Context(), query.ExploreFilesRequest{

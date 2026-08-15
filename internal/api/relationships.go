@@ -81,7 +81,7 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.Relationships(r.Context(), query.RelationshipsRequest{
@@ -199,7 +199,7 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
 	canonicalID, err := analyzer.ResolveCanonicalParticipant(r.Context(), participantID)
