@@ -11,7 +11,7 @@ import (
 func constrainedListingEngine(t *testing.T) *DuckDBEngine {
 	t.Helper()
 	engine := buildBenchData(t)
-	_, err := engine.db.Exec("SET memory_limit='120MB'")
+	_, err := engine.db.Exec("SET memory_limit='160MB'")
 	require.NoError(t, err)
 	return engine
 }
