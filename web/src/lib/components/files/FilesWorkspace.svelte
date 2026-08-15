@@ -116,8 +116,9 @@
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
     const { generation: currentGeneration, signal } = restartListing();
-    void loadPage(currentGeneration, undefined, signal).then(() =>
-      restoreDeepState(currentGeneration, restorationEpoch, controller?.signal));
+    void loadPage(currentGeneration, undefined, signal).then((loaded) => {
+      if (loaded) return restoreDeepState(currentGeneration, restorationEpoch, signal);
+    });
   });
 
   $effect(() => {
@@ -246,8 +247,9 @@
     // unacknowledged the deep restoration restarts against the fresh listing.
     const epoch = unacknowledgedRestorationEpoch;
     const { generation: currentGeneration, signal } = restartListing();
-    void loadPage(currentGeneration, undefined, signal).then(() =>
-      restoreDeepState(currentGeneration, epoch, signal));
+    void loadPage(currentGeneration, undefined, signal).then((loaded) => {
+      if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
+    });
   }
 
   async function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
