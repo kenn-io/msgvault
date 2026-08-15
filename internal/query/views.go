@@ -418,6 +418,31 @@ func sqlAnalyticalEntriesParticipantLabel(alias string) string {
 // Listing fast paths page or count this relation before enriching only the
 // returned rows with participant facts.
 func buildNarrowAnalyticalEntriesCTE(name string) string {
+	return buildScalarAnalyticalEntriesCTE(name, true)
+}
+
+// buildNarrowFileEntriesCTE omits the per-message attachment summary because
+// Files joins the individual attachment rows and never consumes those totals.
+func buildNarrowFileEntriesCTE(name string) string {
+	return buildScalarAnalyticalEntriesCTE(name, false)
+}
+
+func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
+	attachmentColumns := `
+		0::BIGINT AS attachment_count,
+		0::BIGINT AS attachment_size`
+	attachmentJoin := ""
+	if includeAttachmentSummary {
+		attachmentColumns = `
+		COALESCE(att.attachment_count, 0) AS attachment_count,
+		COALESCE(att.attachment_size, 0) AS attachment_size`
+		attachmentJoin = `
+	LEFT JOIN (
+		SELECT message_id, COUNT(*) AS attachment_count,
+			COALESCE(SUM(size), 0) AS attachment_size
+		FROM attachments GROUP BY message_id
+	) att ON att.message_id = m.id`
+	}
 	return name + ` AS NOT MATERIALIZED (
 	SELECT
 		m.id AS message_id,
@@ -441,18 +466,11 @@ func buildNarrowAnalyticalEntriesCTE(name string) string {
 		m.size_estimate,
 		m.deleted_at IS NOT NULL AS internally_deleted,
 		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
-		COALESCE(m.has_attachments, false) AS has_attachments,
-		COALESCE(att.attachment_count, 0) AS attachment_count,
-		COALESCE(att.attachment_size, 0) AS attachment_size
+		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m
 	JOIN sources s ON s.id = m.source_id
 	LEFT JOIN conversations c ON c.id = m.conversation_id
-	LEFT JOIN participants sender ON sender.id = m.sender_id
-	LEFT JOIN (
-		SELECT message_id, COUNT(*) AS attachment_count,
-			COALESCE(SUM(size), 0) AS attachment_size
-		FROM attachments GROUP BY message_id
-	) att ON att.message_id = m.id
+	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + `
 )`
 }
 

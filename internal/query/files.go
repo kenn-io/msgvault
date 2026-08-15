@@ -424,7 +424,7 @@ WITH selected AS (
 // It carries only scalar entry metadata through the attachment sort; page_facts
 // adds participant lists after LIMIT/OFFSET has bounded the rows.
 func fileNarrowFilteredCTE(exploreConditions, fileConditions string) string {
-	return "WITH " + buildNarrowAnalyticalEntriesCTE("entry_core") + `,
+	return "WITH " + buildNarrowFileEntriesCTE("entry_core") + `,
 selected AS (
 	SELECT * FROM entry_core AS analytical_entries WHERE ` + exploreConditions + `
 ), classified AS (
