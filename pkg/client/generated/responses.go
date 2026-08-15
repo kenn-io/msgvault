@@ -1859,7 +1859,43 @@ type GetSearchCoverageResponse = SearchCoverageResponse
 
 type GetSearchCoverageErrorResponse = ErrorResponse
 
-type GetSearchCoverageErrorResponseJSON = ErrorResponse
+type GetSearchCoverageErrorResponseJSON struct {
+	GetSearchCoverage_ErrorResponse_503_AnyOf *GetSearchCoverage_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetSearchCoverageErrorResponseJSON) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetSearchCoverage_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetSearchCoverage_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetSearchCoverageErrorResponseJSON) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetSearchCoverage_ErrorResponse_503_AnyOf == nil {
+		g.GetSearchCoverage_ErrorResponse_503_AnyOf = &GetSearchCoverage_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetSearchCoverage_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetSearchCoverage_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type DeepSearchResponseJSON = DeepSearchResponse
 

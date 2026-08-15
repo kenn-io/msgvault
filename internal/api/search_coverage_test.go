@@ -360,6 +360,12 @@ func TestSearchCoverageOpenAPIContract(t *testing.T) {
 	for _, status := range []string{"200", "400", "503"} {
 		assert.Contains(op.Responses, status)
 	}
+	unavailable := op.Responses["503"].Content[applicationJSONMediaType].Schema
+	require.Len(unavailable.AnyOf, 2)
+	assert.ElementsMatch([]string{
+		"#/components/schemas/ExploreCacheUnavailableResponse",
+		"#/components/schemas/ErrorResponse",
+	}, []string{unavailable.AnyOf[0].Ref, unavailable.AnyOf[1].Ref})
 	schema := doc.Components.Schemas.Map()["SearchCoverageResponse"]
 	require.NotNil(schema)
 	assert.ElementsMatch(

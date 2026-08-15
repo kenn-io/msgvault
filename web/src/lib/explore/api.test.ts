@@ -47,6 +47,20 @@ describe('ExploreAPI routing', () => {
     expect(paths).toEqual(['/api/v1/search/coverage', '/api/v1/explore/match-counts']);
   });
 
+  it('maps transient analytical cache preparation to initializing coverage', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const api = createExploreAPI(createAPIClient(fetchFn));
+
+    await expect(api.coverage([])).resolves.toMatchObject({
+      status: 'initializing', eligible_count: 0, embedded_count: 0,
+      percentage: 0, cache_revision: '', actions: [],
+      detail: 'The analytical cache is being prepared'
+    });
+  });
+
   it('passes cursors and cancellation through the session-aware entry request', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

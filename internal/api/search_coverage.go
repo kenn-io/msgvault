@@ -55,6 +55,7 @@ func (s *Server) registerSearchCoverageRoute(api huma.API) {
 	op.RequestBody = jsonRequestBodyFor[SearchCoverageRequest](api)
 	op.Responses = jsonResponsesFor[SearchCoverageResponse](api)
 	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
 	registerRawHumaRoute(api, op, s.handleSearchCoverage)
 }
 

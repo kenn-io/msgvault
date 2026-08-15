@@ -196,6 +196,17 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       const coverage = parseSearchCoverage(data);
       if (coverage) return coverage;
       if (data) throw new Error('Semantic coverage response is incompatible with this browser');
+      if (response.status === 503 && isCacheUnavailable(error) && error.readiness === 'building') {
+        return {
+          eligible_count: 0,
+          embedded_count: 0,
+          percentage: 0,
+          cache_revision: '',
+          status: 'initializing',
+          detail: error.message,
+          actions: []
+        };
+      }
       throw new Error(messageFor(error, response.status));
     },
     async matchCounts(predicate, rowKeys, signal) {

@@ -247,7 +247,12 @@ func registerExploreRoute[Req any, Resp any](api huma.API, operationID, path, su
 	op.RequestBody = jsonRequestBodyFor[Req](api)
 	op.Responses = jsonResponsesFor[Resp](api)
 	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusServiceUnavailable)
-	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = &huma.Response{
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
+	registerRawHumaRoute(api, op, handler)
+}
+
+func exploreUnavailableResponseFor(api huma.API) *huma.Response {
+	return &huma.Response{
 		Description: http.StatusText(http.StatusServiceUnavailable),
 		Content: map[string]*huma.MediaType{
 			applicationJSONMediaType: {Schema: &huma.Schema{AnyOf: []*huma.Schema{
@@ -256,7 +261,6 @@ func registerExploreRoute[Req any, Resp any](api huma.API, operationID, path, su
 			}}},
 		},
 	}
-	registerRawHumaRoute(api, op, handler)
 }
 
 func (s *Server) handleExplore(w http.ResponseWriter, r *http.Request) {

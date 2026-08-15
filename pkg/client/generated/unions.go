@@ -577,3 +577,21 @@ func (s *SearchMessages_Response_OneOf) Validate() error {
 	}
 	return nil
 }
+
+type GetSearchCoverage_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetSearchCoverage_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
