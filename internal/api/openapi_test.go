@@ -748,15 +748,17 @@ func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
 }
 
 func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
 		for _, path := range []string{"/api/v1/people/{id}", "/api/v1/domains/{domain}"} {
 			response := document.Paths[path].Get.Responses[httpStatusKey(http.StatusServiceUnavailable)]
-			require.NotNil(t, response, path)
+			requirements.NotNil(response, path)
 			media := response.Content[applicationJSONMediaType]
-			require.NotNil(t, media, path)
-			require.NotNil(t, media.Schema, path)
-			require.Len(t, media.Schema.AnyOf, 2, path)
-			assert.ElementsMatch(t, []string{
+			requirements.NotNil(media, path)
+			requirements.NotNil(media.Schema, path)
+			requirements.Len(media.Schema.AnyOf, 2, path)
+			assertions.ElementsMatch([]string{
 				"#/components/schemas/ExploreCacheUnavailableResponse",
 				"#/components/schemas/ErrorResponse",
 			}, []string{media.Schema.AnyOf[0].Ref, media.Schema.AnyOf[1].Ref}, path)
