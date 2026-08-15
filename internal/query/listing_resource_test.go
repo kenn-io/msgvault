@@ -25,3 +25,13 @@ func TestExploreFastPathFitsConstrainedMemory(t *testing.T) {
 	assert.Len(t, result.Rows, 50)
 	assert.Equal(t, int64(104), result.TotalCount)
 }
+
+func TestFileSearchFastPathFitsConstrainedMemory(t *testing.T) {
+	engine := constrainedListingEngine(t)
+	result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Page: PageSpec{Limit: 500},
+	})
+	require.NoError(t, err)
+	assert.Len(t, result.Files, 500)
+	assert.Equal(t, int64(20_000), result.TotalCount)
+}

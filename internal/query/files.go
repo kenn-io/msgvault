@@ -420,6 +420,25 @@ WITH selected AS (
 )`
 }
 
+// fileNarrowFilteredCTE is the default-listing counterpart to fileFilteredCTE.
+// It carries only scalar entry metadata through the attachment sort; page_facts
+// adds participant lists after LIMIT/OFFSET has bounded the rows.
+func fileNarrowFilteredCTE(exploreConditions, fileConditions string) string {
+	return "WITH " + buildNarrowAnalyticalEntriesCTE("entry_core") + `,
+selected AS (
+	SELECT * FROM entry_core AS analytical_entries WHERE ` + exploreConditions + `
+), classified AS (
+	SELECT
+		a.attachment_id, a.message_id, COALESCE(a.size, 0)::BIGINT AS size,
+		COALESCE(a.filename, '') AS filename, COALESCE(a.mime_type, '') AS mime_type,
+		` + sqlFileMIMEFamilyExpr("a") + ` AS mime_family,
+		s.*
+	FROM selected s JOIN attachments a ON a.message_id = s.message_id
+), filtered AS (
+	SELECT * FROM classified WHERE ` + fileConditions + `
+)`
+}
+
 func filePopulationSQL(exploreConditions, fileConditions string) string {
 	return fileFilteredCTE(exploreConditions, fileConditions) + `, file_population AS (
 	SELECT *,
@@ -470,13 +489,13 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // Output columns, ordering, and pagination are identical to fileSearchSQL;
 // TestSearchFilesFastPathMatchesLegacy pins the equivalence.
 func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) string {
-	return fileFilteredCTE(exploreConditions, fileConditions) + `, page AS (
+	return fileNarrowFilteredCTE(exploreConditions, fileConditions) + `, page AS (
 	SELECT * FROM filtered
 	ORDER BY ` + order + ` LIMIT ? OFFSET ?
 ), total AS (
 	SELECT COUNT(*) AS total_count FROM (
 		SELECT COALESCE(a.filename, '') AS filename, ` + sqlFileMIMEFamilyExpr("a") + ` AS mime_family
-		FROM (SELECT message_id FROM analytical_entries WHERE ` + exploreConditions + `) s
+		FROM (SELECT message_id FROM entry_core AS analytical_entries WHERE ` + exploreConditions + `) s
 		JOIN attachments a ON a.message_id = s.message_id
 	) WHERE ` + fileConditions + `
 ), page_ids AS (
