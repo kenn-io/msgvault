@@ -193,7 +193,9 @@ import (
 // 1.41.0 adds list, accept, and reject routes for reviewable identity match
 // candidates. Additive (minor bump): existing person, source-identity, and
 // meeting-import routes keep their current contracts.
-const APISchemaVersion = "1.41.0"
+// 1.42.0 adds the dated activity and daily-note route families. Existing
+// profile, meeting, media, and other API contracts remain unchanged.
+const APISchemaVersion = "1.42.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -225,6 +227,7 @@ func baseOpenAPIDocument() *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenActivitySchemas(doc)
 	return doc
 }
 
@@ -237,6 +240,36 @@ func hardenPersonRelationshipSchemas(doc *huma.OpenAPI) {
 		patch := doc.Components.Schemas.Map()[name]
 		if patch != nil {
 			patch.MinProperties = &minProperties
+		}
+	}
+}
+
+func hardenActivitySchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for schemaName, arrayFields := range map[string][]string{
+		"PersonDaysPage":           {"days"},
+		"PersonDayPage":            {"activity", "entries"},
+		"DayPage":                  {"persons", "entries"},
+		"DayPerson":                {"activity"},
+		"DailyNoteEntriesResponse": {"entries"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, field := range arrayFields {
+			if property := schema.Properties[field]; property != nil {
+				property.Nullable = false
+			}
+		}
+	}
+	if request := doc.Components.Schemas.Map()["CreateDailyNoteEntryRequest"]; request != nil {
+		if personIDs := request.Properties["person_ids"]; personIDs != nil &&
+			personIDs.Items != nil {
+			minimum := float64(1)
+			personIDs.Items.Minimum = &minimum
 		}
 	}
 }

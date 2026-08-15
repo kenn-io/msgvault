@@ -270,6 +270,10 @@ type Dialect interface {
 	// otherwise ignore SIGINT and SIGTERM indefinitely.
 	EnsureTriggers(q querier) error
 
+	// EnsureActivityProjectionTriggers repairs the durable activity queue
+	// triggers independently of the message watermark trigger migration.
+	EnsureActivityProjectionTriggers(q querier) error
+
 	// LegacyColumnMigrations returns ALTER TABLE ADD COLUMN statements to
 	// bring older databases up to date with schema columns added over time.
 	// Both dialects return the same logical list, translated to the

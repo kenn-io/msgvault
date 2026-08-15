@@ -36,7 +36,7 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "1.41.0", APISchemaVersion,
+	assert.Equal(t, "1.42.0", APISchemaVersion,
 		"organization and employment routes are an additive schema release")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -315,8 +315,8 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.41.0", APISchemaVersion,
-		"identity match review preserves the structured profile contract")
+	assert.Equal("1.42.0", APISchemaVersion,
+		"activity and identity match review preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
@@ -389,8 +389,8 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.41.0", APISchemaVersion,
-		"identity match review preserves the raw profile media contract")
+	assert.Equal("1.42.0", APISchemaVersion,
+		"activity and identity match review preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/persons/{id}/profile/media/{media_id}/content"]
 	require.NotNil(path)
@@ -417,8 +417,8 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("1.41.0", APISchemaVersion,
-		"identity match review routes are the additive 1.41.0 schema release")
+	assertions.Equal("1.42.0", APISchemaVersion,
+		"activity routes follow the additive identity match review schema release")
 
 	doc := OpenAPIDocument()
 	list := doc.Paths["/api/v1/identity/match-candidates"]
@@ -456,9 +456,10 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// shipped in 1.33.0; the feed added in 1.34.0, the attributes added in
 	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
 	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
-	// person relationships added in 1.39.0, and organizations and employments
-	// added in 1.40.0 and identity match review added in 1.41.0 did not touch it.
-	assert.Equal("1.41.0", APISchemaVersion, "meeting import is an additive schema release")
+	// person relationships added in 1.39.0, organizations and employments
+	// added in 1.40.0, identity match review added in 1.41.0, and dated activity
+	// routes added in 1.42.0 did not touch it.
+	assert.Equal("1.42.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

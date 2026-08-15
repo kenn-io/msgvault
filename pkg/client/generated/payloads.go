@@ -50,6 +50,8 @@ type CreateCommunicationServiceBody = CreateCommunicationServiceRequest
 
 type GetRemoteImageBody = RemoteImageRequest
 
+type CreateDayEntryBody = CreateDailyNoteEntryRequest
+
 type StageDeletionBody = StageDeletionRequest
 
 type SearchDomainsBody = IdentitySearchHTTPRequest

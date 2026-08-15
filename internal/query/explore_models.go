@@ -184,11 +184,11 @@ type EntryRow struct {
 	AttachmentSize            int64  `json:"attachment_size"`
 	DeletedFromSource         bool   `json:"deleted_from_source"`
 	// CounterpartParticipantID is the smallest participant ID on the entry
-	// that is not the archive owner (owners resolved through the same
-	// cluster-aware canon the Relationships ranking uses — see
-	// buildExploreSQL). It is nil when the owner set is unknown (the
-	// owner_participants dataset has no rows) or when every participant on
-	// the entry is the owner: never guessed from participant_ids[0] alone.
+	// that is not the archive owner. Global owners use the same cluster-aware
+	// canon as Relationships, and outbound entries additionally recognize the
+	// message-relative sender cluster (see buildExploreSQL). It is nil when no
+	// owner can be identified or every participant on the entry is the owner:
+	// never guessed from participant_ids[0] alone.
 	CounterpartParticipantID *int64 `json:"counterpart_participant_id,omitempty"`
 }
 

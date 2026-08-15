@@ -498,6 +498,130 @@ type buildResult struct {
 	IdentityOnly  bool // true when only derived cache datasets were refreshed
 }
 
+// ownerParticipantsSelectSQL is the SELECT body shared by the full and
+// derived owner_participants exporters. It mirrors the participant surface
+// of store.messageIdentityAttributionMatch: a confirmed address resolves a
+// participant through its non-blank primary email (case-insensitively),
+// through an email-typed identifier ONLY when the participant carries no
+// primary email of its own, or verbatim through any non-email identifier.
+// Without the primary-email guard a message could be cached as inbound while
+// its sender is globally marked the owner, and relationship/explore
+// materialization would drop the actual correspondent.
+const ownerParticipantsSelectSQL = `
+		SELECT DISTINCT ai.source_id, p.id AS participant_id
+		FROM sqlite_db.account_identities ai
+		JOIN sqlite_db.participants p
+		  ON p.email_address IS NOT NULL
+		 AND TRIM(p.email_address) <> ''
+		 AND lower(p.email_address) = lower(ai.address)
+		UNION
+		SELECT DISTINCT ai.source_id, pi.participant_id
+		FROM sqlite_db.account_identities ai
+		JOIN sqlite_db.participant_identifiers pi
+		  ON (pi.identifier_type = 'email'
+		      AND lower(pi.identifier_value) = lower(ai.address)
+		      AND NOT EXISTS (
+		          SELECT 1 FROM sqlite_db.participants guard
+		          WHERE guard.id = pi.participant_id
+		            AND guard.email_address IS NOT NULL
+		            AND TRIM(guard.email_address) <> ''
+		      ))
+		  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)`
+
+// messageCacheAttributionSQL is the cache-facing form of
+// store.messageIdentityAttributionMatch. Source-native provenance is always
+// authoritative. A non-empty From envelope is then the only identity surface
+// for that message; falling through to the participant's current aliases
+// would reclassify mail after a participant merge. Legacy and non-email rows
+// without an envelope use the participant's primary email and identifier rows
+// with the same per-type case rules as the store. The companion owner value
+// is an attribution candidate: consumers gate it on is_from_me, so it can be
+// resolved independently without duplicating this predicate in the export.
+func messageCacheAttributionSQL(
+	sourceAttribution string,
+	hasSourceAttribution, hasEnvelope bool,
+) (string, string) {
+	participantFallback := `(
+			EXISTS (
+				SELECT 1 FROM sqlite_db.account_identities ai
+				JOIN sqlite_db.participants sp ON sp.id = m.sender_id
+				WHERE ai.source_id = m.source_id
+				  AND sp.email_address IS NOT NULL
+				  AND TRIM(sp.email_address) <> ''
+				  AND lower(sp.email_address) = lower(ai.address)
+			)
+			OR EXISTS (
+				SELECT 1 FROM sqlite_db.account_identities ai
+				JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+				WHERE ai.source_id = m.source_id
+				  AND spi.identifier_type != 'email'
+				  AND spi.identifier_value = ai.address
+			)
+			OR (
+				NOT EXISTS (
+					SELECT 1 FROM sqlite_db.participants sp
+					WHERE sp.id = m.sender_id
+					  AND sp.email_address IS NOT NULL
+					  AND TRIM(sp.email_address) <> ''
+				)
+				AND EXISTS (
+					SELECT 1 FROM sqlite_db.account_identities ai
+					JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+					WHERE ai.source_id = m.source_id
+					  AND spi.identifier_type = 'email'
+					  AND lower(spi.identifier_value) = lower(ai.address)
+				)
+			)
+		)`
+	singleFromParticipant := `(SELECT CASE
+			WHEN COUNT(DISTINCT smr.participant_id) = 1 THEN MIN(smr.participant_id)
+			ELSE NULL
+		END
+		FROM sqlite_db.message_recipients smr
+		WHERE smr.message_id = m.id
+		  AND smr.recipient_type = 'from')`
+	if !hasEnvelope {
+		attribution := "(" + sourceAttribution + " OR " + participantFallback + ")"
+		ownerParticipant := "COALESCE(m.sender_id, " + singleFromParticipant + ")"
+		return attribution, ownerParticipant
+	}
+	envelopePresent := `EXISTS (
+			SELECT 1 FROM sqlite_db.message_recipients smr
+			WHERE smr.message_id = m.id
+			  AND smr.recipient_type = 'from'
+			  AND smr.email_address IS NOT NULL
+			  AND TRIM(smr.email_address) <> ''
+		)`
+	envelopeMatch := `EXISTS (
+			SELECT 1 FROM sqlite_db.account_identities ai
+			JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
+			WHERE ai.source_id = m.source_id
+			  AND smr.recipient_type = 'from'
+			  AND smr.email_address IS NOT NULL
+			  AND TRIM(smr.email_address) <> ''
+			  AND lower(smr.email_address) = lower(ai.address)
+		)`
+	envelopeOwnerParticipant := `(SELECT MIN(smr.participant_id)
+			FROM sqlite_db.account_identities ai
+			JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
+			WHERE ai.source_id = m.source_id
+			  AND smr.recipient_type = 'from'
+			  AND smr.email_address IS NOT NULL
+			  AND TRIM(smr.email_address) <> ''
+			  AND lower(smr.email_address) = lower(ai.address))`
+	attribution := "(" + sourceAttribution + " OR (" + envelopeMatch + " OR (NOT " +
+		envelopePresent + " AND " + participantFallback + ")))"
+	sourceNativeAttribution := "FALSE"
+	if hasSourceAttribution {
+		sourceNativeAttribution = sourceAttribution
+	}
+	ownerParticipant := "CASE WHEN " + sourceNativeAttribution +
+		" THEN COALESCE(m.sender_id, " + envelopeOwnerParticipant + ", " +
+		singleFromParticipant + ") ELSE COALESCE(" + envelopeOwnerParticipant +
+		", m.sender_id, " + singleFromParticipant + ") END"
+	return attribution, ownerParticipant
+}
+
 // buildCache honors an explicit full rebuild unconditionally. Default builds
 // recheck staleness under the inter-process lock so retries cannot skip cache
 // repairs for deletions or other mutations that leave the ID boundary intact.
@@ -1103,33 +1227,19 @@ func buildCacheLocked(
 	}
 
 	// Owner participants: every participant row that a confirmed
-	// account_identities address resolves to for its source, matched
-	// case-insensitively against either the durable participant email or an
-	// explicit participant_identifiers email, or verbatim against any
-	// non-email participant_identifiers row (phone, chat handle, etc. — see
-	// the identity CLI contract: identifiers are stored verbatim, and only
-	// email comparisons fold case). Always fully replaced (not filtered by
-	// lastMessageID) since identities are cheap to recompute and independent
-	// of the message ID watermark.
+	// account_identities address resolves to for its source (see
+	// ownerParticipantsSelectSQL for the resolution rules). Always fully
+	// replaced (not filtered by lastMessageID) since identities are cheap to
+	// recompute and independent of the message ID watermark.
 	ownerParticipantsDir := filepath.Join(staging.root, tableOwnerParticipants)
 	escapedOwnerParticipantsDir := strings.ReplaceAll(ownerParticipantsDir, "'", "''")
 	if err := runExport(tableOwnerParticipants, fmt.Sprintf(`
-	COPY (
-		SELECT DISTINCT ai.source_id, p.id AS participant_id
-		FROM sqlite_db.account_identities ai
-		JOIN sqlite_db.participants p
-		  ON p.email_address IS NOT NULL AND lower(p.email_address) = lower(ai.address)
-		UNION
-		SELECT DISTINCT ai.source_id, pi.participant_id
-		FROM sqlite_db.account_identities ai
-		JOIN sqlite_db.participant_identifiers pi
-		  ON (pi.identifier_type = 'email' AND lower(pi.identifier_value) = lower(ai.address))
-		  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)
+	COPY (%s
 	) TO '%s/owner_participants.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedOwnerParticipantsDir)); err != nil {
+	`, ownerParticipantsSelectSQL, escapedOwnerParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export owner participants: %w", err)
 	}
 
@@ -1252,25 +1362,11 @@ func buildCacheLocked(
 	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
-	// Mirrors messageIdentityAttributionMatch (internal/store/messages.go):
-	// after a participant merge a confirmed alias may survive only in the
-	// message's own 'from' envelope snapshot, so deriving attribution from
-	// the sender participant's current fields alone would bake the wrong
-	// message direction into the cache. Guarded because a snapshot from
-	// before the envelope column simply has no alias evidence to read (the
-	// CSV fallback view materializes '' for those rows, excluded here too).
-	identityEnvelopeAttribution := ""
-	if sourceSnapshot.hasRecipientEnvelope {
-		identityEnvelopeAttribution = ` OR EXISTS (
-				SELECT 1 FROM sqlite_db.account_identities ai
-				JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
-				WHERE ai.source_id = m.source_id
-				  AND smr.recipient_type = 'from'
-				  AND smr.email_address IS NOT NULL
-				  AND smr.email_address != ''
-				  AND lower(smr.email_address) = lower(ai.address)
-			)`
-	}
+	messageAttribution, messageOwnerParticipant := messageCacheAttributionSQL(
+		messageSourceAttribution,
+		sourceSnapshot.hasMessageSourceAttribution,
+		sourceSnapshot.hasRecipientEnvelope,
+	)
 
 	if err := runExport(tableMessages, fmt.Sprintf(`
 	COPY (
@@ -1287,20 +1383,9 @@ func buildCacheLocked(
 			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
 			m.deleted_from_source_at,
 			m.sender_id,
+			%s AS owner_participant_id,
 			COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-			(%s OR EXISTS (
-				SELECT 1 FROM sqlite_db.account_identities ai
-				JOIN sqlite_db.participants sp ON sp.id = m.sender_id
-				WHERE ai.source_id = m.source_id
-				  AND sp.email_address IS NOT NULL
-				  AND lower(sp.email_address) = lower(ai.address)
-			) OR EXISTS (
-				SELECT 1 FROM sqlite_db.account_identities ai
-				JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
-				WHERE ai.source_id = m.source_id
-				  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
-				       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
-			)%s) AS is_from_me,
+			%s AS is_from_me,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
@@ -1311,7 +1396,7 @@ func buildCacheLocked(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, messageSourceAttribution, identityEnvelopeAttribution, idFilter, escapedMessagesDir)); err != nil {
+	`, messageOwnerParticipant, messageAttribution, idFilter, escapedMessagesDir)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1346,25 +1431,14 @@ func buildCacheLocked(
 				COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
 				m.deleted_from_source_at,
 				m.sender_id,
+				%s AS owner_participant_id,
 				COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-				(%s OR EXISTS (
-					SELECT 1 FROM sqlite_db.account_identities ai
-					JOIN sqlite_db.participants sp ON sp.id = m.sender_id
-					WHERE ai.source_id = m.source_id
-					  AND sp.email_address IS NOT NULL
-					  AND lower(sp.email_address) = lower(ai.address)
-				) OR EXISTS (
-					SELECT 1 FROM sqlite_db.account_identities ai
-					JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
-					WHERE ai.source_id = m.source_id
-					  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
-					       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
-				)%s) AS is_from_me,
+				%s AS is_from_me,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
 			WHERE 1 = 0
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, messageSourceAttribution, identityEnvelopeAttribution, escapedEmptyShard)); err != nil {
+		`, messageOwnerParticipant, messageAttribution, escapedEmptyShard)); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}

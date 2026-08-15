@@ -629,6 +629,40 @@ func TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope(t *te
 		"empty-envelope rows and direct senders keep the participant fallback")
 }
 
+// TestExploreIdentitySenderSuppressesFallbackWhenAnyEnvelopeExists mirrors
+// attribution's message-level rule on the analytical path: one populated From
+// envelope makes the envelope authoritative for the whole message, so a
+// coexisting legacy NULL From row must not select the message through the
+// participant fallback when attribution stored it as not-from-me.
+func TestExploreIdentitySenderSuppressesFallbackWhenAnyEnvelopeExists(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	mixed := b.AddMessage(MessageOpt{SourceID: source, Subject: "mixed envelopes", SentAt: base})
+	b.AddFrom(mixed, identityID, "Identity")
+	b.AddRecipientWithEnvelope(mixed, identityID, "from", "Outside", "outside@example.net")
+	legacy := b.AddMessage(MessageOpt{SourceID: source, Subject: "legacy only", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(legacy, identityID, "Identity")
+
+	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID:        source,
+			ParticipantIDs:  []int64{identityID},
+			EmailIdentifier: "identity@example.com",
+			Direction:       IdentityDirectionSender,
+		}},
+		Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1,
+		"a populated From envelope suppresses the sender participant fallback message-wide")
+	assertions.Equal("legacy only", result.Rows[0].Title)
+}
+
 // TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence covers
 // the merge edge where no participant row carries the alias any more (the
 // absorbed email vanished from every participant surface): the envelope

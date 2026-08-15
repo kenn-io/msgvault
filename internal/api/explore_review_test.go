@@ -1621,10 +1621,10 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 	}{
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
-			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month",
-			values: `(1::BIGINT, 1::BIGINT, 'chat-1', 700::BIGINT, '', 'strongest conversation excerpt', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'imessage', false, 2026, 7),
-				(2::BIGINT, 1::BIGINT, 'chat-2', 700::BIGINT, '', 'newest conversation excerpt', TIMESTAMP '2026-07-18 12:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'imessage', false, 2026, 7),
-				(3::BIGINT, 2::BIGINT, 'mail-1', 701::BIGINT, 'middle-ranked email', 'email excerpt', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7)`,
+			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
+			values: `(1::BIGINT, 1::BIGINT, 'chat-1', 700::BIGINT, '', 'strongest conversation excerpt', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'imessage', false, 2026, 7),
+				(2::BIGINT, 1::BIGINT, 'chat-2', 700::BIGINT, '', 'newest conversation excerpt', TIMESTAMP '2026-07-18 12:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'imessage', false, 2026, 7),
+				(3::BIGINT, 2::BIGINT, 'mail-1', 701::BIGINT, 'middle-ranked email', 'email excerpt', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2026, 7)`,
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, '+15550000000', 'imessage'), (2::BIGINT, 'archive@example.com', 'gmail')`},
 		{dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number", values: `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', '')`, empty: true},

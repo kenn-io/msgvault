@@ -543,7 +543,23 @@ type stringRepair struct {
 // must run only after the read cursor that produced the repairs is closed: on
 // a single-connection store, beginning a transaction while a SELECT cursor is
 // still open deadlocks waiting for the connection the cursor holds.
+const participantEmailRepairSQL = "UPDATE participants SET email_address = ? WHERE id = ?"
+
 func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []stringRepair) error {
+	if updateStmt == participantEmailRepairSQL {
+		// The email is an ownership surface: the store applies the rewrite
+		// and settles attribution plus the identity revisions in ONE
+		// transaction, so a committed batch can never lack its refresh and a
+		// failed batch rolls back and stays discoverable on rerun.
+		repairs := make([]store.ParticipantEmailRepair, 0, len(batch))
+		for _, repair := range batch {
+			repairs = append(repairs, store.ParticipantEmailRepair{
+				ParticipantID: repair.id,
+				EmailAddress:  repair.value,
+			})
+		}
+		return s.RepairParticipantEmailAddresses(repairs)
+	}
 	if updateStmt == participantDisplayNameRepairSQL {
 		repairs := make([]store.ParticipantDisplayNameRepair, 0, len(batch))
 		for _, repair := range batch {
@@ -735,7 +751,7 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 			name:       tableParticipants,
 			column:     "email_address",
 			query:      "SELECT id, email_address FROM participants WHERE email_address IS NOT NULL",
-			updateStmt: "UPDATE participants SET email_address = ? WHERE id = ?",
+			updateStmt: participantEmailRepairSQL,
 			counter:    &stats.emailAddrs,
 		},
 		{
@@ -750,7 +766,10 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	for _, table := range tables {
 		fmt.Printf("Scanning %s.%s for invalid UTF-8...\n", table.name, table.column)
 
-		totalRepaired, err := repairOtherStringColumn(s, table.name, table.column, table.query, table.updateStmt, table.counter, stats)
+		totalRepaired, err := repairOtherStringColumn(
+			s, table.name, table.column, table.query, table.updateStmt,
+			table.counter, stats,
+		)
 		if err != nil {
 			return err
 		}
@@ -767,7 +786,10 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 // offending rows in batches. Opening, scanning, and closing the read query all
 // happen here so the deferred rows.Close() is scoped to this single query and
 // cannot leak across the caller's table loop. counter is incremented once per
-// repaired row. It returns the number of rows repaired.
+// repaired row. Ownership-bearing columns settle their derived state inside
+// applyStringRepairs (see the participantEmailRepairSQL special case), so a
+// committed batch never depends on later batches or a follow-up step.
+// It returns the number of rows repaired.
 func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStmt string, counter *int, stats *repairStats) (int, error) {
 	db := s.DB()
 

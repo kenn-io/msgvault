@@ -1588,6 +1588,187 @@ CREATE TABLE IF NOT EXISTS attachment_packs (
 -- INDEXES
 -- ============================================================================
 
+-- ============================================================================
+-- DATED ACTIVITY SPINE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS activity_events (
+    message_id                         BIGINT PRIMARY KEY
+                                                  REFERENCES messages(id) ON DELETE CASCADE,
+    ref_kind                           TEXT NOT NULL
+                                                  CHECK (ref_kind IN ('message', 'meeting')),
+    source_id                          BIGINT NOT NULL
+                                                  REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_id                    BIGINT
+                                                  REFERENCES conversations(id) ON DELETE SET NULL,
+    channel                            TEXT NOT NULL
+                                                  CHECK (channel IN ('email', 'chat', 'meeting', 'other')),
+    occurred_at                        TIMESTAMPTZ NOT NULL,
+    date_origin                        TEXT NOT NULL
+                                                  CHECK (date_origin IN ('sent_at', 'received_at', 'internal_date')),
+    date_precision                     TEXT NOT NULL
+                                                  CHECK (date_precision IN ('timestamp', 'day')),
+    timezone                           TEXT NOT NULL CHECK (LENGTH(timezone) > 0),
+    utc_offset_minutes                 INTEGER NOT NULL
+                                                  CHECK (utc_offset_minutes BETWEEN -840 AND 840),
+    local_date                         TEXT NOT NULL
+                                                  CHECK (LENGTH(local_date) = 10
+                                                      AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 5, 1) = '-'
+                                                      AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 8, 1) = '-'
+                                                      AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                      AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')),
+    direction                          TEXT NOT NULL
+                                                  CHECK (direction IN ('inbound', 'outbound', 'observed')),
+    owner_source_id                    BIGINT
+                                                  REFERENCES sources(id) ON DELETE SET NULL,
+    owner_address                      TEXT NOT NULL DEFAULT '',
+    projected_last_modified            TIMESTAMPTZ NOT NULL,
+    projected_identity_revision        BIGINT NOT NULL
+                                                  CHECK (projected_identity_revision >= 0),
+    projected_account_identity_revision BIGINT NOT NULL
+                                                  CHECK (projected_account_identity_revision >= 0),
+    created_at                          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_events_local_date
+    ON activity_events(local_date, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_source
+    ON activity_events(source_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS activity_event_persons (
+    message_id BIGINT NOT NULL REFERENCES activity_events(message_id) ON DELETE CASCADE,
+    person_id  BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL
+                    CHECK (role IN ('sender', 'addressed', 'organizer', 'attendee', 'member')),
+    evidence   TEXT NOT NULL CHECK (evidence IN ('direct', 'co_presence')),
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    PRIMARY KEY (message_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_person_date
+    ON activity_event_persons(person_id, local_date, message_id);
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_date_person
+    ON activity_event_persons(local_date, person_id, message_id);
+
+CREATE TABLE IF NOT EXISTS person_contact_state (
+    person_id                 BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    first_contact_at          TIMESTAMPTZ,
+    first_contact_message_id  BIGINT,
+    last_contact_at           TIMESTAMPTZ,
+    last_contact_message_id   BIGINT,
+    last_contact_channel      TEXT
+                                    CHECK (last_contact_channel IS NULL
+                                        OR last_contact_channel IN ('email', 'chat', 'meeting', 'other')),
+    last_contact_source_id    BIGINT,
+    last_contact_owner        TEXT,
+    last_inbound_at           TIMESTAMPTZ,
+    last_inbound_message_id   BIGINT,
+    last_outbound_at          TIMESTAMPTZ,
+    last_outbound_message_id  BIGINT,
+    interaction_count         BIGINT NOT NULL DEFAULT 0 CHECK (interaction_count >= 0),
+    identity_revision         BIGINT NOT NULL DEFAULT 0 CHECK (identity_revision >= 0),
+    account_identity_revision BIGINT NOT NULL DEFAULT 0
+                                    CHECK (account_identity_revision >= 0),
+    dirty_at                  TIMESTAMPTZ,
+    computed_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_dirty
+    ON person_contact_state(person_id) WHERE dirty_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_last_contact
+    ON person_contact_state(last_contact_at DESC);
+
+-- ============================================================================
+-- AUTHORED DAILY NOTES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS daily_note_day_sequences (
+    local_date TEXT PRIMARY KEY CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    last_ordinal BIGINT NOT NULL CHECK (last_ordinal > 0)
+);
+
+CREATE TABLE IF NOT EXISTS daily_note_entries (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    ordinal    BIGINT NOT NULL CHECK (ordinal > 0),
+    body       TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'user' CHECK (source = 'user'),
+    source_ref TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(local_date, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entries_date
+    ON daily_note_entries(local_date, ordinal, id);
+
+CREATE TABLE IF NOT EXISTS daily_note_entry_persons (
+    entry_id  BIGINT NOT NULL REFERENCES daily_note_entries(id) ON DELETE CASCADE,
+    person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entry_persons_person
+    ON daily_note_entry_persons(person_id, entry_id);
+
+CREATE TABLE IF NOT EXISTS activity_projection_queue (
+    message_id         BIGINT PRIMARY KEY REFERENCES messages(id)
+                       ON DELETE CASCADE ON UPDATE CASCADE,
+    revision           BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    processed_revision BIGINT NOT NULL DEFAULT 0
+                              CHECK (processed_revision >= 0
+                                 AND processed_revision <= revision),
+    queued_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
+    ON activity_projection_queue(message_id)
+    WHERE revision > processed_revision;
+
+
 CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(source_type);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_email ON participants(email_address)

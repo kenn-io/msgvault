@@ -38,6 +38,7 @@ type MessageFixture struct {
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
 	DeletedFromSourceAt *time.Time // nil = NULL
 	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
+	OwnerParticipantID  *int64     // nil = NULL (message-relative owner identity)
 	MessageType         string     // e.g. "email", "whatsapp"; "" defaults to "email"
 	// LegacyEmptyMessageType writes '' instead of the "email" default,
 	// modeling rows imported before message_type existed.
@@ -254,6 +255,7 @@ type MessageOpt struct {
 	// modeling rows imported before message_type existed.
 	LegacyEmptyMessageType bool
 	SenderID               *int64 // nil = NULL (direct sender for text/chat messages)
+	OwnerParticipantID     *int64 // nil defaults to SenderID for outbound messages
 	IsFromMe               bool
 	ConversationType       string // defaults from MessageType
 	ConversationTitle      string
@@ -297,6 +299,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		InternalDeletedAt:      opt.InternalDeletedAt,
 		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
 		SenderID:               opt.SenderID,
+		OwnerParticipantID:     opt.OwnerParticipantID,
 		MessageType:            opt.MessageType,
 		LegacyEmptyMessageType: opt.LegacyEmptyMessageType,
 		IsFromMe:               opt.IsFromMe,
@@ -471,12 +474,18 @@ func (m MessageFixture) toSQL() string {
 	if m.SenderID != nil {
 		senderID = fmt.Sprintf("%d::BIGINT", *m.SenderID)
 	}
+	ownerParticipantID := "NULL::BIGINT"
+	if m.OwnerParticipantID != nil {
+		ownerParticipantID = fmt.Sprintf("%d::BIGINT", *m.OwnerParticipantID)
+	} else if m.IsFromMe && m.SenderID != nil {
+		ownerParticipantID = senderID
+	}
 	msgType := m.resolvedMessageType()
-	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %v, %d, %d)",
+	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %s, %v, %d, %d)",
 		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
 		sqlStr(m.Subject), sqlStr(m.Snippet),
 		m.SentAt.Format("2006-01-02 15:04:05"), m.SizeEstimate,
-		m.HasAttachments, m.AttachmentCount, deletedFromSourceAt, senderID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
+		m.HasAttachments, m.AttachmentCount, deletedFromSourceAt, senderID, ownerParticipantID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
 	)
 }
 
@@ -495,12 +504,18 @@ func (m MessageFixture) toSQLWithInternalDeletion() string {
 	if m.SenderID != nil {
 		senderID = fmt.Sprintf("%d::BIGINT", *m.SenderID)
 	}
+	ownerParticipantID := "NULL::BIGINT"
+	if m.OwnerParticipantID != nil {
+		ownerParticipantID = fmt.Sprintf("%d::BIGINT", *m.OwnerParticipantID)
+	} else if m.IsFromMe && m.SenderID != nil {
+		ownerParticipantID = senderID
+	}
 	msgType := m.resolvedMessageType()
-	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %s, %v, %d, %d)",
+	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %s, %s, %v, %d, %d)",
 		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
 		sqlStr(m.Subject), sqlStr(m.Snippet),
 		m.SentAt.Format("2006-01-02 15:04:05"), m.SizeEstimate,
-		m.HasAttachments, m.AttachmentCount, internalDeletedAt, deletedFromSourceAt, senderID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
+		m.HasAttachments, m.AttachmentCount, internalDeletedAt, deletedFromSourceAt, senderID, ownerParticipantID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
 	)
 }
 
@@ -592,8 +607,8 @@ func (b *TestDataBuilder) participantClustersSQL() string {
 
 // column definitions (coupled to SQL generation methods above).
 const (
-	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
-	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month"
+	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month"
 	sourcesCols                = "id, account_email, source_type"
 	participantsCols           = "id, email_address, domain, display_name, phone_number"
 	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"
@@ -628,7 +643,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 	if len(b.messages) == 0 {
 		pb.addEmptyTable("messages", "messages/year=0", "empty.parquet", messagesCols,
-			"(0::BIGINT, 0::BIGINT, '', 0::BIGINT, '', '', TIMESTAMP '1970-01-01', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 0, 0)")
+			"(0::BIGINT, 0::BIGINT, '', 0::BIGINT, '', '', TIMESTAMP '1970-01-01', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 0, 0)")
 		return
 	}
 	byYear := map[int][]MessageFixture{}

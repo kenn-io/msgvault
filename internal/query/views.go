@@ -197,6 +197,11 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 						defaultExpr: "NULL::BIGINT AS sender_id",
 					},
 					{
+						name:        "owner_participant_id",
+						replaceExpr: "TRY_CAST(owner_participant_id AS BIGINT) AS owner_participant_id",
+						defaultExpr: "NULL::BIGINT AS owner_participant_id",
+					},
+					{
 						name:        messageTypeDimension,
 						replaceExpr: "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type",
 						defaultExpr: "'' AS message_type",

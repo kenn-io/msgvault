@@ -57,6 +57,28 @@ func (a AccountStatus) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type ActivityRef struct {
+	Channel          string    `json:"channel" validate:"required"`
+	ConversationID   *int64    `json:"conversation_id,omitempty"`
+	DateOrigin       string    `json:"date_origin" validate:"required"`
+	DatePrecision    string    `json:"date_precision" validate:"required"`
+	Direction        string    `json:"direction" validate:"required"`
+	Evidence         string    `json:"evidence" validate:"required"`
+	Kind             string    `json:"kind" validate:"required"`
+	LocalDate        string    `json:"local_date" validate:"required"`
+	MessageID        int64     `json:"message_id"`
+	OccurredAt       time.Time `json:"occurred_at" validate:"required"`
+	Ref              string    `json:"ref" validate:"required"`
+	Role             string    `json:"role" validate:"required"`
+	SourceID         int64     `json:"source_id"`
+	Timezone         string    `json:"timezone" validate:"required"`
+	UtcOffsetMinutes int64     `json:"utc_offset_minutes"`
+}
+
+func (a ActivityRef) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AddAccountRequest struct {
 	Email    string `json:"email" validate:"required"`
 	Enabled  bool   `json:"enabled"`
@@ -1204,6 +1226,31 @@ func (c CommunicationServicesResponse) Validate() error {
 	return errors
 }
 
+type ContactState struct {
+	CadenceDueAt        *time.Time `json:"cadence_due_at,omitempty"`
+	CadenceStatus       string     `json:"cadence_status" validate:"required"`
+	ComputedAt          time.Time  `json:"computed_at" validate:"required"`
+	FirstContactAt      *time.Time `json:"first_contact_at,omitempty"`
+	FirstContactRef     *string    `json:"first_contact_ref,omitempty"`
+	InferredChannel     *string    `json:"inferred_channel,omitempty"`
+	InteractionCount    int64      `json:"interaction_count"`
+	LastContactAt       *time.Time `json:"last_contact_at,omitempty"`
+	LastContactChannel  *string    `json:"last_contact_channel,omitempty"`
+	LastContactOwner    *string    `json:"last_contact_owner,omitempty"`
+	LastContactRef      *string    `json:"last_contact_ref,omitempty"`
+	LastContactSourceID *int64     `json:"last_contact_source_id,omitempty"`
+	LastInboundAt       *time.Time `json:"last_inbound_at,omitempty"`
+	LastInboundRef      *string    `json:"last_inbound_ref,omitempty"`
+	LastOutboundAt      *time.Time `json:"last_outbound_at,omitempty"`
+	LastOutboundRef     *string    `json:"last_outbound_ref,omitempty"`
+	PersonID            int64      `json:"person_id"`
+	Stale               bool       `json:"stale"`
+}
+
+func (c ContactState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type ConversationResponse struct {
 	AnchorID  int64           `json:"anchor_id"`
 	HasAfter  bool            `json:"has_after"`
@@ -1320,6 +1367,28 @@ func (c CreateCommunicationServiceRequest) Validate() error {
 	return errors
 }
 
+type CreateDailyNoteEntryRequest struct {
+	Author    *string `json:"author,omitempty"`
+	Body      string  `json:"body" validate:"required"`
+	PersonIds []int64 `json:"person_ids,omitempty"`
+}
+
+func (c CreateDailyNoteEntryRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	for i, item := range c.PersonIds {
+		if err := typesValidator.Var(item, "gte=1"); err != nil {
+			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CreatePersonRelationshipRequest struct {
 	EndDate              *string `json:"end_date,omitempty"`
 	Notes                *string `json:"notes,omitempty"`
@@ -1377,6 +1446,107 @@ func (c CreateSavedViewRequest) Validate() error {
 	}
 	if err := typesValidator.Var(c.Name, "required"); err != nil {
 		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DailyNoteEntriesResponse struct {
+	Entries []DailyNoteEntry `json:"entries" validate:"required"`
+}
+
+func (d DailyNoteEntriesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Entries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Entries[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DailyNoteEntry struct {
+	Author    string    `json:"author" validate:"required"`
+	Body      string    `json:"body" validate:"required"`
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        int64     `json:"id"`
+	LocalDate string    `json:"local_date" validate:"required"`
+	Ordinal   int64     `json:"ordinal"`
+	PersonIds []int64   `json:"person_ids,omitempty" validate:"required"`
+	Source    string    `json:"source" validate:"required"`
+	SourceRef *string   `json:"source_ref,omitempty"`
+	UpdatedAt time.Time `json:"updated_at" validate:"required"`
+}
+
+func (d DailyNoteEntry) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DayPage struct {
+	Entries          []DailyNoteEntry `json:"entries" validate:"required"`
+	EntryTotalCount  int64            `json:"entry_total_count"`
+	LocalDate        string           `json:"local_date" validate:"required"`
+	PersonTotalCount int64            `json:"person_total_count"`
+	Persons          []DayPerson      `json:"persons" validate:"required"`
+}
+
+func (d DayPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Entries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Entries[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.LocalDate, "required"); err != nil {
+		errors = errors.Append("LocalDate", err)
+	}
+	for i, item := range d.Persons {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Persons[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DayPerson struct {
+	Activity          []ActivityRef `json:"activity" validate:"required"`
+	ActivityTruncated bool          `json:"activity_truncated"`
+	DirectCount       int64         `json:"direct_count"`
+	DisplayName       *string       `json:"display_name,omitempty"`
+	EventCount        int64         `json:"event_count"`
+	LastAt            time.Time     `json:"last_at" validate:"required"`
+	PersonID          int64         `json:"person_id"`
+	VcardUID          string        `json:"vcard_uid" validate:"required"`
+}
+
+func (d DayPerson) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Activity {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.LastAt, "required"); err != nil {
+		errors = errors.Append("LastAt", err)
+	}
+	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -4973,6 +5143,72 @@ func (p PersonDatePatchRequest) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonDay struct {
+	DirectCount int64  `json:"direct_count"`
+	EntryCount  int64  `json:"entry_count"`
+	EventCount  int64  `json:"event_count"`
+	LocalDate   string `json:"local_date" validate:"required"`
+}
+
+func (p PersonDay) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonDayPage struct {
+	Activity           []ActivityRef    `json:"activity" validate:"required"`
+	ActivityTotalCount int64            `json:"activity_total_count"`
+	Entries            []DailyNoteEntry `json:"entries" validate:"required"`
+	EntryTotalCount    int64            `json:"entry_total_count"`
+	LocalDate          string           `json:"local_date" validate:"required"`
+	PersonID           int64            `json:"person_id"`
+}
+
+func (p PersonDayPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Activity {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Entries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Entries[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.LocalDate, "required"); err != nil {
+		errors = errors.Append("LocalDate", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonDaysPage struct {
+	Days       []PersonDay `json:"days" validate:"required"`
+	PersonID   int64       `json:"person_id"`
+	TotalCount int64       `json:"total_count"`
+}
+
+func (p PersonDaysPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Days {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Days[%d]", i), err)
 			}
 		}
 	}

@@ -1821,3 +1821,318 @@ CREATE INDEX IF NOT EXISTS idx_employments_person ON employments(person_id);
 CREATE INDEX IF NOT EXISTS idx_employments_organization ON employments(organization_id);
 CREATE INDEX IF NOT EXISTS idx_employments_person_current ON employments(person_id) WHERE is_current = 1;
 CREATE INDEX IF NOT EXISTS idx_employments_address ON employments(address_id) WHERE address_id IS NOT NULL;
+
+-- ============================================================================
+-- DATED ACTIVITY SPINE
+-- ============================================================================
+
+-- One row per archived communication projected into the date-indexed spine.
+-- The native stable reference is derived as "<ref_kind>:<message_id>".
+CREATE TABLE IF NOT EXISTS activity_events (
+    message_id                         INTEGER PRIMARY KEY
+                                                   REFERENCES messages(id) ON DELETE CASCADE,
+    ref_kind                           TEXT NOT NULL
+                                                   CHECK (ref_kind IN ('message', 'meeting')),
+    source_id                          INTEGER NOT NULL
+                                                   REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_id                    INTEGER
+                                                   REFERENCES conversations(id) ON DELETE SET NULL,
+    channel                            TEXT NOT NULL
+                                                   CHECK (channel IN ('email', 'chat', 'meeting', 'other')),
+    occurred_at                        DATETIME NOT NULL,
+    date_origin                        TEXT NOT NULL
+                                                   CHECK (date_origin IN ('sent_at', 'received_at', 'internal_date')),
+    date_precision                     TEXT NOT NULL
+                                                   CHECK (date_precision IN ('timestamp', 'day')),
+    timezone                           TEXT NOT NULL CHECK (LENGTH(timezone) > 0),
+    utc_offset_minutes                 INTEGER NOT NULL
+                                                   CHECK (utc_offset_minutes BETWEEN -840 AND 840),
+    local_date                         TEXT NOT NULL
+                                                   CHECK (LENGTH(local_date) = 10
+                                                       AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 5, 1) = '-'
+                                                       AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 8, 1) = '-'
+                                                       AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')),
+    direction                          TEXT NOT NULL
+                                                   CHECK (direction IN ('inbound', 'outbound', 'observed')),
+    owner_source_id                    INTEGER
+                                                   REFERENCES sources(id) ON DELETE SET NULL,
+    owner_address                      TEXT NOT NULL DEFAULT '',
+    projected_last_modified            DATETIME NOT NULL,
+    projected_identity_revision        INTEGER NOT NULL
+                                                   CHECK (projected_identity_revision >= 0),
+    projected_account_identity_revision INTEGER NOT NULL
+                                                   CHECK (projected_account_identity_revision >= 0),
+    created_at                          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_events_local_date
+    ON activity_events(local_date, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_source
+    ON activity_events(source_id, occurred_at DESC);
+
+-- Each person has at most one link to a native event. Classification stores
+-- the strongest evidence and a deterministic representative role.
+CREATE TABLE IF NOT EXISTS activity_event_persons (
+    message_id INTEGER NOT NULL REFERENCES activity_events(message_id) ON DELETE CASCADE,
+    person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL
+                    CHECK (role IN ('sender', 'addressed', 'organizer', 'attendee', 'member')),
+    evidence   TEXT NOT NULL CHECK (evidence IN ('direct', 'co_presence')),
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    PRIMARY KEY (message_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_person_date
+    ON activity_event_persons(person_id, local_date, message_id);
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_date_person
+    ON activity_event_persons(local_date, person_id, message_id);
+
+CREATE TABLE IF NOT EXISTS person_contact_state (
+    person_id                 INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    first_contact_at          DATETIME,
+    first_contact_message_id  INTEGER,
+    last_contact_at           DATETIME,
+    last_contact_message_id   INTEGER,
+    last_contact_channel      TEXT
+                                      CHECK (last_contact_channel IS NULL
+                                          OR last_contact_channel IN ('email', 'chat', 'meeting', 'other')),
+    last_contact_source_id    INTEGER,
+    last_contact_owner        TEXT,
+    last_inbound_at           DATETIME,
+    last_inbound_message_id   INTEGER,
+    last_outbound_at          DATETIME,
+    last_outbound_message_id  INTEGER,
+    interaction_count         INTEGER NOT NULL DEFAULT 0 CHECK (interaction_count >= 0),
+    identity_revision         INTEGER NOT NULL DEFAULT 0 CHECK (identity_revision >= 0),
+    account_identity_revision INTEGER NOT NULL DEFAULT 0
+                                      CHECK (account_identity_revision >= 0),
+    dirty_at                  DATETIME,
+    computed_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_dirty
+    ON person_contact_state(person_id) WHERE dirty_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_last_contact
+    ON person_contact_state(last_contact_at DESC);
+
+-- ============================================================================
+-- AUTHORED DAILY NOTES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS daily_note_day_sequences (
+    local_date TEXT NOT NULL PRIMARY KEY CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    last_ordinal INTEGER NOT NULL CHECK (last_ordinal > 0)
+);
+
+CREATE TABLE IF NOT EXISTS daily_note_entries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    ordinal    INTEGER NOT NULL CHECK (ordinal > 0),
+    body       TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'user' CHECK (source = 'user'),
+    source_ref TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(local_date, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entries_date
+    ON daily_note_entries(local_date, ordinal, id);
+
+CREATE TABLE IF NOT EXISTS daily_note_entry_persons (
+    entry_id  INTEGER NOT NULL REFERENCES daily_note_entries(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entry_persons_person
+    ON daily_note_entry_persons(person_id, entry_id);
+
+-- Mutations enqueue the native message rather than relying on a timestamp
+-- watermark. The monotone revision lets the projector consume with CAS.
+CREATE TABLE IF NOT EXISTS activity_projection_queue (
+    message_id         INTEGER PRIMARY KEY REFERENCES messages(id)
+                       ON DELETE CASCADE ON UPDATE CASCADE,
+    revision           INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    processed_revision INTEGER NOT NULL DEFAULT 0
+                               CHECK (processed_revision >= 0
+                                  AND processed_revision <= revision),
+    queued_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
+    ON activity_projection_queue(message_id)
+    WHERE revision > processed_revision;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_messages_update
+AFTER UPDATE ON messages FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    VALUES (NEW.id, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_insert
+AFTER INSERT ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_update
+AFTER UPDATE ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE id = OLD.message_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_delete
+AFTER DELETE ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE id = OLD.message_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_insert
+AFTER INSERT ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = NEW.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_update
+AFTER UPDATE ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = OLD.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = NEW.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_delete
+AFTER DELETE ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = OLD.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+-- Conversation updates are classification input: changing email/chat/channel
+-- semantics must reproject every native message already in the conversation.
+--
+-- The trigger is scoped to real conversation_type changes. A blanket
+-- AFTER UPDATE trigger would requeue the whole conversation on every routine
+-- write — per-source statistics recomputation alone would reproject entire
+-- archives after each import and hold the contact-state freshness barrier
+-- open. UPDATE OF matches statements that NAME the column, so the WHEN guard
+-- still filters upserts that set conversation_type to its current value.
+-- SQLite resolves the column reference at fire time, so creating the trigger
+-- on a legacy table that has not run the conversation_type ADD COLUMN
+-- migration yet is safe; anything that drops and re-adds the column (the
+-- subset tests' legacy-shape surgery) must drop and recreate this trigger
+-- around the rebuild.
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_type_update
+AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+WHEN OLD.conversation_type IS NOT NEW.conversation_type
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages WHERE conversation_id = NEW.id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+-- Cascades can remove direct evidence without passing through the projector.
+-- Dirty only an existing row: person deletion must never resurrect state.
+CREATE TRIGGER IF NOT EXISTS trg_activity_direct_link_delete_dirty
+AFTER DELETE ON activity_event_persons FOR EACH ROW
+WHEN OLD.evidence = 'direct'
+BEGIN
+    UPDATE person_contact_state
+    SET dirty_at = CURRENT_TIMESTAMP
+    WHERE person_id = OLD.person_id;
+END;

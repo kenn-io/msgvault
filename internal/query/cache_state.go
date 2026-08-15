@@ -20,9 +20,11 @@ import (
 // adds has_attachments to the relationship activity dataset; version 17 adds
 // the envelope address snapshot (email_address) to message_recipients; version
 // 18 adds participant-directory revision tracking; version 19 exports
-// attachment_metadata for raw attachment queries. Schema bumps force a full
-// rebuild before readers use an older publication.
-const CacheSchemaVersion = 19
+// attachment_metadata for raw attachment queries; version 20 rebuilds
+// relationship activity with message-relative owner attribution; version 21
+// preserves the exact message-relative owner participant in message Parquet.
+// Schema bumps force a full rebuild before readers use an older publication.
+const CacheSchemaVersion = 21
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

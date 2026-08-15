@@ -1239,6 +1239,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationActivityProjectionTriggers, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureActivityProjectionTriggers(
+					boundQuerier{ctx: ctx, q: tx},
+				)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure activity projection triggers: %w", err)
+	}
 
 	// Initialize explicit attribution provenance for every legacy message once
 	// under the maintenance timeout escape hatch. Granola and Circleback

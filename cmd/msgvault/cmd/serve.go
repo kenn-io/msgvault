@@ -402,6 +402,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerAttachmentMaintenanceJob(sched, attachmentMaint); err != nil {
 		return fmt.Errorf("schedule attachment maintenance: %w", err)
 	}
+	if err := registerActivityProjectionJob(
+		sched, s, cfg.Activity, logger); err != nil {
+		return fmt.Errorf("schedule activity projection: %w", err)
+	}
 
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
 		logger.Warn("beeper is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
@@ -1109,6 +1113,47 @@ var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
+var _ api.ActivityStore = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) ContactStateContext(
+	ctx context.Context, personID int64, now time.Time,
+) (store.ContactState, error) {
+	return a.store.ContactStateContext(ctx, personID, now)
+}
+
+func (a *storeAPIAdapter) PersonDaysContext(
+	ctx context.Context, request store.PersonDaysRequest,
+) (*store.PersonDaysPage, error) {
+	return a.store.PersonDaysContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) PersonDayContext(
+	ctx context.Context, request store.PersonDayRequest,
+) (*store.PersonDayPage, error) {
+	return a.store.PersonDayContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) DayContext(
+	ctx context.Context, request store.DayRequest,
+) (*store.DayPage, error) {
+	return a.store.DayContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) ListDailyNoteEntriesContext(
+	ctx context.Context, localDate string, limit, offset int,
+) ([]store.DailyNoteEntry, error) {
+	return a.store.ListDailyNoteEntriesContext(ctx, localDate, limit, offset)
+}
+
+func (a *storeAPIAdapter) CreateDailyNoteEntryContext(
+	ctx context.Context, input store.DailyNoteEntryInput,
+) (*store.DailyNoteEntry, error) {
+	return a.store.CreateDailyNoteEntryContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) DeleteDailyNoteEntryContext(ctx context.Context, id int64) error {
+	return a.store.DeleteDailyNoteEntryContext(ctx, id)
+}
 
 func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
 	return a.store.ConversationExistsContext(ctx, conversationID)

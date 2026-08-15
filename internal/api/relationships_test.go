@@ -121,7 +121,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		id := nextID
 		nextID++
 		messageRows = append(messageRows, fmt.Sprintf(
-			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, %s, %v, %d, %d)",
+			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, %s, %v, %d, %d)",
 			id, id, id, id, sentAt.Format("2006-01-02 15:04:05"), sqlQuote(messageType), isFromMe, sentAt.Year(), int(sentAt.Month())))
 		recipientRows = append(recipientRows,
 			fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'from', '')", id, fromID),
@@ -142,7 +142,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	}{
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
-			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month",
+			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
 			values:  strings.Join(messageRows, ",\n"),
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},

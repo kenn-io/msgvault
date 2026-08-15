@@ -58,6 +58,60 @@ components:
         - next_run
         - schedule
       type: object
+    ActivityRef:
+      additionalProperties: true
+      properties:
+        channel:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        date_origin:
+          type: string
+        date_precision:
+          type: string
+        direction:
+          type: string
+        evidence:
+          type: string
+        kind:
+          type: string
+        local_date:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+        ref:
+          type: string
+        role:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        timezone:
+          type: string
+        utc_offset_minutes:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - message_id
+        - kind
+        - channel
+        - occurred_at
+        - local_date
+        - timezone
+        - utc_offset_minutes
+        - date_origin
+        - date_precision
+        - direction
+        - source_id
+        - role
+        - evidence
+      type: object
     AddAccountRequest:
       additionalProperties: false
       properties:
@@ -1461,6 +1515,61 @@ components:
       required:
         - services
       type: object
+    ContactState:
+      additionalProperties: true
+      properties:
+        cadence_due_at:
+          format: date-time
+          type: string
+        cadence_status:
+          type: string
+        computed_at:
+          format: date-time
+          type: string
+        first_contact_at:
+          format: date-time
+          type: string
+        first_contact_ref:
+          type: string
+        inferred_channel:
+          type: string
+        interaction_count:
+          format: int64
+          type: integer
+        last_contact_at:
+          format: date-time
+          type: string
+        last_contact_channel:
+          type: string
+        last_contact_owner:
+          type: string
+        last_contact_ref:
+          type: string
+        last_contact_source_id:
+          format: int64
+          type: integer
+        last_inbound_at:
+          format: date-time
+          type: string
+        last_inbound_ref:
+          type: string
+        last_outbound_at:
+          format: date-time
+          type: string
+        last_outbound_ref:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        stale:
+          type: boolean
+      required:
+        - person_id
+        - interaction_count
+        - cadence_status
+        - stale
+        - computed_at
+      type: object
     ConversationResponse:
       additionalProperties: true
       properties:
@@ -1579,6 +1688,24 @@ components:
         - scope_policy
         - normalization
       type: object
+    CreateDailyNoteEntryRequest:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        person_ids:
+          items:
+            format: int64
+            minimum: 1
+            type: integer
+          type:
+            - array
+            - "null"
+      required:
+        - body
+      type: object
     CreatePersonRelationshipRequest:
       additionalProperties: false
       properties:
@@ -1675,6 +1802,119 @@ components:
         - name
         - canonical_state
         - schema_version
+      type: object
+    DailyNoteEntriesResponse:
+      additionalProperties: true
+      properties:
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+      required:
+        - entries
+      type: object
+    DailyNoteEntry:
+      additionalProperties: true
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        person_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        source:
+          type: string
+        source_ref:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - local_date
+        - ordinal
+        - body
+        - author
+        - source
+        - person_ids
+        - created_at
+        - updated_at
+      type: object
+    DayPage:
+      additionalProperties: true
+      properties:
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+        entry_total_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        person_total_count:
+          format: int64
+          type: integer
+        persons:
+          items:
+            $ref: "#/components/schemas/DayPerson"
+          type: array
+      required:
+        - local_date
+        - persons
+        - entries
+        - person_total_count
+        - entry_total_count
+      type: object
+    DayPerson:
+      additionalProperties: true
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ActivityRef"
+          type: array
+        activity_truncated:
+          type: boolean
+        direct_count:
+          format: int64
+          type: integer
+        display_name:
+          type: string
+        event_count:
+          format: int64
+          type: integer
+        last_at:
+          format: date-time
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        vcard_uid:
+          type: string
+      required:
+        - person_id
+        - vcard_uid
+        - event_count
+        - direct_count
+        - last_at
+        - activity
+        - activity_truncated
       type: object
     DecideIdentityMatchRequest:
       additionalProperties: false
@@ -5637,6 +5877,74 @@ components:
             - array
             - "null"
       type: object
+    PersonDay:
+      additionalProperties: true
+      properties:
+        direct_count:
+          format: int64
+          type: integer
+        entry_count:
+          format: int64
+          type: integer
+        event_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+      required:
+        - local_date
+        - event_count
+        - direct_count
+        - entry_count
+      type: object
+    PersonDayPage:
+      additionalProperties: true
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ActivityRef"
+          type: array
+        activity_total_count:
+          format: int64
+          type: integer
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+        entry_total_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - local_date
+        - activity
+        - entries
+        - activity_total_count
+        - entry_total_count
+      type: object
+    PersonDaysPage:
+      additionalProperties: true
+      properties:
+        days:
+          items:
+            $ref: "#/components/schemas/PersonDay"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - days
+        - total_count
+      type: object
     PersonIdentifier:
       additionalProperties: true
       properties:
@@ -8054,7 +8362,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.41.0
+  version: 1.42.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -10393,6 +10701,324 @@ paths:
       security:
         - apiKey: []
       summary: Get a bounded containing conversation
+      tags:
+        - API
+  /api/v1/days/entries/{id}:
+    delete:
+      operationId: deleteDayEntry
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete an authored daily entry
+      tags:
+        - API
+  /api/v1/days/{date}:
+    get:
+      operationId: getActivityDay
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum authored entries to return independently
+          in: query
+          name: entry_limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based authored-entry offset
+          in: query
+          name: entry_offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum activity references previewed for each person
+          in: query
+          name: activity_limit_per_person
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DayPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get people, activity, and notes for a day
+      tags:
+        - API
+  /api/v1/days/{date}/entries:
+    get:
+      operationId: listDayEntries
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyNoteEntriesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List authored entries for a day
+      tags:
+        - API
+    post:
+      operationId: createDayEntry
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDailyNoteEntryRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyNoteEntry"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create an authored entry for a day
       tags:
         - API
   /api/v1/deletions:
@@ -14261,6 +14887,274 @@ paths:
       security:
         - apiKey: []
       summary: Set a person's attribute value
+      tags:
+        - API
+  /api/v1/persons/{id}/contact-state:
+    get:
+      operationId: getPersonContactState
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactState"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get computed contact state for a person
+      tags:
+        - API
+  /api/v1/persons/{id}/days:
+    get:
+      operationId: listPersonActivityDays
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Inclusive first local calendar date
+          in: query
+          name: from
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Inclusive last local calendar date
+          in: query
+          name: to
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDaysPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List calendar days intersecting a person
+      tags:
+        - API
+  /api/v1/persons/{id}/days/{date}:
+    get:
+      operationId: getPersonActivityDay
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum authored entries to return independently
+          in: query
+          name: entry_limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based authored-entry offset
+          in: query
+          name: entry_offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDayPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person's activity and notes for a day
       tags:
         - API
   /api/v1/persons/{id}/employments:

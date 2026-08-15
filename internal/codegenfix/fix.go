@@ -58,6 +58,40 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}
 	}
+	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
+	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
+	start := bytes.Index(result, startMarker)
+	if start < 0 {
+		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+	}
+	endOffset := bytes.Index(result[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+	}
+	end := start + endOffset
+	validator := result[start:end]
+	generatedPersonIDValidation := []byte(`	for i, item := range c.PersonIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1"); err != nil {
+			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)
+		}
+	}
+`)
+	positivePersonIDValidation := []byte(`	for i, item := range c.PersonIds {
+		if err := typesValidator.Var(item, "gte=1"); err != nil {
+			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)
+		}
+	}
+`)
+	generatedCount := bytes.Count(validator, generatedPersonIDValidation)
+	positiveCount := bytes.Count(validator, positivePersonIDValidation)
+	switch {
+	case generatedCount == 1 && positiveCount == 0:
+		rewritten := bytes.Replace(validator, generatedPersonIDValidation, positivePersonIDValidation, 1)
+		result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
+	case generatedCount == 0 && positiveCount == 1:
+	default:
+		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
+	}
 	attributeJSON := []byte("*struct{}  `json:\"json,omitempty\"`")
 	if !bytes.Contains(result, attributeJSON) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")

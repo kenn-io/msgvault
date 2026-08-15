@@ -419,3 +419,50 @@ func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalB
 	assert.Contains(reembedNeededIDs, int64(40), "invalid body repair still requests re-embedding")
 	assert.NotContains(reembedNeededIDs, int64(10), "snippet-only regeneration does not request re-embedding")
 }
+
+// TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch pins the email
+// column's derived-state contract: each committed batch settles attribution
+// and advances the identity revisions in the SAME transaction as the email
+// rewrite. Repairs commit in 1,000-row batches, so 1,500 broken emails must
+// advance the account-identity revision once per batch — and a rewrite can
+// never commit without its refresh, which mattered because repaired emails
+// are valid UTF-8 and a rerun's scan can no longer discover them.
+func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	const broken = 1500
+	for start := 0; start < broken; start += 500 {
+		values := make([]string, 0, 500)
+		args := make([]any, 0, 500)
+		for i := start; i < min(start+500, broken); i++ {
+			values = append(values, "(?, datetime('now'), datetime('now'))")
+			args = append(args, fmt.Sprintf("user%d\xFE@example.com", i))
+		}
+		_, err := db.Exec(
+			`INSERT INTO participants (email_address, created_at, updated_at) VALUES `+
+				strings.Join(values, ","), args...)
+		require.NoError(err, "seed broken participant emails")
+	}
+
+	revisionBefore, err := st.AccountIdentityRevision()
+	require.NoError(err)
+	stats := &repairStats{}
+	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	assert.Equal(broken, stats.emailAddrs)
+
+	revisionAfter, err := st.AccountIdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBefore+2, revisionAfter,
+		"each committed batch must advance the revision with its rewrite")
+
+	var stillBroken int
+	require.NoError(db.QueryRow(
+		`SELECT COUNT(*) FROM participants
+		 WHERE email_address LIKE '%' || CAST(x'FE' AS TEXT) || '%'`,
+	).Scan(&stillBroken))
+	assert.Zero(stillBroken, "every seeded email must be repaired")
+}

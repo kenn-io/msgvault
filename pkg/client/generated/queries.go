@@ -285,6 +285,39 @@ type GetConversationQuery struct {
 	End *string `json:"end,omitempty"`
 }
 
+type GetActivityDayQuery struct {
+	// Limit Maximum primary rows to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// Offset Zero-based primary row offset
+	Offset *int64 `json:"offset,omitempty" validate:"omitempty,gte=0"`
+
+	// EntryLimit Maximum authored entries to return independently
+	EntryLimit *int64 `json:"entry_limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// EntryOffset Zero-based authored-entry offset
+	EntryOffset *int64 `json:"entry_offset,omitempty" validate:"omitempty,gte=0"`
+
+	// ActivityLimitPerPerson Maximum activity references previewed for each person
+	ActivityLimitPerPerson *int64 `json:"activity_limit_per_person,omitempty" validate:"omitempty,gte=1,lte=500"`
+}
+
+func (g GetActivityDayQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type ListDayEntriesQuery struct {
+	// Limit Maximum primary rows to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// Offset Zero-based primary row offset
+	Offset *int64 `json:"offset,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (l ListDayEntriesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListDeletionsQuery struct {
 	// Status Filter manifests by status (pending, in_progress, completed, failed, cancelled)
 	Status *string `json:"status,omitempty"`
@@ -545,6 +578,42 @@ type ClearPersonAttributeQuery struct {
 type SetPersonAttributeQuery struct {
 	// DryRun Validate and preview without writing
 	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type ListPersonActivityDaysQuery struct {
+	// From Inclusive first local calendar date
+	From *string `json:"from,omitempty"`
+
+	// To Inclusive last local calendar date
+	To *string `json:"to,omitempty"`
+
+	// Limit Maximum primary rows to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// Offset Zero-based primary row offset
+	Offset *int64 `json:"offset,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (l ListPersonActivityDaysQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type GetPersonActivityDayQuery struct {
+	// Limit Maximum primary rows to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// Offset Zero-based primary row offset
+	Offset *int64 `json:"offset,omitempty" validate:"omitempty,gte=0"`
+
+	// EntryLimit Maximum authored entries to return independently
+	EntryLimit *int64 `json:"entry_limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// EntryOffset Zero-based authored-entry offset
+	EntryOffset *int64 `json:"entry_offset,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (g GetPersonActivityDayQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListPersonEmploymentsQuery struct {

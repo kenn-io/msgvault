@@ -717,27 +717,42 @@ func (s *Store) MessageMetadataWithRawBatch(
 }
 
 // EnsureConversation gets or creates a conversation (thread) for a message.
-// Concurrent first-inserts converge via INSERT ... ON CONFLICT DO UPDATE
-// RETURNING id: the no-op SET fires the RETURNING clause for both the
-// insert and the conflict path, so the second caller still receives the
-// existing row's id instead of a unique-violation error.
+// Concurrent first-inserts converge via INSERT ... ON CONFLICT DO NOTHING
+// RETURNING id followed by a lookup. The conflict path deliberately issues no
+// UPDATE, not even a no-op SET: the SQLite activity conversation trigger fires
+// on every conversations UPDATE, so a per-message no-op upsert would requeue
+// the whole thread once per synced message — quadratic queue churn on a large
+// thread.
 func (s *Store) EnsureConversation(sourceID int64, sourceConversationID, title string) (int64, error) {
 	now := s.dialect.Now()
 	var id int64
 	err := s.db.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, 'email_thread', ?, %s, %s)
-		ON CONFLICT (source_id, source_conversation_id) DO UPDATE
-		SET source_conversation_id = conversations.source_conversation_id
+		ON CONFLICT (source_id, source_conversation_id) DO NOTHING
 		RETURNING id
 	`, now, now), sourceID, sourceConversationID, title).Scan(&id)
-	if err != nil {
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
+	}
+	if err := s.db.QueryRow(
+		`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`,
+		sourceID, sourceConversationID,
+	).Scan(&id); err != nil {
+		return 0, fmt.Errorf("ensure conversation %d/%q: %w",
+			sourceID, sourceConversationID, err)
 	}
 	return id, nil
 }
 
 // upsertMessageSQL returns the message upsert SQL with dialect-specific timestamp.
+// The attribution CTE runs before this transaction writes any 'from' envelope
+// snapshot, so it must mirror the no-envelope fallback of
+// messageIdentityAttributionMatch exactly; refreshMessageAttributionWith later
+// settles rows whose envelope disagrees.
 func upsertMessageSQL(now string) string {
 	return fmt.Sprintf(`
 	WITH attribution AS (
@@ -751,6 +766,7 @@ func upsertMessageSQL(now string) string {
 					JOIN participants p ON p.id = ?
 					WHERE ai.source_id = ?
 					  AND p.email_address IS NOT NULL
+					  AND TRIM(p.email_address) <> ''
 					  AND LOWER(p.email_address) = LOWER(ai.address)
 				)
 				OR EXISTS (
@@ -760,6 +776,13 @@ func upsertMessageSQL(now string) string {
 					WHERE ai.source_id = ?
 					  AND (
 						(pi.identifier_type = 'email'
+						 AND NOT EXISTS (
+							SELECT 1
+							FROM participants p
+							WHERE p.id = pi.participant_id
+							  AND p.email_address IS NOT NULL
+							  AND TRIM(p.email_address) <> ''
+						 )
 						 AND LOWER(pi.identifier_value) = LOWER(ai.address))
 						OR (pi.identifier_type <> 'email'
 							AND pi.identifier_value = ai.address)
@@ -913,6 +936,15 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, err
 		}
 	}
+	// Fresh SQLite message inserts intentionally have no activity INSERT
+	// trigger: even an inert trigger compiles a subprogram into every INSERT and
+	// opens a statement journal. Enqueue through the production write path
+	// instead. INSERT OR IGNORE makes this compatible with the UPDATE trigger
+	// (which has already advanced an existing row) and with archives that still
+	// carry the old INSERT trigger during migration.
+	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -998,6 +1030,17 @@ func canonicalMessageTime(values ...sql.NullTime) sql.NullTime {
 
 func nullTimeEqual(left, right sql.NullTime) bool {
 	return left.Valid == right.Valid && (!left.Valid || left.Time.Equal(right.Time))
+}
+
+func enqueueActivityProjectionMessage(q querier, d Dialect, messageID int64) error {
+	statement := d.InsertOrIgnore(`
+		INSERT OR IGNORE INTO activity_projection_queue
+			(message_id, revision, processed_revision)
+		VALUES (?, 1, 0)`)
+	if _, err := q.Exec(statement, messageID); err != nil {
+		return fmt.Errorf("enqueue activity projection message %d: %w", messageID, err)
+	}
+	return nil
 }
 
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
@@ -1144,41 +1187,61 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 }
 
 // messageIdentityAttributionMatch derives identity_is_from_me for one
-// messages row. The first two clauses match the sender participant's current
-// email and identifier rows. The third matches the message's own 'from'
-// envelope snapshot (message_recipients.email_address): after a participant
-// merge a confirmed alias may survive ONLY there — the survivor's email is
-// the primary address and no identifier row carries the alias — so without
-// it, confirming that alias would leave the alias's sent messages
-// unattributed. Envelope snapshots exist only for email addresses, so a
-// non-email identity (phone, matrix) can never match the clause.
+// messages row. A non-empty 'from' envelope snapshot is authoritative: the
+// sender's current participant aliases cannot reclassify that message after a
+// participant merge. Legacy rows without an envelope use the sender's primary
+// email and identifier rows with the same per-type case rules as identity
+// matching. Envelope snapshots only contain email addresses, so non-email
+// identities use the legacy fallback.
 const messageIdentityAttributionMatch = `(
 	EXISTS (
-	  SELECT 1
-	  FROM account_identities ai
-	  JOIN participants p ON p.id = messages.sender_id
-	  WHERE ai.source_id = messages.source_id
-	    AND p.email_address IS NOT NULL
-	    AND LOWER(p.email_address) = LOWER(ai.address)
-	)
-	OR EXISTS (
-	  SELECT 1
-	  FROM account_identities ai
-	  JOIN participant_identifiers pi ON pi.participant_id = messages.sender_id
-	  WHERE ai.source_id = messages.source_id
-	    AND (
-	      (pi.identifier_type = 'email' AND LOWER(pi.identifier_value) = LOWER(ai.address))
-	      OR (pi.identifier_type <> 'email' AND pi.identifier_value = ai.address)
-	    )
-	)
-	OR EXISTS (
 	  SELECT 1
 	  FROM account_identities ai
 	  JOIN message_recipients mr ON mr.message_id = messages.id
 	  WHERE ai.source_id = messages.source_id
 	    AND mr.recipient_type = 'from'
 	    AND mr.email_address IS NOT NULL
+	    AND TRIM(mr.email_address) <> ''
 	    AND LOWER(mr.email_address) = LOWER(ai.address)
+	)
+	OR (
+	  NOT EXISTS (
+	    SELECT 1
+	    FROM message_recipients mr
+	    WHERE mr.message_id = messages.id
+	      AND mr.recipient_type = 'from'
+	      AND mr.email_address IS NOT NULL
+	      AND TRIM(mr.email_address) <> ''
+	  )
+	  AND (
+	    EXISTS (
+	      SELECT 1
+	      FROM account_identities ai
+	      JOIN participants p ON p.id = messages.sender_id
+	      WHERE ai.source_id = messages.source_id
+	        AND p.email_address IS NOT NULL
+	        AND TRIM(p.email_address) <> ''
+	        AND LOWER(p.email_address) = LOWER(ai.address)
+	    )
+	    OR EXISTS (
+	      SELECT 1
+	      FROM account_identities ai
+	      JOIN participant_identifiers pi ON pi.participant_id = messages.sender_id
+	      WHERE ai.source_id = messages.source_id
+	        AND (
+	          (pi.identifier_type = 'email'
+	           AND NOT EXISTS (
+	             SELECT 1
+	             FROM participants p
+	             WHERE p.id = messages.sender_id
+	               AND p.email_address IS NOT NULL
+	               AND TRIM(p.email_address) <> ''
+	           )
+	           AND LOWER(pi.identifier_value) = LOWER(ai.address))
+	          OR (pi.identifier_type <> 'email' AND pi.identifier_value = ai.address)
+	        )
+	    )
+	  )
 	)
 )`
 
@@ -1621,11 +1684,20 @@ func (s *Store) EnsureParticipantsBatch(addresses []mime.Address) (map[string]in
 // ReplaceMessageRecipients replaces all recipients for a message atomically.
 func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
 	return s.withTx(func(tx *loggedTx) error {
-		return replaceMessageRecipientsTx(tx, messageID, RecipientSet{
+		if err := replaceMessageRecipientsTx(tx, messageID, RecipientSet{
 			Type:           recipientType,
 			ParticipantIDs: participantIDs,
 			DisplayNames:   displayNames,
-		})
+		}); err != nil {
+			return err
+		}
+		if recipientType != "from" {
+			return nil
+		}
+		// 'from' rows are attribution input: the message upsert's CTE could not
+		// see the envelope rows this call just replaced, and importers on this
+		// granular path never reach persistMessageWith's final recompute.
+		return refreshMessageAttributionWith(tx, messageID)
 	})
 }
 
@@ -2919,6 +2991,11 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
 	now := dialect.Now()
 	var id int64
+	// The conflict UPDATE only fires when it would change something. The
+	// SQLite activity conversation trigger requeues every message in the
+	// conversation on ANY conversations UPDATE, so an unconditional upsert
+	// would replay whole threads once per persisted message. A filtered
+	// conflict emits no RETURNING row, hence the lookup fallback.
 	err := q.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, ?, ?, %s, %s)
@@ -2927,10 +3004,23 @@ func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sour
 		    title = CASE WHEN EXCLUDED.title IS NOT NULL AND EXCLUDED.title != ''
 		                 THEN EXCLUDED.title ELSE conversations.title END,
 		    updated_at = %s
+		WHERE conversations.conversation_type <> EXCLUDED.conversation_type
+		   OR (EXCLUDED.title IS NOT NULL AND EXCLUDED.title != ''
+		       AND COALESCE(conversations.title, '') <> EXCLUDED.title)
 		RETURNING id
 	`, now, now, now), sourceID, sourceConversationID, conversationType, title).Scan(&id)
-	if err != nil {
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
+	}
+	if err := q.QueryRow(
+		`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`,
+		sourceID, sourceConversationID,
+	).Scan(&id); err != nil {
+		return 0, fmt.Errorf("ensure conversation %d/%q: %w",
+			sourceID, sourceConversationID, err)
 	}
 	return id, nil
 }
@@ -3471,6 +3561,58 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 			context.Background(), tx, existingParticipantID, participantID,
 		); err != nil {
 			return err
+		}
+		if _, err := s.bumpIdentityRevision(tx); err != nil {
+			return err
+		}
+		return s.bumpAccountIdentityRevision(tx)
+	})
+}
+
+// ParticipantEmailRepair is one maintenance rewrite of a participant's
+// email_address (encoding repair).
+type ParticipantEmailRepair struct {
+	ParticipantID int64
+	EmailAddress  string
+}
+
+// RepairParticipantEmailAddresses applies one maintenance batch of email
+// rewrites and settles ownership-derived state IN THE SAME TRANSACTION. The
+// email is an attribution and activity-ownership surface: a repaired address
+// can start or stop matching a confirmed account identity, so the persisted
+// message attribution of the touched participants is re-derived and both
+// identity revisions advance — activity projection and published caches key
+// staleness on those revisions and would otherwise never reproject. Atomicity
+// is the recovery story: the rewrite makes the address valid UTF-8, so a
+// rerun's scan can never rediscover a row whose rewrite committed without
+// its refresh, and a failed batch rolls back entirely and stays discoverable.
+func (s *Store) RepairParticipantEmailAddresses(repairs []ParticipantEmailRepair) error {
+	if len(repairs) == 0 {
+		return nil
+	}
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		participantIDs := make([]int64, 0, len(repairs))
+		for _, repair := range repairs {
+			if _, err := tx.Exec(
+				`UPDATE participants SET email_address = ? WHERE id = ?`,
+				repair.EmailAddress, repair.ParticipantID,
+			); err != nil {
+				return fmt.Errorf(
+					"repair participant email %d: %w", repair.ParticipantID, err)
+			}
+			participantIDs = append(participantIDs, repair.ParticipantID)
+		}
+		const chunkSize = 500
+		for start := 0; start < len(participantIDs); start += chunkSize {
+			end := min(start+chunkSize, len(participantIDs))
+			if err := refreshParticipantMessageAttributionContext(
+				context.Background(), tx, participantIDs[start:end]...,
+			); err != nil {
+				return err
+			}
 		}
 		if _, err := s.bumpIdentityRevision(tx); err != nil {
 			return err

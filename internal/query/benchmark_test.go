@@ -261,6 +261,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			SELECT id, source_id, source_message_id, conversation_id,
 				   subject, snippet, sent_at, size_estimate, has_attachments,
 				   deleted_from_source_at, attachment_count, sender_id,
+				   NULL::BIGINT AS owner_participant_id,
 				   message_type, is_from_me, year, month
 			FROM bench_messages
 		) TO '%s' (FORMAT PARQUET, PARTITION_BY (year), OVERWRITE_OR_IGNORE)

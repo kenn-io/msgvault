@@ -2029,7 +2029,7 @@ func viewTypeString(v query.ViewType) string {
 // Accepted values for enum query parameters, surfaced in 400 messages.
 var (
 	aggregateSortFields = []string{"count", "size", "attachment_size", "name"}
-	messageSortFields   = []string{"date", "size", "subject"}
+	messageSortFields   = []string{activityDateField, "size", "subject"}
 	textSortFields      = []string{"last_message", "count", "name"}
 	sortDirections      = []string{"asc", apiSortDirectionDesc}
 	timeGranularities   = []string{"year", "month", "day"}
@@ -2291,7 +2291,7 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	// Sorting
 	if v := r.URL.Query().Get("sort"); v != "" {
 		switch strings.ToLower(v) {
-		case "date":
+		case activityDateField:
 			filter.Sorting.Field = query.MessageSortByDate
 		case "size":
 			filter.Sorting.Field = query.MessageSortBySize

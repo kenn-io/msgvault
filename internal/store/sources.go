@@ -395,10 +395,10 @@ func (s *Store) removeSourceExec(
 	return nil
 }
 
-// sourceIdentityQuery returns the common edgeRows shape used by *loggedTx and
+// sourceIdentityQuery returns the common rowsScanner shape used by *loggedTx and
 // *sql.Conn. RemoveSourceSerialized owns the latter directly on a pinned
 // connection.
-type sourceIdentityQuery func(context.Context, string, ...any) (edgeRows, error)
+type sourceIdentityQuery func(context.Context, string, ...any) (rowsScanner, error)
 type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
 
 // currentCandidateObservationPairSQL verifies the conjunctive observation
@@ -446,7 +446,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesTxContext(
 ) error {
 	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
 		ctx,
-		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+		func(ctx context.Context, query string, args ...any) (rowsScanner, error) {
 			return tx.QueryContext(ctx, query, args...)
 		},
 		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -461,7 +461,7 @@ func (s *Store) recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(
 ) error {
 	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
 		ctx,
-		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+		func(ctx context.Context, query string, args ...any) (rowsScanner, error) {
 			return tx.QueryContext(ctx, query, args...)
 		},
 		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -476,7 +476,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesConnContext(
 ) error {
 	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
 		ctx,
-		func(ctx context.Context, query string, args ...any) (edgeRows, error) {
+		func(ctx context.Context, query string, args ...any) (rowsScanner, error) {
 			//nolint:rowserrcheck // Ownership transfers to the shared iterator, which checks Err after iteration.
 			return conn.QueryContext(ctx, s.dialect.Rebind(query), args...)
 		},

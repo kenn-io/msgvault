@@ -26,7 +26,7 @@ const (
 )
 
 const relationshipTimelineMessagesCols = "id, source_id, source_message_id, conversation_id, subject, snippet, " +
-	"sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	"sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month"
 
 // writeRelationshipTimelineFixture writes (or rewrites in place) the
 // Parquet fixture for the relationship timeline HTTP tests: an owner, a
@@ -69,7 +69,7 @@ func writeRelationshipTimelineFixture(t *testing.T, analyticsDir string, now tim
 	var messageRows, recipientRows []string
 	for _, m := range rows {
 		messageRows = append(messageRows, fmt.Sprintf(
-			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, %s, %v, %d, %d)",
+			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, %s, %v, %d, %d)",
 			m.id, m.id, m.convID, m.id, m.sentAt.Format("2006-01-02 15:04:05"), sqlQuote(m.messageType), m.isFromMe, m.sentAt.Year(), int(m.sentAt.Month())))
 		recipientRows = append(recipientRows,
 			fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'from', '')", m.id, m.fromID),

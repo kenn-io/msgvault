@@ -38,7 +38,7 @@ func TestRemoveAccountIdentityRecomputesOnlyIdentityDerivedAttribution(t *testin
 	require.NoError(err, "simulate legacy message without attribution provenance")
 	_, err = st.DB().Exec(
 		st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
-		"message_attribution_provenance_v2",
+		"message_attribution_provenance_v3",
 	)
 	require.NoError(err, "reset attribution migration sentinel")
 	require.NoError(st.InitSchema(), "initialize legacy attribution provenance")

@@ -46,6 +46,21 @@ func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {
 	assert.JSONEq(t, `{"display_name":null}`, string(encoded))
 }
 
+func TestGeneratedDailyNotePersonIDsRequirePositiveValues(t *testing.T) {
+	require.NoError(t, (generated.CreateDailyNoteEntryRequest{
+		Body:      "note",
+		PersonIds: []int64{1},
+	}).Validate())
+	require.Error(t, (generated.CreateDailyNoteEntryRequest{
+		Body:      "note",
+		PersonIds: []int64{0},
+	}).Validate())
+	require.Error(t, (generated.CreateDailyNoteEntryRequest{
+		Body:      "note",
+		PersonIds: []int64{-1},
+	}).Validate())
+}
+
 func TestGeneratedSourceIdentitiesPreserveRequiredEmptyArrays(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

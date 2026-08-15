@@ -377,6 +377,60 @@ type GetConversationResponse = ConversationResponse
 
 type GetConversationErrorResponse = ErrorResponse
 
+type DeleteDayEntryErrorResponse = ErrorResponse
+
+type DeleteDayEntryErrorResponseJSON = ErrorResponse
+
+type DeleteDayEntryErrorResponseJSON403 = ErrorResponse
+
+type DeleteDayEntryErrorResponseJSON404 = ErrorResponse
+
+type DeleteDayEntryErrorResponseJSON500 = ErrorResponse
+
+type DeleteDayEntryErrorResponseJSON503 = ErrorResponse
+
+type GetActivityDayResponse = DayPage
+
+type GetActivityDayErrorResponse = ErrorResponse
+
+type GetActivityDayErrorResponseJSON = ErrorResponse
+
+type GetActivityDayErrorResponseJSON403 = ErrorResponse
+
+type GetActivityDayErrorResponseJSON500 = ErrorResponse
+
+type GetActivityDayErrorResponseJSON503 = ErrorResponse
+
+type ListDayEntriesResponse = DailyNoteEntriesResponse
+
+type ListDayEntriesErrorResponse = ErrorResponse
+
+type ListDayEntriesErrorResponseJSON = ErrorResponse
+
+type ListDayEntriesErrorResponseJSON403 = ErrorResponse
+
+type ListDayEntriesErrorResponseJSON500 = ErrorResponse
+
+type ListDayEntriesErrorResponseJSON503 = ErrorResponse
+
+type CreateDayEntryResponse = DailyNoteEntry
+
+type CreateDayEntryErrorResponse = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON403 = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON404 = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON413 = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON415 = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON500 = ErrorResponse
+
+type CreateDayEntryErrorResponseJSON503 = ErrorResponse
+
 type ListDeletionsResponseJSON = ListDeletionsResponse
 
 type ListDeletionsErrorResponse = ErrorResponse
@@ -1483,6 +1537,48 @@ type SetPersonAttributeErrorResponseJSON409 = ErrorResponse
 
 type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
 
+type GetPersonContactStateResponse = ContactState
+
+type GetPersonContactStateErrorResponse = ErrorResponse
+
+type GetPersonContactStateErrorResponseJSON = ErrorResponse
+
+type GetPersonContactStateErrorResponseJSON403 = ErrorResponse
+
+type GetPersonContactStateErrorResponseJSON404 = ErrorResponse
+
+type GetPersonContactStateErrorResponseJSON500 = ErrorResponse
+
+type GetPersonContactStateErrorResponseJSON503 = ErrorResponse
+
+type ListPersonActivityDaysResponse = PersonDaysPage
+
+type ListPersonActivityDaysErrorResponse = ErrorResponse
+
+type ListPersonActivityDaysErrorResponseJSON = ErrorResponse
+
+type ListPersonActivityDaysErrorResponseJSON403 = ErrorResponse
+
+type ListPersonActivityDaysErrorResponseJSON404 = ErrorResponse
+
+type ListPersonActivityDaysErrorResponseJSON500 = ErrorResponse
+
+type ListPersonActivityDaysErrorResponseJSON503 = ErrorResponse
+
+type GetPersonActivityDayResponse = PersonDayPage
+
+type GetPersonActivityDayErrorResponse = ErrorResponse
+
+type GetPersonActivityDayErrorResponseJSON = ErrorResponse
+
+type GetPersonActivityDayErrorResponseJSON403 = ErrorResponse
+
+type GetPersonActivityDayErrorResponseJSON404 = ErrorResponse
+
+type GetPersonActivityDayErrorResponseJSON500 = ErrorResponse
+
+type GetPersonActivityDayErrorResponseJSON503 = ErrorResponse
+
 type ListPersonEmploymentsResponse = EmploymentsResponse
 
 type ListPersonEmploymentsErrorResponse = ErrorResponse
@@ -2331,6 +2427,57 @@ type GetConversationResp struct {
 	JSON200      *GetConversationResponse
 }
 
+type DeleteDayEntryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteDayEntryErrorResponse
+	JSON401      *DeleteDayEntryErrorResponseJSON
+	JSON403      *DeleteDayEntryErrorResponseJSON403
+	JSON404      *DeleteDayEntryErrorResponseJSON404
+	JSON500      *DeleteDayEntryErrorResponseJSON500
+	JSON503      *DeleteDayEntryErrorResponseJSON503
+}
+
+type GetActivityDayResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetActivityDayResponse
+	JSON400      *GetActivityDayErrorResponse
+	JSON401      *GetActivityDayErrorResponseJSON
+	JSON403      *GetActivityDayErrorResponseJSON403
+	JSON500      *GetActivityDayErrorResponseJSON500
+	JSON503      *GetActivityDayErrorResponseJSON503
+}
+
+type ListDayEntriesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListDayEntriesResponse
+	JSON400      *ListDayEntriesErrorResponse
+	JSON401      *ListDayEntriesErrorResponseJSON
+	JSON403      *ListDayEntriesErrorResponseJSON403
+	JSON500      *ListDayEntriesErrorResponseJSON500
+	JSON503      *ListDayEntriesErrorResponseJSON503
+}
+
+type CreateDayEntryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateDayEntryResponse
+	JSON400      *CreateDayEntryErrorResponse
+	JSON401      *CreateDayEntryErrorResponseJSON
+	JSON403      *CreateDayEntryErrorResponseJSON403
+	JSON404      *CreateDayEntryErrorResponseJSON404
+	JSON413      *CreateDayEntryErrorResponseJSON413
+	JSON415      *CreateDayEntryErrorResponseJSON415
+	JSON500      *CreateDayEntryErrorResponseJSON500
+	JSON503      *CreateDayEntryErrorResponseJSON503
+}
+
 type ListDeletionsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3125,6 +3272,45 @@ type SetPersonAttributeResp struct {
 	JSON404      *SetPersonAttributeErrorResponseJSON
 	JSON409      *SetPersonAttributeErrorResponseJSON409
 	JSON503      *SetPersonAttributeErrorResponseJSON503
+}
+
+type GetPersonContactStateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonContactStateResponse
+	JSON400      *GetPersonContactStateErrorResponse
+	JSON401      *GetPersonContactStateErrorResponseJSON
+	JSON403      *GetPersonContactStateErrorResponseJSON403
+	JSON404      *GetPersonContactStateErrorResponseJSON404
+	JSON500      *GetPersonContactStateErrorResponseJSON500
+	JSON503      *GetPersonContactStateErrorResponseJSON503
+}
+
+type ListPersonActivityDaysResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonActivityDaysResponse
+	JSON400      *ListPersonActivityDaysErrorResponse
+	JSON401      *ListPersonActivityDaysErrorResponseJSON
+	JSON403      *ListPersonActivityDaysErrorResponseJSON403
+	JSON404      *ListPersonActivityDaysErrorResponseJSON404
+	JSON500      *ListPersonActivityDaysErrorResponseJSON500
+	JSON503      *ListPersonActivityDaysErrorResponseJSON503
+}
+
+type GetPersonActivityDayResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonActivityDayResponse
+	JSON400      *GetPersonActivityDayErrorResponse
+	JSON401      *GetPersonActivityDayErrorResponseJSON
+	JSON403      *GetPersonActivityDayErrorResponseJSON403
+	JSON404      *GetPersonActivityDayErrorResponseJSON404
+	JSON500      *GetPersonActivityDayErrorResponseJSON500
+	JSON503      *GetPersonActivityDayErrorResponseJSON503
 }
 
 type ListPersonEmploymentsResp struct {

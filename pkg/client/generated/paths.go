@@ -76,6 +76,42 @@ type GetConversationPath struct {
 	ID int64 `json:"id"`
 }
 
+type DeleteDayEntryPath struct {
+	// ID Positive durable identifier
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (d DeleteDayEntryPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type GetActivityDayPath struct {
+	// Date Exact local calendar date
+	Date string `json:"date" validate:"required"`
+}
+
+func (g GetActivityDayPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type ListDayEntriesPath struct {
+	// Date Exact local calendar date
+	Date string `json:"date" validate:"required"`
+}
+
+func (l ListDayEntriesPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type CreateDayEntryPath struct {
+	// Date Exact local calendar date
+	Date string `json:"date" validate:"required"`
+}
+
+func (c CreateDayEntryPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CancelDeletionPath struct {
 	// ID Deletion manifest ID
 	ID string `json:"id" validate:"required"`
@@ -349,6 +385,36 @@ type SetPersonAttributePath struct {
 
 func (s SetPersonAttributePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetPersonContactStatePath struct {
+	// ID Positive durable identifier
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (g GetPersonContactStatePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type ListPersonActivityDaysPath struct {
+	// ID Positive durable identifier
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (l ListPersonActivityDaysPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type GetPersonActivityDayPath struct {
+	// ID Positive durable identifier
+	ID int64 `json:"id" validate:"gte=1"`
+
+	// Date Exact local calendar date
+	Date string `json:"date" validate:"required"`
+}
+
+func (g GetPersonActivityDayPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListPersonEmploymentsPath struct {

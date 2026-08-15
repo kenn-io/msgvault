@@ -33,10 +33,10 @@ const identityRevisionKey = "identity_revision"
 // linkEdge is one row of participant_links, always normalized so a < b.
 type linkEdge struct{ a, b int64 }
 
-// edgeRows is satisfied by both *sql.Rows (non-transactional queries) and
-// *loggedRows (queries issued through a *loggedTx), letting loadLinkEdges
-// and loadLinkEdgesTx share one scan routine.
-type edgeRows interface {
+// rowsScanner is satisfied by both *sql.Rows (non-transactional queries) and
+// *loggedRows (queries issued through a *loggedTx), letting store read paths
+// share scan routines without depending on one concrete query type.
+type rowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
 	Close() error
@@ -45,7 +45,7 @@ type edgeRows interface {
 
 // scanLinkEdges drains rows into a slice of edges, closing rows before
 // returning.
-func scanLinkEdges(rows edgeRows) ([]linkEdge, error) {
+func scanLinkEdges(rows rowsScanner) ([]linkEdge, error) {
 	defer func() { _ = rows.Close() }()
 	var edges []linkEdge
 	for rows.Next() {

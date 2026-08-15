@@ -247,7 +247,7 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
-		WHERE name = 'message_attribution_provenance_v2';
+		WHERE name = 'message_attribution_provenance_v3';
 	`)
 	require.NoError(err, "simulate pre-attribution schema")
 	require.NoError(st.InitSchema(), "upgrade source schema")
@@ -2501,8 +2501,10 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 
 	// Rebuild each table into the shape the legacy ADD COLUMN migrations
 	// produce: the late-added columns re-appended at the end, in migration
-	// order. Indexes on the dropped columns go first — SQLite refuses to
-	// drop an indexed column.
+	// order. Indexes and triggers on the dropped columns go first — SQLite
+	// refuses to drop a column referenced by either — and the activity
+	// trigger is recreated afterwards with its schema.sql definition, since
+	// a real upgraded archive carries it.
 	for _, stmt := range []string{
 		`ALTER TABLE labels DROP COLUMN system_role`,
 		`ALTER TABLE labels ADD COLUMN system_role TEXT`,
@@ -2517,10 +2519,22 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 
 		`DROP INDEX IF EXISTS idx_conversations_type`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,
 		`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`,
+		`CREATE TRIGGER trg_activity_queue_conversation_type_update
+		 AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+		 WHEN OLD.conversation_type IS NOT NEW.conversation_type
+		 BEGIN
+		     INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		     SELECT id, 1, CURRENT_TIMESTAMP
+		     FROM messages WHERE conversation_id = NEW.id
+		     ON CONFLICT(message_id) DO UPDATE SET
+		         revision = activity_projection_queue.revision + 1,
+		         queued_at = CURRENT_TIMESTAMP;
+		 END`,
 	} {
 		_, err = db.Exec(stmt)
 		require.NoError(err, "rebuild upgraded order: %s", stmt)

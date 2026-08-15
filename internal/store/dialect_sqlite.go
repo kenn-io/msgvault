@@ -969,6 +969,39 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 	return nil
 }
 
+// EnsureActivityProjectionTriggers repairs activity trigger definitions on
+// archives created before the activity projection queue became part of the
+// production write path. Message INSERTs are intentionally not trigger-backed:
+// even a trigger that does no work adds a compiled trigger subprogram and a
+// statement journal to every fresh message INSERT. The conversation trigger
+// is scoped to real conversation_type changes — a blanket AFTER UPDATE
+// trigger requeued whole archives on routine statistics recomputation. SQLite
+// resolves the column reference at fire time, so the definition is valid even
+// before the conversation_type ADD COLUMN migration has run.
+func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_insert`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`CREATE TRIGGER trg_activity_queue_conversation_type_update
+		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+		     WHEN OLD.conversation_type IS NOT NEW.conversation_type
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         SELECT id, 1, CURRENT_TIMESTAMP
+		         FROM messages WHERE conversation_id = NEW.id
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`,
+	}
+	for _, stmt := range stmts {
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure activity projection triggers: %w", err)
+		}
+	}
+	return nil
+}
+
 // lastModifiedUpdateOfColumns renders every live column of `messages` EXCEPT
 // content_changed_at, for the last_modified trigger's `UPDATE OF` clause.
 //

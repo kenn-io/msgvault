@@ -802,6 +802,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/days/entries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an authored daily entry */
+        delete: operations["deleteDayEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get people, activity, and notes for a day */
+        get: operations["getActivityDay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/days/{date}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List authored entries for a day */
+        get: operations["listDayEntries"];
+        put?: never;
+        /** Create an authored entry for a day */
+        post: operations["createDayEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/deletions": {
         parameters: {
             query?: never;
@@ -1841,6 +1893,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/persons/{id}/contact-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get computed contact state for a person */
+        get: operations["getPersonContactState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List calendar days intersecting a person */
+        get: operations["listPersonActivityDays"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one person's activity and notes for a day */
+        get: operations["getPersonActivityDay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/persons/{id}/employments": {
         parameters: {
             query?: never;
@@ -2419,6 +2522,30 @@ export interface components {
             next_run: string;
             running: boolean;
             schedule: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ActivityRef: {
+            channel: string;
+            /** Format: int64 */
+            conversation_id?: number;
+            date_origin: string;
+            date_precision: string;
+            direction: string;
+            evidence: string;
+            kind: string;
+            local_date: string;
+            /** Format: int64 */
+            message_id: number;
+            /** Format: date-time */
+            occurred_at: string;
+            ref: string;
+            role: string;
+            /** Format: int64 */
+            source_id: number;
+            timezone: string;
+            /** Format: int64 */
+            utc_offset_minutes: number;
         } & {
             [key: string]: unknown;
         };
@@ -3075,6 +3202,37 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        ContactState: {
+            /** Format: date-time */
+            cadence_due_at?: string;
+            cadence_status: string;
+            /** Format: date-time */
+            computed_at: string;
+            /** Format: date-time */
+            first_contact_at?: string;
+            first_contact_ref?: string;
+            inferred_channel?: string;
+            /** Format: int64 */
+            interaction_count: number;
+            /** Format: date-time */
+            last_contact_at?: string;
+            last_contact_channel?: string;
+            last_contact_owner?: string;
+            last_contact_ref?: string;
+            /** Format: int64 */
+            last_contact_source_id?: number;
+            /** Format: date-time */
+            last_inbound_at?: string;
+            last_inbound_ref?: string;
+            /** Format: date-time */
+            last_outbound_at?: string;
+            last_outbound_ref?: string;
+            /** Format: int64 */
+            person_id: number;
+            stale: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         ConversationResponse: {
             /** Format: int64 */
             anchor_id: number;
@@ -3121,6 +3279,11 @@ export interface components {
             slug: string;
             uri_scheme?: string;
         };
+        CreateDailyNoteEntryRequest: {
+            author?: string;
+            body: string;
+            person_ids?: number[] | null;
+        };
         CreatePersonRelationshipRequest: {
             end_date?: string;
             notes?: string | null;
@@ -3155,6 +3318,56 @@ export interface components {
             name: string;
             /** Format: int64 */
             schema_version: number;
+        };
+        DailyNoteEntriesResponse: {
+            entries: components["schemas"]["DailyNoteEntry"][];
+        } & {
+            [key: string]: unknown;
+        };
+        DailyNoteEntry: {
+            author: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            local_date: string;
+            /** Format: int64 */
+            ordinal: number;
+            person_ids: number[] | null;
+            source: string;
+            source_ref?: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DayPage: {
+            entries: components["schemas"]["DailyNoteEntry"][];
+            /** Format: int64 */
+            entry_total_count: number;
+            local_date: string;
+            /** Format: int64 */
+            person_total_count: number;
+            persons: components["schemas"]["DayPerson"][];
+        } & {
+            [key: string]: unknown;
+        };
+        DayPerson: {
+            activity: components["schemas"]["ActivityRef"][];
+            activity_truncated: boolean;
+            /** Format: int64 */
+            direct_count: number;
+            display_name?: string;
+            /** Format: int64 */
+            event_count: number;
+            /** Format: date-time */
+            last_at: string;
+            /** Format: int64 */
+            person_id: number;
+            vcard_uid: string;
+        } & {
+            [key: string]: unknown;
         };
         DecideIdentityMatchRequest: {
             notes?: string;
@@ -4729,6 +4942,39 @@ export interface components {
         PersonDatePatchRequest: {
             add?: components["schemas"]["PersonDateInputRequest"][] | null;
             supersede?: number[] | null;
+        };
+        PersonDay: {
+            /** Format: int64 */
+            direct_count: number;
+            /** Format: int64 */
+            entry_count: number;
+            /** Format: int64 */
+            event_count: number;
+            local_date: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonDayPage: {
+            activity: components["schemas"]["ActivityRef"][];
+            /** Format: int64 */
+            activity_total_count: number;
+            entries: components["schemas"]["DailyNoteEntry"][];
+            /** Format: int64 */
+            entry_total_count: number;
+            local_date: string;
+            /** Format: int64 */
+            person_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonDaysPage: {
+            days: components["schemas"]["PersonDay"][];
+            /** Format: int64 */
+            person_id: number;
+            /** Format: int64 */
+            total_count: number;
+        } & {
+            [key: string]: unknown;
         };
         PersonIdentifier: {
             display_value?: string;
@@ -8443,6 +8689,366 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteDayEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getActivityDay: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+                /** @description Maximum authored entries to return independently */
+                entry_limit?: number;
+                /** @description Zero-based authored-entry offset */
+                entry_offset?: number;
+                /** @description Maximum activity references previewed for each person */
+                activity_limit_per_person?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDayEntries: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyNoteEntriesResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createDayEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDailyNoteEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyNoteEntry"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -12812,6 +13418,284 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonContactState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactState"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonActivityDays: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first local calendar date */
+                from?: string;
+                /** @description Inclusive last local calendar date */
+                to?: string;
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDaysPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonActivityDay: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+                /** @description Maximum authored entries to return independently */
+                entry_limit?: number;
+                /** @description Zero-based authored-entry offset */
+                entry_offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDayPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
