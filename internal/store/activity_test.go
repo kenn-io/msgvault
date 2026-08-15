@@ -298,7 +298,7 @@ func TestMessageMutationsDurablyQueueProjection(t *testing.T) {
 	require.Positive(initial)
 
 	_, err := activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "changed", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), messageID)
 	require.NoError(err)
 	assert.Greater(activityQueueRevision(t, f.Store, messageID), initial)
 
@@ -315,7 +315,7 @@ func TestExistingMessageMutationQueuesBelowWatermark(t *testing.T) {
 	require.NoError(t, f.Store.SetActivityWatermarkContext(context.Background(), messageID+1000))
 
 	_, err := activityExec(f.Store,
-		`UPDATE messages SET snippet = ? WHERE id = ?`, "repaired", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("repaired"), messageID)
 	require.NoError(t, err)
 	assert.Positive(t, activityQueueRevision(t, f.Store, messageID))
 }
@@ -327,7 +327,7 @@ func TestActivitySchemaReinitKeepsQueueTriggers(t *testing.T) {
 
 	require.NoError(t, f.Store.InitSchema())
 	_, err := activityExec(
-		f.Store, `UPDATE messages SET subject = ? WHERE id = ?`, "after reinit", messageID)
+		f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("after reinit"), messageID)
 	require.NoError(t, err)
 	assert.Greater(t, activityQueueRevision(t, f.Store, messageID), before)
 }
@@ -451,7 +451,7 @@ func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 		messageID := f.CreateMessage("queue-processed-message")
 		assertActivityQueueReopensAfterProcessed(t, f.Store, messageID, func() error {
 			_, err := activityExec(f.Store,
-				`UPDATE messages SET subject = ? WHERE id = ?`, "changed", messageID)
+				`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), messageID)
 			return err
 		})
 	})
@@ -810,6 +810,16 @@ func activityLinkFixture(
 	`, person.ID)
 	require.NoError(t, err)
 	return f, person.ID, messageID
+}
+
+// activityTouch renders a metadata payload that requeues a message without
+// changing its derived event. metadata is an activity input (meeting
+// all_day/status), but the plain fixtures here carry neither key, so the touch
+// advances the queue revision and last_modified and nothing else. Columns the
+// projector never reads (subject, snippet) do not requeue at all -- see
+// MessagesActivityColumns.
+func activityTouch(marker string) string {
+	return `{"touch":` + strconv.Quote(marker) + `}`
 }
 
 func activityExec(st *store.Store, query string, args ...any) (sql.Result, error) {
@@ -1853,7 +1863,7 @@ func TestProjectActivityBatchMaintainsMonotoneExtremaAndReplayCount(t *testing.T
 	assert.Equal(int64(2), state.InteractionCount)
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "replayed", newerMessage)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("replayed"), newerMessage)
 	require.NoError(err)
 	replay := activityProjectionForMessage(t, f, newerMessage, personID, newer)
 	_, err = f.Store.ProjectActivityBatchContext(
@@ -1976,7 +1986,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 	require.NoError(err)
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "move", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("move"), messageID)
 	require.NoError(err)
 	moved := activityProjectionForMessage(t, f, messageID, newPerson.ID, occurredAt)
 	_, err = f.Store.ProjectActivityBatchContext(
@@ -1994,7 +2004,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 	assert.Equal(occurredAt, newState.LastContactAt.UTC())
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "retract", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("retract"), messageID)
 	require.NoError(err)
 	retractionCandidate, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 	require.NoError(err)
@@ -2073,7 +2083,7 @@ func TestProjectActivityBatchRestoresContactAfterAuthoritativeRetraction(t *test
 
 	for _, subject := range []string{"retract", "restore"} {
 		_, err = activityExec(f.Store,
-			`UPDATE messages SET subject = ? WHERE id = ?`, subject, messageID)
+			`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch(subject), messageID)
 		require.NoError(err)
 		if subject == "retract" {
 			candidates, loadErr := f.Store.LoadQueuedActivityCandidatesContext(
@@ -2124,7 +2134,7 @@ func TestProjectActivityBatchStaleItemRollsBackWholeBatch(t *testing.T) {
 		t, f, secondMessage, personID, occurredAt.Add(time.Hour))
 
 	_, err := activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "changed", secondMessage)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), secondMessage)
 	require.NoError(err)
 	_, err = f.Store.ProjectActivityBatchContext(
 		t.Context(), []store.ActivityProjection{first, second})
@@ -2186,12 +2196,12 @@ func TestProjectActivityBatchRejectsRetainedDrainedGenerationABA(t *testing.T) {
 	require.NoError(err)
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "generation-2", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("generation-2"), messageID)
 	require.NoError(err)
 	staleProjection := activityProjectionForMessage(
 		t, f, messageID, personID, occurredAt)
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "generation-3", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("generation-3"), messageID)
 	require.NoError(err)
 	_, err = activityExec(f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
@@ -2331,7 +2341,7 @@ func TestProjectActivityBatchRacingMutationLeavesPendingGeneration(t *testing.T)
 	go func() {
 		<-start
 		_, err := activityExec(f.Store,
-			`UPDATE messages SET subject = ? WHERE id = ?`, "raced", messageID)
+			`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("raced"), messageID)
 		mutationResult <- err
 	}()
 	close(start)
@@ -2389,11 +2399,11 @@ func TestProjectActivityBatchLocksMessageBeforeQueueOnPostgreSQL(t *testing.T) {
 	mutationResult := make(chan error, 1)
 	go func() {
 		_, mutationErr := activityExec(f.Store,
-			`UPDATE messages SET subject = ? WHERE id = ?`,
-			"blocked-behind-projection", messageID)
+			`UPDATE messages SET metadata = ? WHERE id = ?`,
+			activityTouch("blocked-behind-projection"), messageID)
 		mutationResult <- mutationErr
 	}()
-	waitForPostgreSQLLockWait(t, f.Store, "%UPDATE messages SET subject%")
+	waitForPostgreSQLLockWait(t, f.Store, "%UPDATE messages SET metadata%")
 
 	require.NoError(blocker.Commit())
 	blockerDone = true
@@ -2810,7 +2820,7 @@ func TestProjectActivityBatchRecomputesEveryContactRelevantChange(t *testing.T) 
 			require.NoError(err)
 
 			_, err = activityExec(f.Store,
-				`UPDATE messages SET subject = ? WHERE id = ?`, test.name, messageID)
+				`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch(test.name), messageID)
 			require.NoError(err)
 			replacement := activityProjectionForMessage(
 				t, f, messageID, personID, occurredAt)
@@ -2882,7 +2892,7 @@ func TestProjectActivityBatchPreservesDirtyStateUntilEpochReconciles(t *testing.
 	assert.True(state.Stale, "a pure addition cannot clear pre-existing dirtiness")
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "still-dirty", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("still-dirty"), messageID)
 	require.NoError(err)
 	replacement := activityProjectionForMessage(
 		t, f, messageID, personID, occurredAt.Add(time.Hour))
@@ -2916,7 +2926,7 @@ func TestProjectActivityBatchClearsOnlyTransactionLocalDirtyAtReconciledEpoch(t 
 	require.NoError(err)
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "redated", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("redated"), messageID)
 	require.NoError(err)
 	replacement := activityProjectionForMessage(
 		t, f, messageID, personID, occurredAt.Add(time.Hour))
@@ -2988,8 +2998,8 @@ func TestRecomputeContactStateRejectsPendingProjectionQueue(t *testing.T) {
 	require.NoError(f.Store.MarkAllContactStateDirtyContext(t.Context()))
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`,
-		"pending repair", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`,
+		activityTouch("pending repair"), messageID)
 	require.NoError(err)
 	err = f.Store.RecomputeContactStateContext(
 		t.Context(), []int64{personID}, revisions)
@@ -3064,8 +3074,8 @@ func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit(
 	mutationResult := make(chan error, 1)
 	go func() {
 		_, mutationErr := activityExec(f.Store,
-			`UPDATE messages SET subject = ? WHERE id = ?`,
-			"queued behind recompute", messageID)
+			`UPDATE messages SET metadata = ? WHERE id = ?`,
+			activityTouch("queued behind recompute"), messageID)
 		mutationResult <- mutationErr
 	}()
 	mutationBlocked := false

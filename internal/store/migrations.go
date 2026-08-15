@@ -31,7 +31,10 @@ const (
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.
-	migrationActivityProjectionTriggers = "activity_projection_triggers_v3"
+	// v4: the messages trigger narrowed on both backends to
+	// MessagesActivityColumns with a value-change guard, so embedding and
+	// FTS bookkeeping sweeps no longer requeue the archive.
+	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
 )
 
 // backfillLegacyIdentityMatchSourceSupport gives pre-support-table generated

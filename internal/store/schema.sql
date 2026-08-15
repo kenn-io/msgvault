@@ -2008,15 +2008,11 @@ CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
     ON activity_projection_queue(message_id)
     WHERE revision > processed_revision;
 
-CREATE TRIGGER IF NOT EXISTS trg_activity_queue_messages_update
-AFTER UPDATE ON messages FOR EACH ROW
-BEGIN
-    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
-    VALUES (NEW.id, 1, CURRENT_TIMESTAMP)
-    ON CONFLICT(message_id) DO UPDATE SET
-        revision = activity_projection_queue.revision + 1,
-        queued_at = CURRENT_TIMESTAMP;
-END;
+-- trg_activity_queue_messages_update is NOT defined here. It is scoped to the
+-- columns the projector reads (MessagesActivityColumns, activity_columns.go)
+-- and built by SQLiteDialect.EnsureActivityProjectionTriggers, where the shared
+-- column list keeps it identical to the PostgreSQL definition. A blanket AFTER
+-- UPDATE here requeued the whole archive on every embed/FTS backfill.
 
 CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_insert
 AFTER INSERT ON message_recipients FOR EACH ROW

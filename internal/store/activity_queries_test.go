@@ -421,7 +421,7 @@ func TestContactStateMarksExistingProjectionStaleWhileQueueIsPending(t *testing.
 	assert.False(fresh.Stale)
 
 	_, err = activityExec(f.Store,
-		`UPDATE messages SET subject = ? WHERE id = ?`, "queued change", messageID)
+		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("queued change"), messageID)
 	require.NoError(err)
 	pending, err := f.Store.ContactStateContext(t.Context(), personID, occurredAt)
 	require.NoError(err)

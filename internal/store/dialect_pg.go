@@ -1171,12 +1171,14 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		     END LOOP;
 		 END;
 		 $$ LANGUAGE plpgsql`,
-		`CREATE OR REPLACE FUNCTION queue_activity_messages() RETURNS trigger AS $$
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION queue_activity_messages() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_message(NEW.id);
+		     IF %s THEN
+		         PERFORM enqueue_activity_projection_message(NEW.id);
+		     END IF;
 		     RETURN NEW;
 		 END;
-		 $$ LANGUAGE plpgsql`,
+		 $$ LANGUAGE plpgsql`, activityValueGuard("IS DISTINCT FROM")),
 		`CREATE OR REPLACE FUNCTION queue_activity_recipient_insert() RETURNS trigger AS $$
 		 BEGIN
 		     PERFORM enqueue_activity_projection_message(NEW.message_id);
@@ -1233,9 +1235,9 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
-		`CREATE TRIGGER trg_activity_queue_messages_update
-		     AFTER UPDATE ON messages FOR EACH ROW
-		     EXECUTE FUNCTION queue_activity_messages()`,
+		fmt.Sprintf(`CREATE TRIGGER trg_activity_queue_messages_update
+		     AFTER UPDATE OF %s ON messages FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_messages()`, activityTriggerColumnList()),
 		`CREATE TRIGGER trg_activity_queue_recipients_insert
 		     AFTER INSERT ON message_recipients FOR EACH ROW
 		     EXECUTE FUNCTION queue_activity_recipient_insert()`,

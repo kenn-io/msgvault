@@ -330,8 +330,8 @@ func TestProjectorReloadsAndReclassifiesChangedStaleCandidate(t *testing.T) {
 	_, err = initial.RunOnce(t.Context())
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
-		UPDATE messages SET subject = ? WHERE id = ?
-	`), "queued reclassification", messageID)
+		UPDATE messages SET metadata = ? WHERE id = ?
+	`), activityTouch("queued reclassification"), messageID)
 	require.NoError(err)
 
 	reclassifying := &reclassifyingStaleProjectorStore{
@@ -823,6 +823,12 @@ func (s *alwaysStaleProjectorStore) LoadActivityCandidatesByIDContext(
 	return s.Store.LoadActivityCandidatesByIDContext(ctx, messageIDs)
 }
 
+// activityTouch renders a metadata payload that requeues a message without
+// changing its derived event; see the store package helper of the same name.
+func activityTouch(marker string) string {
+	return `{"touch":` + strconv.Quote(marker) + `}`
+}
+
 type reclassifyingStaleProjectorStore struct {
 	*store.Store
 
@@ -954,7 +960,7 @@ func (m *mutatingAfterProjectionStore) ProjectActivityBatchContext(
 	}
 	m.once.Do(func() {
 		_, m.err = m.Store.DB().ExecContext(ctx, m.Rebind(`
-			UPDATE messages SET subject = 'changed while projecting'
+			UPDATE messages SET metadata = '{"touch":"changed while projecting"}'
 			WHERE id = ?
 		`), m.messageID)
 	})

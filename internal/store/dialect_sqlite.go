@@ -978,9 +978,27 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 // trigger requeued whole archives on routine statistics recomputation. SQLite
 // resolves the column reference at fire time, so the definition is valid even
 // before the conversation_type ADD COLUMN migration has run.
+//
+// The messages trigger is built here rather than in schema.sql because its
+// column list comes from MessagesActivityColumns, shared with the PostgreSQL
+// dialect so the two backends cannot drift, and because DROP + CREATE replaces
+// the blanket definition an earlier build left on an existing archive where
+// CREATE TRIGGER IF NOT EXISTS silently would not. It runs after
+// LegacyColumnMigrations, so every column it names already exists.
 func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 	stmts := []string{
 		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_insert`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_update`,
+		fmt.Sprintf(`CREATE TRIGGER trg_activity_queue_messages_update
+		     AFTER UPDATE OF %s ON messages FOR EACH ROW
+		     WHEN %s
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         VALUES (NEW.id, 1, CURRENT_TIMESTAMP)
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`, activityTriggerColumnList(), activityValueGuard("IS NOT")),
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update
 		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
