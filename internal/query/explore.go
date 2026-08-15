@@ -542,10 +542,9 @@ func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGl
     WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
 ), message_owner_canon AS (
     SELECT m.id AS message_id, cn.canonical_id
-    FROM counted outbound
-    JOIN messages m ON m.id = outbound.anchor_message_id
+    FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE outbound.is_from_me
+    WHERE m.is_from_me
 )
 SELECT
     entry_key,
@@ -570,21 +569,18 @@ SELECT
     deleted_from_source,
     total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
-                  AND NOT (is_from_me AND EXISTS (
-                      SELECT 1 FROM message_owner_canon
-                      WHERE message_id = anchor_message_id
-                  )) THEN NULL
+                  AND NOT (is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(participant_ids) AS u(pid)
               WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
                 AND NOT (is_from_me AND EXISTS (
                     SELECT 1 FROM canon participant_canon
-                    JOIN message_owner_canon owner
-                      ON owner.canonical_id = participant_canon.canonical_id
                     WHERE participant_canon.participant_id = pid
-                      AND owner.message_id = anchor_message_id
+                      AND participant_canon.canonical_id = message_owner.canonical_id
                 )))
     END AS counterpart_participant_id
 FROM counted
+LEFT JOIN message_owner_canon message_owner
+  ON message_owner.message_id = counted.anchor_message_id
 ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
 LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
 }
@@ -693,10 +689,9 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
 ), message_owner_canon AS (
     SELECT m.id AS message_id, cn.canonical_id
-    FROM page outbound
-    JOIN messages m ON m.id = outbound.anchor_message_id
+    FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE outbound.is_from_me
+    WHERE m.is_from_me
 )
 SELECT
     p.entry_key,
@@ -721,21 +716,18 @@ SELECT
     p.deleted_from_source,
     (SELECT total_count FROM total) AS total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
-                  AND NOT (p.is_from_me AND EXISTS (
-                      SELECT 1 FROM message_owner_canon
-                      WHERE message_id = p.anchor_message_id
-                  )) THEN NULL
+                  AND NOT (p.is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(COALESCE(f.participant_ids, []::BIGINT[])) AS u(pid)
               WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
                 AND NOT (p.is_from_me AND EXISTS (
                     SELECT 1 FROM canon participant_canon
-                    JOIN message_owner_canon owner
-                      ON owner.canonical_id = participant_canon.canonical_id
                     WHERE participant_canon.participant_id = pid
-                      AND owner.message_id = p.anchor_message_id
+                      AND participant_canon.canonical_id = message_owner.canonical_id
                 )))
     END AS counterpart_participant_id
-FROM page p LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
+FROM page p
+LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
+LEFT JOIN message_owner_canon message_owner ON message_owner.message_id = p.anchor_message_id
 ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
 		conditions, sqlIsChatPredicate("message_type", "conversation_type"),
 		sqlAnalyticalEntriesParticipantLabel("pt"),
