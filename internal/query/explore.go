@@ -602,7 +602,7 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
 func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
-	return buildExploreFilteredClassifiedCTE(conditions, candidateRankExpression) +
+	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
 		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
 ), page AS (
     SELECT * FROM logical_entries
@@ -610,7 +610,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     LIMIT ? OFFSET ?
 ), membership AS (
     SELECT source_id, conversation_id, message_id
-    FROM analytical_entries
+    FROM entry_core AS analytical_entries
     WHERE (%s) AND (%s)
 ), page_messages AS (
     SELECT p.entry_key, p.anchor_message_id AS message_id
@@ -644,7 +644,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     FROM (
         SELECT source_id, conversation_id,
             %s AS is_chat
-        FROM analytical_entries
+        FROM entry_core AS analytical_entries
         WHERE %s
     )
 ), clusters AS (
@@ -739,6 +739,22 @@ WITH filtered AS (
         ` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
         ` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
     FROM filtered
+)`
+}
+
+// buildExploreNarrowFilteredClassifiedCTE is the listing-only counterpart to
+// buildExploreFilteredClassifiedCTE. It shadows the wide convenience-view name
+// while evaluating conditions so identity predicates keep their established
+// qualification without forcing participant-list aggregation.
+func buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression string) string {
+	return "WITH " + buildNarrowAnalyticalEntriesCTE("entry_core") + `,
+filtered AS (
+	SELECT * FROM entry_core AS analytical_entries WHERE ` + conditions + `
+), classified AS (
+	SELECT *, ` + candidateRankExpression + ` AS candidate_rank,
+		` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
+		` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
+	FROM filtered
 )`
 }
 
