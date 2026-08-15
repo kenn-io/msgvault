@@ -71,7 +71,8 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	countArgs := append(append([]any{}, conditionArgs...), candidateRankArgs...)
 	args := append(append([]any{}, countArgs...), limit, request.Page.Offset)
 	var queryText string
-	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request) {
+	fastPath := !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request)
+	if fastPath {
 		queryText = buildExploreFastListingSQL(conditions, candidateRankExpression,
 			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
 		args = append(args, conditionArgs...) // membership rescan
@@ -136,7 +137,11 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 		return nil, fmt.Errorf("iterate analytical entries: %w", err)
 	}
 	if len(response.Rows) == 0 && request.Page.Offset > 0 {
-		if err := e.db.QueryRowContext(ctx, buildExploreCountSQL(conditions, candidateRankExpression), countArgs...).Scan(&response.TotalCount); err != nil {
+		countSQL := buildExploreCountSQL(conditions, candidateRankExpression)
+		if fastPath {
+			countSQL = buildExploreFastCountSQL(conditions, candidateRankExpression)
+		}
+		if err := e.db.QueryRowContext(ctx, countSQL, countArgs...).Scan(&response.TotalCount); err != nil {
 			return nil, fmt.Errorf("count analytical entries beyond page: %w", err)
 		}
 	}
@@ -559,6 +564,13 @@ LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
 
 func buildExploreCountSQL(conditions, candidateRankExpression string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression) + `
+)
+SELECT COUNT(*) FROM logical_entries`
+}
+
+func buildExploreFastCountSQL(conditions, candidateRankExpression string) string {
+	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
+		exploreLogicalEntriesCTE(false) + `
 )
 SELECT COUNT(*) FROM logical_entries`
 }

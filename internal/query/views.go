@@ -418,7 +418,7 @@ func sqlAnalyticalEntriesParticipantLabel(alias string) string {
 // Listing fast paths page or count this relation before enriching only the
 // returned rows with participant facts.
 func buildNarrowAnalyticalEntriesCTE(name string) string {
-	return name + ` AS (
+	return name + ` AS NOT MATERIALIZED (
 	SELECT
 		m.id AS message_id,
 		m.source_id,

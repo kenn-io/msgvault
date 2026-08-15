@@ -94,7 +94,7 @@ Add this helper beside `sqlAnalyticalEntries` in `internal/query/views.go`, keep
 
 ```go
 func buildNarrowAnalyticalEntriesCTE(name string) string {
-	return name + ` AS (
+	return name + ` AS NOT MATERIALIZED (
 	SELECT
 		m.id AS message_id,
 		m.source_id,
@@ -159,7 +159,7 @@ Run:
 
 ```bash
 go test -tags "fts5 sqlite_vec" ./internal/query \
-  -run '^(TestExploreFastPathFitsConstrainedMemory|TestExploreListingFastPath)' \
+  -run '^(TestExploreFastPathFitsConstrainedMemory|TestExploreListingFastPath.*)$' \
   -count=1 -v
 ```
 
@@ -243,7 +243,7 @@ Run:
 
 ```bash
 go test -tags "fts5 sqlite_vec" ./internal/query \
-  -run '^(TestFileSearchFastPathFitsConstrainedMemory|TestSearchFilesFastPath)' \
+  -run '^(TestFileSearchFastPathFitsConstrainedMemory|TestSearchFilesFastPath.*)$' \
   -count=1 -v
 ```
 
@@ -386,12 +386,29 @@ query/tests/docs commits, and no private or personal data in public artifacts.
 
 - [ ] **Step 4: Run the requested automated review-fix pass**
 
-Invoke `$roborev-fix` against the completed, verified branch. Address every
+Precondition: a separate, current user invocation is required; this plan does
+not grant invocation authority. With that invocation, run the automated
+review-fix workflow against the completed, verified branch. Address every
 material open finding, run the affected tests, commit any resulting fixes, and
-confirm the original review jobs are closed. Re-run the focused query package
-tests after the review fixes.
+confirm the original review jobs are closed.
 
-- [ ] **Step 5: Push and open the pull request**
+- [ ] **Step 5: Repeat verification and public-artifact review after fixes**
+
+Run:
+
+```bash
+go fmt ./...
+go vet ./...
+go test -tags "fts5 sqlite_vec" ./internal/query -count=1
+make test
+make docs-check
+git diff --check origin/main...HEAD
+```
+
+Review the final diff and rerun the private-data scrub over the complete branch
+before pushing.
+
+- [ ] **Step 6: Push and open the pull request**
 
 Push `fix/analytical-query-reliability` and open a concise PR titled:
 
