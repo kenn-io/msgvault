@@ -23,7 +23,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const documentBuildSubcommand = "build"
+const (
+	documentsCommandName    = "documents"
+	documentBuildSubcommand = "build"
+)
 
 type documentBuildMode int
 
@@ -111,7 +114,7 @@ func defaultDocumentsCommandDeps() documentsCommandDeps {
 
 func newDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	parent := &cobra.Command{
-		Use:   "documents",
+		Use:   documentsCommandName,
 		Short: "Manage document attachment indexing",
 	}
 	parent.AddCommand(newProbeMistralCmd(deps))
@@ -172,7 +175,10 @@ func newConsentMistralCmd(deps documentsCommandDeps) *cobra.Command {
 		Use:   "consent-mistral",
 		Short: "Record consent for the exact Mistral document policy",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(command, args)
+			}
 			return runConsentMistral(command, capabilityPath, confirmed, deps)
 		},
 	}
@@ -191,10 +197,13 @@ func newBuildDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 		Use:   documentBuildSubcommand,
 		Short: "Extract and index eligible document attachments",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			mode := documentBuildIncremental
 			if fullRebuild {
 				mode = documentBuildStartRebuild
+			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, documentProviderForwardEnv())
 			}
 			return runBuildDocuments(command, capabilityPath, limit, mode, confirmed, deps)
 		},
@@ -212,10 +221,13 @@ func newResumeDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	var limit int
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   "resume",
+		Use:   cmdUseResume,
 		Short: "Resume pending and retry-ready document extraction",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, documentProviderForwardEnv())
+			}
 			return runBuildDocuments(command, capabilityPath, limit, documentBuildResume, confirmed, deps)
 		},
 	}
@@ -250,7 +262,10 @@ func newRetryDocumentCmd(deps documentsCommandDeps) *cobra.Command {
 		Use:   "retry",
 		Short: "Retry one terminal document extraction",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(command, args)
+			}
 			return runRetryDocument(command, capabilityPath, canonicalBlobHash, deps)
 		},
 	}
@@ -268,6 +283,9 @@ func newRetireDocumentProfileCmd(deps documentsCommandDeps) *cobra.Command {
 		Short: "Retire one exact document extraction profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(command, args)
+			}
 			return runRetireDocumentProfile(command, args[0], confirmed, deps)
 		},
 	}
@@ -282,7 +300,10 @@ func newPurgeDocumentDerivedCmd(deps documentsCommandDeps) *cobra.Command {
 		Use:   "purge-derived",
 		Short: "Delete local document derivatives for one exact attachment hash",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(command, args)
+			}
 			return runPurgeDocumentDerived(command, canonicalBlobHash, confirmed, deps)
 		},
 	}
@@ -290,6 +311,23 @@ func newPurgeDocumentDerivedCmd(deps documentsCommandDeps) *cobra.Command {
 	command.Flags().BoolVar(&confirmed, "yes", false, "Confirm permanent deletion of local document derivatives")
 	_ = command.MarkFlagRequired("hash")
 	return command
+}
+
+// documentProviderForwardEnv carries the caller's configured provider key to
+// the daemon-owned subprocess that performs an explicitly requested build.
+func documentProviderForwardEnv() map[string]string {
+	if cfg == nil {
+		return nil
+	}
+	name := cfg.Attachments.Documents.APIKeyEnv
+	if name == "" {
+		return nil
+	}
+	value := os.Getenv(name)
+	if value == "" {
+		return nil
+	}
+	return map[string]string{name: value}
 }
 
 func runProbeMistral(
@@ -557,7 +595,7 @@ func printDocumentBuildPreflight(
 	case documentBuildStartRebuild:
 		modeName = "full rebuild"
 	case documentBuildResume:
-		modeName = "resume"
+		modeName = cmdUseResume
 	}
 	_, _ = fmt.Fprintln(w, "Document build upload preflight:")
 	_, _ = fmt.Fprintf(w,

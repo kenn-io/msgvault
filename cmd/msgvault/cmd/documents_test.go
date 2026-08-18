@@ -28,6 +28,8 @@ import (
 )
 
 func TestProbeMistralCommandWritesCompleteSanitizedManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	previousConfig := cfg
 	t.Cleanup(func() { cfg = previousConfig })
 	cfg = config.NewDefaultConfig()
@@ -39,12 +41,12 @@ func TestProbeMistralCommandWritesCompleteSanitizedManifest(t *testing.T) {
 	probeCalled := false
 	deps := documentsCommandDeps{
 		newMistralClient: func(got *documentindex.DocumentsConfig) (*mistral.Client, error) {
-			assert.Same(t, &cfg.Attachments.Documents, got)
+			assert.Same(&cfg.Attachments.Documents, got)
 			return new(mistral.Client), nil
 		},
 		runCapabilityProbe: func(_ context.Context, _ *mistral.Client, got mistral.ProbeConfig) (mistral.CapabilityManifest, error) {
 			probeCalled = true
-			assert.Equal(t, "synthetic-fixtures", got.Fixtures.FixtureDirectory)
+			assert.Equal("synthetic-fixtures", got.Fixtures.FixtureDirectory)
 			return commandCapabilityManifest(t, cfg.Attachments.Documents.MaxPagesPerDocument), nil
 		},
 	}
@@ -54,16 +56,17 @@ func TestProbeMistralCommandWritesCompleteSanitizedManifest(t *testing.T) {
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"probe-mistral", "--fixtures", "synthetic-fixtures"})
 
-	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.True(t, probeCalled)
+	require.NoError(command.ExecuteContext(t.Context()))
+	assert.True(probeCalled)
 	manifest, err := mistral.DecodeCapabilityManifest(bytes.NewReader(output.Bytes()))
-	require.NoError(t, err)
-	require.Len(t, manifest.Results, len(mistral.CandidateFormats()))
-	assert.Equal(t, mistral.ProbeStatusPassed, manifest.Results[0].Status)
-	assert.NotContains(t, output.String(), "synthetic-fixtures")
+	require.NoError(err)
+	require.Len(manifest.Results, len(mistral.CandidateFormats()))
+	assert.Equal(mistral.ProbeStatusPassed, manifest.Results[0].Status)
+	assert.NotContains(output.String(), "synthetic-fixtures")
 }
 
 func TestProbeMistralValidateOnlyNeedsNoProviderConfiguration(t *testing.T) {
+	assert := assert.New(t)
 	previousConfig := cfg
 	t.Cleanup(func() { cfg = previousConfig })
 	cfg = config.NewDefaultConfig()
@@ -77,7 +80,7 @@ func TestProbeMistralValidateOnlyNeedsNoProviderConfiguration(t *testing.T) {
 		},
 		validateProbeFixtures: func(_ context.Context, _ mistral.Policy, got mistral.ProbeFixtureConfig) error {
 			validationCalled = true
-			assert.Equal(t, "synthetic-fixtures", got.FixtureDirectory)
+			assert.Equal("synthetic-fixtures", got.FixtureDirectory)
 			return nil
 		},
 	}
@@ -88,16 +91,17 @@ func TestProbeMistralValidateOnlyNeedsNoProviderConfiguration(t *testing.T) {
 	command.SetArgs([]string{"probe-mistral", "--fixtures", "synthetic-fixtures", "--validate-only"})
 
 	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.False(t, providerCalled)
-	assert.True(t, validationCalled)
-	assert.Contains(t, output.String(), "Validated 26 private Mistral fixture(s) locally")
-	assert.Contains(t, output.String(), "no provider requests")
-	assert.NotContains(t, output.String(), "synthetic-fixtures")
+	assert.False(providerCalled)
+	assert.True(validationCalled)
+	assert.Contains(output.String(), "Validated 26 private Mistral fixture(s) locally")
+	assert.Contains(output.String(), "no provider requests")
+	assert.NotContains(output.String(), "synthetic-fixtures")
 }
 
 func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	markDaemonCLISubprocessForTest(t)
 	previousConfig := cfg
 	t.Cleanup(func() { cfg = previousConfig })
 	cfg = config.NewDefaultConfig()
@@ -305,6 +309,7 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 }
 
 func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	previousConfig := cfg
@@ -401,6 +406,7 @@ func TestDocumentsSearchDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) 
 }
 
 func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {
+	assert := assert.New(t)
 	openStoreCalled := false
 	cleanupCalled := false
 	reader := commandDocumentReadClient{
@@ -408,7 +414,7 @@ func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {
 			_ context.Context,
 			request store.DocumentSearchRequest,
 		) (store.DocumentSearchResponse, error) {
-			assert.Equal(t, "damage report", request.Query)
+			assert.Equal("damage report", request.Query)
 			return store.DocumentSearchResponse{Results: []store.DocumentSearchResult{{
 				AttachmentID: 3, MessageID: 4, Filename: "report.pdf", Rank: 1,
 			}}}, nil
@@ -428,12 +434,13 @@ func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"search", "damage report", "--json"})
 	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.False(t, openStoreCalled)
-	assert.True(t, cleanupCalled)
-	assert.Contains(t, output.String(), "report.pdf")
+	assert.False(openStoreCalled)
+	assert.True(cleanupCalled)
+	assert.Contains(output.String(), "report.pdf")
 }
 
 func TestDocumentsStatusUsesConfiguredReadClient(t *testing.T) {
+	assert := assert.New(t)
 	previousConfig := cfg
 	t.Cleanup(func() { cfg = previousConfig })
 	cfg = config.NewDefaultConfig()
@@ -448,9 +455,9 @@ func TestDocumentsStatusUsesConfiguredReadClient(t *testing.T) {
 			_ context.Context,
 			request store.DocumentIndexStatusRequest,
 		) (store.DocumentIndexStatusResponse, error) {
-			assert.NotEmpty(t, request.ProfileID)
-			assert.Equal(t, "original", request.ExtractionInputKey)
-			assert.NotEmpty(t, request.AllowedMediaTypes)
+			assert.NotEmpty(request.ProfileID)
+			assert.Equal("original", request.ExtractionInputKey)
+			assert.NotEmpty(request.AllowedMediaTypes)
 			return store.DocumentIndexStatusResponse{Status: store.DocumentIndexStatus{
 				ProfileExists: true, ReadyOwners: 3,
 			}}, nil
@@ -470,12 +477,13 @@ func TestDocumentsStatusUsesConfiguredReadClient(t *testing.T) {
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"status", "--capabilities", manifestPath, "--json"})
 	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.False(t, openStoreCalled)
-	assert.True(t, cleanupCalled)
-	assert.Contains(t, output.String(), `"ready_owners":3`)
+	assert.False(openStoreCalled)
+	assert.True(cleanupCalled)
+	assert.Contains(output.String(), `"ready_owners":3`)
 }
 
 func TestDocumentsBuildRefusesAPIUseBeforeExactConsent(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
 	previousConfig := cfg
 	t.Cleanup(func() { cfg = previousConfig })
 	cfg = config.NewDefaultConfig()
@@ -501,6 +509,7 @@ func TestDocumentsBuildRefusesAPIUseBeforeExactConsent(t *testing.T) {
 }
 
 func TestDocumentFullRebuildResumesDurableTargetSnapshot(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	previousConfig := cfg

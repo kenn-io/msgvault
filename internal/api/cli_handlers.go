@@ -1351,16 +1351,27 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 
 // cliRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
-// alone; command groups whose subcommand matters (currently only "backup")
-// are checked against args[1] as well, since e.g. "backup init" and "backup
-// verify" run local, unfrozen archive mutations that the daemon's backup
-// freeze window does not protect against.
+// alone; command groups whose subcommand matters (currently "backup" and
+// "documents") are checked against args[1] as well. Backup admits only the
+// frozen create path, while documents admits only mutations that must run
+// under the daemon's writer lock.
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
+	}
+	if args[0] == "documents" {
+		if len(args) < 2 {
+			return false
+		}
+		switch args[1] {
+		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+			return true
+		default:
+			return false
+		}
 	}
 	switch args[0] {
 	case "add-account",
@@ -1439,9 +1450,9 @@ func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	}
 }
 
-// cliRunEnvAllowed permits the static forwarding allowlist plus the
-// config-named embedding API key variable, which the frontend CLI forwards
-// so a key exported in the caller's shell reaches the embed subprocess.
+// cliRunEnvAllowed permits the static forwarding allowlist plus config-named
+// provider API key variables, which the frontend CLI forwards so a key
+// exported in the caller's shell reaches the daemon subprocess.
 func (s *Server) cliRunEnvAllowed(name string) bool {
 	if clirun.EnvAllowed(name) {
 		return true
@@ -1449,8 +1460,15 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 	if s.cfg == nil {
 		return false
 	}
-	keyEnv := s.cfg.Vector.Embeddings.APIKeyEnv
-	return keyEnv != "" && name == keyEnv
+	for _, keyEnv := range []string{
+		s.cfg.Vector.Embeddings.APIKeyEnv,
+		s.cfg.Attachments.Documents.APIKeyEnv,
+	} {
+		if keyEnv != "" && name == keyEnv {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) cliDedupDeleteStore() (CLIDedupDeleteStore, *apiHTTPError) {

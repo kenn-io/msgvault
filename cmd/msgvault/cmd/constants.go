@@ -39,6 +39,9 @@ const flagJSON = "json"
 // cmdUseList is the shared Cobra use/name for list subcommands.
 const cmdUseList = "list"
 
+// cmdUseResume is the shared Cobra use/name for resume subcommands.
+const cmdUseResume = "resume"
+
 // outputFormatJSON is the "json" value accepted by the --format flag.
 const outputFormatJSON = "json"
 

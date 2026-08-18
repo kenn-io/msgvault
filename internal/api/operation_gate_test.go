@@ -1067,14 +1067,18 @@ func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
 	assert := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	srv.cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_EMBED_API_KEY"
+	srv.cfg.Attachments.Documents.APIKeyEnv = "MSGVAULT_DOCUMENT_API_KEY"
 
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_IMAP_PASSWORD"), "static allowlist entry")
-	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"), "configured api_key_env")
+	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"), "configured embedding api_key_env")
+	assert.True(srv.cliRunEnvAllowed("MSGVAULT_DOCUMENT_API_KEY"), "configured document api_key_env")
 	assert.False(srv.cliRunEnvAllowed("PATH"), "arbitrary env stays rejected")
 
 	unconfigured := &Server{cfg: &config.Config{}}
 	assert.False(unconfigured.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"),
 		"key env rejected when not configured")
+	assert.False(unconfigured.cliRunEnvAllowed("MSGVAULT_DOCUMENT_API_KEY"),
+		"document key env rejected when not configured")
 }
 
 func healthResponseForServer(t *testing.T, srv *Server) HealthResponse {

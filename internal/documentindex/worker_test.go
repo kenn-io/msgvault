@@ -110,6 +110,8 @@ func (p *workerProcessor) Process(
 }
 
 func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	digest := hex.EncodeToString(hash[:])
@@ -124,26 +126,28 @@ func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
 		AttachmentID: 7, CanonicalBlobHash: digest, MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
 	})
-	require.NoError(t, err)
-	require.NotNil(t, catalog.publication)
-	assert.True(t, catalog.claimInput.RequireNoHead)
-	assert.Equal(t, int64(11), catalog.claimInput.SourceSequence)
-	assert.Equal(t, "# Invoice\nAmount 42", catalog.publication.Units[0].Text)
-	assert.NotContains(t, catalog.publication.Units[0].Text, "private")
-	assert.Equal(t, []string{"Invoice"}, catalog.publication.Chunks[0].HeadingPath)
-	assert.Equal(t, 1, catalog.publication.RequestCount)
-	assert.Zero(t, catalog.publication.RetryCount)
-	assert.Positive(t, catalog.publication.ProviderLatencyMS)
-	assert.Equal(t, 1, result.Units)
-	assert.Equal(t, 1, result.Chunks)
-	assert.Nil(t, catalog.failure)
+	require.NoError(err)
+	require.NotNil(catalog.publication)
+	assert.True(catalog.claimInput.RequireNoHead)
+	assert.Equal(int64(11), catalog.claimInput.SourceSequence)
+	assert.Equal("# Invoice\nAmount 42", catalog.publication.Units[0].Text)
+	assert.NotContains(catalog.publication.Units[0].Text, "private")
+	assert.Equal([]string{"Invoice"}, catalog.publication.Chunks[0].HeadingPath)
+	assert.Equal(1, catalog.publication.RequestCount)
+	assert.Zero(catalog.publication.RetryCount)
+	assert.Positive(catalog.publication.ProviderLatencyMS)
+	assert.Equal(1, result.Units)
+	assert.Equal(1, result.Chunks)
+	assert.Nil(catalog.failure)
 
 	entries, err := os.ReadDir(worker.config.SpoolDirectory)
-	require.NoError(t, err)
-	assert.Len(t, entries, 1, "only the package reservation lock remains after publication")
+	require.NoError(err)
+	assert.Len(entries, 1, "only the package reservation lock remains after publication")
 }
 
 func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
@@ -154,15 +158,17 @@ func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
-	require.ErrorIs(t, err, mistral.ErrTransientResponse)
-	require.NotNil(t, catalog.failure)
-	assert.False(t, catalog.failure.Terminal)
-	assert.Equal(t, "provider_transient", catalog.failure.ReasonCode)
-	assert.True(t, catalog.failure.RetryAt.After(time.Now().UTC()))
-	assert.Nil(t, catalog.publication)
+	require.ErrorIs(err, mistral.ErrTransientResponse)
+	require.NotNil(catalog.failure)
+	assert.False(catalog.failure.Terminal)
+	assert.Equal("provider_transient", catalog.failure.ReasonCode)
+	assert.True(catalog.failure.RetryAt.After(time.Now().UTC()))
+	assert.Nil(catalog.publication)
 }
 
 func TestMistralWorkerReleasesClaimAfterRequestCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
@@ -174,14 +180,16 @@ func TestMistralWorkerReleasesClaimAfterRequestCancellation(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
-	require.ErrorIs(t, err, context.Canceled)
-	require.NotNil(t, catalog.failure)
-	require.NoError(t, catalog.failureContextErr)
-	assert.False(t, catalog.failure.Terminal)
-	assert.Equal(t, "provider_interrupted", catalog.failure.ReasonCode)
+	require.ErrorIs(err, context.Canceled)
+	require.NotNil(catalog.failure)
+	require.NoError(catalog.failureContextErr)
+	assert.False(catalog.failure.Terminal)
+	assert.Equal("provider_interrupted", catalog.failure.ReasonCode)
 }
 
 func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{publishErr: errors.New("synthetic publication failure")}
@@ -194,13 +202,15 @@ func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
-	require.ErrorIs(t, err, errDocumentPublication)
-	require.NotNil(t, catalog.failure)
-	assert.False(t, catalog.failure.Terminal)
-	assert.Equal(t, "publication_failed", catalog.failure.ReasonCode)
+	require.ErrorIs(err, errDocumentPublication)
+	require.NotNil(catalog.failure)
+	assert.False(catalog.failure.Terminal)
+	assert.Equal("publication_failed", catalog.failure.ReasonCode)
 }
 
 func TestMistralWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{renewErr: errors.New("synthetic renewal failure")}
@@ -212,11 +222,11 @@ func TestMistralWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
-	require.ErrorIs(t, err, errDocumentLeaseRenewal)
-	assert.Positive(t, catalog.renewals.Load())
-	require.NotNil(t, catalog.failure)
-	assert.False(t, catalog.failure.Terminal)
-	assert.Equal(t, "lease_renewal_failed", catalog.failure.ReasonCode)
+	require.ErrorIs(err, errDocumentLeaseRenewal)
+	assert.Positive(catalog.renewals.Load())
+	require.NotNil(catalog.failure)
+	assert.False(catalog.failure.Terminal)
+	assert.Equal("lease_renewal_failed", catalog.failure.ReasonCode)
 }
 
 func TestMistralWorkerRejectsUnboundedFormatBeforeReadingBytes(t *testing.T) {
@@ -233,6 +243,8 @@ func TestMistralWorkerRejectsUnboundedFormatBeforeReadingBytes(t *testing.T) {
 }
 
 func TestMistralWorkerRecordsOversizedCandidateBeforeReadingBytes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	opener := &workerOpener{content: []byte("unused")}
 	catalog := &workerCatalog{}
 	worker := newTestMistralWorker(t, catalog, opener, &workerProcessor{})
@@ -241,11 +253,11 @@ func TestMistralWorkerRecordsOversizedCandidateBeforeReadingBytes(t *testing.T) 
 		AttachmentID: 1, CanonicalBlobHash: strings.Repeat("a", 64),
 		MIMEType: "application/pdf", Size: (1 << 20) + 1, MessageType: "email",
 	})
-	require.ErrorContains(t, err, "candidate size is outside configured bounds")
-	assert.Zero(t, opener.opened)
-	require.NotNil(t, catalog.failure)
-	assert.True(t, catalog.failure.Terminal)
-	assert.Equal(t, "invalid_local_source", catalog.failure.ReasonCode)
+	require.ErrorContains(err, "candidate size is outside configured bounds")
+	assert.Zero(opener.opened)
+	require.NotNil(catalog.failure)
+	assert.True(catalog.failure.Terminal)
+	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
 }
 
 func TestMistralWorkerClaimsBeforeWritingPrivateSpool(t *testing.T) {
@@ -265,6 +277,8 @@ func TestMistralWorkerClaimsBeforeWritingPrivateSpool(t *testing.T) {
 }
 
 func TestMistralWorkerClassifiesCapabilityDrift(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := validWorkerPDF()
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
@@ -277,10 +291,10 @@ func TestMistralWorkerClassifiesCapabilityDrift(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
-	require.ErrorIs(t, err, mistral.ErrCapabilityContract)
-	require.NotNil(t, catalog.failure)
-	assert.True(t, catalog.failure.Terminal)
-	assert.Equal(t, "provider_capability_changed", catalog.failure.ReasonCode)
+	require.ErrorIs(err, mistral.ErrCapabilityContract)
+	require.NotNil(catalog.failure)
+	assert.True(catalog.failure.Terminal)
+	assert.Equal("provider_capability_changed", catalog.failure.ReasonCode)
 }
 
 func newTestMistralWorker(

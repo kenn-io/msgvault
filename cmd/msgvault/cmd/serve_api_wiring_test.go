@@ -44,10 +44,12 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 }
 
 func TestStoreAPIAdapterReconcilesEnabledDocumentSearchConsumer(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	fixture := storetest.New(t)
 	messageID := fixture.CreateMessage("document-search-adapter")
 	hash := strings.Repeat("a", 64)
-	require.NoError(t, fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+	require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
 		Filename: "evidence.pdf", MIMEType: "application/pdf", Size: 128,
 		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
 		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
@@ -56,22 +58,22 @@ func TestStoreAPIAdapterReconcilesEnabledDocumentSearchConsumer(t *testing.T) {
 	_, created, err := fixture.Store.RegisterAttachmentChangeConsumer(
 		t.Context(), documentindex.DocumentAttachmentConsumerKey,
 	)
-	require.NoError(t, err)
-	require.True(t, created)
+	require.NoError(err)
+	require.True(created)
 
 	adapter := &storeAPIAdapter{store: fixture.Store}
 	_, err = adapter.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "absent"})
-	require.NoError(t, err)
+	require.NoError(err)
 	consumer, err := fixture.Store.GetAttachmentChangeConsumer(
 		t.Context(), documentindex.DocumentAttachmentConsumerKey,
 	)
-	require.NoError(t, err)
-	assert.True(t, consumer.ReconciliationComplete)
+	require.NoError(err)
+	assert.True(consumer.ReconciliationComplete)
 	var occurrences int
-	require.NoError(t, fixture.Store.DB().QueryRow(
+	require.NoError(fixture.Store.DB().QueryRow(
 		`SELECT COUNT(*) FROM document_occurrences`,
 	).Scan(&occurrences))
-	assert.Equal(t, 1, occurrences)
+	assert.Equal(1, occurrences)
 }
 
 func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T) {

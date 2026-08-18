@@ -29,7 +29,7 @@ var embeddingsCmd = &cobra.Command{
 
 var embeddingsBuildCmd = newEmbeddingsBuildCmd("build")
 var embeddingsResumeCmd = &cobra.Command{
-	Use:   "resume",
+	Use:   cmdUseResume,
 	Short: "Resume or top up the current vector embedding generation",
 	Long: `Resume or top up the current vector embedding generation.
 If a matching generation is building, this embeds any messages still

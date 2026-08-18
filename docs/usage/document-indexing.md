@@ -38,8 +38,9 @@ not contact Mistral.
 
 Provider uploads are manual-only. `msgvault serve` performs weekly local
 reconciliation and derivative cleanup when document indexing is enabled, but it
-does not run extraction or contact Mistral. Start every upload batch explicitly
-with `documents build` or `documents resume`.
+never starts extraction on its own. Start every upload batch explicitly with
+`documents build` or `documents resume`; when the daemon owns the archive, it
+runs that requested batch so the command does not contend for the writer lock.
 
 ## Configure the policy
 

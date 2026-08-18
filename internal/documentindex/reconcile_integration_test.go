@@ -54,13 +54,14 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 }
 
 func TestConcurrentReconciliationTreatsAlreadyAdvancedCursorAsSuccess(t *testing.T) {
+	require := require.New(t)
 	f := storetest.New(t)
 	reconciler, err := NewReconciler(f.Store, ReconcilerConfig{
 		AttachmentPageSize: 10, ChangePageSize: 10,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = reconciler.Reconcile(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	messageID := f.CreateMessage("document-reconcile-concurrent")
 	attachmentID := createReconcileAttachment(t, f, messageID, "f")
 
@@ -78,36 +79,38 @@ func TestConcurrentReconciliationTreatsAlreadyAdvancedCursorAsSuccess(t *testing
 	workers.Wait()
 	close(errorsFound)
 	for reconcileErr := range errorsFound {
-		require.NoError(t, reconcileErr)
+		require.NoError(reconcileErr)
 	}
 	assert.Equal(t, []int64{attachmentID}, documentOccurrenceAttachmentIDs(t, f))
 }
 
 func TestOccurrenceReconciliationIgnoresStaleSourceSequence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("document-reconcile-stale")
 	attachmentID := createReconcileAttachment(t, f, messageID, "7")
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 10)
-	require.NoError(t, err)
-	require.True(t, eligible)
+	require.NoError(err)
+	require.True(eligible)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE attachments SET filename = ?, attachment_role = ?, role_source = ? WHERE id = ?`),
 		"stale-name.pdf", store.AttachmentRoleInline,
 		store.AttachmentRoleSourceMIMEDisposition, attachmentID)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 9)
-	require.NoError(t, err)
-	assert.False(t, eligible)
+	require.NoError(err)
+	assert.False(eligible)
 
 	var filename string
 	var sequence int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
 		SELECT filename, source_sequence FROM document_occurrences WHERE attachment_id = ?`),
 		attachmentID,
 	).Scan(&filename, &sequence))
-	assert.Equal(t, "synthetic.pdf", filename)
-	assert.Equal(t, int64(10), sequence)
+	assert.Equal("synthetic.pdf", filename)
+	assert.Equal(int64(10), sequence)
 }
 
 func TestConcurrentOccurrenceReconciliationKeepsHighestSourceSequence(t *testing.T) {
