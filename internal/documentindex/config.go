@@ -38,18 +38,12 @@ const (
 	defaultMaxNormalizedChars        = 25_000_000
 	defaultMaxSpoolBytes       int64 = 512 << 20
 	defaultMinFreeSpaceBytes   int64 = 1 << 30
-	defaultMaxRetries                = 3
 	defaultMaxPagesPerRun            = 10_000
 	defaultMaxEstimatedCostUSD       = 50.0
 	profilePolicyVersion             = 1
-	hardMaxFileBytes           int64 = 500 << 20
-	hardMaxPages                     = 5_000
-	hardMaxResponseBytes       int64 = 512 << 20
 	hardMaxNormalizedChars           = 100_000_000
 	hardMaxSpoolBytes          int64 = 100 << 30
 	hardMaxFreeSpaceBytes      int64 = 1 << 40
-	hardMaxRequestTimeout            = 30 * time.Minute
-	hardMaxRetries                   = 10
 	hardMaxPagesPerRun               = 1_000_000
 	hardMaxEstimatedCostUSD          = 1_000_000.0
 )
@@ -67,8 +61,8 @@ func DefaultDocumentsConfig() DocumentsConfig {
 		MaxNormalizedChars:        defaultMaxNormalizedChars,
 		MaxSpoolBytes:             defaultMaxSpoolBytes,
 		MinFreeSpaceBytes:         defaultMinFreeSpaceBytes,
-		RequestTimeout:            5 * time.Minute,
-		MaxRetries:                defaultMaxRetries,
+		RequestTimeout:            mistral.DefaultTimeout,
+		MaxRetries:                mistral.DefaultMaxRetries,
 		MaxPagesPerRun:            defaultMaxPagesPerRun,
 		MaxEstimatedCostUSDPerRun: defaultMaxEstimatedCostUSD,
 	}
@@ -245,14 +239,14 @@ func (c *DocumentsConfig) Validate() error {
 		value int64
 		limit int64
 	}{
-		{name: "max_file_bytes", value: c.MaxFileBytes, limit: hardMaxFileBytes},
-		{name: "max_pages_per_document", value: int64(c.MaxPagesPerDocument), limit: hardMaxPages},
-		{name: "max_response_bytes", value: c.MaxResponseBytes, limit: hardMaxResponseBytes},
+		{name: "max_file_bytes", value: c.MaxFileBytes, limit: mistral.MaxDocumentBytes},
+		{name: "max_pages_per_document", value: int64(c.MaxPagesPerDocument), limit: int64(mistral.MaxUnits)},
+		{name: "max_response_bytes", value: c.MaxResponseBytes, limit: mistral.MaxResponseBytes},
 		{name: "max_normalized_chars", value: int64(c.MaxNormalizedChars), limit: hardMaxNormalizedChars},
 		{name: "max_spool_bytes", value: c.MaxSpoolBytes, limit: hardMaxSpoolBytes},
 		{name: "min_free_space_bytes", value: c.MinFreeSpaceBytes, limit: hardMaxFreeSpaceBytes},
-		{name: "request_timeout", value: int64(c.RequestTimeout), limit: int64(hardMaxRequestTimeout)},
-		{name: "max_retries", value: int64(c.MaxRetries), limit: hardMaxRetries},
+		{name: "request_timeout", value: int64(c.RequestTimeout), limit: int64(mistral.MaxTimeout)},
+		{name: "max_retries", value: int64(c.MaxRetries), limit: int64(mistral.MaxRetries)},
 		{name: "max_pages_per_run", value: int64(c.MaxPagesPerRun), limit: hardMaxPagesPerRun},
 	}
 	for _, field := range bounded {

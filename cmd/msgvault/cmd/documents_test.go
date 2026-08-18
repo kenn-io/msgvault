@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	internalmime "go.kenn.io/msgvault/internal/mime"
@@ -113,7 +113,7 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	cfg.Attachments.Documents.PricingAssumptionOn = "2026-08-13"
 
 	fixture := storetest.New(t)
-	content := commandValidPDF("synthetic document")
+	content := mistraltest.MinimalPDF("synthetic document")
 	hash := sha256.Sum256(content)
 	digest := hex.EncodeToString(hash[:])
 	messageID := fixture.CreateMessage("documents-command")
@@ -522,8 +522,8 @@ func TestDocumentFullRebuildResumesDurableTargetSnapshot(t *testing.T) {
 	fixture := storetest.New(t)
 	contents := make(map[string][]byte)
 	for index, content := range [][]byte{
-		commandValidPDF("first rebuild document"),
-		commandValidPDF("second rebuild document"),
+		mistraltest.MinimalPDF("first rebuild document"),
+		mistraltest.MinimalPDF("second rebuild document"),
 	} {
 		digestBytes := sha256.Sum256(content)
 		digest := hex.EncodeToString(digestBytes[:])
@@ -596,8 +596,8 @@ func TestDocumentBuildRecordsOversizedCandidateAndContinues(t *testing.T) {
 	require := require.New(t)
 	fixture := storetest.New(t)
 	contents := make(map[string][]byte)
-	searchable := commandValidPDF("searchable synthetic document")
-	oversized := append(commandValidPDF("oversized synthetic document"), bytes.Repeat([]byte("% padding\n"), 20)...)
+	searchable := mistraltest.MinimalPDF("searchable synthetic document")
+	oversized := append(mistraltest.MinimalPDF("oversized synthetic document"), bytes.Repeat([]byte("% padding\n"), 20)...)
 	for index, content := range [][]byte{
 		oversized,
 		searchable,
@@ -647,7 +647,7 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := storetest.New(t)
-	content := commandValidPDF("synthetic canceled document")
+	content := mistraltest.MinimalPDF("synthetic canceled document")
 	digestBytes := sha256.Sum256(content)
 	digest := hex.EncodeToString(digestBytes[:])
 	messageID := fixture.CreateMessage("documents-canceled")
@@ -918,60 +918,9 @@ func commandCapabilityManifest(t *testing.T, maxUnits int) mistral.CapabilityMan
 	documentsConfig.MaxPagesPerDocument = maxUnits
 	policy, err := documentsConfig.MistralPolicy()
 	require.NoError(t, err)
-	values := policy.Values()
-	manifest := mistral.CapabilityManifest{
-		SchemaVersion: mistral.CapabilitySchemaVersion, ProbeFixtureContract: 2,
-		ObservedOn: time.Now().UTC().Format(time.DateOnly), Endpoint: values.Endpoint,
-		Region: values.Region, RequestedModel: values.Model, MaxUnits: values.MaxUnits,
-		Results: make([]mistral.CapabilityResult, 0, len(mistral.CandidateFormats())),
-	}
-	for _, candidate := range mistral.CandidateFormats() {
-		result := mistral.CapabilityResult{
-			FormatID: candidate.ID, Family: candidate.Family, MediaType: candidate.MediaType,
-			UnitKind: candidate.UnitKind, Status: mistral.ProbeStatusPassed,
-			FixtureDigest: strings.Repeat("0", 16), RequestFingerprint: strings.Repeat("0", 64),
-			ReturnedModel: values.Model, UnitCount: 1, UnitsProcessed: 1,
-			UnitBoundMethod: mistral.UnitBoundNone,
-		}
-		if candidate.ID == "pdf" {
-			result.RequestFingerprint = commandRequestFingerprint(t, values, candidate)
-			result.UnitCount = 2
-			result.UnitsProcessed = 2
-			result.UnitBoundMethod = mistral.UnitBoundProviderRequest
-			result.FixtureUnits = 2
-			result.BoundRequestedUnits = 1
-			result.BoundUnitsProcessed = 1
-		}
-		manifest.Results = append(manifest.Results, result)
-	}
-	require.NoError(t, manifest.ValidateComplete())
-	return manifest
-}
-
-func commandRequestFingerprint(
-	t *testing.T,
-	values mistral.PolicyValues,
-	candidate mistral.CandidateFormat,
-) string {
-	t.Helper()
-	payload := struct {
-		Version   int                     `json:"version"`
-		Endpoint  string                  `json:"endpoint"`
-		Model     string                  `json:"model"`
-		Candidate mistral.CandidateFormat `json:"candidate"`
-		Options   struct {
-			Pages         string `json:"pages"`
-			ExtractHeader bool   `json:"extract_header"`
-			ExtractFooter bool   `json:"extract_footer"`
-		} `json:"options"`
-	}{Version: 2, Endpoint: values.Endpoint, Model: values.Model, Candidate: candidate}
-	payload.Options.Pages = fmt.Sprintf("0-%d", values.MaxUnits-1)
-	payload.Options.ExtractHeader = values.ExtractHeader
-	payload.Options.ExtractFooter = values.ExtractFooter
-	encoded, err := json.Marshal(payload)
+	manifest, err := mistraltest.SyntheticManifest(policy, true)
 	require.NoError(t, err)
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:])
+	return manifest
 }
 
 func commandDocumentOccurrenceCount(t *testing.T, st *store.Store) int {
@@ -990,29 +939,4 @@ func commandMistralResult(markdown string) mistral.Result {
 		ReturnedModel: mistral.DefaultModel, UnitsProcessed: 1,
 		Metrics: mistral.RequestMetrics{Requests: 1, Latency: time.Millisecond},
 	}
-}
-
-func commandValidPDF(marker string) []byte {
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
-	}
-	var output bytes.Buffer
-	output.WriteString("%PDF-1.4\n% " + marker + "\n")
-	offsets := make([]int, len(objects))
-	for index, object := range objects {
-		offsets[index] = output.Len()
-		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
-	}
-	xref := output.Len()
-	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
-	for _, offset := range offsets {
-		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
-	}
-	_, _ = fmt.Fprintf(&output,
-		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n",
-		len(objects)+1, xref,
-	)
-	return output.Bytes()
 }

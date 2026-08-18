@@ -5,9 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -112,7 +111,7 @@ func (p *workerProcessor) Process(
 func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	digest := hex.EncodeToString(hash[:])
 	catalog := &workerCatalog{}
@@ -148,7 +147,7 @@ func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
 func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
 	processor := &workerProcessor{err: mistral.ErrTransientResponse}
@@ -169,7 +168,7 @@ func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
 func TestMistralWorkerReleasesClaimAfterRequestCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -190,7 +189,7 @@ func TestMistralWorkerReleasesClaimAfterRequestCancellation(t *testing.T) {
 func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{publishErr: errors.New("synthetic publication failure")}
 	worker := newTestMistralWorker(
@@ -211,7 +210,7 @@ func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
 func TestMistralWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{renewErr: errors.New("synthetic renewal failure")}
 	processor := &workerProcessor{block: make(chan struct{})}
@@ -261,7 +260,7 @@ func TestMistralWorkerRecordsOversizedCandidateBeforeReadingBytes(t *testing.T) 
 }
 
 func TestMistralWorkerClaimsBeforeWritingPrivateSpool(t *testing.T) {
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{claimErr: store.ErrDocumentExtractionClaimed}
 	worker := newTestMistralWorker(t, catalog, &workerOpener{content: content}, &workerProcessor{})
@@ -279,7 +278,7 @@ func TestMistralWorkerClaimsBeforeWritingPrivateSpool(t *testing.T) {
 func TestMistralWorkerClassifiesCapabilityDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	content := validWorkerPDF()
+	content := mistraltest.MinimalPDF("worker test")
 	hash := sha256.Sum256(content)
 	catalog := &workerCatalog{}
 	worker := newTestMistralWorker(
@@ -333,60 +332,13 @@ func testMistralPolicy(t *testing.T) mistral.Policy {
 
 func testCapabilityManifest(t *testing.T, policy mistral.Policy) mistral.CapabilityManifest {
 	t.Helper()
-	values := policy.Values()
-	manifest := mistral.CapabilityManifest{
-		SchemaVersion: mistral.CapabilitySchemaVersion, ProbeFixtureContract: 2,
-		ObservedOn: time.Now().UTC().Format(time.DateOnly), Endpoint: values.Endpoint,
-		Region: values.Region, RequestedModel: values.Model, MaxUnits: values.MaxUnits,
-		Results: make([]mistral.CapabilityResult, 0, len(mistral.CandidateFormats())),
-	}
-	for _, candidate := range mistral.CandidateFormats() {
-		result := mistral.CapabilityResult{
-			FormatID: candidate.ID, Family: candidate.Family, MediaType: candidate.MediaType,
-			UnitKind: candidate.UnitKind, Status: mistral.ProbeStatusPassed,
-			FixtureDigest: strings.Repeat("0", 16), RequestFingerprint: strings.Repeat("0", 64),
-			ReturnedModel: values.Model, UnitCount: 1, UnitsProcessed: 1,
-			UnitBoundMethod: mistral.UnitBoundNone,
-		}
-		if candidate.ID == "pdf" {
-			result.RequestFingerprint = testRequestFingerprint(t, values, candidate)
-			result.UnitCount = 2
-			result.UnitsProcessed = 2
-			result.UnitBoundMethod = mistral.UnitBoundProviderRequest
-			result.FixtureUnits = 2
-			result.BoundRequestedUnits = 1
-			result.BoundUnitsProcessed = 1
-		}
-		manifest.Results = append(manifest.Results, result)
+	manifest, err := mistraltest.SyntheticManifest(policy, true)
+	require.NoError(t, err)
+	for index := range manifest.Results {
+		manifest.Results[index].FixtureDigest = strings.Repeat("0", 16)
 	}
 	require.NoError(t, manifest.ValidateComplete())
 	return manifest
-}
-
-func testRequestFingerprint(
-	t *testing.T,
-	values mistral.PolicyValues,
-	candidate mistral.CandidateFormat,
-) string {
-	t.Helper()
-	payload := struct {
-		Version   int                     `json:"version"`
-		Endpoint  string                  `json:"endpoint"`
-		Model     string                  `json:"model"`
-		Candidate mistral.CandidateFormat `json:"candidate"`
-		Options   struct {
-			Pages         string `json:"pages"`
-			ExtractHeader bool   `json:"extract_header"`
-			ExtractFooter bool   `json:"extract_footer"`
-		} `json:"options"`
-	}{Version: 2, Endpoint: values.Endpoint, Model: values.Model, Candidate: candidate}
-	payload.Options.Pages = fmt.Sprintf("0-%d", values.MaxUnits-1)
-	payload.Options.ExtractHeader = values.ExtractHeader
-	payload.Options.ExtractFooter = values.ExtractFooter
-	encoded, err := json.Marshal(payload)
-	require.NoError(t, err)
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:])
 }
 
 func successfulWorkerResult(markdown string) mistral.Result {
@@ -398,29 +350,4 @@ func successfulWorkerResult(markdown string) mistral.Result {
 		ReturnedModel: mistral.DefaultModel, UnitsProcessed: 1,
 		Metrics: mistral.RequestMetrics{Requests: 1, Latency: time.Millisecond},
 	}
-}
-
-func validWorkerPDF() []byte {
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
-	}
-	var output bytes.Buffer
-	output.WriteString("%PDF-1.4\n")
-	offsets := make([]int, len(objects))
-	for index, object := range objects {
-		offsets[index] = output.Len()
-		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
-	}
-	xref := output.Len()
-	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
-	for _, offset := range offsets {
-		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
-	}
-	_, _ = fmt.Fprintf(&output,
-		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n",
-		len(objects)+1, xref,
-	)
-	return output.Bytes()
 }

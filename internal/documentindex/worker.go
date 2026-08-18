@@ -327,8 +327,6 @@ func (w *MistralWorker) recordFailure(
 
 func classifyDocumentExtractionFailure(err error) (bool, string) {
 	switch {
-	case errors.Is(err, mistral.ErrSpoolCapacity):
-		return false, "spool_capacity_unavailable"
 	case errors.Is(err, errDocumentLeaseRenewal):
 		return false, "lease_renewal_failed"
 	case errors.Is(err, errDocumentPublication):
@@ -337,7 +335,10 @@ func classifyDocumentExtractionFailure(err error) (bool, string) {
 		return false, "provider_interrupted"
 	case errors.Is(err, errDocumentPreparation):
 		return true, "invalid_local_source"
-	case errors.Is(err, mistral.ErrTransientResponse):
+	case mistral.IsRetryable(err):
+		if errors.Is(err, mistral.ErrSpoolCapacity) {
+			return false, "spool_capacity_unavailable"
+		}
 		return false, "provider_transient"
 	case errors.Is(err, mistral.ErrPermanentResponse):
 		return true, "provider_rejected"
