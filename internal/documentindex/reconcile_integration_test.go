@@ -68,13 +68,11 @@ func TestConcurrentReconciliationTreatsAlreadyAdvancedCursorAsSuccess(t *testing
 	errorsFound := make(chan error, 2)
 	var workers sync.WaitGroup
 	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			_, reconcileErr := reconciler.Reconcile(t.Context())
 			errorsFound <- reconcileErr
-		}()
+		})
 	}
 	close(start)
 	workers.Wait()
@@ -83,6 +81,63 @@ func TestConcurrentReconciliationTreatsAlreadyAdvancedCursorAsSuccess(t *testing
 		require.NoError(t, reconcileErr)
 	}
 	assert.Equal(t, []int64{attachmentID}, documentOccurrenceAttachmentIDs(t, f))
+}
+
+func TestOccurrenceReconciliationIgnoresStaleSourceSequence(t *testing.T) {
+	f := storetest.New(t)
+	messageID := f.CreateMessage("document-reconcile-stale")
+	attachmentID := createReconcileAttachment(t, f, messageID, "7")
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 10)
+	require.NoError(t, err)
+	require.True(t, eligible)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET filename = ?, attachment_role = ?, role_source = ? WHERE id = ?`),
+		"stale-name.pdf", store.AttachmentRoleInline,
+		store.AttachmentRoleSourceMIMEDisposition, attachmentID)
+	require.NoError(t, err)
+	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 9)
+	require.NoError(t, err)
+	assert.False(t, eligible)
+
+	var filename string
+	var sequence int64
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT filename, source_sequence FROM document_occurrences WHERE attachment_id = ?`),
+		attachmentID,
+	).Scan(&filename, &sequence))
+	assert.Equal(t, "synthetic.pdf", filename)
+	assert.Equal(t, int64(10), sequence)
+}
+
+func TestConcurrentOccurrenceReconciliationKeepsHighestSourceSequence(t *testing.T) {
+	f := storetest.New(t)
+	messageID := f.CreateMessage("document-reconcile-monotonic")
+	attachmentID := createReconcileAttachment(t, f, messageID, "8")
+
+	start := make(chan struct{})
+	errorsFound := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, sequence := range []int64{50, 100} {
+		workers.Go(func() {
+			<-start
+			_, _, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, sequence)
+			errorsFound <- err
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		require.NoError(t, err)
+	}
+
+	var sequence int64
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT source_sequence FROM document_occurrences WHERE attachment_id = ?`),
+		attachmentID,
+	).Scan(&sequence))
+	assert.Equal(t, int64(100), sequence)
 }
 
 func TestReconcilerRemovesCascadedOccurrenceFromJournalReplay(t *testing.T) {

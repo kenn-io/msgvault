@@ -317,7 +317,7 @@ func TestSearchDocumentsAppliesCandidateLimitAfterOccurrenceDeduplication(t *tes
 	assert.Contains(t, []int64{response.Results[0].AttachmentID, response.Results[1].AttachmentID}, secondAttachmentID)
 }
 
-func TestSearchDocumentsExpandsCandidateWindowAcrossPagination(t *testing.T) {
+func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -337,12 +337,17 @@ func TestSearchDocumentsExpandsCandidateWindowAcrossPagination(t *testing.T) {
 
 	cursor := ""
 	seen := make(map[int64]struct{}, copies)
+	nextRank := 1
 	for {
 		response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
 			Query: "nebula", PageSize: 10, Cursor: cursor,
 		})
 		require.NoError(err)
 		for _, result := range response.Results {
+			_, duplicate := seen[result.AttachmentID]
+			require.False(duplicate, "a stable cursor must not repeat an occurrence")
+			require.Equal(nextRank, result.Rank)
+			nextRank++
 			seen[result.AttachmentID] = struct{}{}
 		}
 		if response.NextCursor == "" {
@@ -351,7 +356,7 @@ func TestSearchDocumentsExpandsCandidateWindowAcrossPagination(t *testing.T) {
 		}
 		cursor = response.NextCursor
 	}
-	require.Len(seen, copies, "pagination must expand beyond the initial 200-candidate window")
+	require.Len(seen, copies, "pagination must cover the fixed ranked candidate set")
 }
 
 func publishSearchDocument(

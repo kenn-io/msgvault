@@ -10,7 +10,8 @@ import (
 	"slices"
 	"time"
 
-	"go.kenn.io/msgvault/internal/documentindex/mistral"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -42,22 +43,33 @@ type MistralWorkerConfig struct {
 	LeaseDuration    time.Duration
 	RetryDelay       time.Duration
 	SpoolDirectory   string
-	MaxFileBytes     int64
 	MaxSpoolBytes    int64
 	MinFreeBytes     int64
-	MaxPages         int
 	MessageTypes     []string
 	ReplaceCurrent   bool
-	NormalizePolicy  NormalizePolicy
+	Policy           mistral.Policy
 	CapabilityPolicy mistral.CapabilityManifest
+}
+
+type MistralProcessor interface {
+	Process(
+		ctx context.Context,
+		prepared *mistral.PreparedDocument,
+		authorization mistral.FormatAuthorization,
+	) (mistral.Result, error)
+}
+
+type authorizedFormat struct {
+	format        mistral.CandidateFormat
+	authorization mistral.FormatAuthorization
 }
 
 type MistralWorker struct {
 	catalog      DocumentExtractionCatalog
 	opener       DocumentAttachmentOpener
-	processor    mistral.Processor
+	processor    MistralProcessor
 	config       MistralWorkerConfig
-	formats      map[string]mistral.CandidateFormat
+	formats      map[string]authorizedFormat
 	messageTypes map[string]struct{}
 }
 
@@ -75,45 +87,33 @@ type DocumentExtractionResult struct {
 func NewMistralWorker(
 	catalog DocumentExtractionCatalog,
 	opener DocumentAttachmentOpener,
-	processor mistral.Processor,
+	processor MistralProcessor,
 	config MistralWorkerConfig,
 ) (*MistralWorker, error) {
 	if catalog == nil || opener == nil || processor == nil {
 		return nil, errors.New("mistral document worker requires catalog, attachment opener, and processor")
 	}
 	if config.ProfileID == "" || config.LeaseOwner == "" || config.SpoolDirectory == "" ||
-		config.MaxFileBytes <= 0 || config.MaxPages <= 0 || config.LeaseDuration <= 0 ||
-		config.MaxSpoolBytes < config.MaxFileBytes || config.MinFreeBytes <= 0 ||
+		config.LeaseDuration <= 0 || config.MinFreeBytes <= 0 ||
 		config.LeaseDuration > time.Hour || config.RetryDelay <= 0 || config.RetryDelay > 7*24*time.Hour {
 		return nil, errors.New("mistral document worker configuration is incomplete")
 	}
 	if config.ReplaceCurrent != (config.RebuildID != "") {
 		return nil, errors.New("mistral document worker replacement requires an exact rebuild")
 	}
-	if err := config.CapabilityPolicy.ValidateComplete(); err != nil {
-		return nil, err
+	if _, err := config.Policy.CanonicalJSON(config.CapabilityPolicy); err != nil {
+		return nil, fmt.Errorf("validate Mistral capability policy: %w", err)
 	}
-	target := processor.Target()
-	if target.Endpoint != config.CapabilityPolicy.Endpoint || target.Region != config.CapabilityPolicy.Region ||
-		target.Model != config.CapabilityPolicy.RequestedModel {
-		return nil, errors.New("mistral document worker target does not match capability manifest")
-	}
-	if config.MaxPages > config.CapabilityPolicy.MaxPages {
-		return nil, errors.New("mistral document worker page limit exceeds probed policy")
-	}
-	if err := validateNormalizePolicy(config.NormalizePolicy); err != nil {
-		return nil, err
-	}
-	formats := make(map[string]mistral.CandidateFormat)
-	for _, result := range config.CapabilityPolicy.Results {
-		if result.Status != mistral.ProbeStatusPassed {
+	formats := make(map[string]authorizedFormat)
+	for _, format := range mistral.CandidateFormats() {
+		authorization, err := config.Policy.Authorize(config.CapabilityPolicy, format.ID)
+		if err != nil {
 			continue
 		}
-		format, ok := mistral.CandidateFormatByID(result.FormatID)
-		if !ok {
-			return nil, fmt.Errorf("mistral capability manifest contains unknown format %q", result.FormatID)
-		}
-		formats[format.MediaType] = format
+		formats[format.MediaType] = authorizedFormat{format: format, authorization: authorization}
+	}
+	if len(formats) == 0 {
+		return nil, errors.New("no format has authorized upload authority; run the authenticated capability probe and supply its manifest")
 	}
 	messageTypes := make(map[string]struct{}, len(config.MessageTypes))
 	for _, messageType := range config.MessageTypes {
@@ -136,7 +136,7 @@ func (w *MistralWorker) ProcessCandidate(
 	ctx context.Context,
 	candidate store.DocumentExtractionCandidate,
 ) (result DocumentExtractionResult, runErr error) {
-	format, allowed := w.formats[candidate.MIMEType]
+	authorized, allowed := w.formats[candidate.MIMEType]
 	if !allowed {
 		return result, fmt.Errorf("document media type %q lacks passing capability authority", candidate.MIMEType)
 	}
@@ -145,21 +145,8 @@ func (w *MistralWorker) ProcessCandidate(
 			return result, fmt.Errorf("document message type %q is outside configured scope", candidate.MessageType)
 		}
 	}
-	if candidate.Size <= 0 || candidate.Size > w.config.MaxFileBytes {
-		return result, errors.New("document candidate size is outside configured bounds")
-	}
-
-	source, authoritativeSize, err := w.opener.OpenStream(ctx, candidate.CanonicalBlobHash)
-	if err != nil {
-		return result, fmt.Errorf("open document attachment: %w", err)
-	}
-	if authoritativeSize != candidate.Size {
-		_ = source.Close()
-		return result, errors.New("document attachment size no longer matches reconciled metadata")
-	}
 	extractionID, err := newDocumentExtractionID()
 	if err != nil {
-		_ = source.Close()
 		return result, err
 	}
 	claim, err := w.catalog.ClaimDocumentExtraction(ctx, store.DocumentExtractionClaimInput{
@@ -170,11 +157,10 @@ func (w *MistralWorker) ProcessCandidate(
 		OccurrenceMIMEType:     candidate.MIMEType,
 		OccurrenceMessageType:  candidate.MessageType,
 		LeaseOwner:             w.config.LeaseOwner, LeaseUntil: time.Now().UTC().Add(w.config.LeaseDuration),
-		LocalBytes: authoritativeSize, SourceSequence: candidate.SourceSequence,
+		LocalBytes: candidate.Size, SourceSequence: candidate.SourceSequence,
 		RequireNoHead: !w.config.ReplaceCurrent,
 	})
 	if err != nil {
-		_ = source.Close()
 		return result, err
 	}
 	workCtx, cancelWork, renewalDone, renewalErr := w.keepClaimAlive(ctx, claim)
@@ -182,28 +168,41 @@ func (w *MistralWorker) ProcessCandidate(
 		cancelWork()
 		<-renewalDone
 	}()
-	document, cleanup, err := mistral.SpoolVerifiedSource(workCtx, source, mistral.SpoolOptions{
-		Directory: w.config.SpoolDirectory, MediaType: candidate.MIMEType,
+	failPreparation := func(cause error) error {
+		preparationErr := fmt.Errorf("%w: %w", errDocumentPreparation, cause)
+		if renewErr := readRenewalError(renewalErr); renewErr != nil {
+			preparationErr = errors.Join(preparationErr, renewErr)
+		}
+		return errors.Join(
+			preparationErr,
+			w.recordFailureAfterError(ctx, claim, preparationErr, mistral.RequestMetrics{}),
+		)
+	}
+	if candidate.Size <= 0 || candidate.Size > w.config.Policy.Values().MaxDocumentBytes {
+		return result, failPreparation(errors.New("document candidate size is outside configured bounds"))
+	}
+	source, authoritativeSize, err := w.opener.OpenStream(workCtx, candidate.CanonicalBlobHash)
+	if err != nil {
+		return result, failPreparation(fmt.Errorf("open document attachment: %w", err))
+	}
+	if authoritativeSize != candidate.Size {
+		closeErr := source.Close()
+		return result, failPreparation(errors.Join(
+			errors.New("document attachment size no longer matches reconciled metadata"), closeErr,
+		))
+	}
+	prepared, err := mistral.Prepare(workCtx, source, w.config.Policy, mistral.PrepareOptions{
+		Directory: w.config.SpoolDirectory, DeclaredMediaType: candidate.MIMEType,
 		ExpectedSize: authoritativeSize, ExpectedSHA256: candidate.CanonicalBlobHash,
-		MaxBytes: w.config.MaxFileBytes, MaxSpoolBytes: w.config.MaxSpoolBytes,
-		MinFreeBytes: w.config.MinFreeBytes,
+		MaxSpoolBytes: w.config.MaxSpoolBytes, MinFreeBytes: w.config.MinFreeBytes,
 	})
 	if err != nil {
-		err = fmt.Errorf("%w: %w", errDocumentPreparation, err)
-		if renewErr := readRenewalError(renewalErr); renewErr != nil {
-			err = errors.Join(err, renewErr)
-		}
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, mistral.RequestMetrics{}))
-		return result, err
+		return result, failPreparation(err)
 	}
-	defer func() { runErr = errors.Join(runErr, cleanup()) }()
+	defer func() { runErr = errors.Join(runErr, prepared.Release()) }()
 
-	options := mistral.DefaultOptions()
-	if format.Family == "pdf" {
-		options.Pages = fmt.Sprintf("0-%d", w.config.MaxPages-1)
-	}
 	providerStarted := time.Now()
-	providerResult, err := w.processor.Process(workCtx, document, options)
+	providerResult, err := w.processor.Process(workCtx, prepared, authorized.authorization)
 	providerMetrics := providerResult.Metrics
 	if err != nil {
 		providerMetrics = mistral.MetricsFromError(err)
@@ -224,24 +223,7 @@ func (w *MistralWorker) ProcessCandidate(
 		providerMetrics.Latency = time.Since(providerStarted)
 	}
 	providerResult.Metrics = providerMetrics
-	if len(providerResult.Pages) > w.config.MaxPages {
-		err = fmt.Errorf("document provider returned %d units, limit %d", len(providerResult.Pages), w.config.MaxPages)
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
-		return result, err
-	}
-	sourceDocument := SourceDocument{
-		Family: format.Family, UnitKind: format.UnitKind,
-		Units: make([]SourceUnit, len(providerResult.Pages)),
-	}
-	for i, page := range providerResult.Pages {
-		sourceDocument.Units[i] = SourceUnit{
-			Index: i, Markdown: page.Markdown, Header: page.Header, Footer: page.Footer,
-			Dimensions: UnitDimensions{
-				DPI: page.Dimensions.DPI, Height: page.Dimensions.Height, Width: page.Dimensions.Width,
-			},
-		}
-	}
-	normalized, err := NormalizeDocument(sourceDocument, w.config.NormalizePolicy)
+	normalized, err := document.NormalizeDocument(providerResult.Document, w.config.Policy.NormalizePolicy())
 	if err != nil {
 		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
 		return result, err
@@ -273,13 +255,7 @@ func (w *MistralWorker) keepClaimAlive(
 	workCtx, cancelWork := context.WithCancel(ctx)
 	done := make(chan struct{})
 	errCh := make(chan error, 1)
-	interval := w.config.LeaseDuration / 3
-	if interval < time.Millisecond {
-		interval = time.Millisecond
-	}
-	if interval > time.Minute {
-		interval = time.Minute
-	}
+	interval := min(max(w.config.LeaseDuration/3, time.Millisecond), time.Minute)
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(interval)
@@ -367,6 +343,8 @@ func classifyDocumentExtractionFailure(err error) (bool, string) {
 		return true, "provider_rejected"
 	case errors.Is(err, mistral.ErrResponseTooLarge):
 		return true, "response_too_large"
+	case errors.Is(err, mistral.ErrCapabilityContract):
+		return true, "provider_capability_changed"
 	default:
 		return true, "invalid_provider_output"
 	}
@@ -375,9 +353,9 @@ func classifyDocumentExtractionFailure(err error) (bool, string) {
 func publicationFromNormalized(
 	claim store.DocumentExtractionClaim,
 	providerResult mistral.Result,
-	normalized NormalizedDocument,
+	normalized document.NormalizedDocument,
 ) (store.DocumentExtractionPublication, error) {
-	if providerResult.UsageInfo == nil || providerResult.UsageInfo.PagesProcessed <= 0 || len(normalized.Chunks) == 0 {
+	if providerResult.UnitsProcessed <= 0 || len(normalized.Chunks) == 0 {
 		return store.DocumentExtractionPublication{}, errors.New("document extraction produced no publishable evidence")
 	}
 	publication := store.DocumentExtractionPublication{
@@ -387,8 +365,8 @@ func publicationFromNormalized(
 		OccurrenceMIMEType:     claim.OccurrenceMIMEType,
 		OccurrenceMessageType:  claim.OccurrenceMessageType,
 		LeaseOwner:             claim.LeaseOwner, LeaseFence: claim.LeaseFence,
-		ReturnedModel: providerResult.Model, ProviderBytes: providerResult.UsageInfo.DocSizeBytes,
-		UnitsProcessed: providerResult.UsageInfo.PagesProcessed, ManifestChecksum: normalized.Checksum,
+		ReturnedModel: providerResult.ReturnedModel, ProviderBytes: providerResult.ProviderBytes,
+		UnitsProcessed: providerResult.UnitsProcessed, ManifestChecksum: normalized.Checksum,
 		RequestCount: providerResult.Metrics.Requests, RetryCount: providerResult.Metrics.Retries,
 		ProviderLatencyMS: requestLatencyMillis(providerResult.Metrics.Latency),
 		Units:             make([]store.DocumentPublishedUnit, len(normalized.Units)),

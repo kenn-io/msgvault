@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/documentindex"
-	"go.kenn.io/msgvault/internal/documentindex/mistral"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -22,7 +21,7 @@ const (
 )
 
 type scheduledDocumentDeps struct {
-	newProcessor    func(*documentindex.DocumentsConfig, []string) (mistral.Processor, error)
+	newProcessor    func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error)
 	openAttachments func(*store.Store) (documentindex.DocumentAttachmentOpener, func() error, error)
 	dataDirectory   string
 }
@@ -113,7 +112,7 @@ func configureDocumentExtractionJob(
 			if err != nil {
 				return err
 			}
-			processor, err := deps.newProcessor(&documentsConfig, allowedMediaTypes)
+			processor, err := deps.newProcessor(&documentsConfig)
 			if err != nil {
 				return err
 			}

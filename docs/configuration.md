@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-09"
+last_edited: "2026-08-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -134,6 +134,39 @@ collapse_whitespace = true
 # Empty means embed the full archive. Set this for partial generations.
 message_types = ["sms", "mms"]
 
+[attachments.documents]
+# Hosted extraction is opt-in and requires a separately recorded consent.
+enabled = false
+provider = "mistral"
+region = "eu"
+api_key_env = "MISTRAL_API_KEY"
+model = "mistral-ocr-4-0"
+retention_posture = "zdr"
+training_posture = "opted-out"
+max_file_bytes = 52428800
+max_pages_per_document = 500
+max_response_bytes = 67108864
+max_normalized_chars = 25000000
+max_spool_bytes = 536870912
+min_free_space_bytes = 1073741824
+request_timeout = "5m"
+max_retries = 3
+max_pages_per_run = 10000
+max_estimated_cost_usd_per_run = 50
+# Set both pricing fields together when scheduling extraction.
+# estimated_cost_usd_per_1000_units = 0.001
+# pricing_assumption_on = "2026-08-17"
+# schedule = "15 4 * * *"
+# capability_manifest = "/private/path/mistral-capabilities.json"
+
+[attachments.documents.scope]
+# Empty includes every supported message type.
+message_types = ["email"]
+
+[attachments.documents.index]
+lexical = true
+store_chunk_text = true
+
 [[synctech_sms.sources]]
 name = "phone-backups"
 enabled = true
@@ -174,6 +207,50 @@ Setting `loose_attachments = true` prevents new pack files but does not
 convert existing packs. Stop the daemon and run `msgvault unpack-attachments`
 once to materialize their contents as loose files. Backup restore also restores
 attachments loose while this setting is enabled.
+
+### `[attachments.documents]`
+
+Hosted extraction and local full-text indexing for standalone document
+attachments. It is disabled by default. Enabling it does not grant consent or
+send data: an operator must generate an authenticated capability manifest and
+record consent for the exact effective policy before a build can upload a
+document.
+
+| Key | Default | Description |
+|---|---:|---|
+| `enabled` | `false` | Allow document extraction commands and scheduled runs |
+| `provider` | `mistral` | Pinned extraction provider |
+| `region` | `eu` | Pinned provider region and EU endpoint |
+| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key |
+| `model` | `mistral-ocr-4-0` | Pinned OCR model |
+| `retention_posture` | `unknown` | Confirmed provider posture: `standard` or `zdr` |
+| `training_posture` | `unknown` | Confirmed provider posture: `default-opt-out` or `opted-out` |
+| `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
+| `max_pages_per_document` | `500` | Maximum provider units for one document |
+| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
+| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
+| `max_spool_bytes` | `536870912` | Maximum private staging-directory usage (512 MiB) |
+| `min_free_space_bytes` | `1073741824` | Free space preserved before staging (1 GiB) |
+| `request_timeout` | `5m` | Timeout for each provider request attempt |
+| `max_retries` | `3` | Maximum transient retries |
+| `max_pages_per_run` | `10000` | Conservative provider-unit budget for one run |
+| `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
+| `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
+| `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
+| `schedule` | — | Cron schedule for daemon-managed extraction |
+| `capability_manifest` | — | Private path to the authenticated manifest used by scheduled runs |
+
+`schedule` requires both a capability manifest and an explicit price
+assumption. Manual builds still display their upload and cost preflight before
+requiring `--yes`.
+
+`[attachments.documents.scope]` accepts `message_types`; an empty list includes
+all supported standalone attachment sources. The first release requires
+`[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
+Hosted document embeddings are not enabled by this configuration.
+
+See [Document Attachment Indexing](/usage/document-indexing/) for the complete
+probe, consent, build, and recovery flow.
 
 ### `[oauth]`
 

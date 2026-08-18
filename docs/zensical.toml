@@ -25,6 +25,7 @@ nav = [
     {"IMAP Folder Sync" = "usage/imap.md"},
     {"Searching" = "usage/searching.md"},
     {"Vector Search" = "usage/vector-search.md"},
+    {"Document Attachment Indexing" = "usage/document-indexing.md"},
     {"Importing Local Email" = "usage/importing.md"},
     {"Text Messages" = "usage/text-messages.md"},
     {"Google Calendar" = "usage/calendar.md"},

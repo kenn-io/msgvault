@@ -13,20 +13,23 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/mistral"
 )
 
 const (
 	ProviderMistral = "mistral"
-	ModelMistralOCR = "mistral-ocr-4-0"
-	RegionMistralEU = "eu"
+	ModelMistralOCR = mistral.DefaultModel
+	RegionMistralEU = mistral.RegionEU
 
 	RetentionUnknown  = "unknown"
-	RetentionStandard = "standard"
-	RetentionZDR      = "zdr"
+	RetentionStandard = mistral.RetentionStandard
+	RetentionZDR      = mistral.RetentionZDR
 
 	TrainingUnknown       = "unknown"
-	TrainingDefaultOptOut = "default-opt-out"
-	TrainingOptedOut      = "opted-out"
+	TrainingDefaultOptOut = mistral.TrainingDefaultOptOut
+	TrainingOptedOut      = mistral.TrainingOptedOut
 
 	defaultAPIKeyEnv                 = "MISTRAL_API_KEY" // #nosec G101 -- environment variable name, not a credential.
 	defaultMaxFileBytes        int64 = 50 << 20
@@ -201,12 +204,18 @@ func (c *DocumentsConfig) MaxDocumentsWithinRunBudget(requested int) (int, error
 // Endpoint returns the one documented v1 regional endpoint currently shipped.
 // More regions require an explicit documented-host addition and new consent.
 func (c *DocumentsConfig) Endpoint() (string, error) {
-	switch c.Region {
-	case RegionMistralEU:
-		return "https://api.mistral.ai/v1/ocr", nil
-	default:
-		return "", fmt.Errorf("attachments.documents.region: unknown region %q (supported: %q)", c.Region, RegionMistralEU)
+	effective := *c
+	if effective.RetentionPosture == RetentionUnknown {
+		effective.RetentionPosture = mistral.RetentionStandard
 	}
+	if effective.TrainingPosture == TrainingUnknown {
+		effective.TrainingPosture = mistral.TrainingDefaultOptOut
+	}
+	policy, err := effective.MistralPolicy()
+	if err != nil {
+		return "", err
+	}
+	return policy.Values().Endpoint, nil
 }
 
 // Validate checks the complete effective policy without resolving credentials.
@@ -219,8 +228,8 @@ func (c *DocumentsConfig) Validate() error {
 	if c.Model != ModelMistralOCR {
 		return fmt.Errorf("attachments.documents.model: must be pinned to %q", ModelMistralOCR)
 	}
-	if _, err := c.Endpoint(); err != nil {
-		return err
+	if c.Region != RegionMistralEU {
+		return fmt.Errorf("attachments.documents.region: unknown region %q (supported: %q)", c.Region, RegionMistralEU)
 	}
 	if !envNamePattern.MatchString(c.APIKeyEnv) {
 		return fmt.Errorf("attachments.documents.api_key_env: invalid environment variable name %q", c.APIKeyEnv)
@@ -311,6 +320,27 @@ func (c *DocumentsConfig) Validate() error {
 	return nil
 }
 
+// MistralPolicy returns the reusable processing policy represented by this
+// application configuration. Run budgets, scheduling, and storage choices are
+// deliberately not part of the policy.
+func (c *DocumentsConfig) MistralPolicy() (mistral.Policy, error) {
+	normalizePolicy, err := document.NewNormalizePolicy(c.MaxNormalizedChars)
+	if err != nil {
+		return mistral.Policy{}, fmt.Errorf("configure document normalization: %w", err)
+	}
+	policy, err := mistral.NewPolicy(mistral.PolicyConfig{
+		Region: c.Region, Model: c.Model,
+		Retention: c.RetentionPosture, Training: c.TrainingPosture,
+		MaxDocumentBytes: c.MaxFileBytes, MaxResponseBytes: c.MaxResponseBytes,
+		MaxUnits: c.MaxPagesPerDocument, ExtractHeader: true, ExtractFooter: true,
+		NormalizePolicy: normalizePolicy,
+	})
+	if err != nil {
+		return mistral.Policy{}, fmt.Errorf("configure Mistral document policy: %w", err)
+	}
+	return policy, nil
+}
+
 // ResolveAPIKey is called only by an explicit provider operation. Merely
 // loading configuration never resolves or validates the secret.
 func (c *DocumentsConfig) ResolveAPIKey() (string, error) {
@@ -341,11 +371,12 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 	mediaTypes := slices.Clone(allowedMediaTypes)
 	slices.Sort(mediaTypes)
 	mediaTypes = slices.Compact(mediaTypes)
-	endpoint, err := c.Endpoint()
+	policy, err := c.MistralPolicy()
 	if err != nil {
 		return nil, err
 	}
-	normalizePolicy := DefaultNormalizePolicy(c.MaxNormalizedChars)
+	values := policy.Values()
+	normalizePolicy := values.Normalization
 	payload := struct {
 		Version                   int      `json:"version"`
 		Provider                  string   `json:"provider"`
@@ -378,10 +409,10 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 		ChunkOverlap              int      `json:"chunk_overlap"`
 		MaxChunks                 int      `json:"max_chunks"`
 	}{
-		Version: profilePolicyVersion, Provider: c.Provider, Endpoint: endpoint,
-		Model: c.Model, Retention: c.RetentionPosture, Training: c.TrainingPosture,
-		MaxFileBytes: c.MaxFileBytes, MaxPagesPerDocument: c.MaxPagesPerDocument,
-		MaxResponseBytes: c.MaxResponseBytes, MaxNormalizedChars: c.MaxNormalizedChars,
+		Version: profilePolicyVersion, Provider: values.Provider, Endpoint: values.Endpoint,
+		Model: values.Model, Retention: values.Retention, Training: values.Training,
+		MaxFileBytes: values.MaxDocumentBytes, MaxPagesPerDocument: values.MaxUnits,
+		MaxResponseBytes: values.MaxResponseBytes, MaxNormalizedChars: normalizePolicy.MaxDocumentChars,
 		MaxSpoolBytes: c.MaxSpoolBytes, MinFreeSpaceBytes: c.MinFreeSpaceBytes,
 		RequestTimeoutNanos: int64(c.RequestTimeout), MaxRetries: c.MaxRetries,
 		MaxPagesPerRun:            c.MaxPagesPerRun,
@@ -389,7 +420,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 		MessageTypes:              slices.Clone(c.Scope.MessageTypes), AllowedMediaTypes: mediaTypes,
 		Lexical: c.LexicalEnabled(), StoreChunkText: c.StoresChunkText(),
 		ExtractHeader: true, ExtractFooter: true,
-		NormalizationVersion: normalizationPolicyVersion,
+		NormalizationVersion: normalizePolicy.Version,
 		MaxUnitChars:         normalizePolicy.MaxUnitChars, MaxSourceUnitBytes: normalizePolicy.MaxSourceUnitBytes,
 		MaxMetadataSourceBytes: normalizePolicy.MaxMetadataSourceBytes, MaxLinkChars: normalizePolicy.MaxLinkChars,
 		MaxChunkRunes: normalizePolicy.MaxChunkRunes, ChunkOverlap: normalizePolicy.ChunkOverlap,

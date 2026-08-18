@@ -1033,6 +1033,40 @@ search scope.
 
 ---
 
+## documents
+
+Manage hosted extraction and local full-text indexing for standalone document
+attachments. Provider operations require a private authenticated capability
+manifest and exact recorded consent; local search and removal operations do
+not contact the provider.
+
+```bash
+msgvault documents probe-mistral --fixtures <private-dir> [--validate-only]
+msgvault documents consent-mistral --capabilities <manifest> [--yes]
+msgvault documents build --capabilities <manifest> [--limit N] [--full-rebuild] [--yes]
+msgvault documents resume --capabilities <manifest> [--limit N] [--yes]
+msgvault documents search <query> [flags]
+msgvault documents status --capabilities <manifest> [--json]
+msgvault documents retry --capabilities <manifest> --hash <sha256>
+msgvault documents retire <profile-id> [--yes]
+msgvault documents purge-derived --hash <sha256> [--yes]
+```
+
+`probe-mistral --validate-only` checks the complete synthetic fixture set
+without credentials or network access. An authenticated probe writes the
+manifest to stdout. Run consent and build commands once without `--yes` to
+review their disclosure and preflight.
+
+`documents search` accepts `--source-id`, `--message-type`, `--attachment-id`,
+`--message-id`, `-n`/`--limit`, `--cursor`, and `--json`. Its cursor is opaque
+and bound to a stable index revision; restart pagination after a stale-cursor
+error.
+
+See [Document Attachment Indexing](/usage/document-indexing/) for fixture
+generation, configuration, privacy boundaries, scheduling, and recovery.
+
+---
+
 ## tui
 
 Launch the interactive terminal interface.

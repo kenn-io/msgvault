@@ -308,7 +308,7 @@ func (s *Store) ReconcileDocumentOccurrence(
 		}
 	}
 	if file == nil || !live || !eligibleDocumentFile(*file) {
-		if err := s.removeDocumentOccurrence(ctx, attachmentID); err != nil {
+		if err := s.removeDocumentOccurrence(ctx, attachmentID, sourceSequence); err != nil {
 			return DocumentOccurrence{}, false, err
 		}
 		return DocumentOccurrence{}, false, nil
@@ -1201,17 +1201,31 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 		if err == nil && existing == occurrence {
 			return nil
 		}
+		if err == nil && existing.SourceSequence > occurrence.SourceSequence {
+			return nil
+		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read document occurrence: %w", err)
 		}
+		var attachmentSequence int64
+		err = tx.QueryRow(`
+			SELECT source_sequence FROM document_occurrences WHERE attachment_id = ?`,
+			occurrence.AttachmentID,
+		).Scan(&attachmentSequence)
+		if err == nil && attachmentSequence > occurrence.SourceSequence {
+			return nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read document occurrence attachment sequence: %w", err)
+		}
 		if _, err := tx.Exec(`
 			DELETE FROM document_occurrences
-			WHERE attachment_id = ? AND occurrence_key != ?`,
-			occurrence.AttachmentID, occurrence.OccurrenceKey,
+			WHERE attachment_id = ? AND occurrence_key != ? AND source_sequence <= ?`,
+			occurrence.AttachmentID, occurrence.OccurrenceKey, occurrence.SourceSequence,
 		); err != nil {
 			return fmt.Errorf("remove replaced document occurrence: %w", err)
 		}
-		if _, err := tx.Exec(`
+		result, err := tx.Exec(`
 			INSERT INTO document_occurrences
 				(occurrence_key, attachment_id, message_id, source_id,
 				 source_part_key, stable_source_part, canonical_blob_hash,
@@ -1229,22 +1243,33 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 				attachment_role = EXCLUDED.attachment_role,
 				role_source = EXCLUDED.role_source,
 				source_sequence = EXCLUDED.source_sequence,
-				reconciled_at = CURRENT_TIMESTAMP`,
+				reconciled_at = CURRENT_TIMESTAMP
+			WHERE document_occurrences.source_sequence <= EXCLUDED.source_sequence`,
 			occurrence.OccurrenceKey, occurrence.AttachmentID, occurrence.MessageID,
 			occurrence.SourceID, nullIfEmpty(occurrence.SourcePartKey),
 			occurrence.StableSourcePart, occurrence.CanonicalBlobHash,
 			nullIfEmpty(occurrence.Filename), nullIfEmpty(occurrence.MIMEType),
 			occurrence.AttachmentRole, occurrence.RoleSource, occurrence.SourceSequence,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("upsert document occurrence: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read document occurrence upsert count: %w", err)
+		}
+		if changed == 0 {
+			return nil
 		}
 		return bumpDocumentIndexRevision(tx)
 	})
 }
 
-func (s *Store) removeDocumentOccurrence(ctx context.Context, attachmentID int64) error {
+func (s *Store) removeDocumentOccurrence(ctx context.Context, attachmentID, sourceSequence int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		result, err := tx.Exec(`DELETE FROM document_occurrences WHERE attachment_id = ?`, attachmentID)
+		result, err := tx.Exec(`
+			DELETE FROM document_occurrences
+			WHERE attachment_id = ? AND source_sequence <= ?`, attachmentID, sourceSequence)
 		if err != nil {
 			return fmt.Errorf("remove document occurrence: %w", err)
 		}

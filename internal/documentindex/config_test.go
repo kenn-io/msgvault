@@ -1,6 +1,8 @@
 package documentindex
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ func TestDocumentsConfigDefaultsAreValidAndOptIn(t *testing.T) {
 	assert.Equal(int64(1<<30), config.MinFreeSpaceBytes)
 	endpoint, err := config.Endpoint()
 	require.NoError(t, err)
-	assert.Equal("https://api.mistral.ai/v1/ocr", endpoint)
+	assert.Equal("https://api.eu.mistral.ai/v1/ocr", endpoint)
 }
 
 func TestDocumentsConfigDoesNotDefaultExplicitZeroSafetyLimits(t *testing.T) {
@@ -113,6 +115,8 @@ func TestDocumentsProfileFingerprintIsDeterministicAndPolicyBound(t *testing.T) 
 	require := require.New(t)
 	assert := assert.New(t)
 	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
 	config.Scope.MessageTypes = []string{"email", "chat"}
 	config.ApplyDefaults()
 
@@ -124,7 +128,7 @@ func TestDocumentsProfileFingerprintIsDeterministicAndPolicyBound(t *testing.T) 
 	assert.Regexp(`^[0-9a-f]{64}$`, first)
 
 	changed := config
-	changed.RetentionPosture = RetentionZDR
+	changed.RetentionPosture = RetentionStandard
 	third, err := changed.ProfileFingerprint([]string{"application/pdf", "text/csv"})
 	require.NoError(err)
 	assert.NotEqual(first, third)
@@ -144,6 +148,24 @@ func TestDocumentsProfileFingerprintIsDeterministicAndPolicyBound(t *testing.T) 
 	sixth, err := changed.ProfileFingerprint([]string{"application/pdf", "text/csv"})
 	require.NoError(err)
 	assert.NotEqual(first, sixth)
+}
+
+func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	config.Scope.MessageTypes = []string{"email", "chat", "email"}
+	config.ApplyDefaults()
+
+	policyJSON, err := config.ProfilePolicyJSON([]string{"text/csv", "application/pdf", "text/csv"})
+	require.NoError(t, err)
+	expected := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","model":"mistral-ocr-4-0","retention":"zdr","training":"opted-out","max_file_bytes":52428800,"max_pages_per_document":500,"max_response_bytes":67108864,"max_normalized_chars":25000000,"max_spool_bytes":536870912,"min_free_space_bytes":1073741824,"request_timeout_nanos":300000000000,"max_retries":3,"max_pages_per_run":10000,"max_estimated_cost_usd_per_run":50,"message_types":["chat","email"],"allowed_media_types":["application/pdf","text/csv"],"lexical":true,"store_chunk_text":true,"extract_header":true,"extract_footer":true,"normalization_version":2,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000}`
+	assert.JSONEq(t, expected, string(policyJSON))
+
+	fingerprint, err := config.ProfileFingerprint([]string{"application/pdf", "text/csv"})
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(expected))
+	assert.Equal(t, hex.EncodeToString(digest[:]), fingerprint)
 }
 
 func TestDocumentsConfigResolvesAPIKeyOnlyOnDemand(t *testing.T) {

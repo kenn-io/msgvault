@@ -1,6 +1,6 @@
 module go.kenn.io/msgvault
 
-go 1.26.5
+go 1.26.6
 
 require (
 	charm.land/bubbles/v2 v2.1.1
@@ -23,6 +23,7 @@ require (
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.3
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jhillyerd/enmime v1.3.0
 	github.com/mattn/go-isatty v0.0.22
@@ -36,7 +37,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/yuin/goldmark v1.7.17
+	go.kenn.io/docbank v0.12.1-0.20260818005848-b9b9f83545e3
 	go.kenn.io/kit v0.18.1
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
@@ -97,7 +98,6 @@ require (
 	github.com/godzie44/go-uring v0.0.0-20220926161041-69611e8b13d5 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
@@ -132,6 +132,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

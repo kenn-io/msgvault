@@ -123,16 +123,6 @@ func (s *Store) SearchDocuments(
 		Truncated: moreCandidates && candidateLimit == maxDocumentSearchCandidates,
 	}
 	if offset >= len(rows) {
-		if moreCandidates && candidateLimit < maxDocumentSearchCandidates {
-			response.NextCursor, err = encodeDocumentSearchCursor(documentSearchCursor{
-				Version: documentSearchCursorVersion, Revision: revision,
-				RequestHash: requestHash, Offset: offset,
-				CandidateLimit: nextDocumentSearchCandidateLimit(candidateLimit, offset, prepared.PageSize),
-			})
-			if err != nil {
-				return DocumentSearchResponse{}, err
-			}
-		}
 		return response, nil
 	}
 	end := min(offset+prepared.PageSize, len(rows))
@@ -145,14 +135,10 @@ func (s *Store) SearchDocuments(
 	if err := s.populateDocumentLiveCopyCounts(ctx, response.Results); err != nil {
 		return DocumentSearchResponse{}, err
 	}
-	if end < len(rows) || (moreCandidates && candidateLimit < maxDocumentSearchCandidates) {
-		nextCandidateLimit := candidateLimit
-		if end == len(rows) {
-			nextCandidateLimit = nextDocumentSearchCandidateLimit(candidateLimit, end, prepared.PageSize)
-		}
+	if end < len(rows) {
 		response.NextCursor, err = encodeDocumentSearchCursor(documentSearchCursor{
 			Version: documentSearchCursorVersion, Revision: revision,
-			RequestHash: requestHash, Offset: end, CandidateLimit: nextCandidateLimit,
+			RequestHash: requestHash, Offset: end, CandidateLimit: candidateLimit,
 		})
 		if err != nil {
 			return DocumentSearchResponse{}, err
@@ -202,7 +188,10 @@ func (s *Store) prepareDocumentSearch(
 		return request, nil, "", 0, 0, 0, err
 	}
 	offset := 0
-	candidateLimit := min(max(request.PageSize*20, 200), maxDocumentSearchCandidates)
+	// RRF ranks are meaningful only for one fixed candidate set. Every page
+	// therefore evaluates the same bounded set instead of widening it between
+	// cursors, which could reorder earlier results and cause skips or repeats.
+	candidateLimit := maxDocumentSearchCandidates
 	if request.Cursor != "" {
 		cursor, decodeErr := decodeDocumentSearchCursor(request.Cursor)
 		if decodeErr != nil {
@@ -215,7 +204,9 @@ func (s *Store) prepareDocumentSearch(
 			return request, nil, "", 0, 0, 0, ErrDocumentSearchCursorStale
 		}
 		offset = cursor.Offset
-		candidateLimit = cursor.CandidateLimit
+		if cursor.CandidateLimit != candidateLimit {
+			return request, nil, "", 0, 0, 0, ErrDocumentSearchInvalidCursor
+		}
 	}
 	return request, terms, requestHash, offset, candidateLimit, revision, nil
 }
@@ -510,11 +501,6 @@ func (s *Store) scanDocumentSearchRows(
 		results = results[:uniqueOccurrenceLimit]
 	}
 	return results, hasMore, nil
-}
-
-func nextDocumentSearchCandidateLimit(current, offset, pageSize int) int {
-	required := min(offset+pageSize, maxDocumentSearchCandidates)
-	return min(max(current*2, required), maxDocumentSearchCandidates)
 }
 
 func (s *Store) populateDocumentLiveCopyCounts(
