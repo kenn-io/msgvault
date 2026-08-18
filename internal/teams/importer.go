@@ -611,8 +611,9 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	// Store the call-recording link (systemEventMessage eventDetail) as an attachment.
 	if recURL, recName, ok := gm.callRecording(); ok {
 		linkAttachments = append(linkAttachments, store.AttachmentRef{
-			Filename:    recName,
-			StoragePath: recURL,
+			Filename:           recName,
+			StoragePath:        recURL,
+			SourceAttachmentID: "teams:recording:" + recURL,
 		})
 	}
 	// Store attachment[] refs (reference/file/card) that carry a content URL.
@@ -620,10 +621,15 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		if att.ContentURL == "" {
 			continue
 		}
+		attachmentID := att.ID
+		if attachmentID == "" {
+			attachmentID = att.ContentURL
+		}
 		linkAttachments = append(linkAttachments, store.AttachmentRef{
-			Filename:    att.Name,
-			MimeType:    att.ContentType,
-			StoragePath: att.ContentURL,
+			Filename:           att.Name,
+			MimeType:           att.ContentType,
+			StoragePath:        att.ContentURL,
+			SourceAttachmentID: "teams:link:" + attachmentID,
 		})
 	}
 	if err := imp.store.ReplaceMessageLinkAttachments(messageID, linkAttachments); err != nil {

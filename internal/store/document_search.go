@@ -116,8 +116,8 @@ func (s *Store) SearchDocuments(
 	if err != nil {
 		return DocumentSearchResponse{}, err
 	}
-	rows := fuseDocumentSearchRows(contentRows, filenameRows, terms)
-	moreCandidates := contentMore || filenameMore
+	rows, fusionMore := fuseDocumentSearchRows(contentRows, filenameRows, terms, candidateLimit)
+	moreCandidates := contentMore || filenameMore || fusionMore
 	response := DocumentSearchResponse{
 		Revision:  revision,
 		Truncated: moreCandidates && candidateLimit == maxDocumentSearchCandidates,
@@ -562,7 +562,8 @@ func fuseDocumentSearchRows(
 	contentRows []documentSearchRow,
 	filenameRows []documentSearchRow,
 	terms []string,
-) []documentSearchRow {
+	limit int,
+) ([]documentSearchRow, bool) {
 	byOccurrence := make(map[string]documentSearchRow, len(contentRows)+len(filenameRows))
 	for _, row := range contentRows {
 		existing, found := byOccurrence[row.OccurrenceKey]
@@ -600,7 +601,10 @@ func fuseDocumentSearchRows(
 		}
 		return results[i].AttachmentID < results[j].AttachmentID
 	})
-	return results
+	if len(results) > limit {
+		return results[:limit], true
+	}
+	return results, false
 }
 
 func documentSearchExcerpt(text string, terms []string) (string, int, int) {

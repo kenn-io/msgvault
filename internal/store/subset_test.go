@@ -353,6 +353,94 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 	assert.Equal(int64(7), embedGen)
 }
 
+func TestCopySubset_UpgradedAttachmentColumnOrder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 1)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	legacy, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = legacy.Exec(`
+		DROP TRIGGER IF EXISTS trg_attachment_message_live_change;
+		DROP TABLE attachments;
+		CREATE TABLE attachments (
+			id INTEGER PRIMARY KEY,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			filename TEXT,
+			mime_type TEXT,
+			size INTEGER,
+			content_hash TEXT,
+			storage_path TEXT NOT NULL,
+			media_type TEXT,
+			width INTEGER,
+			height INTEGER,
+			duration_ms INTEGER,
+			thumbnail_hash TEXT,
+			thumbnail_path TEXT,
+			source_attachment_id TEXT,
+			attachment_metadata JSON,
+			encryption_version INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	require.NoError(err, "restore pre-occurrence attachment schema")
+	_, err = legacy.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationAttachmentOccurrenceUnique)
+	require.NoError(err, "reopen attachment occurrence migration")
+	require.NoError(legacy.Close())
+
+	upgraded, err := Open(srcDB)
+	require.NoError(err)
+	require.NoError(upgraded.InitSchema(), "upgrade attachment schema")
+	hash := strings.Repeat("ab", 32)
+	require.NoError(upgraded.UpsertAttachmentRecord(t.Context(), 1, AttachmentWrite{
+		Filename: "evidence.pdf", MIMEType: "application/pdf", Size: 1234,
+		ContentHash: hash, StoragePath: hash[:2] + "/" + hash,
+		SourceAttachmentID: "teams:link:a1", Metadata: `{"origin":"upgraded"}`,
+		Role: AttachmentRoleStandalone, RoleSource: AttachmentRoleSourceProviderExplicit,
+		SourcePartKey: "teams:link:a1", ContentID: "evidence@example.invalid",
+	}))
+	_, err = upgraded.DB().Exec(`UPDATE attachments SET encryption_version = 7 WHERE message_id = 1`)
+	require.NoError(err)
+	require.NoError(upgraded.Close())
+
+	result, err := CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err, "copy subset from upgraded attachment schema")
+	assert.Equal(int64(1), result.Messages)
+
+	destination, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = destination.Close() }()
+	var (
+		filename, mimeType, contentHash, storagePath   string
+		sourceAttachmentID, metadata, role, roleSource string
+		sourcePartKey, contentID                       string
+		size, encryptionVersion                        int64
+	)
+	require.NoError(destination.QueryRow(`
+		SELECT filename, mime_type, size, content_hash, storage_path,
+		       source_attachment_id, attachment_metadata, attachment_role,
+		       role_source, source_part_key, content_id, encryption_version
+		FROM attachments WHERE message_id = 1
+	`).Scan(
+		&filename, &mimeType, &size, &contentHash, &storagePath,
+		&sourceAttachmentID, &metadata, &role, &roleSource,
+		&sourcePartKey, &contentID, &encryptionVersion,
+	))
+	assert.Equal("evidence.pdf", filename)
+	assert.Equal("application/pdf", mimeType)
+	assert.Equal(int64(1234), size)
+	assert.Equal(hash, contentHash)
+	assert.Equal(hash[:2]+"/"+hash, storagePath)
+	assert.Equal("teams:link:a1", sourceAttachmentID)
+	assert.JSONEq(`{"origin":"upgraded"}`, metadata)
+	assert.Equal(string(AttachmentRoleStandalone), role)
+	assert.Equal(string(AttachmentRoleSourceProviderExplicit), roleSource)
+	assert.Equal("teams:link:a1", sourcePartKey)
+	assert.Equal("evidence@example.invalid", contentID)
+	assert.Equal(int64(7), encryptionVersion)
+}
+
 func TestCopySubset_AllRows(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")

@@ -717,9 +717,8 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy reactions: %w", err)
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO attachments SELECT * FROM src.attachments
-		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
+	if _, err := copyByName(tx, "attachments",
+		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy attachments: %w", err)
 	}
 

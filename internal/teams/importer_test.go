@@ -1528,7 +1528,10 @@ func TestTeamsMixedInlineAndLinkAttachmentsRefreshMessageStats(t *testing.T) {
 				"createdDateTime":"2025-01-01T00:00:00Z",
 				"lastModifiedDateTime":"2025-01-01T00:00:00Z",
 				"body":{"contentType":"html","content":` + jsonString(t, body) + `},
-				"attachments":[{"id":"a1","contentType":"reference","contentUrl":"https://sp/file.docx","name":"file.docx"}]
+				"attachments":[
+					{"id":"a1","contentType":"reference","contentUrl":"https://sp/file.docx","name":"file.docx"},
+					{"id":"a2","contentType":"reference","contentUrl":"https://sp/notes.txt","name":"notes.txt"}
+				]
 			}]}`))
 		default:
 			http.Error(w, "404", http.StatusNotFound)
@@ -1557,8 +1560,8 @@ func TestTeamsMixedInlineAndLinkAttachmentsRefreshMessageStats(t *testing.T) {
 		GROUP BY m.id, m.has_attachments, m.attachment_count
 	`), chatSourceMessageID("19:mixed@thread.v2", "m1")).Scan(&hasAttachments, &messageAttachmentCount, &actualAttachmentRows))
 	assert.True(hasAttachments)
-	assert.Equal(2, actualAttachmentRows)
-	assert.Equal(2, messageAttachmentCount)
+	assert.Equal(3, actualAttachmentRows)
+	assert.Equal(3, messageAttachmentCount)
 }
 
 func TestDuplicateMentionDedup(t *testing.T) {
