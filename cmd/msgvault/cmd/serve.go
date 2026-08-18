@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
@@ -1200,27 +1199,14 @@ func (a *storeAPIAdapter) SearchDocuments(
 	ctx context.Context,
 	request store.DocumentSearchRequest,
 ) (store.DocumentSearchResponse, error) {
-	if _, err := a.store.GetAttachmentChangeConsumer(
-		ctx, documentindex.DocumentAttachmentConsumerKey,
-	); err == nil {
-		reconciler, reconcileErr := documentindex.NewReconciler(a.store, documentindex.ReconcilerConfig{
-			AttachmentPageSize: 1000,
-			ChangePageSize:     1000,
-		})
-		if reconcileErr != nil {
-			return store.DocumentSearchResponse{}, reconcileErr
-		}
-		if _, reconcileErr = reconciler.Reconcile(ctx); reconcileErr != nil {
-			return store.DocumentSearchResponse{}, reconcileErr
-		}
-	} else if !errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
+	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
 		return store.DocumentSearchResponse{}, err
 	}
 	return a.store.SearchDocuments(ctx, request)
 }
 
 func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
-	return reconcileDocumentOccurrencesIfEnabled(ctx, a.store)
+	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
 }
 
 func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(

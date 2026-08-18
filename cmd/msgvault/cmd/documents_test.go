@@ -812,7 +812,7 @@ func TestScheduledDocumentReconcileDoesNotEnableUnconsentedConsumer(t *testing.T
 	require.ErrorIs(t, err, store.ErrAttachmentChangeConsumerMissing)
 }
 
-func TestScheduledDocumentReconcileBootstrapsExistingConsent(t *testing.T) {
+func TestScheduledDocumentReconcilePreservesExistingConsentWhenExtractionDisabled(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := storetest.New(t)
@@ -843,7 +843,8 @@ func TestScheduledDocumentReconcileBootstrapsExistingConsent(t *testing.T) {
 
 	sched := scheduler.New(func(context.Context, string) error { return nil })
 	t.Cleanup(func() { <-sched.Stop().Done() })
-	require.NoError(configureDocumentReconcileJob(t.Context(), sched, fixture.Store, true))
+	require.NoError(configureDocumentReconcileJob(t.Context(), sched, fixture.Store, false))
+	assert.True(sched.IsJobScheduled(documentFullReconcileJob))
 	assert.Equal(1, commandDocumentOccurrenceCount(t, fixture.Store))
 }
 

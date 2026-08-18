@@ -25,7 +25,13 @@ func configureDocumentReconcileJob(
 	enabled bool,
 ) error {
 	if !enabled {
-		return st.UnregisterAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
+		consented, err := st.HasActiveDocumentProviderConsent(ctx)
+		if err != nil {
+			return err
+		}
+		if !consented {
+			return st.UnregisterAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
+		}
 	}
 	reconciler, err := documentindex.NewReconciler(st, documentindex.ReconcilerConfig{
 		AttachmentPageSize: 1000,

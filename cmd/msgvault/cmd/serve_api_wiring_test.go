@@ -43,7 +43,7 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 	assertions.Empty(files)
 }
 
-func TestStoreAPIAdapterReconcilesEnabledDocumentSearchConsumer(t *testing.T) {
+func TestStoreAPIAdapterRecreatesConsentedDocumentSearchConsumer(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := storetest.New(t)
@@ -55,11 +55,22 @@ func TestStoreAPIAdapterReconcilesEnabledDocumentSearchConsumer(t *testing.T) {
 		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
 		SourcePartKey: "part:1",
 	}))
-	_, created, err := fixture.Store.RegisterAttachmentChangeConsumer(
-		t.Context(), documentindex.DocumentAttachmentConsumerKey,
-	)
+	fingerprint := strings.Repeat("b", 64)
+	profile := store.DocumentExtractionProfile{
+		ID: "profile-" + fingerprint, Fingerprint: fingerprint,
+		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
+		Region: "eu", Model: documentindex.ModelMistralOCR,
+		RetentionPosture:  string(documentindex.RetentionStandard),
+		TrainingPosture:   string(documentindex.TrainingOptedOut),
+		AllowedMediaTypes: []string{"application/pdf"},
+		PolicyJSON:        []byte(`{"normalization":1}`),
+	}
+	_, err := fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(err)
-	require.True(created)
+	require.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
 
 	adapter := &storeAPIAdapter{store: fixture.Store}
 	_, err = adapter.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "absent"})

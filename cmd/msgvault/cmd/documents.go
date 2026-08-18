@@ -992,7 +992,7 @@ func (c localDocumentReadClient) SearchDocuments(
 	ctx context.Context,
 	request store.DocumentSearchRequest,
 ) (store.DocumentSearchResponse, error) {
-	if err := reconcileDocumentOccurrencesIfEnabled(ctx, c.store); err != nil {
+	if err := reconcileDocumentOccurrencesForSearch(ctx, c.store); err != nil {
 		return store.DocumentSearchResponse{}, err
 	}
 	return c.store.SearchDocuments(ctx, request)
@@ -1002,7 +1002,7 @@ func (c localDocumentReadClient) GetDocumentIndexStatus(
 	ctx context.Context,
 	request store.DocumentIndexStatusRequest,
 ) (store.DocumentIndexStatusResponse, error) {
-	if err := reconcileDocumentOccurrencesIfEnabled(ctx, c.store); err != nil {
+	if err := reconcileDocumentOccurrencesForSearch(ctx, c.store); err != nil {
 		return store.DocumentIndexStatusResponse{}, err
 	}
 	status, err := c.store.GetDocumentIndexStatusForScope(
@@ -1034,11 +1034,11 @@ func (c localDocumentReadClient) GetDocumentIndexStatus(
 	return response, nil
 }
 
-func reconcileDocumentOccurrencesIfEnabled(ctx context.Context, st *store.Store) error {
+func reconcileDocumentOccurrencesForSearch(ctx context.Context, st *store.Store) error {
 	if _, err := st.GetAttachmentChangeConsumer(
 		ctx, documentindex.DocumentAttachmentConsumerKey,
 	); errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
-		return nil
+		return bootstrapDocumentOccurrencesIfConsented(ctx, st)
 	} else if err != nil {
 		return err
 	}
