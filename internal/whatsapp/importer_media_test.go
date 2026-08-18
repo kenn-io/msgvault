@@ -36,10 +36,11 @@ func TestHandleMediaFile(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		opts := newOpts(t)
-		rel, hash := imp.handleMediaFile(media("photo.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(media("photo.jpg"), opts)
 		// Storage paths are slash-separated on every platform.
 		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
 		assert.Equal(wantHash, hash)
+		assert.Equal(int64(len(content)), size)
 
 		got, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, wantHash[:2], wantHash))
 		require.NoError(err)
@@ -48,17 +49,19 @@ func TestHandleMediaFile(t *testing.T) {
 
 	t.Run("returns empty for missing media file", func(t *testing.T) {
 		opts := newOpts(t)
-		rel, hash := imp.handleMediaFile(media("nope.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(media("nope.jpg"), opts)
 		assert.Empty(t, rel)
 		assert.Empty(t, hash)
+		assert.Zero(t, size)
 	})
 
 	t.Run("returns empty for oversized media file", func(t *testing.T) {
 		opts := newOpts(t)
 		opts.MaxMediaFileSize = 4
-		rel, hash := imp.handleMediaFile(media("photo.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(media("photo.jpg"), opts)
 		assert.Empty(t, rel)
 		assert.Empty(t, hash)
+		assert.Zero(t, size)
 	})
 }
 
@@ -99,8 +102,8 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 			(100, 10, 1, 'document-message', NULL, 1000, 13, NULL, 0, 0),
 			(101, 10, 1, 'sticker-message', NULL, 2000, 90, NULL, 0, 0);
 		INSERT INTO message_media VALUES
-			(100, 'application/pdf', 14, 'report.pdf', NULL, NULL, NULL),
-			(101, 'image/webp', 13, 'sticker.webp', NULL, NULL, NULL);
+			(100, 'application/pdf', 0, 'report.pdf', NULL, NULL, NULL),
+			(101, 'image/webp', 999, 'sticker.webp', NULL, NULL, NULL);
 	`)
 	require.NoError(err)
 	require.NoError(waDB.Close())
@@ -115,7 +118,7 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 	assert.Equal(int64(2), summary.MediaCopied)
 
 	rows, err := st.DB().Query(`
-		SELECT a.filename, a.attachment_role, a.role_source,
+		SELECT a.filename, a.attachment_role, a.role_source, a.size,
 		       COALESCE(a.source_part_key, '')
 		FROM attachments a
 		ORDER BY a.filename`)
@@ -124,11 +127,12 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 
 	type attachmentRole struct {
 		filename, role, roleSource, sourcePartKey string
+		size                                      int64
 	}
 	var got []attachmentRole
 	for rows.Next() {
 		var item attachmentRole
-		require.NoError(rows.Scan(&item.filename, &item.role, &item.roleSource, &item.sourcePartKey))
+		require.NoError(rows.Scan(&item.filename, &item.role, &item.roleSource, &item.size, &item.sourcePartKey))
 		got = append(got, item)
 	}
 	require.NoError(rows.Err())
@@ -137,10 +141,12 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 		filename: "report.pdf", role: string(store.AttachmentRoleStandalone),
 		roleSource:    string(store.AttachmentRoleSourceImporterSemantics),
 		sourcePartKey: "whatsapp:media",
+		size:          int64(len("document bytes")),
 	}, got[0])
 	assert.Equal(attachmentRole{
 		filename: "sticker.webp", role: string(store.AttachmentRoleSticker),
 		roleSource:    string(store.AttachmentRoleSourceProviderExplicit),
 		sourcePartKey: "whatsapp:media",
+		size:          int64(len("sticker bytes")),
 	}, got[1])
 }

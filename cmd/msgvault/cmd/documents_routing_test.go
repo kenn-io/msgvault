@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 )
 
-func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
+func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
 	const (
 		apiKeyEnv = "MSGVAULT_DOCUMENT_TEST_KEY"
 		apiKey    = "synthetic-document-key"
@@ -19,6 +19,7 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 		args       []string
 		wantArgs   []string
 		wantAPIKey bool
+		localFile  bool
 	}{
 		{
 			name: "consent",
@@ -26,6 +27,7 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 			wantArgs: []string{
 				"documents", "consent-mistral", "--capabilities=manifest.json", "--yes",
 			},
+			localFile: true,
 		},
 		{
 			name: "build",
@@ -34,6 +36,7 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 				"documents", "build", "--capabilities=manifest.json", "--limit=5", "--yes",
 			},
 			wantAPIKey: true,
+			localFile:  true,
 		},
 		{
 			name: "resume",
@@ -42,6 +45,7 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 				"documents", "resume", "--capabilities=manifest.json", "--limit=5", "--yes",
 			},
 			wantAPIKey: true,
+			localFile:  true,
 		},
 		{
 			name: "retry",
@@ -49,6 +53,7 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 			wantArgs: []string{
 				"documents", "retry", "--capabilities=manifest.json", "--hash=abc",
 			},
+			localFile: true,
 		},
 		{
 			name: "retire",
@@ -86,7 +91,13 @@ func TestDocumentMutationsUseDaemonRunner(t *testing.T) {
 			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
 			root.SetArgs(test.args)
 
-			require.NoError(t, root.ExecuteContext(t.Context()))
+			err := root.ExecuteContext(t.Context())
+			if test.localFile {
+				require.ErrorContains(t, err, "run it on the daemon host with --local")
+				assert.Equal(t, 0, int(requests.Load()))
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, 1, int(requests.Load()))
 		})
 	}

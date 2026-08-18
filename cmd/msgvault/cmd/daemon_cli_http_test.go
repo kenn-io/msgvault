@@ -372,10 +372,17 @@ func TestDaemonCLIRunCwdUsesCallerCwdForLocalDaemon(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(err, "get cwd")
 
-	got, err := daemonCLIRunCwd(HTTPStoreInfo{Kind: HTTPStoreLocalDaemon})
+	got, err := daemonCLIRunCwd(HTTPStoreInfo{Kind: HTTPStoreLocalDaemon}, true)
 
 	require.NoError(err, "daemonCLIRunCwd")
 	assert.Equal(cwd, got, "local daemon cwd")
+}
+
+func TestDaemonCLIRunCwdRejectsCallerFilesForConfiguredRemote(t *testing.T) {
+	got, err := daemonCLIRunCwd(HTTPStoreInfo{Kind: HTTPStoreConfiguredRemote}, true)
+
+	require.ErrorContains(t, err, "run it on the daemon host with --local")
+	assert.Empty(t, got)
 }
 
 func TestDaemonCLIArgsFromCobraHandlesNestedCommandsAndFalseBool(t *testing.T) {

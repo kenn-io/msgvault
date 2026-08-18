@@ -177,7 +177,7 @@ func newConsentMistralCmd(deps documentsCommandDeps) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobra(command, args)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, nil)
 			}
 			return runConsentMistral(command, capabilityPath, confirmed, deps)
 		},
@@ -203,7 +203,7 @@ func newBuildDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 				mode = documentBuildStartRebuild
 			}
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, documentProviderForwardEnv())
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, documentProviderForwardEnv())
 			}
 			return runBuildDocuments(command, capabilityPath, limit, mode, confirmed, deps)
 		},
@@ -226,7 +226,7 @@ func newResumeDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, documentProviderForwardEnv())
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, documentProviderForwardEnv())
 			}
 			return runBuildDocuments(command, capabilityPath, limit, documentBuildResume, confirmed, deps)
 		},
@@ -264,7 +264,7 @@ func newRetryDocumentCmd(deps documentsCommandDeps) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobra(command, args)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, nil)
 			}
 			return runRetryDocument(command, capabilityPath, canonicalBlobHash, deps)
 		},

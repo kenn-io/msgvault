@@ -127,6 +127,10 @@ deployment configuration.
 First run the consent command without `--yes` to read the exact disclosure,
 then repeat it after review:
 
+The manifest path is resolved on the daemon host. When `[remote].url` is
+configured, run manifest-backed mutation commands on that host with `--local`;
+the CLI rejects forwarding a client-local manifest path to a remote daemon.
+
 ```bash
 msgvault documents consent-mistral \
   --capabilities /private/msgvault/mistral-capabilities.json

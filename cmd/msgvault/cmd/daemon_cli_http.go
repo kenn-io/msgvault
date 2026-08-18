@@ -39,17 +39,25 @@ func runDaemonCLICommandHTTPFromCobraWithEnv(cmd *cobra.Command, args []string, 
 	if err != nil {
 		return err
 	}
-	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env)
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, false)
 }
 
-func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[string]string) error {
+func runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd *cobra.Command, args []string, env map[string]string) error {
+	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
+	if err != nil {
+		return err
+	}
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, true)
+}
+
+func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[string]string, requiresLocalFiles bool) error {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	cwd, err := daemonCLIRunCwd(info)
+	cwd, err := daemonCLIRunCwd(info, requiresLocalFiles)
 	if err != nil {
 		return err
 	}
@@ -82,8 +90,11 @@ func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[s
 // callers exit non-zero without printing anything further.
 var errCLISubprocessProxied = errors.New("cli subprocess failed")
 
-func daemonCLIRunCwd(info HTTPStoreInfo) (string, error) {
+func daemonCLIRunCwd(info HTTPStoreInfo, requiresLocalFiles bool) (string, error) {
 	if info.Kind != HTTPStoreLocalDaemon {
+		if requiresLocalFiles {
+			return "", errors.New("this command uses a local capability manifest and cannot run through a configured remote daemon; run it on the daemon host with --local")
+		}
 		return "", nil
 	}
 	cwd, err := os.Getwd()
