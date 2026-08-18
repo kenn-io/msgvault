@@ -938,7 +938,7 @@ func (s *Store) PurgeDocumentDerivedByHash(
 			return fmt.Errorf("read document derivative purge result: %w", err)
 		}
 		result.ExtractionsRemoved = int(rows)
-		if result.HeadsRemoved > 0 {
+		if result.ExtractionsRemoved > 0 {
 			return bumpDocumentIndexRevision(tx)
 		}
 		return nil

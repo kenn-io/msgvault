@@ -344,6 +344,32 @@ func TestPurgeDocumentDerivedByHashKeepsOccurrenceReadyForRebuild(t *testing.T) 
 	assert.Equal(hash, candidates[0].CanonicalBlobHash)
 }
 
+func TestPurgeDocumentDerivedByHashInvalidatesTerminalSuppression(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "purge-terminal", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "purge-terminal-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1, RequireNoHead: true,
+	}))
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_rejected", Terminal: true,
+	}))
+	revisionBefore, err := f.Store.GetDocumentIndexRevision(t.Context())
+	require.NoError(err)
+
+	result, err := f.Store.PurgeDocumentDerivedByHash(t.Context(), hash)
+	require.NoError(err)
+	assert.Equal(store.DocumentDerivedPurgeResult{ExtractionsRemoved: 1}, result)
+	revisionAfter, err := f.Store.GetDocumentIndexRevision(t.Context())
+	require.NoError(err)
+	assert.Equal(revisionBefore+1, revisionAfter)
+}
+
 func seedDocumentPublicationAuthority(
 	t *testing.T,
 	f *storetest.Fixture,
