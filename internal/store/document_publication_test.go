@@ -96,39 +96,86 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 	assert.Equal(t, "staging", state)
 }
 
+func TestDocumentExtractionClaimRequiresAuthoritativeRoleProvenance(t *testing.T) {
+	tests := []struct {
+		name   string
+		update string
+	}{
+		{
+			name:   "occurrence",
+			update: `UPDATE document_occurrences SET role_source = 'unknown' WHERE attachment_id = ?`,
+		},
+		{
+			name:   "current attachment",
+			update: `UPDATE attachments SET role_source = 'unknown' WHERE id = ?`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := storetest.New(t)
+			profile, hash := seedDocumentPublicationAuthority(t, f)
+			input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+				ExtractionID: "extraction-untrusted-role", ProfileID: profile.ID,
+				CanonicalBlobHash: hash, ExtractionInputKey: "original",
+				LeaseOwner: "worker-untrusted-role", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+				LocalBytes: 128, SourceSequence: 1,
+			})
+			_, err := f.Store.DB().Exec(f.Store.Rebind(test.update), input.OccurrenceAttachmentID)
+			require.NoError(t, err)
+
+			_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+			require.ErrorContains(t, err, "no eligible occurrence")
+		})
+	}
+}
+
 func TestDocumentExtractionPublicationRechecksClaimedOccurrenceScope(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	profile, hash := seedDocumentPublicationAuthority(t, f)
-	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
-		ExtractionID: "extraction-scope-change", ProfileID: profile.ID,
-		CanonicalBlobHash: hash, ExtractionInputKey: "original",
-		LeaseOwner: "worker-scope-change", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
-		LocalBytes: 128, SourceSequence: 1,
-	}))
-	require.NoError(err)
+	tests := []struct {
+		name   string
+		update string
+	}{
+		{
+			name:   "occurrence provenance",
+			update: `UPDATE document_occurrences SET role_source = 'unknown' WHERE attachment_id = ?`,
+		},
+		{
+			name:   "current attachment provenance",
+			update: `UPDATE attachments SET role_source = 'unknown' WHERE id = ?`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			profile, hash := seedDocumentPublicationAuthority(t, f)
+			claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+				ExtractionID: "extraction-scope-change", ProfileID: profile.ID,
+				CanonicalBlobHash: hash, ExtractionInputKey: "original",
+				LeaseOwner: "worker-scope-change", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+				LocalBytes: 128, SourceSequence: 1,
+			}))
+			require.NoError(err)
 
-	otherMessageID := f.CreateMessage("document-publication-other-scope")
-	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), otherMessageID, store.AttachmentWrite{
-		Filename: "other.pdf", MIMEType: "application/pdf", Size: 128,
-		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
-		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
-		SourcePartKey: "mime:other",
-	}))
-	otherAttachmentID := singleAttachmentID(t, f, otherMessageID)
-	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), otherAttachmentID, 2)
-	require.NoError(err)
-	require.True(eligible)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
-		UPDATE attachments SET attachment_role = 'inline' WHERE id = ?`),
-		claim.OccurrenceAttachmentID,
-	)
-	require.NoError(err)
+			otherMessageID := f.CreateMessage("document-publication-other-scope")
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), otherMessageID, store.AttachmentWrite{
+				Filename: "other.pdf", MIMEType: "application/pdf", Size: 128,
+				StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+				Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+				SourcePartKey: "mime:other",
+			}))
+			otherAttachmentID := singleAttachmentID(t, f, otherMessageID)
+			_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), otherAttachmentID, 2)
+			require.NoError(err)
+			require.True(eligible)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(test.update), claim.OccurrenceAttachmentID)
+			require.NoError(err)
 
-	err = f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
-		claim, "must not publish", strings.Repeat("f", 64),
-	))
-	require.ErrorContains(err, "claimed occurrence is no longer eligible")
+			err = f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+				claim, "must not publish", strings.Repeat("f", 64),
+			))
+			require.ErrorContains(err, "claimed occurrence is no longer eligible")
+		})
+	}
 }
 
 func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.T) {

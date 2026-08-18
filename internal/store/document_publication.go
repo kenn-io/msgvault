@@ -131,7 +131,9 @@ func (s *Store) ClaimDocumentExtraction(
 				JOIN messages m ON m.id = o.message_id
 				WHERE o.attachment_id = ? AND o.canonical_blob_hash = ?
 				  AND o.attachment_role = 'standalone'
+				  AND `+authoritativeDocumentRoleSourceSQL("o")+`
 				  AND a.attachment_role = 'standalone'
+				  AND `+authoritativeDocumentRoleSourceSQL("a")+`
 				  AND (COALESCE(a.content_hash, '') = ? OR
 				       (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?))
 				  AND COALESCE(o.mime_type, '') = ?
@@ -404,7 +406,9 @@ func (s *Store) PublishDocumentExtraction(
 			JOIN messages m ON m.id = o.message_id
 			WHERE o.attachment_id = ? AND o.canonical_blob_hash = ?
 			  AND o.attachment_role = 'standalone'
+			  AND `+authoritativeDocumentRoleSourceSQL("o")+`
 			  AND a.attachment_role = 'standalone'
+			  AND `+authoritativeDocumentRoleSourceSQL("a")+`
 			  AND (COALESCE(a.content_hash, '') = ? OR
 			       (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?))
 			  AND COALESCE(o.mime_type, '') = ?

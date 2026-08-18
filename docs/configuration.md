@@ -156,11 +156,9 @@ request_timeout = "5m"
 max_retries = 3
 max_pages_per_run = 10000
 max_estimated_cost_usd_per_run = 50
-# Set both pricing fields together when scheduling extraction.
+# Set both pricing fields together to include a cost estimate in manual build preflight.
 # estimated_cost_usd_per_1000_units = 0.001
 # pricing_assumption_on = "2026-08-17"
-# schedule = "15 4 * * *"
-# capability_manifest = "/private/path/mistral-capabilities.json"
 
 [attachments.documents.scope]
 # Empty includes every supported message type.
@@ -221,7 +219,7 @@ document.
 
 | Key | Default | Description |
 |---|---:|---|
-| `enabled` | `false` | Allow document extraction commands and scheduled runs |
+| `enabled` | `false` | Allow explicit document extraction commands |
 | `provider` | `mistral` | Pinned extraction provider |
 | `region` | `eu` | Pinned provider region and EU endpoint |
 | `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key |
@@ -240,12 +238,11 @@ document.
 | `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
 | `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
 | `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
-| `schedule` | — | Cron schedule for daemon-managed extraction |
-| `capability_manifest` | — | Private path to the authenticated manifest used by scheduled runs |
-
-`schedule` requires both a capability manifest and an explicit price
-assumption. Manual builds still display their upload and cost preflight before
-requiring `--yes`.
+Provider uploads are manual-only: `msgvault serve` does not schedule document
+extraction. Each `documents build` or `documents resume` receives its capability
+manifest explicitly and displays its upload and cost preflight before requiring
+`--yes`. When document indexing is enabled, the daemon's weekly reconciliation
+and local derivative cleanup remain automatic and make no provider requests.
 
 `[attachments.documents.scope]` accepts `message_types`; an empty list includes
 all supported standalone attachment sources. The first release requires

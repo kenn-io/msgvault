@@ -408,14 +408,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("configure document reconciliation: %w", err)
 	}
-	if err := configureDocumentExtractionJob(
-		sched, s, cfg.Attachments.Documents, scheduledDocumentDeps{
-			newProcessor: newConfiguredMistralProcessor, openAttachments: openDocumentAttachments,
-			dataDirectory: cfg.Data.DataDir,
-		},
-	); err != nil {
-		return fmt.Errorf("configure document extraction: %w", err)
-	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)

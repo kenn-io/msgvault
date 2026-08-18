@@ -10,7 +10,7 @@ full-text search. The feature is opt-in and fail-closed: configuration alone
 cannot upload a document.
 
 The provider receives the complete original document bytes and media type.
-Message provenance, normalized text, chunks, indexes, schedules, consent, and
+Message provenance, normalized text, chunks, indexes, orchestration, consent, and
 backups remain owned by Msgvault. Raw provider JSON and full provider Markdown
 are transient.
 
@@ -35,6 +35,11 @@ not contact Mistral.
     The first capability contract authorizes at most PDF for production upload.
     Other formats are still probed for extraction support, but remain blocked
     until Msgvault can enforce their provider-unit limits before upload.
+
+Provider uploads are manual-only. `msgvault serve` performs weekly local
+reconciliation and derivative cleanup when document indexing is enabled, but it
+does not run extraction or contact Mistral. Start every upload batch explicitly
+with `documents build` or `documents resume`.
 
 ## Configure the policy
 
@@ -78,7 +83,7 @@ export MISTRAL_API_KEY="..."
 ```
 
 See the [configuration reference](/configuration/#attachmentsdocuments) for
-all limits and scheduling fields.
+all policy and run limits.
 
 ## Build and validate the synthetic fixtures
 

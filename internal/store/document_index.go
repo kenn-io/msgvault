@@ -20,6 +20,12 @@ var (
 	ErrDocumentExtractionRebuildMissing = errors.New("document extraction rebuild is not active")
 )
 
+const authoritativeDocumentRoleSourcesSQL = "('mime_disposition','provider_explicit','importer_semantics','raw_mime_repair')"
+
+func authoritativeDocumentRoleSourceSQL(alias string) string {
+	return alias + ".role_source IN " + authoritativeDocumentRoleSourcesSQL
+}
+
 // DocumentExtractionProfile is an immutable hosted-extraction policy. The
 // caller supplies its full policy fingerprint as both durable identity and
 // rebuild boundary; provider consent is recorded separately.
@@ -998,10 +1004,9 @@ func (s *Store) ReconcileMissingDocumentOccurrences(ctx context.Context, limit i
 			return fmt.Errorf("read missing document occurrence count: %w", err)
 		}
 		removed = int(rows)
-		if removed == 0 {
-			return nil
-		}
-		return bumpDocumentIndexRevision(q)
+		// Each removed row advances the revision through the occurrence delete
+		// trigger. That same trigger also covers foreign-key cascades.
+		return nil
 	})
 	return removed, err
 }
@@ -1218,12 +1223,17 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read document occurrence attachment sequence: %w", err)
 		}
-		if _, err := tx.Exec(`
+		removedResult, err := tx.Exec(`
 			DELETE FROM document_occurrences
 			WHERE attachment_id = ? AND occurrence_key != ? AND source_sequence <= ?`,
 			occurrence.AttachmentID, occurrence.OccurrenceKey, occurrence.SourceSequence,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("remove replaced document occurrence: %w", err)
+		}
+		removed, err := removedResult.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read replaced document occurrence count: %w", err)
 		}
 		result, err := tx.Exec(`
 			INSERT INTO document_occurrences
@@ -1261,6 +1271,11 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 		if changed == 0 {
 			return nil
 		}
+		if removed > 0 {
+			// The delete trigger already advanced the revision for this atomic
+			// replacement. One invalidation is sufficient for the new row too.
+			return nil
+		}
 		return bumpDocumentIndexRevision(tx)
 	})
 }
@@ -1273,14 +1288,13 @@ func (s *Store) removeDocumentOccurrence(ctx context.Context, attachmentID, sour
 		if err != nil {
 			return fmt.Errorf("remove document occurrence: %w", err)
 		}
-		rows, err := result.RowsAffected()
+		_, err = result.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("read removed document occurrence count: %w", err)
 		}
-		if rows == 0 {
-			return nil
-		}
-		return bumpDocumentIndexRevision(tx)
+		// The database trigger advances the revision when a row is removed,
+		// including when foreign-key cascades bypass this method.
+		return nil
 	})
 }
 

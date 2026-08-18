@@ -13,18 +13,10 @@ import (
 
 const (
 	documentFullReconcileJob         = "document-index-full-reconcile"
-	documentExtractionJob            = "document-index-extract"
 	documentFullReconcileCron        = "43 3 * * 0"
 	documentDerivativeRecoveryWindow = 7 * 24 * time.Hour
 	documentDerivativeGCBatch        = 1000
-	documentRoleRepairBatch          = 1000
 )
-
-type scheduledDocumentDeps struct {
-	newProcessor    func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error)
-	openAttachments func(*store.Store) (documentindex.DocumentAttachmentOpener, func() error, error)
-	dataDirectory   string
-}
 
 func configureDocumentReconcileJob(
 	ctx context.Context,
@@ -71,62 +63,6 @@ func configureDocumentReconcileJob(
 					return nil
 				}
 			}
-		},
-	})
-}
-
-func configureDocumentExtractionJob(
-	sched *scheduler.Scheduler,
-	st *store.Store,
-	documentsConfig documentindex.DocumentsConfig,
-	deps scheduledDocumentDeps,
-) error {
-	if !documentsConfig.Enabled || documentsConfig.Schedule == "" {
-		return nil
-	}
-	if deps.newProcessor == nil || deps.openAttachments == nil || deps.dataDirectory == "" {
-		return errors.New("scheduled document extraction dependencies are incomplete")
-	}
-	return sched.AddJob(scheduler.Job{
-		Name: documentExtractionJob, Schedule: documentsConfig.Schedule,
-		Run: func(ctx context.Context) (runErr error) {
-			manifest, err := loadDocumentCapabilityManifest(documentsConfig.CapabilityManifest)
-			if err != nil {
-				return err
-			}
-			allowedMediaTypes, profile, err := documentProfileForConfig(&documentsConfig, manifest)
-			if err != nil {
-				return err
-			}
-			if _, err = st.RepairHistoricalAttachmentRolesBatch(ctx, documentRoleRepairBatch); err != nil {
-				return fmt.Errorf("repair historical attachment roles before scheduled extraction: %w", err)
-			}
-			status, err := st.GetDocumentIndexStatus(ctx, profile.ID)
-			if err != nil {
-				return err
-			}
-			if !status.ProfileEnabled || !status.ExactConsent {
-				return errors.New("scheduled document extraction requires exact provider consent")
-			}
-			limit, err := documentsConfig.MaxDocumentsWithinRunBudget(10_000)
-			if err != nil {
-				return err
-			}
-			processor, err := deps.newProcessor(&documentsConfig)
-			if err != nil {
-				return err
-			}
-			attachments, closeAttachments, err := deps.openAttachments(st)
-			if err != nil {
-				return err
-			}
-			defer func() { runErr = errors.Join(runErr, closeAttachments()) }()
-			_, err = executeDocumentBuild(
-				ctx, st, attachments, processor, &documentsConfig, manifest,
-				allowedMediaTypes, profile, limit, "documents-daemon", deps.dataDirectory,
-				documentBuildIncremental, nil,
-			)
-			return err
 		},
 	})
 }

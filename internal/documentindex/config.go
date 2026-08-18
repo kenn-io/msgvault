@@ -104,8 +104,6 @@ type DocumentsConfig struct {
 	MaxEstimatedCostUSDPerRun float64       `toml:"max_estimated_cost_usd_per_run"`
 	EstimatedCostUSDPerKUnits float64       `toml:"estimated_cost_usd_per_1000_units"`
 	PricingAssumptionOn       string        `toml:"pricing_assumption_on"`
-	Schedule                  string        `toml:"schedule"`
-	CapabilityManifest        string        `toml:"capability_manifest"`
 	Scope                     ScopeConfig   `toml:"scope"`
 	Index                     IndexConfig   `toml:"index"`
 	defaultsApplied           bool
@@ -298,14 +296,6 @@ func (c *DocumentsConfig) Validate() error {
 	if c.PricingAssumptionOn != "" {
 		if _, err := time.Parse(time.DateOnly, c.PricingAssumptionOn); err != nil {
 			return errors.New("attachments.documents.pricing_assumption_on: must use YYYY-MM-DD")
-		}
-	}
-	if c.Schedule != "" {
-		if strings.TrimSpace(c.CapabilityManifest) == "" {
-			return errors.New("attachments.documents.schedule requires capability_manifest")
-		}
-		if c.EstimatedCostUSDPerKUnits <= 0 {
-			return errors.New("attachments.documents.schedule requires an explicit pricing assumption")
 		}
 	}
 	if !c.LexicalEnabled() || !c.StoresChunkText() {

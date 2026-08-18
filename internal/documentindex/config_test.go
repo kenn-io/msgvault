@@ -73,15 +73,6 @@ func TestDocumentsConfigRejectsUnsafePolicy(t *testing.T) {
 		{name: "cost", mutate: func(c *DocumentsConfig) { c.MaxEstimatedCostUSDPerRun = hardMaxEstimatedCostUSD + 1 }, want: "hard safety limit"},
 		{name: "pricing pair", mutate: func(c *DocumentsConfig) { c.EstimatedCostUSDPerKUnits = 4 }, want: "pricing assumption requires both"},
 		{name: "pricing date", mutate: func(c *DocumentsConfig) { c.EstimatedCostUSDPerKUnits = 4; c.PricingAssumptionOn = "today" }, want: "YYYY-MM-DD"},
-		{name: "schedule manifest", mutate: func(c *DocumentsConfig) {
-			c.Schedule = "0 * * * *"
-			c.EstimatedCostUSDPerKUnits = 4
-			c.PricingAssumptionOn = "2026-08-13"
-		}, want: "requires capability_manifest"},
-		{name: "schedule pricing", mutate: func(c *DocumentsConfig) {
-			c.Schedule = "0 * * * *"
-			c.CapabilityManifest = "/private/capabilities.json"
-		}, want: "pricing assumption"},
 		{name: "retention", mutate: func(c *DocumentsConfig) { c.RetentionPosture = "no-retention" }, want: "retention_posture"},
 		{name: "training", mutate: func(c *DocumentsConfig) { c.TrainingPosture = "never" }, want: "training_posture"},
 		{name: "lexical without text", mutate: func(c *DocumentsConfig) { disabled := false; c.Index.StoreChunkText = &disabled }, want: "must both be true"},

@@ -1800,6 +1800,17 @@ CREATE TABLE IF NOT EXISTS document_index_state (
     updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 INSERT OR IGNORE INTO document_index_state(singleton, revision) VALUES (1, 0);
+
+-- Foreign-key cascades can remove occurrences before asynchronous attachment
+-- reconciliation observes the deletion. Invalidate search cursors at the
+-- authoritative row mutation so every deletion path is covered.
+CREATE TRIGGER IF NOT EXISTS trg_document_occurrence_delete_revision
+AFTER DELETE ON document_occurrences FOR EACH ROW
+BEGIN
+    UPDATE document_index_state
+    SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE singleton = 1;
+END;
 CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
     ON attachment_pack_index(pack_id);
 

@@ -791,68 +791,6 @@ func TestScheduledDocumentReconcileBootstrapsExistingConsent(t *testing.T) {
 	assert.Equal(1, commandDocumentOccurrenceCount(t, fixture.Store))
 }
 
-func TestScheduledDocumentExtractionUsesExactManifestConsentAndRunBudget(t *testing.T) {
-	require := require.New(t)
-	fixture := storetest.New(t)
-	content := commandValidPDF("scheduled synthetic document")
-	hash := sha256.Sum256(content)
-	digest := hex.EncodeToString(hash[:])
-	messageID := fixture.CreateMessage("documents-scheduled-build")
-	require.NoError(fixture.Store.UpsertMessageRaw(messageID, []byte(
-		"From: sender@example.com\r\nTo: recipient@example.com\r\n"+
-			"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=scheduled\r\n\r\n"+
-			"--scheduled\r\nContent-Type: text/plain\r\n\r\nbody\r\n"+
-			"--scheduled\r\nContent-Type: application/pdf\r\n"+
-			"Content-Disposition: attachment; filename=scheduled.pdf\r\n\r\n"+
-			string(content)+"\r\n--scheduled--\r\n")))
-	require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
-		Filename: "scheduled.pdf", MIMEType: "application/pdf", Size: int64(len(content)),
-		StoragePath: digest[:2] + "/" + digest, ContentHash: digest,
-	}))
-
-	documentsConfig := documentindex.DefaultDocumentsConfig()
-	documentsConfig.Enabled = true
-	documentsConfig.RetentionPosture = documentindex.RetentionStandard
-	documentsConfig.TrainingPosture = documentindex.TrainingOptedOut
-	documentsConfig.Schedule = "17 * * * *"
-	documentsConfig.EstimatedCostUSDPerKUnits = 4
-	documentsConfig.PricingAssumptionOn = "2026-08-13"
-	documentsConfig.CapabilityManifest = writeCommandCapabilityManifest(
-		t, documentsConfig.MaxPagesPerDocument,
-	)
-	require.NoError(documentsConfig.Validate())
-	manifest, err := loadDocumentCapabilityManifest(documentsConfig.CapabilityManifest)
-	require.NoError(err)
-	_, profile, err := documentProfileForConfig(&documentsConfig, manifest)
-	require.NoError(err)
-	_, err = fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
-	require.NoError(err)
-	require.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
-		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
-		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-	}))
-
-	processor := &commandBuildProcessor{}
-	sched := scheduler.New(func(context.Context, string) error { return nil })
-	t.Cleanup(func() { <-sched.Stop().Done() })
-	require.NoError(configureDocumentExtractionJob(sched, fixture.Store, documentsConfig, scheduledDocumentDeps{
-		newProcessor: func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error) {
-			return processor, nil
-		},
-		openAttachments: func(*store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
-			return commandAttachmentOpener{content: content}, func() error { return nil }, nil
-		},
-		dataDirectory: t.TempDir(),
-	}))
-	assert.True(t, sched.IsJobScheduled(documentExtractionJob))
-	require.NoError(sched.TriggerJob(documentExtractionJob))
-	assert.Equal(t, 1, processor.calls)
-	response, err := fixture.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "Synthetic"})
-	require.NoError(err)
-	require.Len(response.Results, 1)
-	assert.Equal(t, messageID, response.Results[0].MessageID)
-}
-
 func TestProbeMistralCommandRequiresExplicitEnablementAndPosture(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

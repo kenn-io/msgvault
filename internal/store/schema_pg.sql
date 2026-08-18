@@ -1811,6 +1811,24 @@ CREATE TABLE IF NOT EXISTS document_index_state (
 );
 INSERT INTO document_index_state(singleton, revision) VALUES (1, 0)
 ON CONFLICT (singleton) DO NOTHING;
+
+-- Foreign-key cascades can remove occurrences before asynchronous attachment
+-- reconciliation observes the deletion. Invalidate search cursors at the
+-- authoritative row mutation so every deletion path is covered.
+CREATE OR REPLACE FUNCTION bump_document_index_revision_after_occurrence_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE document_index_state
+    SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE singleton = 1;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_document_occurrence_delete_revision ON document_occurrences;
+CREATE TRIGGER trg_document_occurrence_delete_revision
+AFTER DELETE ON document_occurrences
+FOR EACH ROW EXECUTE FUNCTION bump_document_index_revision_after_occurrence_delete();
 CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
     ON attachment_pack_index(pack_id);
 

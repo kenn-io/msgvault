@@ -35,8 +35,6 @@ max_pages_per_run = 100
 max_estimated_cost_usd_per_run = 3.5
 estimated_cost_usd_per_1000_units = 4.25
 pricing_assumption_on = "2026-08-13"
-schedule = "17 * * * *"
-capability_manifest = "/private/mistral-capabilities.json"
 
 [attachments.documents.scope]
 message_types = ["EMAIL", "chat", "email"]
@@ -56,7 +54,6 @@ store_chunk_text = true
 	assert.Equal(int64(8388608), documents.MaxSpoolBytes)
 	assert.Equal(int64(4194304), documents.MinFreeSpaceBytes)
 	assert.InDelta(4.25, documents.EstimatedCostUSDPerKUnits, 0.0001)
-	assert.Equal("17 * * * *", documents.Schedule)
 	assert.Equal([]string{"chat", "email"}, documents.Scope.MessageTypes)
 	assert.True(documents.LexicalEnabled())
 	assert.True(documents.StoresChunkText())
@@ -92,18 +89,4 @@ func TestLoadRejectsExplicitZeroDocumentLimits(t *testing.T) {
 			assert.ErrorContains(t, err, "must be")
 		})
 	}
-}
-
-func TestLoadResolvesRelativeDocumentCapabilityManifest(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(`
-[attachments.documents]
-capability_manifest = "private/capabilities.json"
-`), 0o600))
-
-	loaded, err := Load(path, "")
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "private", "capabilities.json"),
-		loaded.Attachments.Documents.CapabilityManifest)
 }
