@@ -549,7 +549,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	resp := statsResponseFromStore(stats)
 	resp.VectorSearch = vs
-	s.refreshVectorStatusIfStale(r.Context())
+	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
 	}
@@ -877,6 +877,9 @@ func (s *Server) handleHybridSearch(
 		return
 	}
 	ctx := r.Context()
+	if !s.vectorSearchPreflight(ctx, w) {
+		return
+	}
 	start := time.Now()
 
 	freeText := strings.Join(parsed.TextTerms, " ")
@@ -924,7 +927,7 @@ func (s *Server) handleHybridSearch(
 				"vector search is not configured")
 		case errors.Is(err, vector.ErrIndexStale):
 			writeError(w, http.StatusServiceUnavailable, "index_stale",
-				"the vector index does not match the configured model; run `msgvault embeddings build --full-rebuild`")
+				"the vector index does not match configured embedding settings; align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`")
 		case errors.Is(err, vector.ErrIndexBuilding):
 			writeError(w, http.StatusServiceUnavailable, "index_building",
 				"the initial vector index is still being built")
@@ -1074,6 +1077,9 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 	_, backend, vectorCfg := s.vectorComponents()
 	if backend == nil {
 		s.writeVectorUnavailable(w)
+		return
+	}
+	if !s.vectorSearchPreflight(r.Context(), w) {
 		return
 	}
 	if s.store == nil {
@@ -1238,7 +1244,7 @@ func (s *Server) writeVectorSearchError(w http.ResponseWriter, err error, operat
 			"vector search is not configured")
 	case errors.Is(err, vector.ErrIndexStale):
 		writeError(w, http.StatusServiceUnavailable, "index_stale",
-			"the vector index does not match the configured model; run `msgvault embeddings build --full-rebuild`")
+			"the vector index does not match configured embedding settings; align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`")
 	case errors.Is(err, vector.ErrIndexBuilding):
 		writeError(w, http.StatusServiceUnavailable, "index_building",
 			"the initial vector index is still being built")
@@ -2023,7 +2029,7 @@ func viewTypeString(v query.ViewType) string {
 // Accepted values for enum query parameters, surfaced in 400 messages.
 var (
 	aggregateSortFields = []string{"count", "size", "attachment_size", "name"}
-	messageSortFields   = []string{"date", "size", "subject"}
+	messageSortFields   = []string{activityDateField, "size", "subject"}
 	textSortFields      = []string{"last_message", "count", "name"}
 	sortDirections      = []string{"asc", apiSortDirectionDesc}
 	timeGranularities   = []string{"year", "month", "day"}
@@ -2285,7 +2291,7 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	// Sorting
 	if v := r.URL.Query().Get("sort"); v != "" {
 		switch strings.ToLower(v) {
-		case "date":
+		case activityDateField:
 			filter.Sorting.Field = query.MessageSortByDate
 		case "size":
 			filter.Sorting.Field = query.MessageSortBySize

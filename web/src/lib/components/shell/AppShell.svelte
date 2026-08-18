@@ -727,7 +727,7 @@
   $effect(() => {
     if (landingFallbackApplied || !arrivedWithoutExploreParam) return;
     if (exploreState.current.workspace !== 'relationships') return;
-    if (relationshipsController.degraded !== 'cache_unavailable') return;
+    if (!relationshipsController.degraded || relationshipsController.degraded.readiness === 'building') return;
     landingFallbackApplied = true;
     // A committed replace, not a transient one: `committed` is what the
     // next push rewrites the current history entry from (see

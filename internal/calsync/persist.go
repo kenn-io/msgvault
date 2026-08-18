@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
@@ -123,7 +124,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		IsFromMe:                fromMe,
 		IdentityDerivedIsFromMe: identityFromMe,
 		Subject:                 sql.NullString{String: subject, Valid: subject != ""},
-		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
+		Snippet:                 sql.NullString{String: Snippet(body), Valid: body != ""},
 		SizeEstimate:            int64(len(body)),
 	})
 	if err != nil {
@@ -362,12 +363,17 @@ func whenLine(ev gcal.Event) string {
 	return "When: " + start.Format("2006-01-02 15:04")
 }
 
-// snippet is a short preview derived from the body.
-func snippet(body string) string {
-	const maxSnippetLength = 200
+// Snippet returns a trimmed calendar-event preview of at most 200 bytes without splitting valid UTF-8.
+func Snippet(body string) string {
+	const maxSnippetBytes = 200
 	body = strings.TrimSpace(body)
-	if len(body) <= maxSnippetLength {
+	if len(body) <= maxSnippetBytes {
 		return body
 	}
-	return body[:maxSnippetLength]
+
+	end := maxSnippetBytes
+	for end > 0 && !utf8.RuneStart(body[end]) {
+		end--
+	}
+	return body[:end]
 }

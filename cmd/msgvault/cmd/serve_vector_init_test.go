@@ -357,7 +357,7 @@ func runRegisteredContextJob(
 		Backend: backend, Runner: runner,
 		Convergence: registeredConvergenceChecker{state: state}, Cfg: vectorCfg,
 	}
-	require.NoError(t, registerEmbedJob(capture, vf, nil))
+	require.NoError(t, registerEmbedJob(capture, vf, nil, nil))
 	require.NotNil(t, capture.job)
 	capture.job.Run(t.Context())
 	return backend, runner

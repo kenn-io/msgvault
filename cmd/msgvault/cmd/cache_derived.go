@@ -357,22 +357,9 @@ func exportDerivedOwnerParticipants(
 	}
 	path := filepath.Join(dir, "owner_participants.parquet")
 	_, err := db.ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			SELECT DISTINCT ai.source_id, p.id AS participant_id
-			FROM sqlite_db.account_identities ai
-			JOIN sqlite_db.participants p
-			  ON p.email_address IS NOT NULL
-			 AND lower(p.email_address) = lower(ai.address)
-			UNION
-			SELECT DISTINCT ai.source_id, pi.participant_id
-			FROM sqlite_db.account_identities ai
-			JOIN sqlite_db.participant_identifiers pi
-			  ON (pi.identifier_type = 'email'
-			      AND lower(pi.identifier_value) = lower(ai.address))
-			  OR (pi.identifier_type != 'email'
-			      AND pi.identifier_value = ai.address)
+		COPY (%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, quoteCacheSQL(path)))
+	`, ownerParticipantsSelectSQL, quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived owner participants: %w", err)
 	}

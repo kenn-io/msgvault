@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/calsync"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -184,6 +186,7 @@ type repairStats struct {
 	filenames     int
 	convTitles    int
 	convSourceIDs int
+	convPreviews  int
 	emailAddrs    int
 	domains       int
 	skippedRows   int
@@ -204,6 +207,13 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 		return nil, err
 	}
 
+	// Repair denormalized conversation previews after all message snippets so
+	// each preview is derived once from the final message state. This also
+	// catches previews stranded by a repair run from an older version.
+	if err := repairConversationPreviews(s, stats); err != nil {
+		return nil, err
+	}
+
 	// Repair display names in participants and message_recipients
 	if err := repairDisplayNames(s, stats); err != nil {
 		return nil, err
@@ -217,7 +227,7 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	// Summary
 	total := stats.subjects + stats.bodyTexts + stats.bodyHTMLs + stats.snippets +
 		stats.displayNames + stats.labels + stats.filenames + stats.convTitles +
-		stats.convSourceIDs + stats.emailAddrs + stats.domains
+		stats.convSourceIDs + stats.convPreviews + stats.emailAddrs + stats.domains
 	if total == 0 {
 		fmt.Println("No encoding repairs needed.")
 		return nil, nil
@@ -251,6 +261,9 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	if stats.convSourceIDs > 0 {
 		fmt.Printf("  Conv src IDs:  %d\n", stats.convSourceIDs)
 	}
+	if stats.convPreviews > 0 {
+		fmt.Printf("  Conv previews: %d\n", stats.convPreviews)
+	}
 	if stats.emailAddrs > 0 {
 		fmt.Printf("  Email addrs:   %d\n", stats.emailAddrs)
 	}
@@ -271,7 +284,7 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 
 	// Query all messages with their raw data
 	rows, err := db.Query(`
-		SELECT m.id, m.subject, mb.body_text, mb.body_html, m.snippet,
+		SELECT m.id, m.message_type, m.subject, mb.body_text, mb.body_html, m.snippet,
 		       mr.raw_data, mr.compression
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
@@ -370,11 +383,12 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 
 	for rows.Next() {
 		var id int64
+		var messageType string
 		var subject, bodyText, bodyHTML, snippet sql.NullString
 		var rawData []byte
 		var compression sql.NullString
 
-		if err := rows.Scan(&id, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
+		if err := rows.Scan(&id, &messageType, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
 			logger.Warn("skipping message row with scan error", "error", err)
 			stats.skippedRows++
 			continue
@@ -433,9 +447,17 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			stats.bodyHTMLs++
 		}
 
-		// Snippet (from Gmail API, not in raw MIME)
+		// Only the exact historical body[:200] signature can be reconstructed from
+		// canonical body text. Every other case retains the generic repair.
 		if snippet.Valid && !utf8.ValidString(snippet.String) {
-			repair.newSnippet = sql.NullString{String: textutil.EnsureUTF8(snippet.String), Valid: true}
+			repairedSnippet := textutil.EnsureUTF8(snippet.String)
+			if messageType == gcal.MessageTypeCalendarEvent &&
+				len(snippet.String) == 200 &&
+				bodyText.Valid && utf8.ValidString(bodyText.String) &&
+				strings.HasPrefix(bodyText.String, snippet.String) {
+				repairedSnippet = calsync.Snippet(bodyText.String)
+			}
+			repair.newSnippet = sql.NullString{String: repairedSnippet, Valid: true}
 			needsRepair = true
 			stats.snippets++
 		}
@@ -521,7 +543,23 @@ type stringRepair struct {
 // must run only after the read cursor that produced the repairs is closed: on
 // a single-connection store, beginning a transaction while a SELECT cursor is
 // still open deadlocks waiting for the connection the cursor holds.
+const participantEmailRepairSQL = "UPDATE participants SET email_address = ? WHERE id = ?"
+
 func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []stringRepair) error {
+	if updateStmt == participantEmailRepairSQL {
+		// The email is an ownership surface: the store applies the rewrite
+		// and settles attribution plus the identity revisions in ONE
+		// transaction, so a committed batch can never lack its refresh and a
+		// failed batch rolls back and stays discoverable on rerun.
+		repairs := make([]store.ParticipantEmailRepair, 0, len(batch))
+		for _, repair := range batch {
+			repairs = append(repairs, store.ParticipantEmailRepair{
+				ParticipantID: repair.id,
+				EmailAddress:  repair.value,
+			})
+		}
+		return s.RepairParticipantEmailAddresses(repairs)
+	}
 	if updateStmt == participantDisplayNameRepairSQL {
 		repairs := make([]store.ParticipantDisplayNameRepair, 0, len(batch))
 		for _, repair := range batch {
@@ -614,6 +652,63 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 	return totalRepaired, nil
 }
 
+// repairConversationPreviews recomputes invalid denormalized previews from
+// the final message state. The compare-and-set store update preserves a
+// preview changed after this scan and makes a failed run safe to retry.
+func repairConversationPreviews(s *store.Store, stats *repairStats) error {
+	fmt.Println("Scanning conversations.last_message_preview for invalid UTF-8...")
+
+	type previewRepair struct {
+		id       int64
+		expected string
+	}
+	repairs, err := func() ([]previewRepair, error) {
+		rows, err := s.DB().Query(`SELECT id, last_message_preview
+			FROM conversations WHERE last_message_preview IS NOT NULL`)
+		if err != nil {
+			return nil, fmt.Errorf("query conversation previews: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		var repairs []previewRepair
+		for rows.Next() {
+			var repair previewRepair
+			if err := rows.Scan(&repair.id, &repair.expected); err != nil {
+				logger.Warn("skipping row with scan error", "table", tableConversations,
+					"column", "last_message_preview", "error", err)
+				stats.skippedRows++
+				continue
+			}
+			if !utf8.ValidString(repair.expected) {
+				repairs = append(repairs, repair)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate conversation previews: %w", err)
+		}
+		return repairs, nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	repaired := 0
+	for _, repair := range repairs {
+		updated, err := s.RecomputeConversationPreviewIfMatches(repair.id, repair.expected)
+		if err != nil {
+			return err
+		}
+		if updated {
+			stats.convPreviews++
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		fmt.Printf("Repaired %d conversations.last_message_preview values\n", repaired)
+	}
+	return nil
+}
+
 // repairOtherStrings repairs other string fields that could have encoding issues.
 func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	// Tables and columns to repair
@@ -656,7 +751,7 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 			name:       tableParticipants,
 			column:     "email_address",
 			query:      "SELECT id, email_address FROM participants WHERE email_address IS NOT NULL",
-			updateStmt: "UPDATE participants SET email_address = ? WHERE id = ?",
+			updateStmt: participantEmailRepairSQL,
 			counter:    &stats.emailAddrs,
 		},
 		{
@@ -671,7 +766,10 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	for _, table := range tables {
 		fmt.Printf("Scanning %s.%s for invalid UTF-8...\n", table.name, table.column)
 
-		totalRepaired, err := repairOtherStringColumn(s, table.name, table.column, table.query, table.updateStmt, table.counter, stats)
+		totalRepaired, err := repairOtherStringColumn(
+			s, table.name, table.column, table.query, table.updateStmt,
+			table.counter, stats,
+		)
 		if err != nil {
 			return err
 		}
@@ -688,7 +786,10 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 // offending rows in batches. Opening, scanning, and closing the read query all
 // happen here so the deferred rows.Close() is scoped to this single query and
 // cannot leak across the caller's table loop. counter is incremented once per
-// repaired row. It returns the number of rows repaired.
+// repaired row. Ownership-bearing columns settle their derived state inside
+// applyStringRepairs (see the participantEmailRepairSQL special case), so a
+// committed batch never depends on later batches or a follow-up step.
+// It returns the number of rows repaired.
 func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStmt string, counter *int, stats *repairStats) (int, error) {
 	db := s.DB()
 

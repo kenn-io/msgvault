@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +11,71 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := storetest.New(t)
+	st := fixture.Store
+	ctx := t.Context()
+	secondSource, err := st.GetOrCreateSource("beeper", "second-account")
+	require.NoError(err)
+	left, err := st.EnsureParticipantByIdentifier("beeper", "evidence-left", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("beeper", "evidence-right", "Right")
+	require.NoError(err)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("provider-user"),
+		State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+
+	type result struct {
+		evidence *store.IdentityMatchEvidence
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, sourceID := range []int64{fixture.Source.ID, secondSource.ID} {
+		wg.Go(func() {
+			<-start
+			evidence, addErr := st.AddIdentityMatchEvidenceContext(
+				ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+					EvidenceKind: "stable_provider_id",
+					Detail:       new("provider-user"),
+					Source:       store.ProvenanceArchiveObservation,
+					SourceID:     &sourceID,
+				})
+			results <- result{evidence: evidence, err: addErr}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var evidenceIDs []int64
+	for call := range results {
+		require.NoError(call.err)
+		require.NotNil(call.evidence)
+		evidenceIDs = append(evidenceIDs, call.evidence.ID)
+	}
+	require.Len(evidenceIDs, 2)
+	assert.Equal(evidenceIDs[0], evidenceIDs[1],
+		"identical evidence writers should receive the same row")
+
+	loaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Len(loaded.Evidence, 1)
+	var supportCount int
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`
+		SELECT COUNT(*) FROM identity_match_evidence_sources WHERE evidence_id = ?`),
+		evidenceIDs[0]).Scan(&supportCount))
+	assert.Equal(2, supportCount,
+		"the converged evidence row should retain both source supports")
+}
 
 func TestUsernameOnlyCandidateCannotBeAcceptedWithoutCorroboration(t *testing.T) {
 	require := require.New(t)
@@ -99,6 +166,7 @@ func TestStableProviderIDCandidateWithoutRecordedValueRequiresUserAcceptance(t *
 
 func TestUpsertIdentityMatchCandidateEnforcesServiceScope(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
 	left, err := st.EnsureParticipantByIdentifier("example", "scope-left", "Left")
@@ -116,6 +184,14 @@ func TestUpsertIdentityMatchCandidateEnforcesServiceScope(t *testing.T) {
 	require.ErrorIs(err, store.ErrServiceScopeRequired,
 		"a required-scope service must not accept an unscoped candidate")
 
+	input.CrossScope = true
+	candidate, created, err := st.UpsertIdentityMatchCandidateContext(ctx, input)
+	require.NoError(err, "a cross-scope username candidate keeps the service namespace")
+	assert.True(created)
+	assert.Nil(candidate.ScopeKind)
+	assert.Nil(candidate.ScopeValue)
+
+	input.CrossScope = false
 	input.ServiceSlug = nil
 	input.ScopeKind = new("workspace")
 	_, _, err = st.UpsertIdentityMatchCandidateContext(ctx, input)
@@ -147,6 +223,333 @@ func TestBlankNormalizedValueDoesNotSatisfySystemAcceptance(t *testing.T) {
 	)
 	require.ErrorIs(err, store.ErrIdentityMatchNotAcceptable,
 		"a blank stable ID must not satisfy the non-user acceptance guard")
+}
+
+func TestSystemAcceptedLinkedIdentityMatchCanBeRejectedAndUnlinked(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@accepted-left:beeper.local", "Test User")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@accepted-right:beeper.local", "Test User")
+	require.NoError(err, "ensure right")
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	accepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		ctx, candidate.ID, "system", new("stable provider ID"))
+	require.NoError(err, "accept and link candidate")
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(left, right), maxInt64(left, right)).Scan(&owner),
+		"read automated link ownership")
+	assert.Equal(candidate.ID, owner)
+
+	rejected, err := st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", new("not the same person"))
+	require.NoError(err, "a user can withdraw an automated match")
+	assert.Equal(store.IdentityMatchStateRejected, rejected.State)
+
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload candidate")
+	assert.Equal(store.IdentityMatchStateRejected, reloaded.State)
+	assert.Equal("user", *reloaded.DecidedBy)
+	assert.NotEqual(accepted.Notes, reloaded.Notes)
+	assert.False(linkedPair(t, st, left, right),
+		"rejecting an automated match must remove its direct participant link")
+}
+
+func TestManualLinkConfirmationDetachesSystemCandidateOwnership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@confirm-left:beeper.local", "Test User")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@confirm-right:beeper.local", "Test User")
+	require.NoError(err)
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+	require.NoError(err, "system acceptance")
+
+	_, err = st.LinkParticipants(left, right)
+	require.NoError(err, "manual confirmation of existing link")
+	var owner sql.NullInt64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(left, right), maxInt64(left, right)).Scan(&owner))
+	assert.False(owner.Valid, "manual confirmation must detach automated ownership")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "reject candidate after manual confirmation")
+	assert.True(linkedPair(t, st, left, right),
+		"rejecting the old automated explanation must preserve the confirmed link")
+}
+
+func TestRejectingOwnedSystemMatchTransfersEdgeToAnotherAcceptedCandidate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@shared-left:beeper.local", "Test User")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@shared-right:beeper.local", "Test User")
+	require.NoError(err)
+	first := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	secondValue := "beeper:another-stable-id"
+	second, created, err := st.UpsertIdentityMatchCandidateContext(ctx,
+		store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: left,
+			RightKind: store.IdentityMatchParticipant, RightID: right,
+			Basis:           store.IdentityMatchStableProviderID,
+			NormalizedValue: &secondValue,
+			State:           store.IdentityMatchStateCandidate,
+			Source:          store.ProvenanceArchiveObservation,
+		})
+	require.NoError(err)
+	require.True(created)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, first.ID, "system", nil)
+	require.NoError(err, "accept first candidate")
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, second.ID, "system", nil)
+	require.NoError(err, "accept second candidate")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, first.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "reject original owner")
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(left, right), maxInt64(left, right)).Scan(&owner))
+	assert.Equal(second.ID, owner, "the other accepted candidate must inherit ownership")
+	assert.True(linkedPair(t, st, left, right))
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, second.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "reject final supporting candidate")
+	assert.False(linkedPair(t, st, left, right),
+		"the edge can be removed once no accepted candidate supports it")
+}
+
+func TestRejectingOwnedSystemMatchReappliesAcceptedCrossComponentCandidate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	a, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@cross-a:beeper.local", "Cross A")
+	require.NoError(err)
+	b, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@cross-b:beeper.local", "Cross B")
+	require.NoError(err)
+	c, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@cross-c:beeper.local", "Cross C")
+	require.NoError(err)
+
+	ab := upsertPairCandidate(t, st, a, b, store.IdentityMatchStableProviderID)
+	ac := upsertPairCandidate(t, st, a, c, store.IdentityMatchStableProviderID)
+	bc := upsertPairCandidate(t, st, b, c, store.IdentityMatchStableProviderID)
+	for _, candidate := range []*store.IdentityMatchCandidate{ab, ac, bc} {
+		_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+		require.NoError(err)
+	}
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, ab.ID, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.True(linkedPair(t, st, a, b),
+		"the remaining accepted B-C assertion must reconnect the split")
+
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(b, c), maxInt64(b, c)).Scan(&owner))
+	assert.Equal(bc.ID, owner)
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, bc.ID, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.False(linkedPair(t, st, a, b),
+		"the reapplied assertion must retain ownership for later rejection")
+	assert.True(linkedPair(t, st, a, c))
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func TestRejectingSystemMatchPreservesPreexistingManualLink(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@manual-left:beeper.local", "Test User")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@manual-right:beeper.local", "Test User")
+	require.NoError(err, "ensure right")
+	_, err = st.LinkParticipants(left, right)
+	require.NoError(err, "create manual link")
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+	require.NoError(err, "system acceptance of already-linked pair")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "user rejection")
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload candidate")
+	assert.Equal(store.IdentityMatchStateRejected, reloaded.State)
+	assert.True(linkedPair(t, st, left, right),
+		"rejecting an automated explanation must not remove a pre-existing manual edge")
+}
+
+func TestRejectingSystemMatchRemovesItsOwnedEdgeAfterParticipantMerge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	absorbed, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@owned-absorbed:beeper.local", "Test User")
+	require.NoError(err, "ensure absorbed")
+	survivor, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@owned-survivor:beeper.local", "Test User")
+	require.NoError(err, "ensure survivor")
+	other, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@owned-other:beeper.local", "Test User")
+	require.NoError(err, "ensure other")
+	candidate := upsertPairCandidate(t, st, absorbed, other,
+		store.IdentityMatchStableProviderID)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+	require.NoError(err, "system acceptance")
+	require.NoError(st.MergeParticipants(absorbed, survivor), "merge participant")
+
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload rewritten candidate")
+	assert.Equal(survivor, reloaded.LeftID)
+	assert.Equal(other, reloaded.RightID)
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(survivor, other), maxInt64(survivor, other)).Scan(&owner),
+		"read rewritten automated link ownership")
+	assert.Equal(candidate.ID, owner,
+		"participant merge must preserve the candidate that owns the rewritten edge")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "user rejection")
+	assert.False(linkedPair(t, st, survivor, other),
+		"rejection must remove the owned edge after endpoint rewrite")
+}
+
+func TestUserAcceptedIdentityMatchRemainsProtectedFromRejection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@user-accepted-left:beeper.local", "Test User")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@user-accepted-right:beeper.local", "Test User")
+	require.NoError(err, "ensure right")
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	accepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		ctx, candidate.ID, "user", new("confirmed by user"))
+	require.NoError(err, "user acceptance")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", new("rejected later"))
+	require.ErrorIs(err, store.ErrIdentityMatchAlreadyAccepted)
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload candidate")
+	assert.Equal(store.IdentityMatchStateAccepted, reloaded.State)
+	assert.Equal(accepted.DecidedBy, reloaded.DecidedBy)
+	assert.True(linkedPair(t, st, left, right),
+		"a user-accepted link must remain protected")
+}
+
+func TestRejectedSystemMatchCannotBeReplayedBySystem(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@rejected-left:beeper.local", "Test User")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@rejected-right:beeper.local", "Test User")
+	require.NoError(err, "ensure right")
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+	require.NoError(err, "system acceptance")
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err, "user rejection")
+
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+	require.ErrorIs(err, store.ErrIdentityMatchRejected,
+		"a stale system importer must not revive a user rejection")
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload candidate")
+	assert.Equal(store.IdentityMatchStateRejected, reloaded.State)
+	assert.False(linkedPair(t, st, left, right))
+}
+
+func TestAppliedIdentityMatchCannotBecomeConflict(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@applied-left:beeper.local", "Test User")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@applied-right:beeper.local", "Test User")
+	require.NoError(err, "ensure right")
+	candidate := upsertPairCandidate(t, st, left, right, store.IdentityMatchStableProviderID)
+	accepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		ctx, candidate.ID, "system", new("stable provider ID"))
+	require.NoError(err, "accept and link candidate")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateConflict, "system",
+		new("late conflicting evidence"))
+	require.ErrorIs(err, store.ErrIdentityMatchAlreadyApplied,
+		"an applied match must not become a conflict")
+
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err, "reload candidate")
+	assert.Equal(store.IdentityMatchStateAccepted, reloaded.State)
+	assert.Equal(accepted.DecidedBy, reloaded.DecidedBy)
+	assert.Equal(accepted.Notes, reloaded.Notes)
+	assert.True(linkedPair(t, st, left, right))
 }
 
 func TestUpsertIdentityMatchCandidateRejectsDecisionStates(t *testing.T) {

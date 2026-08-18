@@ -723,6 +723,182 @@ func TestSupersedeParticipantObservationRecomputesGeneratedConflicts(t *testing.
 	})
 }
 
+func TestObservationMutationReconcilesGeneratedIdentityMatches(t *testing.T) {
+	t.Run("provider correction withdraws system match but preserves user decision", func(t *testing.T) {
+		for _, test := range []struct {
+			name          string
+			decidedBy     string
+			wantCandidate bool
+			wantLink      bool
+		}{
+			{name: "system", decidedBy: "system"},
+			{name: "user", decidedBy: "user", wantCandidate: true, wantLink: true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				f := storetest.New(t)
+				ctx := t.Context()
+				left := f.EnsureParticipant("provider-correction-left@example.org", "Left", "example.org")
+				right := f.EnsureParticipant("provider-correction-right@example.org", "Right", "example.org")
+				providerID := "provider-before-correction"
+				input := store.ParticipantContactObservationInput{
+					SourceID: &f.Source.ID, AddressKind: store.ContactAddressEmail,
+					ProviderUserID: &providerID, OriginalValue: "shared@example.org",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+				}
+				for _, participantID := range []int64{left, right} {
+					_, err := f.Store.RecordContactObservationContext(ctx, participantID, input)
+					require.NoError(err)
+				}
+
+				candidate, _, err := f.Store.UpsertIdentityMatchCandidateContext(
+					ctx, store.IdentityMatchCandidateInput{
+						LeftKind: store.IdentityMatchParticipant, LeftID: left,
+						RightKind: store.IdentityMatchParticipant, RightID: right,
+						Basis: store.IdentityMatchStableProviderID, NormalizedValue: &providerID,
+						State:  store.IdentityMatchStateCandidate,
+						Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
+					},
+				)
+				require.NoError(err)
+				evidence, err := f.Store.AddIdentityMatchEvidenceContext(
+					ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+						EvidenceKind: "stable_provider_id", Detail: &providerID,
+						Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
+					},
+				)
+				require.NoError(err)
+				_, _, err = f.Store.AcceptIdentityMatchCandidateContext(
+					ctx, candidate.ID, test.decidedBy, nil,
+				)
+				require.NoError(err)
+				assert.True(linkedPair(t, f.Store, left, right))
+
+				correctedProviderID := "provider-after-correction"
+				input.ProviderUserID = &correctedProviderID
+				_, err = f.Store.RecordContactObservationContext(ctx, left, input)
+				require.NoError(err)
+
+				remaining, err := f.Store.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+				if test.wantCandidate {
+					require.NoError(err)
+					assert.Equal(store.IdentityMatchStateAccepted, remaining.State)
+					assert.Equal(string(store.ProvenanceUser), *remaining.DecidedBy)
+					assert.Empty(remaining.Evidence)
+				} else {
+					require.ErrorIs(err, store.ErrIdentityMatchNotFound)
+				}
+				assert.Equal(test.wantLink, linkedPair(t, f.Store, left, right))
+				var evidenceCount int
+				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+					`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`),
+					evidence.ID,
+				).Scan(&evidenceCount))
+				assert.Zero(evidenceCount)
+			})
+		}
+	})
+
+	t.Run("username supersession removes unsupported cross-scope candidate", func(t *testing.T) {
+		require := require.New(t)
+		f := storetest.New(t)
+		ctx := t.Context()
+		left := f.EnsureParticipant("username-rename-left@example.org", "Left", "example.org")
+		right := f.EnsureParticipant("username-rename-right@example.org", "Right", "example.org")
+		normalized := "shared-user"
+		var leftObservationID int64
+		for index, participantID := range []int64{left, right} {
+			scopeValue := fmt.Sprintf("T0EXAMPLE%d", index)
+			result, err := f.Store.RecordContactObservationContext(
+				ctx, participantID, store.ParticipantContactObservationInput{
+					SourceID: &f.Source.ID, AddressKind: store.ContactAddressUsername,
+					ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: &scopeValue,
+					OriginalValue: normalized,
+					Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+				},
+			)
+			require.NoError(err)
+			if participantID == left {
+				leftObservationID = result.Observation.Envelope.ID
+			}
+		}
+		candidate, _, err := f.Store.UpsertIdentityMatchCandidateContext(
+			ctx, store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: left,
+				RightKind: store.IdentityMatchParticipant, RightID: right,
+				Basis: store.IdentityMatchServiceScopeUsername, ServiceSlug: new("slack"),
+				CrossScope: true, NormalizedValue: &normalized, State: store.IdentityMatchStateCandidate,
+				Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
+			},
+		)
+		require.NoError(err)
+
+		require.NoError(f.Store.SupersedeParticipantObservationContext(
+			ctx, left, leftObservationID, nil,
+		))
+		_, err = f.Store.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+		require.ErrorIs(err, store.ErrIdentityMatchNotFound)
+	})
+
+	t.Run("participant merge withdraws match supported by a closed observation", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := storetest.New(t)
+		ctx := t.Context()
+		absorbed := f.EnsureParticipant("merge-absorbed@example.org", "Absorbed", "example.org")
+		survivor := f.EnsureParticipant("merge-survivor@example.org", "Survivor", "example.org")
+		third := f.EnsureParticipant("merge-third@example.org", "Third", "example.org")
+		providerID := "provider-before-merge"
+		for participantID, observationProviderID := range map[int64]string{
+			absorbed: providerID,
+			survivor: "different-survivor-provider",
+			third:    providerID,
+		} {
+			_, err := f.Store.RecordContactObservationContext(
+				ctx, participantID, store.ParticipantContactObservationInput{
+					SourceID: &f.Source.ID, AddressKind: store.ContactAddressEmail,
+					ProviderUserID: &observationProviderID, OriginalValue: "shared@example.org",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+				},
+			)
+			require.NoError(err)
+		}
+
+		candidate, _, err := f.Store.UpsertIdentityMatchCandidateContext(
+			ctx, store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: absorbed,
+				RightKind: store.IdentityMatchParticipant, RightID: third,
+				Basis: store.IdentityMatchStableProviderID, NormalizedValue: &providerID,
+				State:  store.IdentityMatchStateCandidate,
+				Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
+			},
+		)
+		require.NoError(err)
+		evidence, err := f.Store.AddIdentityMatchEvidenceContext(
+			ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+				EvidenceKind: "stable_provider_id", Detail: &providerID,
+				Source: store.ProvenanceArchiveObservation, SourceID: &f.Source.ID,
+			},
+		)
+		require.NoError(err)
+		_, _, err = f.Store.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
+		require.NoError(err)
+		require.True(linkedPair(t, f.Store, absorbed, third))
+
+		require.NoError(f.Store.MergeParticipants(absorbed, survivor))
+		_, err = f.Store.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+		require.ErrorIs(err, store.ErrIdentityMatchNotFound)
+		assert.False(linkedPair(t, f.Store, survivor, third))
+		var evidenceCount int
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`),
+			evidence.ID,
+		).Scan(&evidenceCount))
+		assert.Zero(evidenceCount)
+	})
+}
+
 func TestUserConfirmedObservationConflictSurvivesSupportCleanup(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -791,6 +967,42 @@ func TestUserConfirmedObservationConflictSurvivesSupportCleanup(t *testing.T) {
 			assert.Equal(&note, candidates[0].Notes)
 		})
 	}
+}
+
+func TestGeneratedObservationConflictRetainsEnvelopeSourceRef(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier(
+		"example", "generated-source-left", "Left")
+	require.NoError(err, "ensure left")
+	right, err := st.EnsureParticipantByIdentifier(
+		"example", "generated-source-right", "Right")
+	require.NoError(err, "ensure right")
+	sourceRef := "beeper:telegram:@generated-source-right:beeper.local"
+	input := store.ParticipantContactObservationInput{
+		AddressKind:    store.ContactAddressEmail,
+		OriginalValue:  "shared@example.invalid",
+		ProviderUserID: new("provider-left"),
+		Envelope: store.ValueEnvelopeInput{
+			Source:    store.ProvenanceArchiveObservation,
+			SourceRef: &sourceRef,
+		},
+	}
+	_, err = st.RecordContactObservationContext(ctx, left, input)
+	require.NoError(err, "record left observation")
+	input.ProviderUserID = new("provider-right")
+	result, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err, "record right observation")
+	require.True(result.Conflicting)
+	require.NotNil(result.CandidateID)
+
+	candidate, err := st.GetIdentityMatchCandidateContext(ctx, *result.CandidateID)
+	require.NoError(err, "reload generated conflict candidate")
+	assert.Equal(store.ProvenanceArchiveObservation, candidate.Source)
+	assert.Equal(&sourceRef, candidate.SourceRef,
+		"generated candidates must retain the observation's traceable source reference")
 }
 
 func TestSupersedeParticipantObservationDemotesPromotedCandidate(t *testing.T) {

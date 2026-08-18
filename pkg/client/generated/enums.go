@@ -63,14 +63,14 @@ func (c CreateAttributeDefinitionRequestCardinality) Validate() error {
 type CreateAttributeDefinitionRequestObjectType string
 
 const (
-	CreateAttributeDefinitionRequestObjectTypePerson CreateAttributeDefinitionRequestObjectType = "person"
-	Organization                                     CreateAttributeDefinitionRequestObjectType = "organization"
+	CreateAttributeDefinitionRequestObjectTypeOrganization CreateAttributeDefinitionRequestObjectType = "organization"
+	CreateAttributeDefinitionRequestObjectTypePerson       CreateAttributeDefinitionRequestObjectType = "person"
 )
 
 // Validate checks if the CreateAttributeDefinitionRequestObjectType value is valid
 func (c CreateAttributeDefinitionRequestObjectType) Validate() error {
 	switch c {
-	case CreateAttributeDefinitionRequestObjectTypePerson, Organization:
+	case CreateAttributeDefinitionRequestObjectTypeOrganization, CreateAttributeDefinitionRequestObjectTypePerson:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateAttributeDefinitionRequestObjectType value, got: %v", c))
@@ -134,10 +134,33 @@ func (d DiscoverEventType) Validate() error {
 	}
 }
 
+type EmploymentBodySource string
+
+const (
+	ArchiveObservation EmploymentBodySource = "archive_observation"
+	CarddavImport      EmploymentBodySource = "carddav_import"
+	Enrichment         EmploymentBodySource = "enrichment"
+	Extraction         EmploymentBodySource = "extraction"
+	System             EmploymentBodySource = "system"
+	User               EmploymentBodySource = "user"
+	VcardImport        EmploymentBodySource = "vcard_import"
+)
+
+// Validate checks if the EmploymentBodySource value is valid
+func (e EmploymentBodySource) Validate() error {
+	switch e {
+	case ArchiveObservation, CarddavImport, Enrichment, Extraction, System, User, VcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid EmploymentBodySource value, got: %v", e))
+	}
+}
+
 type ExploreCacheUnavailableResponseReadiness string
 
 const (
 	ExploreCacheUnavailableResponseReadinessAbsent      ExploreCacheUnavailableResponseReadiness = "absent"
+	ExploreCacheUnavailableResponseReadinessBuilding    ExploreCacheUnavailableResponseReadiness = "building"
 	ExploreCacheUnavailableResponseReadinessDrifted     ExploreCacheUnavailableResponseReadiness = "drifted"
 	ExploreCacheUnavailableResponseReadinessInterrupted ExploreCacheUnavailableResponseReadiness = "interrupted"
 	ExploreCacheUnavailableResponseReadinessStaleSchema ExploreCacheUnavailableResponseReadiness = "stale_schema"
@@ -146,7 +169,7 @@ const (
 // Validate checks if the ExploreCacheUnavailableResponseReadiness value is valid
 func (e ExploreCacheUnavailableResponseReadiness) Validate() error {
 	switch e {
-	case ExploreCacheUnavailableResponseReadinessAbsent, ExploreCacheUnavailableResponseReadinessDrifted, ExploreCacheUnavailableResponseReadinessInterrupted, ExploreCacheUnavailableResponseReadinessStaleSchema:
+	case ExploreCacheUnavailableResponseReadinessAbsent, ExploreCacheUnavailableResponseReadinessBuilding, ExploreCacheUnavailableResponseReadinessDrifted, ExploreCacheUnavailableResponseReadinessInterrupted, ExploreCacheUnavailableResponseReadinessStaleSchema:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreCacheUnavailableResponseReadiness value, got: %v", e))
@@ -408,6 +431,40 @@ func (i IdentityLinkResponseCacheState) Validate() error {
 	}
 }
 
+type IdentityMatchAcceptResponseCacheState string
+
+const (
+	IdentityMatchAcceptResponseCacheStateReady IdentityMatchAcceptResponseCacheState = "ready"
+	IdentityMatchAcceptResponseCacheStateStale IdentityMatchAcceptResponseCacheState = "stale"
+)
+
+// Validate checks if the IdentityMatchAcceptResponseCacheState value is valid
+func (i IdentityMatchAcceptResponseCacheState) Validate() error {
+	switch i {
+	case IdentityMatchAcceptResponseCacheStateReady, IdentityMatchAcceptResponseCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityMatchAcceptResponseCacheState value, got: %v", i))
+	}
+}
+
+type IdentityMatchRejectResponseCacheState string
+
+const (
+	IdentityMatchRejectResponseCacheStateReady IdentityMatchRejectResponseCacheState = "ready"
+	IdentityMatchRejectResponseCacheStateStale IdentityMatchRejectResponseCacheState = "stale"
+)
+
+// Validate checks if the IdentityMatchRejectResponseCacheState value is valid
+func (i IdentityMatchRejectResponseCacheState) Validate() error {
+	switch i {
+	case IdentityMatchRejectResponseCacheStateReady, IdentityMatchRejectResponseCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityMatchRejectResponseCacheState value, got: %v", i))
+	}
+}
+
 type IdentitySearchSortDirection string
 
 const (
@@ -457,6 +514,265 @@ func (m MeetingImportResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingImportResponseStatus value, got: %v", m))
+	}
+}
+
+type OrganizationAddressBodySource string
+
+const (
+	OrganizationAddressBodySourceArchiveObservation OrganizationAddressBodySource = "archive_observation"
+	OrganizationAddressBodySourceCarddavImport      OrganizationAddressBodySource = "carddav_import"
+	OrganizationAddressBodySourceEnrichment         OrganizationAddressBodySource = "enrichment"
+	OrganizationAddressBodySourceExtraction         OrganizationAddressBodySource = "extraction"
+	OrganizationAddressBodySourceSystem             OrganizationAddressBodySource = "system"
+	OrganizationAddressBodySourceUser               OrganizationAddressBodySource = "user"
+	OrganizationAddressBodySourceVcardImport        OrganizationAddressBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationAddressBodySource value is valid
+func (o OrganizationAddressBodySource) Validate() error {
+	switch o {
+	case OrganizationAddressBodySourceArchiveObservation, OrganizationAddressBodySourceCarddavImport, OrganizationAddressBodySourceEnrichment, OrganizationAddressBodySourceExtraction, OrganizationAddressBodySourceSystem, OrganizationAddressBodySourceUser, OrganizationAddressBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationAddressBodySource value, got: %v", o))
+	}
+}
+
+type OrganizationBodyKind string
+
+const (
+	Company    OrganizationBodyKind = "company"
+	Government OrganizationBodyKind = "government"
+	Household  OrganizationBodyKind = "household"
+	Nonprofit  OrganizationBodyKind = "nonprofit"
+	Other      OrganizationBodyKind = "other"
+	School     OrganizationBodyKind = "school"
+)
+
+// Validate checks if the OrganizationBodyKind value is valid
+func (o OrganizationBodyKind) Validate() error {
+	switch o {
+	case Company, Government, Household, Nonprofit, Other, School:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationBodyKind value, got: %v", o))
+	}
+}
+
+type OrganizationCategoryBodySource string
+
+const (
+	OrganizationCategoryBodySourceArchiveObservation OrganizationCategoryBodySource = "archive_observation"
+	OrganizationCategoryBodySourceCarddavImport      OrganizationCategoryBodySource = "carddav_import"
+	OrganizationCategoryBodySourceEnrichment         OrganizationCategoryBodySource = "enrichment"
+	OrganizationCategoryBodySourceExtraction         OrganizationCategoryBodySource = "extraction"
+	OrganizationCategoryBodySourceSystem             OrganizationCategoryBodySource = "system"
+	OrganizationCategoryBodySourceUser               OrganizationCategoryBodySource = "user"
+	OrganizationCategoryBodySourceVcardImport        OrganizationCategoryBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationCategoryBodySource value is valid
+func (o OrganizationCategoryBodySource) Validate() error {
+	switch o {
+	case OrganizationCategoryBodySourceArchiveObservation, OrganizationCategoryBodySourceCarddavImport, OrganizationCategoryBodySourceEnrichment, OrganizationCategoryBodySourceExtraction, OrganizationCategoryBodySourceSystem, OrganizationCategoryBodySourceUser, OrganizationCategoryBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationCategoryBodySource value, got: %v", o))
+	}
+}
+
+type OrganizationContactPointBodyContactKind string
+
+const (
+	Calendar     OrganizationContactPointBodyContactKind = "calendar"
+	ContactURI   OrganizationContactPointBodyContactKind = "contact_uri"
+	Email        OrganizationContactPointBodyContactKind = "email"
+	Impp         OrganizationContactPointBodyContactKind = "impp"
+	Language     OrganizationContactPointBodyContactKind = "language"
+	OrgDirectory OrganizationContactPointBodyContactKind = "org_directory"
+	Phone        OrganizationContactPointBodyContactKind = "phone"
+	Social       OrganizationContactPointBodyContactKind = "social"
+	URL          OrganizationContactPointBodyContactKind = "url"
+	Username     OrganizationContactPointBodyContactKind = "username"
+)
+
+// Validate checks if the OrganizationContactPointBodyContactKind value is valid
+func (o OrganizationContactPointBodyContactKind) Validate() error {
+	switch o {
+	case Calendar, ContactURI, Email, Impp, Language, OrgDirectory, Phone, Social, URL, Username:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationContactPointBodyContactKind value, got: %v", o))
+	}
+}
+
+type OrganizationContactPointBodySource string
+
+const (
+	OrganizationContactPointBodySourceArchiveObservation OrganizationContactPointBodySource = "archive_observation"
+	OrganizationContactPointBodySourceCarddavImport      OrganizationContactPointBodySource = "carddav_import"
+	OrganizationContactPointBodySourceEnrichment         OrganizationContactPointBodySource = "enrichment"
+	OrganizationContactPointBodySourceExtraction         OrganizationContactPointBodySource = "extraction"
+	OrganizationContactPointBodySourceSystem             OrganizationContactPointBodySource = "system"
+	OrganizationContactPointBodySourceUser               OrganizationContactPointBodySource = "user"
+	OrganizationContactPointBodySourceVcardImport        OrganizationContactPointBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationContactPointBodySource value is valid
+func (o OrganizationContactPointBodySource) Validate() error {
+	switch o {
+	case OrganizationContactPointBodySourceArchiveObservation, OrganizationContactPointBodySourceCarddavImport, OrganizationContactPointBodySourceEnrichment, OrganizationContactPointBodySourceExtraction, OrganizationContactPointBodySourceSystem, OrganizationContactPointBodySourceUser, OrganizationContactPointBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationContactPointBodySource value, got: %v", o))
+	}
+}
+
+type OrganizationCreateBodyKind string
+
+const (
+	OrganizationCreateBodyKindCompany    OrganizationCreateBodyKind = "company"
+	OrganizationCreateBodyKindGovernment OrganizationCreateBodyKind = "government"
+	OrganizationCreateBodyKindHousehold  OrganizationCreateBodyKind = "household"
+	OrganizationCreateBodyKindNonprofit  OrganizationCreateBodyKind = "nonprofit"
+	OrganizationCreateBodyKindOther      OrganizationCreateBodyKind = "other"
+	OrganizationCreateBodyKindSchool     OrganizationCreateBodyKind = "school"
+)
+
+// Validate checks if the OrganizationCreateBodyKind value is valid
+func (o OrganizationCreateBodyKind) Validate() error {
+	switch o {
+	case OrganizationCreateBodyKindCompany, OrganizationCreateBodyKindGovernment, OrganizationCreateBodyKindHousehold, OrganizationCreateBodyKindNonprofit, OrganizationCreateBodyKindOther, OrganizationCreateBodyKindSchool:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationCreateBodyKind value, got: %v", o))
+	}
+}
+
+type OrganizationIdentifierBodyIdentifierKind string
+
+const (
+	Domain                                        OrganizationIdentifierBodyIdentifierKind = "domain"
+	Duns                                          OrganizationIdentifierBodyIdentifierKind = "duns"
+	Linkedin                                      OrganizationIdentifierBodyIdentifierKind = "linkedin"
+	OrganizationIdentifierBodyIdentifierKindOther OrganizationIdentifierBodyIdentifierKind = "other"
+	Registry                                      OrganizationIdentifierBodyIdentifierKind = "registry"
+	TaxID                                         OrganizationIdentifierBodyIdentifierKind = "tax_id"
+)
+
+// Validate checks if the OrganizationIdentifierBodyIdentifierKind value is valid
+func (o OrganizationIdentifierBodyIdentifierKind) Validate() error {
+	switch o {
+	case Domain, Duns, Linkedin, OrganizationIdentifierBodyIdentifierKindOther, Registry, TaxID:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationIdentifierBodyIdentifierKind value, got: %v", o))
+	}
+}
+
+type OrganizationIdentifierBodySource string
+
+const (
+	OrganizationIdentifierBodySourceArchiveObservation OrganizationIdentifierBodySource = "archive_observation"
+	OrganizationIdentifierBodySourceCarddavImport      OrganizationIdentifierBodySource = "carddav_import"
+	OrganizationIdentifierBodySourceEnrichment         OrganizationIdentifierBodySource = "enrichment"
+	OrganizationIdentifierBodySourceExtraction         OrganizationIdentifierBodySource = "extraction"
+	OrganizationIdentifierBodySourceSystem             OrganizationIdentifierBodySource = "system"
+	OrganizationIdentifierBodySourceUser               OrganizationIdentifierBodySource = "user"
+	OrganizationIdentifierBodySourceVcardImport        OrganizationIdentifierBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationIdentifierBodySource value is valid
+func (o OrganizationIdentifierBodySource) Validate() error {
+	switch o {
+	case OrganizationIdentifierBodySourceArchiveObservation, OrganizationIdentifierBodySourceCarddavImport, OrganizationIdentifierBodySourceEnrichment, OrganizationIdentifierBodySourceExtraction, OrganizationIdentifierBodySourceSystem, OrganizationIdentifierBodySourceUser, OrganizationIdentifierBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationIdentifierBodySource value, got: %v", o))
+	}
+}
+
+type OrganizationMediaBodyMediaKind string
+
+const (
+	Key   OrganizationMediaBodyMediaKind = "key"
+	Logo  OrganizationMediaBodyMediaKind = "logo"
+	Photo OrganizationMediaBodyMediaKind = "photo"
+	Sound OrganizationMediaBodyMediaKind = "sound"
+)
+
+// Validate checks if the OrganizationMediaBodyMediaKind value is valid
+func (o OrganizationMediaBodyMediaKind) Validate() error {
+	switch o {
+	case Key, Logo, Photo, Sound:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationMediaBodyMediaKind value, got: %v", o))
+	}
+}
+
+type OrganizationMediaBodySource string
+
+const (
+	OrganizationMediaBodySourceArchiveObservation OrganizationMediaBodySource = "archive_observation"
+	OrganizationMediaBodySourceCarddavImport      OrganizationMediaBodySource = "carddav_import"
+	OrganizationMediaBodySourceEnrichment         OrganizationMediaBodySource = "enrichment"
+	OrganizationMediaBodySourceExtraction         OrganizationMediaBodySource = "extraction"
+	OrganizationMediaBodySourceSystem             OrganizationMediaBodySource = "system"
+	OrganizationMediaBodySourceUser               OrganizationMediaBodySource = "user"
+	OrganizationMediaBodySourceVcardImport        OrganizationMediaBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationMediaBodySource value is valid
+func (o OrganizationMediaBodySource) Validate() error {
+	switch o {
+	case OrganizationMediaBodySourceArchiveObservation, OrganizationMediaBodySourceCarddavImport, OrganizationMediaBodySourceEnrichment, OrganizationMediaBodySourceExtraction, OrganizationMediaBodySourceSystem, OrganizationMediaBodySourceUser, OrganizationMediaBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationMediaBodySource value, got: %v", o))
+	}
+}
+
+type OrganizationNameBodyNameKind string
+
+const (
+	Abbreviation OrganizationNameBodyNameKind = "abbreviation"
+	Alias        OrganizationNameBodyNameKind = "alias"
+	Former       OrganizationNameBodyNameKind = "former"
+	Legal        OrganizationNameBodyNameKind = "legal"
+	Sort         OrganizationNameBodyNameKind = "sort"
+)
+
+// Validate checks if the OrganizationNameBodyNameKind value is valid
+func (o OrganizationNameBodyNameKind) Validate() error {
+	switch o {
+	case Abbreviation, Alias, Former, Legal, Sort:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationNameBodyNameKind value, got: %v", o))
+	}
+}
+
+type OrganizationNameBodySource string
+
+const (
+	OrganizationNameBodySourceArchiveObservation OrganizationNameBodySource = "archive_observation"
+	OrganizationNameBodySourceCarddavImport      OrganizationNameBodySource = "carddav_import"
+	OrganizationNameBodySourceEnrichment         OrganizationNameBodySource = "enrichment"
+	OrganizationNameBodySourceExtraction         OrganizationNameBodySource = "extraction"
+	OrganizationNameBodySourceSystem             OrganizationNameBodySource = "system"
+	OrganizationNameBodySourceUser               OrganizationNameBodySource = "user"
+	OrganizationNameBodySourceVcardImport        OrganizationNameBodySource = "vcard_import"
+)
+
+// Validate checks if the OrganizationNameBodySource value is valid
+func (o OrganizationNameBodySource) Validate() error {
+	switch o {
+	case OrganizationNameBodySourceArchiveObservation, OrganizationNameBodySourceCarddavImport, OrganizationNameBodySourceEnrichment, OrganizationNameBodySourceExtraction, OrganizationNameBodySourceSystem, OrganizationNameBodySourceUser, OrganizationNameBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationNameBodySource value, got: %v", o))
 	}
 }
 
@@ -586,22 +902,44 @@ func (s SessionStatusAuthMode) Validate() error {
 	}
 }
 
+type SetOrganizationAttributeBodySource string
+
+const (
+	SetOrganizationAttributeBodySourceArchiveObservation SetOrganizationAttributeBodySource = "archive_observation"
+	SetOrganizationAttributeBodySourceCarddavImport      SetOrganizationAttributeBodySource = "carddav_import"
+	SetOrganizationAttributeBodySourceEnrichment         SetOrganizationAttributeBodySource = "enrichment"
+	SetOrganizationAttributeBodySourceExtraction         SetOrganizationAttributeBodySource = "extraction"
+	SetOrganizationAttributeBodySourceSystem             SetOrganizationAttributeBodySource = "system"
+	SetOrganizationAttributeBodySourceUser               SetOrganizationAttributeBodySource = "user"
+	SetOrganizationAttributeBodySourceVcardImport        SetOrganizationAttributeBodySource = "vcard_import"
+)
+
+// Validate checks if the SetOrganizationAttributeBodySource value is valid
+func (s SetOrganizationAttributeBodySource) Validate() error {
+	switch s {
+	case SetOrganizationAttributeBodySourceArchiveObservation, SetOrganizationAttributeBodySourceCarddavImport, SetOrganizationAttributeBodySourceEnrichment, SetOrganizationAttributeBodySourceExtraction, SetOrganizationAttributeBodySourceSystem, SetOrganizationAttributeBodySourceUser, SetOrganizationAttributeBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SetOrganizationAttributeBodySource value, got: %v", s))
+	}
+}
+
 type SetPersonAttributeRequestSource string
 
 const (
-	ArchiveObservation SetPersonAttributeRequestSource = "archive_observation"
-	CarddavImport      SetPersonAttributeRequestSource = "carddav_import"
-	Enrichment         SetPersonAttributeRequestSource = "enrichment"
-	Extraction         SetPersonAttributeRequestSource = "extraction"
-	System             SetPersonAttributeRequestSource = "system"
-	User               SetPersonAttributeRequestSource = "user"
-	VcardImport        SetPersonAttributeRequestSource = "vcard_import"
+	SetPersonAttributeRequestSourceArchiveObservation SetPersonAttributeRequestSource = "archive_observation"
+	SetPersonAttributeRequestSourceCarddavImport      SetPersonAttributeRequestSource = "carddav_import"
+	SetPersonAttributeRequestSourceEnrichment         SetPersonAttributeRequestSource = "enrichment"
+	SetPersonAttributeRequestSourceExtraction         SetPersonAttributeRequestSource = "extraction"
+	SetPersonAttributeRequestSourceSystem             SetPersonAttributeRequestSource = "system"
+	SetPersonAttributeRequestSourceUser               SetPersonAttributeRequestSource = "user"
+	SetPersonAttributeRequestSourceVcardImport        SetPersonAttributeRequestSource = "vcard_import"
 )
 
 // Validate checks if the SetPersonAttributeRequestSource value is valid
 func (s SetPersonAttributeRequestSource) Validate() error {
 	switch s {
-	case ArchiveObservation, CarddavImport, Enrichment, Extraction, System, User, VcardImport:
+	case SetPersonAttributeRequestSourceArchiveObservation, SetPersonAttributeRequestSourceCarddavImport, SetPersonAttributeRequestSourceEnrichment, SetPersonAttributeRequestSourceExtraction, SetPersonAttributeRequestSourceSystem, SetPersonAttributeRequestSourceUser, SetPersonAttributeRequestSourceVcardImport:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SetPersonAttributeRequestSource value, got: %v", s))

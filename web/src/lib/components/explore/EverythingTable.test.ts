@@ -385,6 +385,26 @@ describe('EverythingTable', () => {
     expect(screen.queryByText('No items match this view')).toBeNull();
   });
 
+  it('presents cache initialization as automatic recovery', () => {
+    const selection = new ExploreSelectionState();
+    render(EverythingTable, {
+      rows: [],
+      selection,
+      unavailable: {
+        error: 'analytical_cache_unavailable',
+        message: 'The analytical cache is being prepared',
+        readiness: 'building',
+        recovery_action: ''
+      }
+    });
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Preparing analytical cache');
+    expect(alert.textContent).toContain('This view will refresh automatically.');
+    expect(alert.textContent).not.toContain('Rebuild it with');
+    expect(screen.queryByRole('button', { name: 'Retry cache check' })).toBeNull();
+  });
+
   it('keeps loaded rows visible with an inline retry when a cursor page fails', async () => {
     const selection = new ExploreSelectionState();
     const onLoadMore = vi.fn().mockResolvedValue(undefined);

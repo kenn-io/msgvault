@@ -115,6 +115,11 @@ func (s *Store) CreatePersonFromParticipantContext(
 				return err
 			}
 		}
+		if created || bindingsChanged {
+			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+				return err
+			}
+		}
 		person, err = s.getPersonTx(ctx, tx, personID)
 		return err
 	})
@@ -144,6 +149,11 @@ func (s *Store) bindPersonParticipantsTx(
 			return false, fmt.Errorf("check person %d binding for participant %d: %w", personID, memberID, err)
 		}
 		bindingsChanged = bindingsChanged || changed > 0
+	}
+	if bindingsChanged {
+		if err := s.markContactStateDirtyTx(ctx, tx, personID); err != nil {
+			return false, err
+		}
 	}
 	return bindingsChanged, nil
 }
@@ -189,6 +199,17 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 		if references > 0 {
 			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
 		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM organization_attribute_values
+			WHERE value_record_type = 'person' AND value_record_id = ?
+			  AND active_until IS NULL AND superseded_at IS NULL
+		`, id).Scan(&references); err != nil {
+			return fmt.Errorf("check organization references to person %d: %w", id, err)
+		}
+		if references > 0 {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
 			WHERE (left_kind = ? AND left_id = ?)
 			   OR (right_kind = ? AND right_id = ?)
@@ -214,7 +235,8 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 		if err != nil {
 			return fmt.Errorf("delete person %d: %w", id, err)
 		}
-		return nil
+		_, err = s.bumpIdentityRevisionContext(ctx, tx)
+		return err
 	})
 }
 
@@ -498,6 +520,11 @@ func (s *Store) mergePersonBindingsTx(
 	filled, err := s.bindPersonParticipantsTx(ctx, tx, personID, survivors)
 	if err != nil {
 		return false, err
+	}
+	if removed > 0 {
+		if err := s.markContactStateDirtyTx(ctx, tx, personID); err != nil {
+			return false, err
+		}
 	}
 	return removed > 0 || filled, nil
 }

@@ -81,14 +81,14 @@ func TestBuildChunksRelationshipActivityByOccurrenceYear(t *testing.T) {
 			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
 			 'Earlier'::VARCHAR, ''::VARCHAR, TIMESTAMP '2025-12-31 10:30:00',
 			 50::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP,
-			 1::BIGINT, 'email'::VARCHAR, false, 2025::INTEGER, 12::INTEGER),
+			 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR, false, 2025::INTEGER, 12::INTEGER),
 			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
 			 'Later'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-01-01 10:30:00',
 			 50::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
-			 1::BIGINT, 'email'::VARCHAR, false, 2026::INTEGER, 1::INTEGER)
+			 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR, false, 2026::INTEGER, 1::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
 
 	recordingDB := &relationshipActivityCopyRecorder{sqlExecutor: db}
 	activityProgressCalls := 0
@@ -162,15 +162,15 @@ func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
 			 'Earlier'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
 			 10::BIGINT, false, 1::INTEGER, NULL::TIMESTAMP,
-			 2::BIGINT, 'chat'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
+			 2::BIGINT, NULL::BIGINT, 'chat'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
 			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
 			 'Later without participants'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-07-21 10:30:00',
 			 10::BIGINT, false, 2::INTEGER, NULL::TIMESTAMP,
-			 NULL::BIGINT, 'chat'::VARCHAR, true, 2026::INTEGER, 7::INTEGER)
+			 NULL::BIGINT, NULL::BIGINT, 'chat'::VARCHAR, true, 2026::INTEGER, 7::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `
 		SELECT * FROM (VALUES
 			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
@@ -329,11 +329,11 @@ func writeRelationshipBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {
 			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
 			 'Subject'::VARCHAR, 'Preview'::VARCHAR,
 			 TIMESTAMP '2026-07-20 10:30:00', 50::BIGINT, true,
-			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'email'::VARCHAR,
+			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2026::INTEGER, 7::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`+where)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`+where)
 	writeRelationshipParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@example.com'::VARCHAR, 'gmail'::VARCHAR)
@@ -392,11 +392,11 @@ func rewriteRelationshipFixtureIDs(
 			(%d::BIGINT, 1::BIGINT, 'm-%d'::VARCHAR, %d::BIGINT,
 			 'Subject'::VARCHAR, 'Preview'::VARCHAR,
 			 TIMESTAMP '2027-07-21 10:30:00', 50::BIGINT, true,
-			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'email'::VARCHAR,
+			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2027::INTEGER, 7::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`,
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`,
 		messageID, messageID, conversationID))
 	replaceRelationshipParquet(t, db, root, "conversations", fmt.Sprintf(`
 		SELECT * FROM (VALUES

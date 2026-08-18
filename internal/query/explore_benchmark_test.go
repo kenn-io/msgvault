@@ -10,9 +10,11 @@ import (
 )
 
 // BenchmarkExploreLargeArchive is the scheduled/manual reference gate for the
-// generated mixed archive in buildBenchData. Warm first-page and grouped-view
-// operations have a 500 ms reference budget; shared CI compiles and executes a
-// bounded smoke iteration instead of enforcing wall-clock timing.
+// generated mixed archive in buildBenchData: 100,004 messages, 104 logical
+// entries, and 20,000 attachments. Warm first-page and grouped-view operations
+// have a 500 ms reference budget; shared CI compiles and executes a bounded
+// smoke iteration instead of enforcing wall-clock timing. Constrained-memory
+// behavior tests, not benchmark timing, enforce the listing resource contract.
 //
 // Broad search deliberately transfers at most 10,000 ranked message IDs from
 // the authoritative search engine into DuckDB. EntryRow has no message-ID list,
@@ -27,6 +29,17 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 			result, err := engine.Explore(ctx, ExploreRequest{Page: PageSpec{Limit: 50}})
 			require.NoError(b, err)
 			require.LessOrEqual(b, len(result.Rows), 50)
+		}
+	})
+
+	b.Run("files_first_page", func(b *testing.B) {
+		for b.Loop() {
+			result, err := engine.SearchFiles(ctx, FileSearchRequest{
+				Page: PageSpec{Limit: 500},
+			})
+			require.NoError(b, err)
+			require.Len(b, result.Files, 500)
+			require.Equal(b, int64(20_000), result.TotalCount)
 		}
 	})
 

@@ -86,6 +86,11 @@ const (
 	ContactAddressContactURI   ContactAddressKind = "contact_uri"
 	ContactAddressOrgDirectory ContactAddressKind = "org_directory"
 	ContactAddressLanguage     ContactAddressKind = "language"
+	// ContactAddressProviderIdentity is an importer-only observation kind for
+	// a provider identity that has no exportable phone, email, or username.
+	// It is valid in participant observations so matching can use the stable
+	// provider key, but curated person contact points reject it.
+	ContactAddressProviderIdentity ContactAddressKind = "provider_identity"
 )
 
 func (k ContactAddressKind) Valid() bool {
@@ -93,11 +98,19 @@ func (k ContactAddressKind) Valid() bool {
 	case ContactAddressEmail, ContactAddressPhone, ContactAddressUsername,
 		ContactAddressIMPP, ContactAddressURL, ContactAddressSocial,
 		ContactAddressCalendar, ContactAddressContactURI,
-		ContactAddressOrgDirectory, ContactAddressLanguage:
+		ContactAddressOrgDirectory, ContactAddressLanguage,
+		ContactAddressProviderIdentity:
 		return true
 	default:
 		return false
 	}
+}
+
+// Exportable reports whether a contact kind belongs in a curated profile.
+// Provider identities remain valid importer evidence, but they are opaque
+// matching keys rather than contact points that profiles may publish.
+func (k ContactAddressKind) Exportable() bool {
+	return k.Valid() && k != ContactAddressProviderIdentity
 }
 
 var serviceSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -197,7 +210,62 @@ func (s *Store) ResolveCommunicationServiceContext(ctx context.Context, slugOrAl
 	return service, err
 }
 
+// ResolveCommunicationServiceDiscoveryContext resolves a catalog name and
+// reads its discovery marker from the same database statement. The combined
+// snapshot prevents a concurrent user edit from being mixed with stale
+// provenance from a second read.
+func (s *Store) ResolveCommunicationServiceDiscoveryContext(
+	ctx context.Context, slugOrAlias, provider, discoveryKind string,
+) (*CommunicationService, bool, error) {
+	lookup := strings.ToLower(strings.TrimSpace(slugOrAlias))
+	service, discovered, err := scanCommunicationServiceDiscovery(s.db.QueryRowContext(ctx, `SELECT
+		service.id, service.slug, service.display_label, service.scope_policy,
+		service.default_scope_kind, service.normalization, service.normalization_version,
+		service.uri_scheme, service.profile_url_template, service.is_system, service.is_active,
+		service.created_at, service.updated_at,
+		EXISTS (
+		SELECT 1 FROM communication_service_discoveries discovery
+		WHERE discovery.service_id = service.id
+		  AND discovery.provider = ? AND discovery.discovery_kind = ?
+	)
+	FROM communication_services service
+	WHERE service.slug = ? OR service.id = (
+		SELECT service_id FROM communication_service_aliases WHERE alias = ?
+	)
+	ORDER BY CASE WHEN service.slug = ? THEN 0 ELSE 1 END
+	LIMIT 1`, provider, discoveryKind, lookup, lookup, lookup))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, ErrServiceNotFound
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve communication service discovery: %w", err)
+	}
+	service.Aliases, err = s.loadServiceAliasesContext(ctx, service.ID)
+	return service, discovered, err
+}
+
 func (s *Store) EnsureCommunicationServiceContext(ctx context.Context, input CommunicationServiceInput) (*CommunicationService, bool, error) {
+	return s.ensureCommunicationServiceContext(ctx, input, "", "")
+}
+
+// EnsureDiscoveredCommunicationServiceContext creates a communication service
+// and records importer provenance in the same transaction. If the slug already
+// belongs to a user-configured service, the existing service is returned and no
+// discovery marker is added.
+func (s *Store) EnsureDiscoveredCommunicationServiceContext(
+	ctx context.Context, input CommunicationServiceInput, provider, discoveryKind string,
+) (*CommunicationService, bool, error) {
+	provider = strings.TrimSpace(provider)
+	discoveryKind = strings.TrimSpace(discoveryKind)
+	if provider == "" || discoveryKind == "" {
+		return nil, false, errors.New("communication service discovery provider and kind are required")
+	}
+	return s.ensureCommunicationServiceContext(ctx, input, provider, discoveryKind)
+}
+
+func (s *Store) ensureCommunicationServiceContext(
+	ctx context.Context, input CommunicationServiceInput, discoveryProvider, discoveryKind string,
+) (*CommunicationService, bool, error) {
 	if err := validateCommunicationServiceInput(input); err != nil {
 		return nil, false, err
 	}
@@ -210,6 +278,10 @@ func (s *Store) EnsureCommunicationServiceContext(ctx context.Context, input Com
 		var err error
 		service, err = getCommunicationServiceBySlugTx(ctx, tx, input.Slug)
 		if err == nil {
+			// Never infer provenance for an existing row. The discovery table
+			// ships with the first Beeper writer that creates routing fallbacks,
+			// so supported archives cannot contain an unmarked importer-created
+			// fallback. Guessing here would relabel user-configured services.
 			return nil
 		}
 		if !errors.Is(err, ErrServiceNotFound) {
@@ -235,11 +307,39 @@ func (s *Store) EnsureCommunicationServiceContext(ctx context.Context, input Com
 		if err := s.replaceServiceAliasesTx(ctx, tx, id, input.Aliases); err != nil {
 			return err
 		}
+		if discoveryProvider != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO communication_service_discoveries (
+				service_id, provider, discovery_kind
+			) VALUES (?, ?, ?)`, id, discoveryProvider, discoveryKind); err != nil {
+				return fmt.Errorf("record communication service discovery: %w", err)
+			}
+		}
 		service, err = getCommunicationServiceTx(ctx, tx, id)
 		created = err == nil
 		return err
 	})
 	return service, created, err
+}
+
+// IsCommunicationServiceDiscoveredContext reports whether an importer created
+// the service for the specified discovery purpose.
+func (s *Store) IsCommunicationServiceDiscoveredContext(
+	ctx context.Context, serviceID int64, provider, discoveryKind string,
+) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT 1
+		FROM communication_service_discoveries
+		WHERE service_id = ? AND provider = ? AND discovery_kind = ?`),
+		serviceID, provider, discoveryKind,
+	).Scan(&found)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, fmt.Errorf("read communication service discovery: %w", err)
+	}
 }
 
 func (s *Store) UpdateCommunicationServiceContext(ctx context.Context, id int64, input CommunicationServiceInput) (*CommunicationService, error) {
@@ -278,6 +378,10 @@ func (s *Store) UpdateCommunicationServiceContext(ctx context.Context, id int64,
 		}
 		if err := s.replaceServiceAliasesTx(ctx, tx, id, input.Aliases); err != nil {
 			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM communication_service_discoveries WHERE service_id = ?`, id); err != nil {
+			return fmt.Errorf("clear communication service discovery: %w", err)
 		}
 		service, err = getCommunicationServiceTx(ctx, tx, id)
 		return err
@@ -454,6 +558,24 @@ func scanCommunicationService(row scanner) (*CommunicationService, error) {
 	service.URIScheme = nullStringPtr(uriScheme)
 	service.ProfileURLTemplate = nullStringPtr(profileURLTemplate)
 	return &service, nil
+}
+
+func scanCommunicationServiceDiscovery(row scanner) (*CommunicationService, bool, error) {
+	var service CommunicationService
+	var defaultScopeKind, uriScheme, profileURLTemplate sql.NullString
+	var discovered bool
+	if err := row.Scan(
+		&service.ID, &service.Slug, &service.DisplayLabel, &service.ScopePolicy,
+		&defaultScopeKind, &service.Normalization, &service.NormalizationVersion,
+		&uriScheme, &profileURLTemplate, &service.IsSystem, &service.IsActive,
+		&service.CreatedAt, &service.UpdatedAt, &discovered,
+	); err != nil {
+		return nil, false, err
+	}
+	service.DefaultScopeKind = nullStringPtr(defaultScopeKind)
+	service.URIScheme = nullStringPtr(uriScheme)
+	service.ProfileURLTemplate = nullStringPtr(profileURLTemplate)
+	return &service, discovered, nil
 }
 
 func getCommunicationServiceTx(ctx context.Context, tx *loggedTx, id int64) (*CommunicationService, error) {

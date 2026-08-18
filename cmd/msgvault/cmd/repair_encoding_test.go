@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
@@ -238,4 +241,228 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	assert.Equal(1, stats.convSourceIDs, "convSourceIDs")
 	assert.Equal(1, stats.emailAddrs, "emailAddrs")
 	assert.Equal(1, stats.domains, "domains")
+}
+
+func TestRepairConversationPreviews_RestoresPreviewStrandedByEarlierRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	broken := strings.Repeat("a", 198) + "\xe2\x80"
+	want := strings.Repeat("a", 198)
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, last_message_preview, created_at, updated_at)
+		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', ?, datetime('now'), datetime('now'))`,
+		gcal.ConversationType, broken)
+	require.NoError(err, "insert conversation with stranded preview")
+	_, err = db.Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
+		VALUES (10, 1, 1, 'repair-10', ?, ?, datetime('now'), 1000)`,
+		gcal.MessageTypeCalendarEvent, want)
+	require.NoError(err, "insert previously repaired message")
+
+	stats := &repairStats{}
+	require.NoError(repairConversationPreviews(st, stats), "repair stranded conversation preview")
+	var got string
+	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&got),
+		"read repaired conversation preview")
+	assert.Equal(want, got, "preview is rederived from the previously repaired latest message")
+	assert.Equal(1, stats.convPreviews, "convPreviews")
+
+	require.NoError(repairConversationPreviews(st, stats), "rerun preview repair")
+	assert.Equal(1, stats.convPreviews, "rerun is idempotent")
+}
+
+func TestRepairConversationPreviews_UsesLatestMessageAfterCollidingRepairs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	broken := strings.Repeat("c", 198) + "\xe2\x80"
+	calendarBody := strings.Repeat("c", 198) + "\u2014after-boundary"
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, last_message_preview, created_at, updated_at)
+		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', ?, datetime('now'), datetime('now'))`,
+		gcal.ConversationType, broken)
+	require.NoError(err, "insert conversation")
+	_, err = db.Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
+		VALUES (10, 1, 1, 'older-generic', 'email', ?, datetime('now'), 1000),
+		       (20, 1, 1, 'latest-calendar', ?, ?, datetime('now', '+1 minute'), 1000)`,
+		broken, gcal.MessageTypeCalendarEvent, broken)
+	require.NoError(err, "insert colliding damaged snippets")
+	_, err = db.Exec(`INSERT INTO message_bodies (message_id, body_text)
+		VALUES (10, 'generic body'), (20, ?)`, calendarBody)
+	require.NoError(err, "insert message bodies")
+
+	stats := &repairStats{}
+	_, err = repairMessageFields(st, stats)
+	require.NoError(err, "repair colliding message snippets")
+	require.NoError(repairConversationPreviews(st, stats), "repair conversation preview")
+
+	var older, latest, preview string
+	require.NoError(db.QueryRow(`SELECT snippet FROM messages WHERE id = 10`).Scan(&older), "read older snippet")
+	require.NoError(db.QueryRow(`SELECT snippet FROM messages WHERE id = 20`).Scan(&latest), "read latest snippet")
+	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&preview),
+		"read conversation preview")
+	assert.Equal(textutil.EnsureUTF8(broken), older, "generic repair keeps its existing behavior")
+	assert.Equal(strings.Repeat("c", 198), latest, "calendar repair uses canonical body")
+	assert.Equal(latest, preview, "conversation preview follows the latest message after all repairs")
+}
+
+func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
+		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now')),
+		       (2, 'gmail', 'alice@example.com', datetime('now'), datetime('now'))`, gcal.SourceType)
+	require.NoError(err, "insert sources")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', datetime('now'), datetime('now')),
+		       (2, 2, 'email-conversation', 'email_thread', 'Email', datetime('now'), datetime('now'))`,
+		gcal.ConversationType)
+	require.NoError(err, "insert conversations")
+
+	canonicalBody := strings.Repeat("a", 198) + "\u2014after-boundary"
+	bodyPtr := func(value string) *string { return &value }
+	rows := []struct {
+		id           int64
+		conversation int64
+		source       int64
+		messageType  string
+		snippet      string
+		body         *string
+	}{
+		{10, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("a", 198) + "\xe2\x80", &canonicalBody},
+		{20, 2, 2, "email", "mail\xff", bodyPtr("email canonical body")},
+		{30, 1, 1, gcal.MessageTypeCalendarEvent, "missing\xff", nil},
+		{40, 1, 1, gcal.MessageTypeCalendarEvent, "invalid-body\xff", bodyPtr("body\xff")},
+		{50, 1, 1, gcal.MessageTypeCalendarEvent, "keep existing preview", &canonicalBody},
+		{60, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("a", 198) + "\xe2", &canonicalBody},
+		{70, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("b", 198) + "\xe2\x80", &canonicalBody},
+	}
+	for _, row := range rows {
+		_, execErr := db.Exec(`INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
+			VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1000)`,
+			row.id, row.conversation, row.source, fmt.Sprintf("repair-%d", row.id), row.messageType, row.snippet)
+		require.NoError(execErr, "insert message %d", row.id)
+		if row.body != nil {
+			_, execErr = db.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, row.id, *row.body)
+			require.NoError(execErr, "insert body %d", row.id)
+		}
+	}
+	_, err = db.Exec(`UPDATE messages SET sent_at = datetime('now', '+1 minute') WHERE id = 10`)
+	require.NoError(err, "make repaired calendar message the conversation's latest")
+	_, err = db.Exec(`UPDATE conversations SET last_message_preview = ? WHERE id = 1`, rows[0].snippet)
+	require.NoError(err, "store copied damaged calendar preview")
+	_, err = db.Exec(`UPDATE conversations SET last_message_preview = 'sibling sentinel' WHERE id = 2`)
+	require.NoError(err, "store unrelated conversation preview")
+
+	stats := &repairStats{}
+	reembedNeededIDs, err := repairMessageFields(st, stats)
+	require.NoError(err, "repair message fields")
+	require.NoError(repairConversationPreviews(st, stats), "repair copied conversation preview")
+
+	got := make(map[int64]string)
+	resultRows, err := db.Query(`SELECT id, snippet FROM messages WHERE id IN (10, 20, 30, 40, 50, 60, 70)`)
+	require.NoError(err, "query repaired snippets")
+	defer func() { assert.NoError(resultRows.Close()) }()
+	for resultRows.Next() {
+		var id int64
+		var snippet string
+		require.NoError(resultRows.Scan(&id, &snippet), "scan repaired snippet")
+		got[id] = snippet
+	}
+	require.NoError(resultRows.Err(), "iterate repaired snippets")
+
+	assert.Equal(strings.Repeat("a", 198), got[10], "calendar snippet derives from intact canonical body")
+	assert.Equal(textutil.EnsureUTF8("mail\xff"), got[20], "non-calendar snippet retains generic repair")
+	assert.Equal(textutil.EnsureUTF8("missing\xff"), got[30], "missing calendar body retains generic repair")
+	assert.Equal(textutil.EnsureUTF8("invalid-body\xff"), got[40], "invalid calendar body retains generic repair")
+	assert.Equal("keep existing preview", got[50], "valid calendar snippet is not backfilled")
+	assert.Equal(textutil.EnsureUTF8(strings.Repeat("a", 198)+"\xe2"), got[60],
+		"wrong-length calendar snippet retains generic repair")
+	assert.Equal(textutil.EnsureUTF8(strings.Repeat("b", 198)+"\xe2\x80"), got[70],
+		"200-byte non-prefix calendar snippet retains generic repair")
+	var conversationPreview string
+	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&conversationPreview),
+		"read repaired conversation preview")
+	assert.Equal(strings.Repeat("a", 198), conversationPreview,
+		"copied conversation preview follows the repaired latest message")
+	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 2`).Scan(&conversationPreview),
+		"read unrelated conversation preview")
+	assert.Equal("sibling sentinel", conversationPreview,
+		"repair does not overwrite a preview that is not the damaged snippet")
+	for id, snippet := range got {
+		assert.True(utf8.ValidString(snippet), "message %d snippet must be valid UTF-8", id)
+	}
+	assert.Equal(6, stats.snippets, "only invalid snippets count as repaired")
+	assert.Equal(1, stats.convPreviews, "only the copied invalid conversation preview is repaired")
+	assert.Contains(reembedNeededIDs, int64(40), "invalid body repair still requests re-embedding")
+	assert.NotContains(reembedNeededIDs, int64(10), "snippet-only regeneration does not request re-embedding")
+}
+
+// TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch pins the email
+// column's derived-state contract: each committed batch settles attribution
+// and advances the identity revisions in the SAME transaction as the email
+// rewrite. Repairs commit in 1,000-row batches, so 1,500 broken emails must
+// advance the account-identity revision once per batch — and a rewrite can
+// never commit without its refresh, which mattered because repaired emails
+// are valid UTF-8 and a rerun's scan can no longer discover them.
+func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	const broken = 1500
+	for start := 0; start < broken; start += 500 {
+		values := make([]string, 0, 500)
+		args := make([]any, 0, 500)
+		for i := start; i < min(start+500, broken); i++ {
+			values = append(values, "(?, datetime('now'), datetime('now'))")
+			args = append(args, fmt.Sprintf("user%d\xFE@example.com", i))
+		}
+		_, err := db.Exec(
+			`INSERT INTO participants (email_address, created_at, updated_at) VALUES `+
+				strings.Join(values, ","), args...)
+		require.NoError(err, "seed broken participant emails")
+	}
+
+	revisionBefore, err := st.AccountIdentityRevision()
+	require.NoError(err)
+	stats := &repairStats{}
+	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	assert.Equal(broken, stats.emailAddrs)
+
+	revisionAfter, err := st.AccountIdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBefore+2, revisionAfter,
+		"each committed batch must advance the revision with its rewrite")
+
+	var stillBroken int
+	require.NoError(db.QueryRow(
+		`SELECT COUNT(*) FROM participants
+		 WHERE email_address LIKE '%' || CAST(x'FE' AS TEXT) || '%'`,
+	).Scan(&stillBroken))
+	assert.Zero(stillBroken, "every seeded email must be repaired")
 }

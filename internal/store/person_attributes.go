@@ -135,30 +135,10 @@ func (s *Store) SetPersonAttributeValueContext(
 	if input.Ordinal != nil && *input.Ordinal < 0 {
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
-	return s.retryAttributeWrite("set person attribute value",
+	return retryContendedWrite(s, "set person attribute value",
 		func() (*PersonAttributeWrite, error) {
 			return s.setPersonAttributeValueOnce(ctx, input)
 		})
-}
-
-// retryAttributeWrite retries read-then-write transactions that can fail
-// snapshot upgrade (SQLITE_BUSY) or race the current-value unique index.
-func (s *Store) retryAttributeWrite(
-	operation string, attempt func() (*PersonAttributeWrite, error),
-) (*PersonAttributeWrite, error) {
-	var lastErr error
-	for range maxAttributeWriteAttempts {
-		write, err := attempt()
-		if err == nil {
-			return write, nil
-		}
-		if !s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err) {
-			return nil, err
-		}
-		lastErr = err
-	}
-	return nil, fmt.Errorf("%s: gave up after %d attempts: %w",
-		operation, maxAttributeWriteAttempts, lastErr)
 }
 
 func (s *Store) setPersonAttributeValueOnce(
@@ -415,7 +395,7 @@ func (s *Store) SupersedePersonAttributeValueContext(
 	if input.At != nil {
 		at = input.At.UTC()
 	}
-	return s.retryAttributeWrite("supersede person attribute value",
+	return retryContendedWrite(s, "supersede person attribute value",
 		func() (*PersonAttributeWrite, error) {
 			return s.supersedePersonAttributeValueOnce(ctx, at, input)
 		})

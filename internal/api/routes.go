@@ -223,6 +223,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerOrganizationRoutes(apiV1)
+	s.registerEmploymentRoutes(apiV1)
+	s.registerActivityRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)
@@ -231,6 +234,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerRelationshipRoutes(apiV1)
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
+	s.registerIdentityMatchRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
@@ -631,6 +635,16 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			params = append(params, param("X-Request-Id", "header", "string", "Browser-generated retry-stable request ID", true))
 		}
 		return params
+	case "listIdentityMatchCandidates":
+		return []*huma.Param{
+			queryStringParam("state",
+				"Candidate state filter (candidate, accepted, rejected, conflict); "+
+					"repeat or comma-separate for multiple values", false),
+			queryIntegerParam("limit", "Maximum candidates to return (default 100, max 500)"),
+			queryIntegerParam("offset", "Zero-based candidate offset"),
+		}
+	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate":
+		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
 		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}
 	case "unlinkMessageTask":
@@ -910,7 +924,7 @@ func pathIntegerParam(doc string) *huma.Param {
 
 func pathNamedIntegerParam(name, doc string) *huma.Param {
 	p := param(name, "path", huma.TypeInteger, doc, true)
-	p.Schema.Format = "int64"
+	p.Schema.Format = formatInt64
 	return p
 }
 
@@ -920,13 +934,13 @@ func queryStringParam(name, doc string, required bool) *huma.Param {
 
 func queryIntegerParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeInteger, doc, false)
-	p.Schema.Format = "int64"
+	p.Schema.Format = formatInt64
 	return p
 }
 
 func queryIntegerArrayParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeArray, doc, false)
-	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: "int64"}
+	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}
 	return p
 }
 

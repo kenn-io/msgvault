@@ -75,7 +75,100 @@ describe('FilesWorkspace', () => {
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  it('retries a building analytical cache and renders files when it becomes ready', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      calls += 1;
+      if (calls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+        readiness: 'building', recovery_action: ''
+      }, { status: 503 });
+      return Response.json(response());
+    });
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
+    expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await screen.findByText('fixture.pdf')).toBeDefined();
+    expect(calls).toBe(2);
+
+    rendered.unmount();
+    vi.useRealTimers();
+  });
+
+  it('preserves a later-page file restoration across initial cache preparation', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const first = response();
+    first.files[0] = { ...first.files[0]!, id: 1, key: 'file:1', filename: 'first.pdf' };
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const second = response();
+    second.files[0] = { ...second.files[0]!, id: 900, key: 'file:900', filename: 'deep.pdf' };
+    second.total_count = 2;
+    let initialCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/900') return Response.json({
+        id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { cursor?: string };
+      if (body.cursor === 'page-2') return Response.json(second);
+      initialCalls += 1;
+      if (initialCalls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+        readiness: 'building', recovery_action: ''
+      }, { status: 503 });
+      return Response.json(first);
+    });
+    const onRestorationComplete = vi.fn();
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
+      activeKey: 'file:900', restorationEpoch: 11, onRestorationComplete
+    });
+    try {
+      expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
+      expect(onRestorationComplete).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waitFor(() => expect(onRestorationComplete).toHaveBeenCalledWith(11));
+      expect(await screen.findByRole('dialog', { name: 'View deep.pdf' })).toBeDefined();
+      expect(initialCalls).toBe(2);
+    } finally {
+      rendered.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels cache-readiness polling when the Files workspace is destroyed', async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+      readiness: 'building', recovery_action: ''
+    }, { status: 503 }));
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchFn).toHaveBeenCalledOnce();
+
+    rendered.unmount();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it('requests a bounded canonical page and commits stable sortable headers', async () => {
     const requests: Request[] = [];

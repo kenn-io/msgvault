@@ -12,6 +12,8 @@ var (
 	embedFullRebuild            bool
 	embedYes                    bool
 	embedBackstop               bool
+	embedAccounts               []string
+	embedCollections            []string
 	embeddingsRetireYes         bool
 	embeddingsRetireForceActive bool
 	embeddingsActivateForce     bool
@@ -76,6 +78,10 @@ to point at a running OpenAI-compatible endpoint.`,
 	cmd.Flags().BoolVar(&embedYes, "yes", false, "Skip confirmation prompts")
 	cmd.Flags().BoolVar(&embedBackstop, "backstop", false,
 		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
+	cmd.Flags().StringArrayVar(&embedAccounts, "account", nil,
+		"Limit embedding to this account (repeatable); overrides [vector.embed.scope] accounts for this run")
+	cmd.Flags().StringArrayVar(&embedCollections, "collection", nil,
+		"Limit embedding to this collection's accounts (repeatable); overrides [vector.embed.scope] accounts for this run")
 	return cmd
 }
 
@@ -146,6 +152,10 @@ func init() {
 	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
 	embeddingsResumeCmd.Flags().BoolVar(&embedBackstop, "backstop", false,
 		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
+	embeddingsResumeCmd.Flags().StringArrayVar(&embedAccounts, "account", nil,
+		"Limit embedding to this account (repeatable); overrides [vector.embed.scope] accounts for this run")
+	embeddingsResumeCmd.Flags().StringArrayVar(&embedCollections, "collection", nil,
+		"Limit embedding to this collection's accounts (repeatable); overrides [vector.embed.scope] accounts for this run")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")
 	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")

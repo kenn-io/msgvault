@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -70,6 +71,21 @@ func TestScheduledBeeperAttemptsReturnsRefreshError(t *testing.T) {
 
 	require.ErrorIs(t, err, importErr)
 	require.ErrorIs(t, err, refreshErr)
+}
+
+func TestPrintBeeperSummaryReportsIdentityReplayPending(t *testing.T) {
+	assert := assert.New(t)
+	cmd := newSyncBeeperCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	printBeeperSummary(cmd, "telegram", &beeper.ImportSummary{
+		IdentityReplayErrors: 1,
+		Errors:               1,
+	})
+
+	assert.Contains(stdout.String(), "1 identity replay pending")
+	assert.Contains(stdout.String(), "1 errors")
 }
 
 func resetSyncBeeperRoutingGlobals(t *testing.T) {

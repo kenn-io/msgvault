@@ -67,7 +67,7 @@ func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
-	`), "message_attribution_provenance_v2")
+	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
 	_, err = st.DB().Exec(`
 		INSERT INTO applied_migrations (name)
@@ -150,7 +150,7 @@ func TestInitSchemaClearsLegacyAttributionWithoutRemainingIdentity(t *testing.T)
 	_, err = st.DB().Exec(st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
-	`), "message_attribution_provenance_v2")
+	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
 
 	require.NoError(st.InitSchema(), "run production schema migration")
@@ -196,7 +196,7 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
-	`), "message_attribution_provenance_v2")
+	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
 
 	revisionBefore, err := st.AccountIdentityRevision()
@@ -223,6 +223,72 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 		revisionAfter,
 		"provenance migration must invalidate caches atomically",
 	)
+}
+
+// TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives guards the v3
+// rename of the provenance migration: an archive that already reconciled under
+// v2's predicate (sender aliases could claim ownership past a non-owner From
+// envelope) must re-reconcile under the envelope-authoritative predicate and
+// invalidate published caches.
+func TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	sender := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(
+		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
+		"confirm owner identity",
+	)
+	messageID, err := st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			ConversationID:  f.ConvID,
+			SourceID:        f.Source.ID,
+			SourceMessageID: "v2-envelope-authority",
+			MessageType:     "email",
+			SenderID:        sql.NullInt64{Int64: sender, Valid: true},
+		},
+		Recipients: []store.RecipientSet{{
+			Type:           "from",
+			ParticipantIDs: []int64{sender},
+			DisplayNames:   []string{"Outside"},
+			EmailAddresses: []string{"outside@example.com"},
+		}},
+	})
+	require.NoError(err, "persist message with non-owner envelope")
+
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE messages
+		SET identity_is_from_me = TRUE, is_from_me = TRUE
+		WHERE id = ?
+	`), messageID)
+	require.NoError(err, "simulate attribution reconciled under the v2 predicate")
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM applied_migrations
+		WHERE name = ?
+	`), "message_attribution_provenance_v3")
+	require.NoError(err, "reset v3 migration sentinel")
+	_, err = st.DB().Exec(`
+		INSERT INTO applied_migrations (name)
+		VALUES ('message_attribution_provenance_v2')
+		ON CONFLICT (name) DO NOTHING
+	`)
+	require.NoError(err, "record the already-applied v2 migration")
+
+	revisionBefore, err := st.AccountIdentityRevision()
+	require.NoError(err, "read account identity revision before upgrade")
+	require.NoError(st.InitSchema(), "upgrade archive")
+
+	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	require.NoError(err, "read attribution after upgrade")
+	assert.False(isFromMe,
+		"v3 must re-reconcile envelope-authoritative attribution on v2 archives")
+
+	revisionAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "read account identity revision after upgrade")
+	assert.Equal(revisionBefore+1, revisionAfter,
+		"re-reconciliation must invalidate published caches")
 }
 
 func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
@@ -284,7 +350,7 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
-	`), "message_attribution_provenance_v2")
+	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
 
 	require.NoError(st.InitSchema(), "run production schema migration")

@@ -278,7 +278,15 @@
     </div>
     <div class="file-body" role="rowgroup">
       {#if unavailable}
-        <div role="row"><div role="gridcell" aria-colspan="5"><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable.message}</span><Button label="Retry cache check" surface="outline" onclick={() => onRetry?.()} /></div></div></div>
+        <div role="row"><div role="gridcell" aria-colspan="5"><div class="notice" role="alert">
+          <strong>{unavailable.readiness === 'building' ? 'Preparing analytical cache' : 'Analytical cache unavailable'}</strong>
+          <span>{unavailable.message}</span>
+          {#if unavailable.readiness === 'building'}
+            <span>This view will refresh automatically.</span>
+          {:else}
+            <Button label="Retry cache check" surface="outline" onclick={() => onRetry?.()} />
+          {/if}
+        </div></div></div>
       {:else if error && files.length === 0}
         <div role="row"><div role="gridcell" aria-colspan="5"><div class="notice" role="alert"><span>{error}</span><Button label="Retry request" surface="outline" onclick={() => onRetry?.()} /></div></div></div>
       {:else if loading && files.length === 0}

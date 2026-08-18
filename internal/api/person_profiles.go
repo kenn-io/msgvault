@@ -232,7 +232,7 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 }
 
 func writePerson(w http.ResponseWriter, status int, person *store.Person) {
-	w.Header().Set("ETag", personETag(*person))
+	w.Header().Set(etagHeaderName, personETag(*person))
 	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusCreated {
 		w.Header().Set("Location", personsPath+"/"+strconv.FormatInt(person.ID, 10))
@@ -243,7 +243,7 @@ func writePerson(w http.ResponseWriter, status int, person *store.Person) {
 func addPersonIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "id", In: "path", Required: true, Description: "Durable person ID",
-		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
@@ -259,7 +259,7 @@ func addPersonIfMatchParameter(operation *huma.Operation) {
 
 func addPersonETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong person profile revision tag for optimistic concurrency",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},
@@ -304,32 +304,53 @@ func personIfMatch(w http.ResponseWriter, r *http.Request, id int64) (int64, boo
 }
 
 func decodePersonRequest(w http.ResponseWriter, r *http.Request, target any) bool {
-	_, ok := decodePersonRequestFields(w, r, target)
-	return ok
+	return decodeEntityRequest(w, r, target, "person")
 }
 
 func decodePersonRequestFields(
 	w http.ResponseWriter, r *http.Request, target any,
 ) (map[string]json.RawMessage, bool) {
+	return decodeEntityRequestFields(w, r, target, "person")
+}
+
+// decodeEntityRequest decodes a strict single-object JSON body, labelling
+// errors with the entity kind so an organization request never reports a
+// person decoding failure.
+func decodeEntityRequest(w http.ResponseWriter, r *http.Request, target any, entity string) bool {
+	_, ok := decodeEntityRequestFields(w, r, target, entity)
+	return ok
+}
+
+func decodeEntityRequestFields(
+	w http.ResponseWriter, r *http.Request, target any, entity string,
+) (map[string]json.RawMessage, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person request")
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request")
 		return nil, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person request: "+err.Error())
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request: "+err.Error())
 		return nil, false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "bad_request", "Person request must contain one JSON object")
+		writeError(w, http.StatusBadRequest, "bad_request",
+			capitalizeASCII(entity)+" request must contain one JSON object")
 		return nil, false
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person request")
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request")
 		return nil, false
 	}
 	return fields, true
+}
+
+func capitalizeASCII(s string) string {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return s
+	}
+	return string(s[0]-'a'+'A') + s[1:]
 }

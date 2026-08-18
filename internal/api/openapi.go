@@ -188,9 +188,20 @@ import (
 // one canonical edge with endpoint-aware presentation, optimistic PATCH and
 // delete operations, and unresolved RELATED review listing. Additive (minor
 // bump): existing endpoints and response fields are unchanged.
-// 1.40.0 adds dedicated extracted-document search and status routes. Additive
-// (minor bump): existing message, file, profile, and media routes are unchanged.
-const APISchemaVersion = "1.40.0"
+// 1.40.0 adds organization profiles, employment history, and their typed
+// attribute, projection, and lifecycle routes.
+// 1.41.0 adds list, accept, and reject routes for reviewable identity match
+// candidates. Additive (minor bump): existing person, source-identity, and
+// meeting-import routes keep their current contracts.
+// 1.42.0 adds the dated activity and daily-note route families. Existing
+// profile, meeting, media, and other API contracts remain unchanged.
+// 1.43.0 adds structured analytical-cache readiness responses, including the
+// transient building state, to cache-dependent coverage and detail routes.
+// Additive (minor bump): existing success responses remain unchanged.
+// 1.44.0 adds dedicated extracted-document search and status routes. Additive
+// (minor bump): existing message, file, profile, media, and activity routes are
+// unchanged.
+const APISchemaVersion = "1.44.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -222,6 +233,7 @@ func baseOpenAPIDocument() *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenActivitySchemas(doc)
 	return doc
 }
 
@@ -234,6 +246,36 @@ func hardenPersonRelationshipSchemas(doc *huma.OpenAPI) {
 		patch := doc.Components.Schemas.Map()[name]
 		if patch != nil {
 			patch.MinProperties = &minProperties
+		}
+	}
+}
+
+func hardenActivitySchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for schemaName, arrayFields := range map[string][]string{
+		"PersonDaysPage":           {"days"},
+		"PersonDayPage":            {"activity", "entries"},
+		"DayPage":                  {"persons", "entries"},
+		"DayPerson":                {"activity"},
+		"DailyNoteEntriesResponse": {"entries"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, field := range arrayFields {
+			if property := schema.Properties[field]; property != nil {
+				property.Nullable = false
+			}
+		}
+	}
+	if request := doc.Components.Schemas.Map()["CreateDailyNoteEntryRequest"]; request != nil {
+		if personIDs := request.Properties["person_ids"]; personIDs != nil &&
+			personIDs.Items != nil {
+			minimum := float64(1)
+			personIDs.Items.Minimum = &minimum
 		}
 	}
 }
@@ -392,7 +434,7 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		value.AdditionalProperties = nil
 		value.OneOf = []*huma.Schema{
 			settingsValueArm("string", &huma.Schema{Type: huma.TypeString}),
-			settingsValueArm("integer", &huma.Schema{Type: huma.TypeInteger, Format: "int64"}),
+			settingsValueArm("integer", &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}),
 			settingsValueArm("number", &huma.Schema{Type: huma.TypeNumber, Format: "double"}),
 			settingsValueArm("boolean", &huma.Schema{Type: huma.TypeBoolean}),
 			settingsValueArm("strings", &huma.Schema{
@@ -548,6 +590,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if unavailable := schemas["ExploreCacheUnavailableResponse"]; unavailable != nil {
+		if recoveryAction := unavailable.Properties["recovery_action"]; recoveryAction != nil {
+			if recoveryAction.Extensions == nil {
+				recoveryAction.Extensions = map[string]any{}
+			}
+			recoveryAction.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
 	setEnumNames := func(schema *huma.Schema, enumNames []any) {
 		if schema == nil {
 			return
@@ -584,7 +636,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			},
 		},
 		"ExploreCacheUnavailableResponse": {
-			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
+			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
 			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},

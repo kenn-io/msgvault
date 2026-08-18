@@ -62,19 +62,31 @@ func (s *Store) ResolveAccountIdentityContext(
 	}
 
 	// Mirrors messageIdentityAttributionMatch (messages.go) exactly: the
-	// email column compares case-insensitively, participant_identifiers rows
-	// compare per their own identifier_type (case-insensitive only when
-	// type = 'email'), and participants.phone_number is never consulted —
+	// email column compares case-insensitively and only when non-blank,
+	// participant_identifiers rows compare per their own identifier_type
+	// (case-insensitive only when type = 'email', and email identifiers are
+	// consulted only when the participant carries no primary email — the
+	// attribution fallback's primary-email guard), and
+	// participants.phone_number is never consulted —
 	// EnsureParticipantByPhone always backs a phone identity with a
 	// participant_identifiers row, so that row is the parity-correct match
 	// surface. Do not reintroduce identifierMatch/EqualIdentifier here: their
 	// global, shape-based case rule is what this query replaces.
 	const query = `
 		SELECT p.id FROM participants p
-		WHERE p.email_address IS NOT NULL AND LOWER(p.email_address) = LOWER(?)
+		WHERE p.email_address IS NOT NULL
+		  AND TRIM(p.email_address) <> ''
+		  AND LOWER(p.email_address) = LOWER(?)
 		UNION
 		SELECT pi.participant_id FROM participant_identifiers pi
-		WHERE (pi.identifier_type = 'email' AND LOWER(pi.identifier_value) = LOWER(?))
+		WHERE (pi.identifier_type = 'email'
+		       AND NOT EXISTS (
+		         SELECT 1 FROM participants pp
+		         WHERE pp.id = pi.participant_id
+		           AND pp.email_address IS NOT NULL
+		           AND TRIM(pp.email_address) <> ''
+		       )
+		       AND LOWER(pi.identifier_value) = LOWER(?))
 		   OR (pi.identifier_type <> 'email' AND pi.identifier_value = ?)
 		ORDER BY 1
 	`
@@ -111,10 +123,17 @@ func (s *Store) ResolveAccountIdentityContext(
 }
 
 type messageIdentityCandidates struct {
-	messageID  int64
-	sourceID   int64
-	sender     *identityCandidateSet
-	recipients *identityCandidateSet
+	messageID int64
+	sourceID  int64
+	// sender holds envelope-derived candidates; senderFallback holds
+	// participant-derived candidates from From rows without an envelope
+	// snapshot. Attribution's fallback is message-scoped — ANY non-empty
+	// From envelope suppresses participant matching for the sender — so
+	// senderFallback only applies when senderHasEnvelope is false.
+	sender            *identityCandidateSet
+	senderFallback    *identityCandidateSet
+	senderHasEnvelope bool
+	recipients        *identityCandidateSet
 }
 
 // identityCandidateSet keeps one key set per comparison rule so the
@@ -213,10 +232,11 @@ func (s *Store) MatchMessageIdentitiesContext(
 		candidates := candidatesByMessage[messageID]
 		if candidates == nil {
 			candidates = &messageIdentityCandidates{
-				messageID:  messageID,
-				sourceID:   sourceID,
-				sender:     newIdentityCandidateSet(),
-				recipients: newIdentityCandidateSet(),
+				messageID:      messageID,
+				sourceID:       sourceID,
+				sender:         newIdentityCandidateSet(),
+				senderFallback: newIdentityCandidateSet(),
+				recipients:     newIdentityCandidateSet(),
 			}
 			candidatesByMessage[messageID] = candidates
 			sourceSet[sourceID] = struct{}{}
@@ -225,7 +245,12 @@ func (s *Store) MatchMessageIdentitiesContext(
 		var target *identityCandidateSet
 		switch recipientType.String {
 		case "from":
-			target = candidates.sender
+			if envelopeAddress.Valid && strings.TrimSpace(envelopeAddress.String) != "" {
+				candidates.senderHasEnvelope = true
+				target = candidates.sender
+			} else {
+				target = candidates.senderFallback
+			}
 		case "to", "cc", "bcc":
 			target = candidates.recipients
 		default:
@@ -271,10 +296,14 @@ func (s *Store) MatchMessageIdentitiesContext(
 	matches := make(map[int64]MessageIdentityMatch, len(candidatesByMessage))
 	for messageID, candidates := range candidatesByMessage {
 		identities := identitiesBySource[candidates.sourceID]
+		sender := candidates.sender
+		if !candidates.senderHasEnvelope {
+			sender = candidates.senderFallback
+		}
 		matches[messageID] = MessageIdentityMatch{
 			MessageID:  candidates.messageID,
 			SourceID:   candidates.sourceID,
-			Sender:     intersectStoredIdentities(candidates.sender, identities),
+			Sender:     intersectStoredIdentities(sender, identities),
 			Recipients: intersectStoredIdentities(candidates.recipients, identities),
 		}
 	}

@@ -333,7 +333,7 @@ func (s *Server) writeAttributeError(w http.ResponseWriter, err error) {
 func writeAttributeDefinition(
 	w http.ResponseWriter, status int, definition *store.AttributeDefinition,
 ) {
-	w.Header().Set("ETag", attributeDefinitionETag(*definition))
+	w.Header().Set(etagHeaderName, attributeDefinitionETag(*definition))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, definition)
 }
@@ -345,7 +345,7 @@ func attributeDefinitionETag(definition store.AttributeDefinition) string {
 func addAttributeDefinitionIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "id", In: "path", Required: true, Description: "Attribute definition ID",
-		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
@@ -359,7 +359,7 @@ func addAttributeDefinitionIfMatchParameter(operation *huma.Operation) {
 
 func addAttributeDefinitionETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong attribute definition revision tag",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},

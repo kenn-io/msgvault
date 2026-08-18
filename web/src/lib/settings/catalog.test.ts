@@ -16,6 +16,7 @@ describe('settings catalog', () => {
       'openai',
       'voyage-contextual'
     ]);
+    expect(settingsCatalog['vector.embed.scope.accounts'].group).toBe('search');
     expect(settingsCatalog['beeper.schedule'].group).toBe('sources');
     expect(settingsCatalog['integrations.tasks.api_key'].secret).toBe(true);
   });

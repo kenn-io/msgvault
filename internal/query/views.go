@@ -197,6 +197,11 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 						defaultExpr: "NULL::BIGINT AS sender_id",
 					},
 					{
+						name:        "owner_participant_id",
+						replaceExpr: "TRY_CAST(owner_participant_id AS BIGINT) AS owner_participant_id",
+						defaultExpr: "NULL::BIGINT AS owner_participant_id",
+					},
+					{
 						name:        messageTypeDimension,
 						replaceExpr: "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type",
 						defaultExpr: "'' AS message_type",
@@ -411,6 +416,67 @@ func createConvenienceViews(db *sql.DB) error {
 // must use this so labels cannot drift from the view's.
 func sqlAnalyticalEntriesParticipantLabel(alias string) string {
 	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), " + alias + ".email_address, '')"
+}
+
+// buildNarrowAnalyticalEntriesCTE renders the scalar part of
+// analytical_entries without its archive-wide participant-list aggregates.
+// Listing fast paths page or count this relation before enriching only the
+// returned rows with participant facts.
+func buildNarrowAnalyticalEntriesCTE(name string) string {
+	return buildScalarAnalyticalEntriesCTE(name, true)
+}
+
+// buildNarrowFileEntriesCTE omits the per-message attachment summary because
+// Files joins the individual attachment rows and never consumes those totals.
+func buildNarrowFileEntriesCTE(name string) string {
+	return buildScalarAnalyticalEntriesCTE(name, false)
+}
+
+func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
+	attachmentColumns := `
+		0::BIGINT AS attachment_count,
+		0::BIGINT AS attachment_size`
+	attachmentJoin := ""
+	if includeAttachmentSummary {
+		attachmentColumns = `
+		COALESCE(att.attachment_count, 0) AS attachment_count,
+		COALESCE(att.attachment_size, 0) AS attachment_size`
+		attachmentJoin = `
+	LEFT JOIN (
+		SELECT message_id, COUNT(*) AS attachment_count,
+			COALESCE(SUM(size), 0) AS attachment_size
+		FROM attachments GROUP BY message_id
+	) att ON att.message_id = m.id`
+	}
+	return name + ` AS NOT MATERIALIZED (
+	SELECT
+		m.id AS message_id,
+		m.source_id,
+		COALESCE(s.source_type, '') AS source_type,
+		COALESCE(s.account_email, '') AS source_identifier,
+		m.source_message_id,
+		m.conversation_id,
+		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
+		COALESCE(c.conversation_type, '') AS conversation_type,
+		COALESCE(c.title, '') AS conversation_title,
+		COALESCE(m.message_type, '') AS message_type,
+		m.sender_id,
+		COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
+		COALESCE(sender.domain, '') AS sender_domain,
+		m.sent_at AS occurred_at,
+		COALESCE(m.subject, '') AS subject,
+		COALESCE(m.snippet, '') AS snippet,
+		m.is_from_me,
+		m.size_estimate,
+		m.deleted_at IS NOT NULL AS internally_deleted,
+		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
+		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
+	FROM messages m
+	JOIN sources s ON s.id = m.source_id
+	LEFT JOIN conversations c ON c.id = m.conversation_id
+	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + `
+)`
 }
 
 // sqlAnalyticalEntries normalizes every durable message-shaped source row.

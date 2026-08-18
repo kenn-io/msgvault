@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	activitypkg "go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
@@ -106,6 +107,13 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 		InternalDate: sql.NullTime{Time: fallbackDate, Valid: true},
 	})
 	require.NoError(err)
+	participantID, err := st.EnsureParticipant(
+		"contact-state@example.com", "Contact State", "example.com")
+	require.NoError(err)
+	person, created, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	require.True(created)
+	prepareDateRepairContactState(t, st, person.ID)
 	require.NoError(st.Close())
 
 	now := time.Date(2026, 7, 23, 12, 0, 0, 123, time.UTC)
@@ -131,6 +139,9 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 	)
 	_, err = os.Stat(filepath.Join(dataDir, "repairs"))
 	require.ErrorIs(err, os.ErrNotExist)
+	assert.False(readContactDirtyAt(
+		t, cfg.DatabaseDSN(), person.ID).Valid,
+		"dry run must not dirty contact state")
 
 	var applyOut bytes.Buffer
 	applyCmd := &cobra.Command{}
@@ -147,6 +158,9 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 		fallbackDate,
 		readMessageSentAt(t, cfg.DatabaseDSN(), fallbackMessageID),
 	)
+	dirtyAfterApply := readContactDirtyAt(t, cfg.DatabaseDSN(), person.ID)
+	assert.True(dirtyAfterApply.Valid,
+		"committed date repairs must dirty contact state")
 
 	ledgerPaths, err := filepath.Glob(filepath.Join(dataDir, "repairs", "dates-*.json"))
 	require.NoError(err)
@@ -163,6 +177,19 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 	assert.Equal(fallbackMessageID, ledger.Repairs[1].MessageID)
 	assert.Equal("source-fallback", string(ledger.Repairs[1].Source))
 
+	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	pending, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	assert.Len(pending, 2,
+		"date repair must leave both changed messages queued for real projection")
+	projectDateRepairActivity(t, st)
+	pending, err = st.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	assert.Empty(pending)
+	require.NoError(st.Close())
+	assert.False(readContactDirtyAt(t, cfg.DatabaseDSN(), person.ID).Valid)
+
 	var secondApplyOut bytes.Buffer
 	secondApplyCmd := &cobra.Command{}
 	secondApplyCmd.SetContext(context.Background())
@@ -172,6 +199,8 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 	ledgerPaths, err = filepath.Glob(filepath.Join(dataDir, "repairs", "dates-*.json"))
 	require.NoError(err)
 	assert.Len(ledgerPaths, 1)
+	assert.False(readContactDirtyAt(t, cfg.DatabaseDSN(), person.ID).Valid,
+		"no-op apply must not dirty contact state")
 }
 
 func TestRunRepairDatesLocalReportsUnresolvedReasons(t *testing.T) {
@@ -439,6 +468,114 @@ func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.
 	require.NoError(cacheLock.Unlock())
 }
 
+func TestRunRepairDatesLocalReportsCommittedRepairWhenContactInvalidationFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	savedCfg := cfg
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+	}
+	t.Cleanup(func() { cfg = savedCfg })
+
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(
+		source.ID, "invalidation-failure", "Invalidation failure")
+	require.NoError(err)
+	repairedAt := time.Date(2015, 5, 5, 12, 0, 0, 0, time.UTC)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "invalidation-failure-message",
+		MessageType:     "email",
+		SentAt: sql.NullTime{
+			Time:  time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+			Valid: true,
+		},
+		InternalDate: sql.NullTime{Time: repairedAt, Valid: true},
+	})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipant(
+		"invalidation@example.com", "Invalidation", "example.com")
+	require.NoError(err)
+	person, created, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	require.True(created)
+	prepareDateRepairContactState(t, st, person.ID)
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER reject_contact_invalidation
+		BEFORE UPDATE OF dirty_at ON person_contact_state
+		BEGIN
+			SELECT RAISE(ABORT, 'synthetic contact invalidation failure');
+		END
+	`)
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&bytes.Buffer{})
+	err = runRepairDatesLocal(
+		cmd,
+		true,
+		time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC),
+	)
+	require.ErrorContains(err, "contact state invalidation failed")
+	require.ErrorContains(err, "full activity/contact-state rebuild")
+	require.ErrorContains(err, "synthetic contact invalidation failure")
+	assert.Equal(repairedAt, readMessageSentAt(t, cfg.DatabaseDSN(), messageID),
+		"the repair committed before invalidation failed")
+	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	pending, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(pending, 1)
+	assert.Equal(messageID, pending[0].MessageID,
+		"failed invalidation must not acknowledge the repair queue")
+	require.NoError(st.Close())
+
+	ledgerPaths, err := filepath.Glob(filepath.Join(dataDir, "repairs", "dates-*.json"))
+	require.NoError(err)
+	require.Len(ledgerPaths, 1)
+	ledgerBytes, err := os.ReadFile(ledgerPaths[0])
+	require.NoError(err)
+	var ledger dateRepairLedger
+	require.NoError(json.Unmarshal(ledgerBytes, &ledger))
+	assert.Equal("applied-invalidation-failed", ledger.Status)
+	assert.Contains(ledger.Error, "synthetic contact invalidation failure")
+	require.NotNil(ledger.AppliedAt,
+		"a committed repair must retain its applied timestamp")
+	assert.Nil(ledger.CompletedAt)
+}
+
+func prepareDateRepairContactState(
+	t *testing.T,
+	st *store.Store,
+	personID int64,
+) {
+	t.Helper()
+	projectDateRepairActivity(t, st)
+	revisions, err := st.ContactRevisionsContext(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, st.RecomputeContactStateContext(
+		t.Context(), []int64{personID}, revisions))
+}
+
+func projectDateRepairActivity(t *testing.T, st *store.Store) {
+	t.Helper()
+	projector, err := activitypkg.NewProjector(st, activitypkg.Options{
+		Timezone: "UTC", BatchSize: 10,
+	})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+}
+
 func readMessageSentAt(t *testing.T, dsn string, messageID int64) time.Time {
 	t.Helper()
 	st, err := store.OpenForTest(dsn)
@@ -450,4 +587,17 @@ func readMessageSentAt(t *testing.T, dsn string, messageID int64) time.Time {
 		messageID,
 	).Scan(&sentAt))
 	return sentAt.UTC()
+}
+
+func readContactDirtyAt(t *testing.T, dsn string, personID int64) sql.NullTime {
+	t.Helper()
+	st, err := store.OpenForTest(dsn)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, st.Close()) }()
+	var dirty sql.NullTime
+	require.NoError(t, st.DB().QueryRow(
+		st.Rebind("SELECT dirty_at FROM person_contact_state WHERE person_id = ?"),
+		personID,
+	).Scan(&dirty))
+	return dirty
 }

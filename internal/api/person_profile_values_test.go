@@ -147,6 +147,7 @@ func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
 	}{
 		{"unknown provenance", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"beeper"}}]}}`},
 		{"scope required", `{"contact_points":{"add":[{"address_kind":"username","service_slug":"slack","original_value":"alice","envelope":{"source":"user"}}]}}`},
+		{"provider identity is observation-only", `{"contact_points":{"add":[{"address_kind":"provider_identity","original_value":"provider:key","envelope":{"source":"user"}}]}}`},
 		{"unknown service", `{"contact_points":{"add":[{"address_kind":"username","service_slug":"no-such","original_value":"alice","envelope":{"source":"user"}}]}}`},
 		{"invalid partial date", `{"dates":{"add":[{"date_kind":"birthday","date":{"year":1985,"month":2,"day":30},"original_value":"1985-02-30","envelope":{"source":"user"}}]}}`},
 		{"close before active", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"user","active_from":"2026-08-08T12:00:00Z","active_until":"2026-08-08T11:00:00Z"}}]}}`},

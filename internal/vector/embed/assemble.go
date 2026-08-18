@@ -38,8 +38,12 @@ type AssemblyPolicy struct {
 // LastModified remains dialect-native so the later coverage CAS can bind the
 // exact value read in this transaction.
 type AssemblyMessage struct {
-	ID                int64
-	ConversationID    int64
+	ID             int64
+	ConversationID int64
+	// SourceID is populated by the routing reads (MessageMeta) so scope
+	// checks can enforce the account dimension of the build scope; the
+	// body-loading queries leave it zero.
+	SourceID          int64
 	MessageType       string
 	Subject           string
 	Body              string
@@ -177,7 +181,7 @@ func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMess
 		return AssemblyMessage{}, false, ErrSourceSnapshotClosed
 	}
 	query := s.state.rebind(`
-		SELECT m.id, m.conversation_id, COALESCE(m.message_type, ''),
+		SELECT m.id, m.conversation_id, m.source_id, COALESCE(m.message_type, ''),
 		       m.sent_at, m.received_at, m.internal_date
 		FROM messages m
 		WHERE m.id = ? AND m.deleted_at IS NULL
@@ -185,7 +189,7 @@ func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMess
 	var row AssemblyMessage
 	var sentAt, receivedAt, internalDate sql.NullTime
 	err := s.state.tx.QueryRowContext(ctx, query, id).Scan(
-		&row.ID, &row.ConversationID, &row.MessageType, &sentAt, &receivedAt, &internalDate)
+		&row.ID, &row.ConversationID, &row.SourceID, &row.MessageType, &sentAt, &receivedAt, &internalDate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AssemblyMessage{}, false, nil
 	}
@@ -195,6 +199,30 @@ func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMess
 	row.SentAt = firstValidTime(sentAt, receivedAt, internalDate)
 	row.SourceSequence = s.state.sourceSequence
 	return row, true, nil
+}
+
+// ConversationSourceID reads the owning source of a conversation, for
+// account-scope checks on conversation-level scopes (chat blocks) whose
+// selectors carry no message ID.
+func (s SourceSnapshot) ConversationSourceID(ctx context.Context, conversationID int64) (int64, bool, error) {
+	if s.state == nil {
+		return 0, false, ErrSourceSnapshotClosed
+	}
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
+	if s.state.closed {
+		return 0, false, ErrSourceSnapshotClosed
+	}
+	var sourceID int64
+	err := s.state.tx.QueryRowContext(ctx,
+		s.state.rebind(`SELECT source_id FROM conversations WHERE id = ?`), conversationID).Scan(&sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("read embedding conversation source %d: %w", conversationID, err)
+	}
+	return sourceID, true, nil
 }
 
 // Messages returns the complete live message set selected by one persisted

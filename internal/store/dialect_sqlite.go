@@ -1067,6 +1067,57 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 	return nil
 }
 
+// EnsureActivityProjectionTriggers repairs activity trigger definitions on
+// archives created before the activity projection queue became part of the
+// production write path. Message INSERTs are intentionally not trigger-backed:
+// even a trigger that does no work adds a compiled trigger subprogram and a
+// statement journal to every fresh message INSERT. The conversation trigger
+// is scoped to real conversation_type changes — a blanket AFTER UPDATE
+// trigger requeued whole archives on routine statistics recomputation. SQLite
+// resolves the column reference at fire time, so the definition is valid even
+// before the conversation_type ADD COLUMN migration has run.
+//
+// The messages trigger is built here rather than in schema.sql because its
+// column list comes from MessagesActivityColumns, shared with the PostgreSQL
+// dialect so the two backends cannot drift, and because DROP + CREATE replaces
+// the blanket definition an earlier build left on an existing archive where
+// CREATE TRIGGER IF NOT EXISTS silently would not. It runs after
+// LegacyColumnMigrations, so every column it names already exists.
+func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_insert`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_update`,
+		fmt.Sprintf(`CREATE TRIGGER trg_activity_queue_messages_update
+		     AFTER UPDATE OF %s ON messages FOR EACH ROW
+		     WHEN %s
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         VALUES (NEW.id, 1, CURRENT_TIMESTAMP)
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`, activityTriggerColumnList(), activityValueGuard("IS NOT")),
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`CREATE TRIGGER trg_activity_queue_conversation_type_update
+		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+		     WHEN OLD.conversation_type IS NOT NEW.conversation_type
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         SELECT id, 1, CURRENT_TIMESTAMP
+		         FROM messages WHERE conversation_id = NEW.id
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`,
+	}
+	for _, stmt := range stmts {
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure activity projection triggers: %w", err)
+		}
+	}
+	return nil
+}
+
 // lastModifiedUpdateOfColumns renders every live column of `messages` EXCEPT
 // content_changed_at, for the last_modified trigger's `UPDATE OF` clause.
 //
@@ -1202,8 +1253,12 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN service_id INTEGER REFERENCES communication_services(id) ON DELETE SET NULL`, "pi_service_id"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_kind TEXT`, "pi_scope_kind"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_value TEXT`, "pi_scope_value"},
-		{`ALTER TABLE identity_match_candidates ADD COLUMN observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
-		{`ALTER TABLE identity_match_candidates ADD COLUMN pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
+		{sqliteParticipantLinkIdentityMatchCandidateMigration, "participant_links.identity_match_candidate_id"},
+		{sqliteIdentityMatchObservationConflictOriginMigration, identityMatchObservationConflictOriginMigrationDesc},
+		{sqliteIdentityMatchCandidateSourcesMigration, "identity_match_candidate_sources"},
+		{sqliteIdentityMatchEvidenceSourcesMigration, "identity_match_evidence_sources"},
+		{sqliteIdentityMatchPreConflictStateMigration, "identity_match_candidates.pre_conflict_state"},
+		{sqliteIdentityMatchApplicationPendingMigration, "identity_match_candidates.application_pending"},
 		{`ALTER TABLE embedding_changes ADD COLUMN old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},

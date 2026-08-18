@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -468,4 +469,317 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 	want := min(a, b)
 	assert.Equal(want, canonicalA, "participant a canonical id")
 	assert.Equal(want, canonicalB, "participant b canonical id")
+}
+
+// TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard covers the
+// conflicting-primary-email case: a correspondent whose participant carries a
+// confirmed identity address as an email identifier but has a primary email
+// of their own is NOT globally the owner. An inbound primary-email envelope on
+// that participant therefore stays a counterpart, while an outbound owner-
+// alias envelope on the same merged participant must use the message-relative
+// is_from_me attribution to treat its sender as the owner. An email-less
+// participant with the same identifier still resolves as a global owner.
+func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	st, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(st.InitSchema(), "init schema")
+
+	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
+
+	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	require.NoError(err)
+
+	contactID, err := st.EnsureParticipant("contact@example.com", "Contact", "example.com")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(contactID, "email", "owner@example.com"))
+
+	var aliasOnlyID int64
+	require.NoError(st.DB().QueryRow(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES ('Alias Only', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id
+	`).Scan(&aliasOnlyID), "create email-less alias participant")
+	require.NoError(st.SetParticipantIdentifier(aliasOnlyID, "email", "owner@example.com"))
+
+	inboundMsgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "from-contact",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: contactID, Valid: true},
+		Subject:         sql.NullString{String: "From contact", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		inboundMsgID, "from", []int64{contactID}, []string{"Contact"}))
+	require.NoError(st.ReplaceMessageRecipients(
+		inboundMsgID, "to", []int64{aliasOnlyID}, []string{"Alias Only"}))
+
+	coauthorID, err := st.EnsureParticipant(
+		"coauthor@example.org", "Co-author", "example.org")
+	require.NoError(err)
+	counterpartID, err := st.EnsureParticipant(
+		"counterpart@example.net", "Counterpart", "example.net")
+	require.NoError(err)
+	outboundMsgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "from-owner-alias",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: contactID, Valid: true},
+		Subject:         sql.NullString{String: "From owner alias", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		outboundMsgID, "from", []int64{contactID, coauthorID}, []string{"Owner Alias", "Co-author"}))
+	require.NoError(st.ReplaceMessageRecipients(
+		outboundMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE message_recipients
+		SET email_address = ?
+		WHERE message_id = ? AND recipient_type = 'from' AND participant_id = ?
+	`), "owner@example.com", outboundMsgID, contactID)
+	require.NoError(err, "preserve the outbound owner-alias envelope after the participant merge")
+
+	envelopeOutboundMsgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "from-owner-envelope",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC), Valid: true},
+		Subject:         sql.NullString{String: "From matched owner envelope", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		envelopeOutboundMsgID, "from",
+		[]int64{contactID, coauthorID}, []string{"Owner Alias", "Co-author"}))
+	require.NoError(st.ReplaceMessageRecipients(
+		envelopeOutboundMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE message_recipients
+		SET email_address = ?
+		WHERE message_id = ? AND recipient_type = 'from' AND participant_id = ?
+	`), "owner@example.com", envelopeOutboundMsgID, contactID)
+	require.NoError(err, "record the matching owner envelope without a resolved sender")
+
+	externalFirstMsgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "external-first-owner-second",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 5, 4, 12, 0, 0, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: coauthorID, Valid: true},
+		Subject:         sql.NullString{String: "Envelope owner after external author", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		externalFirstMsgID, "from",
+		[]int64{coauthorID, contactID}, []string{"Co-author", "Owner Alias"}))
+	require.NoError(st.ReplaceMessageRecipients(
+		externalFirstMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE message_recipients
+		SET email_address = CASE participant_id
+			WHEN ? THEN 'coauthor@example.org'
+			WHEN ? THEN 'owner@example.com'
+		END
+		WHERE message_id = ? AND recipient_type = 'from'
+	`), coauthorID, contactID, externalFirstMsgID)
+	require.NoError(err, "record the external-first multi-address envelope")
+
+	sourceNativeMsgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "source-native-external-first",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 5, 5, 12, 0, 0, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: coauthorID, Valid: true},
+		Subject:         sql.NullString{String: "Source-native sender before owner envelope", Valid: true},
+		IsFromMe:        true,
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		sourceNativeMsgID, "from",
+		[]int64{coauthorID, contactID}, []string{"Co-author", "Owner Alias"}))
+	require.NoError(st.ReplaceMessageRecipients(
+		sourceNativeMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE message_recipients
+		SET email_address = CASE participant_id
+			WHEN ? THEN 'coauthor@example.org'
+			WHEN ? THEN 'owner@example.com'
+		END
+		WHERE message_id = ? AND recipient_type = 'from'
+	`), coauthorID, contactID, sourceNativeMsgID)
+	require.NoError(err, "record the source-native multi-address envelope")
+	require.NoError(st.Close())
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "buildCache")
+	require.False(result.Skipped, "buildCache unexpectedly skipped")
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+
+	ownerPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
+	var contactRows int
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`,
+		ownerPattern, contactID).Scan(&contactRows))
+	assert.Equal(0, contactRows,
+		"a participant with its own primary email must not resolve as owner via an email identifier")
+
+	var aliasRows int
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
+		ownerPattern, src.ID, aliasOnlyID).Scan(&aliasRows))
+	assert.Equal(1, aliasRows,
+		"an email-less participant still resolves as owner via its email identifier")
+
+	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
+	var inboundIsFromMe, outboundIsFromMe, envelopeOutboundIsFromMe bool
+	var externalFirstIsFromMe, sourceNativeIsFromMe bool
+	var externalFirstOwnerID, sourceNativeOwnerID int64
+	require.NoError(duckdb.QueryRow(
+		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+		msgPattern, inboundMsgID).Scan(&inboundIsFromMe))
+	require.NoError(duckdb.QueryRow(
+		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+		msgPattern, outboundMsgID).Scan(&outboundIsFromMe))
+	require.NoError(duckdb.QueryRow(
+		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+		msgPattern, envelopeOutboundMsgID).Scan(&envelopeOutboundIsFromMe))
+	require.NoError(duckdb.QueryRow(`
+		SELECT is_from_me, owner_participant_id
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE id = ?
+	`, msgPattern, externalFirstMsgID).Scan(&externalFirstIsFromMe, &externalFirstOwnerID))
+	require.NoError(duckdb.QueryRow(`
+		SELECT is_from_me, owner_participant_id
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE id = ?
+	`, msgPattern, sourceNativeMsgID).Scan(&sourceNativeIsFromMe, &sourceNativeOwnerID))
+	assert.False(inboundIsFromMe,
+		"the contact's mail stays inbound, agreeing with the owner dataset")
+	assert.True(outboundIsFromMe,
+		"the merged participant's owner-alias envelope must make its message outbound")
+	assert.True(envelopeOutboundIsFromMe,
+		"the matching owner envelope must make a null-sender message outbound")
+	assert.True(externalFirstIsFromMe,
+		"the matching second envelope must make the external-first message outbound")
+	assert.Equal(contactID, externalFirstOwnerID,
+		"envelope-derived attribution must select the matching owner participant")
+	assert.True(sourceNativeIsFromMe,
+		"the source-native outbound signal must remain authoritative")
+	assert.Equal(coauthorID, sourceNativeOwnerID,
+		"source-native attribution must retain sender_id priority")
+
+	activityPattern := filepath.Join(analyticsDir, "relationship_activity", "**", "*.parquet")
+	var inboundSenderIsOwner, outboundSenderIsOwner, outboundCoauthorIsOwner bool
+	var envelopeOwnerIsOwner, envelopeCoauthorIsOwner bool
+	var externalFirstOwnerIsOwner, externalFirstCoauthorIsOwner bool
+	var sourceNativeOwnerIsOwner, sourceNativeCoauthorIsOwner bool
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_sender
+	`, activityPattern, inboundMsgID, contactID).Scan(&inboundSenderIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_sender
+	`, activityPattern, outboundMsgID, contactID).Scan(&outboundSenderIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, outboundMsgID, coauthorID).Scan(&outboundCoauthorIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, envelopeOutboundMsgID, contactID).Scan(&envelopeOwnerIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, envelopeOutboundMsgID, coauthorID).Scan(&envelopeCoauthorIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, externalFirstMsgID, contactID).Scan(&externalFirstOwnerIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, externalFirstMsgID, coauthorID).Scan(&externalFirstCoauthorIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, sourceNativeMsgID, contactID).Scan(&sourceNativeOwnerIsOwner))
+	require.NoError(duckdb.QueryRow(`
+		SELECT bool_or(is_owner)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ? AND is_author
+	`, activityPattern, sourceNativeMsgID, coauthorID).Scan(&sourceNativeCoauthorIsOwner))
+	assert.False(inboundSenderIsOwner,
+		"the merged participant must remain a counterpart on its inbound primary envelope")
+	assert.True(outboundSenderIsOwner,
+		"the same participant must be the owner when it sends through the owner alias")
+	assert.False(outboundCoauthorIsOwner,
+		"an external co-author must remain a counterpart when sender_id identifies the owner")
+	assert.True(envelopeOwnerIsOwner,
+		"the matching envelope participant must be the message-relative owner")
+	assert.False(envelopeCoauthorIsOwner,
+		"an unmatched co-author must remain a counterpart when sender_id is null")
+	assert.True(externalFirstOwnerIsOwner,
+		"the matching second envelope participant must carry ownership")
+	assert.False(externalFirstCoauthorIsOwner,
+		"the first external author must remain a counterpart for envelope attribution")
+	assert.False(sourceNativeOwnerIsOwner,
+		"the matching envelope must not override source-native sender ownership")
+	assert.True(sourceNativeCoauthorIsOwner,
+		"the source-native sender must carry ownership")
+
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err)
+	defer func() { require.NoError(engine.Close()) }()
+
+	explored, err := engine.Explore(context.Background(), query.ExploreRequest{
+		Page: query.PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	require.Len(explored.Rows, 5)
+	counterpartsByTitle := make(map[string]*int64, len(explored.Rows))
+	for _, row := range explored.Rows {
+		counterpartsByTitle[row.Title] = row.CounterpartParticipantID
+	}
+	require.NotNil(counterpartsByTitle["From contact"])
+	assert.Equal(contactID, *counterpartsByTitle["From contact"],
+		"the inbound primary-envelope sender remains the counterpart")
+	require.NotNil(counterpartsByTitle["From owner alias"])
+	assert.Equal(coauthorID, *counterpartsByTitle["From owner alias"],
+		"the outbound external co-author must remain eligible as the counterpart")
+	require.NotNil(counterpartsByTitle["From matched owner envelope"])
+	assert.Equal(coauthorID, *counterpartsByTitle["From matched owner envelope"],
+		"the null-sender external co-author must remain eligible as the counterpart")
+	require.NotNil(counterpartsByTitle["Envelope owner after external author"])
+	assert.Equal(coauthorID, *counterpartsByTitle["Envelope owner after external author"],
+		"the external first author must remain the envelope-derived counterpart")
+	require.NotNil(counterpartsByTitle["Source-native sender before owner envelope"])
+	assert.Equal(contactID, *counterpartsByTitle["Source-native sender before owner envelope"],
+		"the matching envelope participant remains a counterpart for source-native attribution")
 }

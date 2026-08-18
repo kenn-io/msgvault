@@ -7,6 +7,25 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+**Features**
+
+- Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
+  keeps the daemon's scheduled embeds within the listed accounts, and
+  `msgvault embeddings build --account/--collection` overrides the account
+  scope for a single run. The account scope is part of the generation
+  fingerprint, so changing it requires a full rebuild; account-scoped indexes
+  do not gate search — out-of-scope accounts simply rank on BM25 alone.
+  Activation refuses a source scope that matches no live messages (an added
+  but never-synced account) rather than replacing the serving index with an
+  empty one, and the daemon marks vector search stale when the configured
+  accounts resolve to a different source set than it was started with.
+
+**Bug fixes**
+
+- Everything and Files now page narrow analytical metadata before enriching
+  participant details, preventing default listings on multi-million-message
+  archives from exhausting the interactive DuckDB memory budget.
+
 ---
 
 ## 0.19.3

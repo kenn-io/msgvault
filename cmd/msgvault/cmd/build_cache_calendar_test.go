@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
@@ -15,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
+	"golang.org/x/oauth2"
 )
 
 // TestBuildCache_IncludesCalendarEventsInModalityNeutralCache verifies calendar
@@ -158,4 +163,211 @@ func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 	result2, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache should accept stable calendar-only state")
 	assert.True(result2.Skipped, "calendar-only cache should be skipped on the second build")
+}
+
+const (
+	cacheCalendarBoundaryAccount = "alice@example.com"
+	cacheCalendarBoundaryEventID = "utf8-boundary-event"
+)
+
+func TestBuildCache_PreservesCalsyncUTF8ByteBoundary(t *testing.T) {
+	boundarySummary := strings.Repeat("a", 198) + "\u2014after-boundary"
+	boundarySnippet := strings.Repeat("a", 198)
+
+	runInitial := func(t *testing.T, forceCSV bool) {
+		t.Helper()
+		require := require.New(t)
+
+		if forceCSV {
+			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+		} else {
+			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+		}
+
+		tmp := t.TempDir()
+		dbPath := filepath.Join(tmp, "msgvault.db")
+		analyticsDir := filepath.Join(tmp, "analytics")
+
+		_, stored := syncCalendarBoundaryEvent(t, dbPath, boundarySummary, "TOKEN1")
+		require.Equal(boundarySnippet, stored, "exact SQLite snippet")
+
+		_, err := buildCache(dbPath, analyticsDir, false)
+		require.NoError(err, "initial cache publication")
+		assertCalendarBoundarySnippetPublished(t, analyticsDir, boundarySnippet)
+	}
+
+	t.Run("initial default publication", func(t *testing.T) {
+		runInitial(t, false)
+	})
+
+	t.Run("initial forced CSV publication", func(t *testing.T) {
+		runInitial(t, true)
+	})
+
+	t.Run("explicit full publication replaces the same event", func(t *testing.T) {
+		require := require.New(t)
+		t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+
+		tmp := t.TempDir()
+		dbPath := filepath.Join(tmp, "msgvault.db")
+		analyticsDir := filepath.Join(tmp, "analytics")
+		oldSummary := strings.Repeat("b", 200) + "old-tail"
+		oldSnippet := strings.Repeat("b", 200)
+
+		oldID, stored := syncCalendarBoundaryEvent(t, dbPath, oldSummary, "TOKEN1")
+		require.Equal(oldSnippet, stored, "initial SQLite snippet")
+
+		_, err := buildCache(dbPath, analyticsDir, false)
+		require.NoError(err, "initial cache publication")
+		assertCalendarBoundarySnippetPublished(t, analyticsDir, oldSnippet)
+
+		updatedID, stored := syncCalendarBoundaryEvent(t, dbPath, boundarySummary, "TOKEN2")
+		require.Equal(oldID, updatedID, "full sync must update the existing event row")
+		require.Equal(boundarySnippet, stored, "updated SQLite snippet")
+
+		_, err = buildCache(dbPath, analyticsDir, true)
+		require.NoError(err, "explicit full cache publication")
+		assertCalendarBoundarySnippetPublished(t, analyticsDir, boundarySnippet)
+	})
+}
+
+func syncCalendarBoundaryEvent(
+	t *testing.T,
+	dbPath, summary, syncToken string,
+) (int64, string) {
+	t.Helper()
+
+	calendarListJSON, err := json.Marshal(map[string]any{
+		"items": []map[string]any{
+			{
+				"id":         "primary",
+				"accessRole": "owner",
+			},
+		},
+	})
+	require.NoError(t, err, "marshal calendar list response")
+
+	eventsJSON, err := json.Marshal(map[string]any{
+		"items": []map[string]any{
+			{
+				"id":      cacheCalendarBoundaryEventID,
+				"status":  gcal.StatusConfirmed,
+				"summary": summary,
+				"organizer": map[string]any{
+					"email": cacheCalendarBoundaryAccount,
+					"self":  true,
+				},
+				"start": map[string]any{
+					"dateTime": "2024-05-02T09:00:00Z",
+				},
+				"end": map[string]any{
+					"dateTime": "2024-05-02T09:30:00Z",
+				},
+			},
+		},
+		"nextSyncToken": syncToken,
+	})
+	require.NoError(t, err, "marshal events response")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/me/calendarList":
+			_, _ = w.Write(calendarListJSON)
+		case "/calendars/primary/events":
+			_, _ = w.Write(eventsJSON)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err, "open store")
+	defer func() {
+		assert.NoError(t, st.Close(), "close store")
+	}()
+	require.NoError(t, st.InitSchema(), "init schema")
+
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"})
+	client := gcal.NewClient(
+		tokenSource,
+		gcal.WithBaseURL(srv.URL),
+		gcal.WithHTTPClient(srv.Client()),
+	)
+	defer func() {
+		assert.NoError(t, client.Close(), "close calendar client")
+	}()
+
+	_, err = calsync.New(client, st, calsync.Options{
+		AccountEmail: cacheCalendarBoundaryAccount,
+	}).Full(context.Background())
+	require.NoError(t, err, "full calendar sync")
+
+	var messageID int64
+	var stored sql.NullString
+	err = st.DB().QueryRow(`
+		SELECT m.id, m.snippet
+		FROM messages m
+		JOIN sources s ON s.id = m.source_id
+		WHERE s.source_type = ?
+		  AND s.identifier = ?
+		  AND m.source_message_id = ?
+		  AND m.message_type = ?`,
+		gcal.SourceType,
+		cacheCalendarBoundaryAccount+"/primary",
+		cacheCalendarBoundaryEventID,
+		gcal.MessageTypeCalendarEvent,
+	).Scan(&messageID, &stored)
+	require.NoError(t, err, "read stored calendar snippet")
+	require.True(t, stored.Valid, "calendar snippet must be non-NULL")
+	return messageID, stored.String
+}
+
+func assertCalendarBoundarySnippetPublished(
+	t *testing.T,
+	analyticsDir, want string,
+) {
+	t.Helper()
+	assert := assert.New(t)
+	got := readCalendarBoundarySnippet(t, analyticsDir)
+
+	assert.Equal(want, got)
+	assert.LessOrEqual(len(got), 200)
+	assert.True(utf8.ValidString(got))
+}
+
+func readCalendarBoundarySnippet(t *testing.T, analyticsDir string) string {
+	t.Helper()
+	require := require.New(t)
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err, "open DuckDB")
+	defer func() {
+		assert.NoError(t, duckDB.Close(), "close DuckDB")
+	}()
+
+	pattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
+	var count int
+	require.NoError(duckDB.QueryRow(`
+		SELECT COUNT(*)
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE source_message_id = ? AND message_type = ?`,
+		pattern,
+		cacheCalendarBoundaryEventID,
+		gcal.MessageTypeCalendarEvent,
+	).Scan(&count), "count boundary event in Parquet")
+	require.Equal(1, count, "boundary event must have exactly one Parquet row")
+
+	var got sql.NullString
+	require.NoError(duckDB.QueryRow(`
+		SELECT snippet
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE source_message_id = ? AND message_type = ?`,
+		pattern,
+		cacheCalendarBoundaryEventID,
+		gcal.MessageTypeCalendarEvent,
+	).Scan(&got), "read boundary snippet from Parquet")
+	require.True(got.Valid, "Parquet snippet must be non-NULL")
+	return got.String
 }

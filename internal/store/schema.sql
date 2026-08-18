@@ -65,6 +65,18 @@ CREATE TABLE IF NOT EXISTS embedding_changes (
 CREATE INDEX IF NOT EXISTS idx_embedding_changes_message_id
     ON embedding_changes(message_id);
 
+-- Records importer-owned service registrations without exposing provenance as
+-- a user-facing alias or overloading catalog metadata. User edits remove these
+-- markers, which makes an explicitly configured service authoritative again.
+-- This table ships with its first writer; existing unmarked services remain
+-- user-owned because their provenance cannot be inferred safely.
+CREATE TABLE IF NOT EXISTS communication_service_discoveries (
+    service_id      INTEGER NOT NULL REFERENCES communication_services(id) ON DELETE CASCADE,
+    provider        TEXT NOT NULL,
+    discovery_kind  TEXT NOT NULL,
+    PRIMARY KEY (service_id, provider, discovery_kind)
+);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================
@@ -762,6 +774,10 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 CREATE TABLE IF NOT EXISTS participant_links (
     participant_a INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     participant_b INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    -- Non-NULL only when an identity-match candidate inserted this exact edge.
+    -- User-created links remain NULL; system-match rejection removes only an
+    -- edge owned by that system decision.
+    identity_match_candidate_id INTEGER,
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (participant_a, participant_b),
     CHECK (participant_a < participant_b)
@@ -898,9 +914,6 @@ CREATE TABLE IF NOT EXISTS person_relationships (
     CHECK (end_day IS NULL OR end_month IS NOT NULL),
     CHECK (start_month IS NULL OR start_year IS NOT NULL),
     CHECK (end_month IS NULL OR end_year IS NOT NULL),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system')),
     CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
            AND source NOT IN ('user', 'carddav_import', 'vcard_import')))
 );
@@ -944,10 +957,7 @@ CREATE TABLE IF NOT EXISTS person_relationship_reviews (
     reviewed_at              DATETIME,
     created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK (matched_person_id IS NULL OR matched_person_id <> person_id),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system'))
+    CHECK (matched_person_id IS NULL OR matched_person_id <> person_id)
 );
 
 -- One review per parsed property occurrence. COALESCE makes the nullable
@@ -1042,9 +1052,6 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     confidence        REAL,
     actor             TEXT,
     CHECK (ordinal >= 0),
-    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                      'archive_observation', 'extraction', 'enrichment',
-                      'system')),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
     CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
@@ -1082,6 +1089,66 @@ CREATE INDEX IF NOT EXISTS idx_person_attribute_values_record_ref
     ON person_attribute_values(value_record_type, value_record_id)
     WHERE value_record_id IS NOT NULL;
 
+-- Organization-owned values mirror person_attribute_values field for field.
+-- object_type enforcement remains in the store because neither database can
+-- portably constrain a foreign row's object_type.
+CREATE TABLE IF NOT EXISTS organization_attribute_values (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id   INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    definition_id     INTEGER NOT NULL
+                          REFERENCES attribute_definitions(id) ON DELETE RESTRICT,
+    ordinal           INTEGER NOT NULL DEFAULT 0,
+    value_text        TEXT,
+    value_integer     BIGINT,
+    value_real        REAL,
+    value_boolean     BOOLEAN,
+    value_date        TEXT,
+    value_timestamp   DATETIME,
+    value_json        JSON,
+    value_record_type TEXT,
+    value_record_id   INTEGER,
+    active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    active_until      DATETIME,
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at     DATETIME,
+    source            TEXT NOT NULL,
+    source_ref        TEXT,
+    confidence        REAL,
+    actor             TEXT,
+    CHECK (ordinal >= 0),
+    CHECK (active_until IS NULL OR active_until >= active_from),
+    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
+    CHECK (
+        (CASE WHEN value_text      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_integer   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_real      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_boolean   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_date      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_timestamp IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_json      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_record_id IS NOT NULL THEN 1 ELSE 0 END) = 1
+    ),
+    CHECK ((value_record_id IS NULL) = (value_record_type IS NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_attribute_values_current
+    ON organization_attribute_values(organization_id, definition_id, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_history
+    ON organization_attribute_values(
+        organization_id, definition_id, active_from DESC, id DESC
+    );
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_definition
+    ON organization_attribute_values(definition_id, active_until);
+
+CREATE INDEX IF NOT EXISTS idx_organization_attribute_values_current_text
+    ON organization_attribute_values(definition_id, value_text)
+    WHERE value_text IS NOT NULL
+      AND active_until IS NULL AND superseded_at IS NULL;
+
 -- ============================================================================
 -- PEOPLE PROFILE PRIMITIVES
 -- ============================================================================
@@ -1116,9 +1183,7 @@ CREATE TABLE IF NOT EXISTS person_names (
     vcard_prop_id         TEXT,
     vcard_pid             TEXT,
     vcard_altid           TEXT,
-    source                TEXT NOT NULL
-        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source                TEXT NOT NULL,
     source_ref            TEXT,
     confidence            REAL
         CHECK (confidence IS NULL
@@ -1161,9 +1226,7 @@ CREATE TABLE IF NOT EXISTS person_contact_points (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL
-        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
-                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL
         CHECK (confidence IS NULL
@@ -1218,10 +1281,7 @@ CREATE TABLE IF NOT EXISTS person_addresses (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1262,10 +1322,7 @@ CREATE TABLE IF NOT EXISTS person_dates (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1304,10 +1361,7 @@ CREATE TABLE IF NOT EXISTS person_categories (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1349,10 +1403,7 @@ CREATE TABLE IF NOT EXISTS person_media (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1398,10 +1449,7 @@ CREATE TABLE IF NOT EXISTS participant_contact_observations (
     vcard_prop_id TEXT,
     vcard_pid TEXT,
     vcard_altid TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     confidence REAL CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
@@ -1445,10 +1493,7 @@ CREATE TABLE IF NOT EXISTS identity_match_candidates (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
     )),
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     source_ref TEXT,
     observation_conflict_origin TEXT CHECK (
         observation_conflict_origin IN ('generated', 'promoted')
@@ -1456,6 +1501,7 @@ CREATE TABLE IF NOT EXISTS identity_match_candidates (
     pre_conflict_state TEXT CHECK (
         pre_conflict_state IN ('candidate', 'accepted', 'rejected')
     ),
+    application_pending BOOLEAN NOT NULL DEFAULT TRUE,
     decided_by TEXT,
     decided_at DATETIME,
     notes TEXT,
@@ -1473,20 +1519,53 @@ CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value
     ON identity_match_candidates(basis, normalized_value)
     WHERE normalized_value IS NOT NULL;
 
+-- A participant merge can collapse duplicate candidates while an accepted
+-- application is waiting for the identity lock. Record the exact survivor,
+-- or a confirmed endpoint collapse, so that waiter can finish safely.
+CREATE TABLE IF NOT EXISTS identity_match_candidate_redirects (
+    retired_candidate_id INTEGER PRIMARY KEY,
+    surviving_candidate_id INTEGER REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    endpoints_collapsed BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK ((endpoints_collapsed = TRUE AND surviving_candidate_id IS NULL) OR
+           (endpoints_collapsed = FALSE AND surviving_candidate_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidate_redirects_survivor
+    ON identity_match_candidate_redirects(surviving_candidate_id)
+    WHERE surviving_candidate_id IS NOT NULL;
+
+-- Generated identity candidates may be supported by observations from more
+-- than one archive source. Keeping the support rows separate from the
+-- candidate's display source lets source removal recompute stale suggestions
+-- without deleting explicit user decisions.
+CREATE TABLE IF NOT EXISTS identity_match_candidate_sources (
+    candidate_id INTEGER NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (candidate_id, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidate_sources_source
+    ON identity_match_candidate_sources(source_id, candidate_id);
+
 CREATE TABLE IF NOT EXISTS identity_match_evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     candidate_id INTEGER NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
     evidence_kind TEXT NOT NULL,
     evidence_ref TEXT,
     detail TEXT,
-    source TEXT NOT NULL CHECK (source IN (
-        'user', 'carddav_import', 'vcard_import', 'archive_observation',
-        'extraction', 'enrichment', 'system'
-    )),
+    source TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_candidate
     ON identity_match_evidence(candidate_id, id);
+
+CREATE TABLE IF NOT EXISTS identity_match_evidence_sources (
+    evidence_id INTEGER NOT NULL REFERENCES identity_match_evidence(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    is_conservative BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (evidence_id, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_sources_source
+    ON identity_match_evidence_sources(source_id, evidence_id);
 
 -- ============================================================================
 -- APPLIED MIGRATIONS
@@ -1732,3 +1811,580 @@ CREATE TABLE IF NOT EXISTS attachment_packs (
     stored_bytes BIGINT NOT NULL,
     created_at   TEXT NOT NULL
 );
+
+-- ============================================================================
+-- ORGANIZATIONS & EMPLOYMENT
+-- ============================================================================
+-- Durable curated organizations. Name and domain are deliberately not unique:
+-- distinct organizations can legitimately share either. Employment history
+-- later supplies the hard-delete guard.
+CREATE TABLE IF NOT EXISTS organizations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    name_normalized TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'other',
+    primary_domain  TEXT,
+    description     TEXT,
+    revision        INTEGER NOT NULL DEFAULT 1,
+    merged_into_id  INTEGER REFERENCES organizations(id) ON DELETE RESTRICT,
+    retired_at      DATETIME,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (LENGTH(name) > 0),
+    CHECK (merged_into_id IS NULL OR merged_into_id <> id)
+);
+CREATE INDEX IF NOT EXISTS idx_organizations_name_normalized
+    ON organizations(name_normalized);
+CREATE INDEX IF NOT EXISTS idx_organizations_primary_domain
+    ON organizations(primary_domain)
+    WHERE primary_domain IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_organizations_merged_into
+    ON organizations(merged_into_id)
+    WHERE merged_into_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organization_names (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name_kind TEXT NOT NULL,
+    formatted TEXT,
+    original_value TEXT NOT NULL,
+    name_normalized TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_names_active
+    ON organization_names(organization_id, name_kind, name_normalized)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_organization_names_lookup
+    ON organization_names(name_normalized)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_names_property_identity
+    ON organization_names(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_identifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    identifier_kind TEXT NOT NULL,
+    identifier_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_identifiers_active
+    ON organization_identifiers(organization_id, identifier_kind, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_organization_identifiers_lookup
+    ON organization_identifiers(identifier_kind, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_identifiers_property_identity
+    ON organization_identifiers(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_addresses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL DEFAULT 'postal',
+    post_office_box TEXT, extended_address TEXT, street_address TEXT,
+    locality TEXT, region TEXT, postal_code TEXT, country_name TEXT,
+    extended_components TEXT, free_text TEXT, label TEXT, geo_uri TEXT,
+    timezone TEXT, country_code TEXT, place_uri TEXT,
+    original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_organization_addresses_current
+    ON organization_addresses(organization_id, address_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_addresses_property_identity
+    ON organization_addresses(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_contact_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL,
+    service_id INTEGER REFERENCES communication_services(id) ON DELETE RESTRICT,
+    scope_kind TEXT, scope_value TEXT,
+    original_value TEXT NOT NULL, normalized_value TEXT NOT NULL,
+    normalization TEXT NOT NULL DEFAULT 'none',
+    normalization_version INTEGER NOT NULL DEFAULT 1,
+    uri TEXT,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_organization_contact_points_current_lookup
+    ON organization_contact_points(address_kind, service_id, scope_kind, scope_value, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_contact_points_property_identity
+    ON organization_contact_points(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    original_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_categories_current_value
+    ON organization_categories(organization_id, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS organization_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    media_kind TEXT NOT NULL, media_type TEXT, uri TEXT, data BLOB,
+    byte_size BIGINT, content_hash TEXT, original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT, type_tokens TEXT,
+    vcard_property TEXT, vcard_group TEXT, vcard_prop_id TEXT,
+    vcard_pid TEXT, vcard_altid TEXT,
+    source TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME, active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_organization_media_current
+    ON organization_media(organization_id, media_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_media_property_identity
+    ON organization_media(organization_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL AND superseded_at IS NULL;
+
+-- The temporal association between a person and an organization. Mutable
+-- employment facts live on this edge so concurrent roles and history remain
+-- independently queryable.
+CREATE TABLE IF NOT EXISTS employments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id        INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    organization_id  INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+    title            TEXT,
+    title_normalized TEXT NOT NULL DEFAULT '',
+    role             TEXT,
+    department       TEXT,
+    location         TEXT,
+    address_id       INTEGER REFERENCES organization_addresses(id) ON DELETE SET NULL,
+    description      TEXT,
+    start_year       INTEGER,
+    start_month      INTEGER,
+    start_day        INTEGER,
+    end_year         INTEGER,
+    end_month        INTEGER,
+    end_day          INTEGER,
+    is_current       INTEGER NOT NULL DEFAULT 1,
+    is_primary       INTEGER NOT NULL DEFAULT 0,
+    source           TEXT NOT NULL DEFAULT 'user',
+    source_ref       TEXT,
+    confidence       REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import'))),
+    revision         INTEGER NOT NULL DEFAULT 1,
+    created_by       TEXT NOT NULL DEFAULT 'user',
+    updated_by       TEXT NOT NULL DEFAULT 'user',
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (is_current IN (0, 1)),
+    CHECK (is_primary IN (0, 1)),
+    CHECK (start_year BETWEEN 1 AND 9999),
+    CHECK (start_month BETWEEN 1 AND 12),
+    CHECK (start_day BETWEEN 1 AND 31),
+    CHECK (end_year BETWEEN 1 AND 9999),
+    CHECK (end_month BETWEEN 1 AND 12),
+    CHECK (end_day BETWEEN 1 AND 31),
+    CHECK (start_day IS NULL OR start_month IS NOT NULL),
+    CHECK (end_day IS NULL OR end_month IS NOT NULL),
+    CHECK (start_month IS NULL OR start_year IS NOT NULL),
+    CHECK (end_month IS NULL OR end_year IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employments_one_primary_current
+    ON employments(person_id) WHERE is_primary = 1 AND is_current = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employments_active_person_org_title
+    ON employments(person_id, organization_id, title_normalized) WHERE is_current = 1;
+CREATE INDEX IF NOT EXISTS idx_employments_person ON employments(person_id);
+CREATE INDEX IF NOT EXISTS idx_employments_organization ON employments(organization_id);
+CREATE INDEX IF NOT EXISTS idx_employments_person_current ON employments(person_id) WHERE is_current = 1;
+CREATE INDEX IF NOT EXISTS idx_employments_address ON employments(address_id) WHERE address_id IS NOT NULL;
+
+-- ============================================================================
+-- DATED ACTIVITY SPINE
+-- ============================================================================
+
+-- One row per archived communication projected into the date-indexed spine.
+-- The native stable reference is derived as "<ref_kind>:<message_id>".
+CREATE TABLE IF NOT EXISTS activity_events (
+    message_id                         INTEGER PRIMARY KEY
+                                                   REFERENCES messages(id) ON DELETE CASCADE,
+    ref_kind                           TEXT NOT NULL
+                                                   CHECK (ref_kind IN ('message', 'meeting')),
+    source_id                          INTEGER NOT NULL
+                                                   REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_id                    INTEGER
+                                                   REFERENCES conversations(id) ON DELETE SET NULL,
+    channel                            TEXT NOT NULL
+                                                   CHECK (channel IN ('email', 'chat', 'meeting', 'other')),
+    occurred_at                        DATETIME NOT NULL,
+    date_origin                        TEXT NOT NULL
+                                                   CHECK (date_origin IN ('sent_at', 'received_at', 'internal_date')),
+    date_precision                     TEXT NOT NULL
+                                                   CHECK (date_precision IN ('timestamp', 'day')),
+    timezone                           TEXT NOT NULL CHECK (LENGTH(timezone) > 0),
+    utc_offset_minutes                 INTEGER NOT NULL
+                                                   CHECK (utc_offset_minutes BETWEEN -840 AND 840),
+    local_date                         TEXT NOT NULL
+                                                   CHECK (LENGTH(local_date) = 10
+                                                       AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 5, 1) = '-'
+                                                       AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 8, 1) = '-'
+                                                       AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+                                                       AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')),
+    direction                          TEXT NOT NULL
+                                                   CHECK (direction IN ('inbound', 'outbound', 'observed')),
+    owner_source_id                    INTEGER
+                                                   REFERENCES sources(id) ON DELETE SET NULL,
+    owner_address                      TEXT NOT NULL DEFAULT '',
+    projected_last_modified            DATETIME NOT NULL,
+    projected_identity_revision        INTEGER NOT NULL
+                                                   CHECK (projected_identity_revision >= 0),
+    projected_account_identity_revision INTEGER NOT NULL
+                                                   CHECK (projected_account_identity_revision >= 0),
+    created_at                          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_events_local_date
+    ON activity_events(local_date, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_source
+    ON activity_events(source_id, occurred_at DESC);
+
+-- Each person has at most one link to a native event. Classification stores
+-- the strongest evidence and a deterministic representative role.
+CREATE TABLE IF NOT EXISTS activity_event_persons (
+    message_id INTEGER NOT NULL REFERENCES activity_events(message_id) ON DELETE CASCADE,
+    person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL
+                    CHECK (role IN ('sender', 'addressed', 'organizer', 'attendee', 'member')),
+    evidence   TEXT NOT NULL CHECK (evidence IN ('direct', 'co_presence')),
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    PRIMARY KEY (message_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_person_date
+    ON activity_event_persons(person_id, local_date, message_id);
+CREATE INDEX IF NOT EXISTS idx_activity_event_persons_date_person
+    ON activity_event_persons(local_date, person_id, message_id);
+
+CREATE TABLE IF NOT EXISTS person_contact_state (
+    person_id                 INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    first_contact_at          DATETIME,
+    first_contact_message_id  INTEGER,
+    last_contact_at           DATETIME,
+    last_contact_message_id   INTEGER,
+    last_contact_channel      TEXT
+                                      CHECK (last_contact_channel IS NULL
+                                          OR last_contact_channel IN ('email', 'chat', 'meeting', 'other')),
+    last_contact_source_id    INTEGER,
+    last_contact_owner        TEXT,
+    last_inbound_at           DATETIME,
+    last_inbound_message_id   INTEGER,
+    last_outbound_at          DATETIME,
+    last_outbound_message_id  INTEGER,
+    interaction_count         INTEGER NOT NULL DEFAULT 0 CHECK (interaction_count >= 0),
+    identity_revision         INTEGER NOT NULL DEFAULT 0 CHECK (identity_revision >= 0),
+    account_identity_revision INTEGER NOT NULL DEFAULT 0
+                                      CHECK (account_identity_revision >= 0),
+    dirty_at                  DATETIME,
+    computed_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_dirty
+    ON person_contact_state(person_id) WHERE dirty_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_state_last_contact
+    ON person_contact_state(last_contact_at DESC);
+
+-- ============================================================================
+-- AUTHORED DAILY NOTES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS daily_note_day_sequences (
+    local_date TEXT NOT NULL PRIMARY KEY CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    last_ordinal INTEGER NOT NULL CHECK (last_ordinal > 0)
+);
+
+CREATE TABLE IF NOT EXISTS daily_note_entries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_date TEXT NOT NULL CHECK (
+        LENGTH(local_date) = 10
+        AND SUBSTR(local_date, 1, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 2, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 3, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 4, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 5, 1) = '-'
+        AND SUBSTR(local_date, 6, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 7, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 8, 1) = '-'
+        AND SUBSTR(local_date, 9, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+        AND SUBSTR(local_date, 10, 1) IN ('0','1','2','3','4','5','6','7','8','9')
+    ),
+    ordinal    INTEGER NOT NULL CHECK (ordinal > 0),
+    body       TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'user' CHECK (source = 'user'),
+    source_ref TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(local_date, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entries_date
+    ON daily_note_entries(local_date, ordinal, id);
+
+CREATE TABLE IF NOT EXISTS daily_note_entry_persons (
+    entry_id  INTEGER NOT NULL REFERENCES daily_note_entries(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_note_entry_persons_person
+    ON daily_note_entry_persons(person_id, entry_id);
+
+-- Mutations enqueue the native message rather than relying on a timestamp
+-- watermark. The monotone revision lets the projector consume with CAS.
+CREATE TABLE IF NOT EXISTS activity_projection_queue (
+    message_id         INTEGER PRIMARY KEY REFERENCES messages(id)
+                       ON DELETE CASCADE ON UPDATE CASCADE,
+    revision           INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    processed_revision INTEGER NOT NULL DEFAULT 0
+                               CHECK (processed_revision >= 0
+                                  AND processed_revision <= revision),
+    queued_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
+    ON activity_projection_queue(message_id)
+    WHERE revision > processed_revision;
+
+-- trg_activity_queue_messages_update is NOT defined here. It is scoped to the
+-- columns the projector reads (MessagesActivityColumns, activity_columns.go)
+-- and built by SQLiteDialect.EnsureActivityProjectionTriggers, where the shared
+-- column list keeps it identical to the PostgreSQL definition. A blanket AFTER
+-- UPDATE here requeued the whole archive on every embed/FTS backfill.
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_insert
+AFTER INSERT ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_update
+AFTER UPDATE ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE id = OLD.message_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_recipients_delete
+AFTER DELETE ON message_recipients FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE id = OLD.message_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_insert
+AFTER INSERT ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = NEW.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_update
+AFTER UPDATE ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = OLD.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = NEW.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_delete
+AFTER DELETE ON conversation_participants FOR EACH ROW
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages
+    WHERE conversation_id = OLD.conversation_id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+-- Conversation updates are classification input: changing email/chat/channel
+-- semantics must reproject every native message already in the conversation.
+--
+-- The trigger is scoped to real conversation_type changes. A blanket
+-- AFTER UPDATE trigger would requeue the whole conversation on every routine
+-- write — per-source statistics recomputation alone would reproject entire
+-- archives after each import and hold the contact-state freshness barrier
+-- open. UPDATE OF matches statements that NAME the column, so the WHEN guard
+-- still filters upserts that set conversation_type to its current value.
+-- SQLite resolves the column reference at fire time, so creating the trigger
+-- on a legacy table that has not run the conversation_type ADD COLUMN
+-- migration yet is safe; anything that drops and re-adds the column (the
+-- subset tests' legacy-shape surgery) must drop and recreate this trigger
+-- around the rebuild.
+CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_type_update
+AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+WHEN OLD.conversation_type IS NOT NEW.conversation_type
+BEGIN
+    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+    SELECT id, 1, CURRENT_TIMESTAMP
+    FROM messages WHERE conversation_id = NEW.id
+    ON CONFLICT(message_id) DO UPDATE SET
+        revision = activity_projection_queue.revision + 1,
+        queued_at = CURRENT_TIMESTAMP;
+END;
+
+-- Cascades can remove direct evidence without passing through the projector.
+-- Dirty only an existing row: person deletion must never resurrect state.
+CREATE TRIGGER IF NOT EXISTS trg_activity_direct_link_delete_dirty
+AFTER DELETE ON activity_event_persons FOR EACH ROW
+WHEN OLD.evidence = 'direct'
+BEGIN
+    UPDATE person_contact_state
+    SET dirty_at = CURRENT_TIMESTAMP
+    WHERE person_id = OLD.person_id;
+END;

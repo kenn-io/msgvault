@@ -237,6 +237,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		{datasetParticipants, "phone_number"},
 		{datasetMessages, "attachment_count"},
 		{datasetMessages, "sender_id"},
+		{datasetMessages, "owner_participant_id"},
 		{datasetMessages, messageTypeDimension},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
@@ -581,7 +582,8 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 // integer/boolean columns as VARCHAR, causing type mismatch errors in JOINs
 // and COALESCE expressions.
 //
-// Optional columns (phone_number, attachment_count, sender_id, message_type)
+// Optional columns (phone_number, attachment_count, sender_id,
+// owner_participant_id, message_type)
 // are handled gracefully: if the Parquet file predates their addition, they
 // are synthesised with sensible defaults instead of causing a binder error.
 // Every caller holds the shared cache read lock (via acquireQuerySlot or
@@ -609,6 +611,11 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		msgReplace = append(msgReplace, "TRY_CAST(sender_id AS BIGINT) AS sender_id")
 	} else {
 		msgExtra = append(msgExtra, "NULL::BIGINT AS sender_id")
+	}
+	if e.hasCol(datasetMessages, "owner_participant_id") {
+		msgReplace = append(msgReplace, "TRY_CAST(owner_participant_id AS BIGINT) AS owner_participant_id")
+	} else {
+		msgExtra = append(msgExtra, "NULL::BIGINT AS owner_participant_id")
 	}
 	if e.hasCol(datasetMessages, messageTypeDimension) {
 		msgReplace = append(msgReplace, "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type")

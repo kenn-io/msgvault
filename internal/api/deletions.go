@@ -354,12 +354,12 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	engine := s.queryEngineForContext(r.Context())
 	analyzer, ok := engine.(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return nil, nil, false
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return nil, nil, false
 	}
 	if selection.CacheRevision != stats.CacheRevision {

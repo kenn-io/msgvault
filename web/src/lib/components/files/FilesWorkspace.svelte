@@ -4,7 +4,7 @@
 
   import type { APIClient } from '../../api/client';
   import { analyticalAuthority } from '../../explore/authority';
-  import type { ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort } from '../../explore/models';
+  import type { ExploreCacheUnavailable, ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort } from '../../explore/models';
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import FileViewer from './FileViewer.svelte';
@@ -71,7 +71,7 @@
   let loadingMore = $state(false);
   let error = $state('');
   let pageError = $state('');
-  let unavailable = $state('');
+  let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let viewport = $state(360);
@@ -81,6 +81,7 @@
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
   let controller: AbortController | undefined;
+  let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let cacheRevision = '';
   let pageAuthority = '';
@@ -115,8 +116,9 @@
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
     const { generation: currentGeneration, signal } = restartListing();
-    void loadPage(currentGeneration, undefined, signal).then(() =>
-      restoreDeepState(currentGeneration, restorationEpoch, controller?.signal));
+    void loadPage(currentGeneration, undefined, signal).then((loaded) => {
+      if (loaded) return restoreDeepState(currentGeneration, restorationEpoch, signal);
+    });
   });
 
   $effect(() => {
@@ -213,10 +215,15 @@
     if (headerElement) observer.observe(headerElement);
     return () => observer.disconnect();
   });
-  onDestroy(() => { controller?.abort(); geometry.destroy(); });
+  onDestroy(() => {
+    controller?.abort();
+    clearCacheBuildRetry();
+    geometry.destroy();
+  });
 
   function restartListing(): { generation: number; signal: AbortSignal } {
     const currentGeneration = ++generation;
+    clearCacheBuildRetry();
     controller?.abort();
     const nextController = new AbortController();
     controller = nextController;
@@ -228,7 +235,7 @@
     seenCursors = new Set<string>();
     error = '';
     pageError = '';
-    unavailable = '';
+    unavailable = undefined;
     pendingRestoration = undefined;
     completingRestoration = '';
     loading = true;
@@ -240,8 +247,9 @@
     // unacknowledged the deep restoration restarts against the fresh listing.
     const epoch = unacknowledgedRestorationEpoch;
     const { generation: currentGeneration, signal } = restartListing();
-    void loadPage(currentGeneration, undefined, signal).then(() =>
-      restoreDeepState(currentGeneration, epoch, signal));
+    void loadPage(currentGeneration, undefined, signal).then((loaded) => {
+      if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
+    });
   }
 
   async function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
@@ -298,7 +306,16 @@
         if (isRetryableStatus(response.status)) pageError = message;
         else failPaging(message);
       }
-      else if (response.status === 503) unavailable = message;
+      else if (response.status === 503 && isCacheUnavailable(responseError)) {
+        unavailable = responseError;
+        if (responseError.readiness === 'building') {
+          cacheBuildRetry = setTimeout(() => {
+            cacheBuildRetry = undefined;
+            if (currentGeneration === generation && !signal.aborted) reloadListing();
+          }, 1_000);
+        }
+      }
+      else if (response.status === 503) error = message;
       else error = message;
       return false;
     }
@@ -338,6 +355,17 @@
       onActiveKey?.(activeKey);
     }
     return true;
+  }
+
+  function clearCacheBuildRetry(): void {
+    if (cacheBuildRetry === undefined) return;
+    clearTimeout(cacheBuildRetry);
+    cacheBuildRetry = undefined;
+  }
+
+  function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
+    return typeof value === 'object' && value !== null &&
+      'readiness' in value && 'recovery_action' in value;
   }
 
   function failPaging(message: string): void {
@@ -562,8 +590,10 @@
         <span role="columnheader">Availability</span>
       </div>
       <div class="table-body" role="rowgroup">
-        {#if unavailable}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable}</span></div></div></div>
+        {#if unavailable?.readiness === 'building'}
+          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="status">Preparing analytical cache…</div></div></div>
+        {:else if unavailable}
+          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable.message}</span></div></div></div>
         {:else if error && rows.length === 0}
           <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="alert">{error}</div></div></div>
         {:else if loading && rows.length === 0}

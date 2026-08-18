@@ -197,16 +197,16 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 			(100::BIGINT, 1::BIGINT, 'message-100'::VARCHAR, 10::BIGINT,
 			 'Earlier message'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-01 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'chat'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'chat'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER),
 			(101::BIGINT, 1::BIGINT, 'message-101'::VARCHAR, 10::BIGINT,
 			 'Newest message'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-02 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 2::BIGINT, 'chat'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 2::BIGINT, NULL::BIGINT, 'chat'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
 	replaceRelationshipParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@alpha.test'::VARCHAR, 'gmail'::VARCHAR)
@@ -305,16 +305,16 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 			(100::BIGINT, 1::BIGINT, 'message-100'::VARCHAR, 10::BIGINT,
 			 'Earlier direct message'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-01 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 2::BIGINT, 'chat'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 2::BIGINT, NULL::BIGINT, 'chat'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER),
 			(101::BIGINT, 1::BIGINT, 'message-101'::VARCHAR, 10::BIGINT,
 			 'Newest member message'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-02 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'chat'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'chat'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
 	replaceRelationshipParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@alpha.test'::VARCHAR, 'gmail'::VARCHAR)
@@ -435,21 +435,21 @@ func writeRelationshipEquivalenceFixture(t *testing.T) (string, *sql.DB) {
 			(100::BIGINT, 1::BIGINT, 'message-100'::VARCHAR, 10::BIGINT,
 			 'Synthetic subject'::VARCHAR, 'Synthetic preview'::VARCHAR,
 			 TIMESTAMP '2026-01-01 12:00:00', 50::BIGINT, true,
-			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'email'::VARCHAR,
+			 1::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER),
 			(101::BIGINT, 1::BIGINT, 'message-101'::VARCHAR, 11::BIGINT,
 			 'No valid edge'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-02 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER),
 			(102::BIGINT, 1::BIGINT, 'message-102'::VARCHAR, 12::BIGINT,
 			 'Unresolved conversation member'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2026-01-03 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'email'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2026::INTEGER, 1::INTEGER)
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
 	replaceRelationshipParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@example.test'::VARCHAR, 'gmail'::VARCHAR)
@@ -544,6 +544,7 @@ func writeSyntheticRelationshipFanOut(
 		       0::INTEGER AS attachment_count,
 		       NULL::TIMESTAMP AS deleted_from_source_at,
 		       1::BIGINT AS sender_id,
+		       NULL::BIGINT AS owner_participant_id,
 		       '%s'::VARCHAR AS message_type,
 		       false AS is_from_me,
 		       year(TIMESTAMP '%s' + i * INTERVAL '1 second')::INTEGER AS year,
@@ -613,11 +614,11 @@ func writeRelationshipYearScopeFixture(t *testing.T, db *sql.DB, root string) {
 			(1::BIGINT, 1::BIGINT, 'selected-message'::VARCHAR, 10::BIGINT,
 			 'Selected year'::VARCHAR, ''::VARCHAR,
 			 TIMESTAMP '2025-01-01 12:00:00', 10::BIGINT, false,
-			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, 'email'::VARCHAR,
+			 0::INTEGER, NULL::TIMESTAMP, 1::BIGINT, NULL::BIGINT, 'email'::VARCHAR,
 			 false, 2025::INTEGER, 1::INTEGER)
 		) AS selected(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)
 
 		UNION ALL
 
@@ -633,6 +634,7 @@ func writeRelationshipYearScopeFixture(t *testing.T, db *sql.DB, root string) {
 		       0::INTEGER AS attachment_count,
 		       NULL::TIMESTAMP AS deleted_from_source_at,
 		       NULL::BIGINT AS sender_id,
+		       NULL::BIGINT AS owner_participant_id,
 		       'email'::VARCHAR AS message_type,
 		       false AS is_from_me,
 		       2024::INTEGER AS year,

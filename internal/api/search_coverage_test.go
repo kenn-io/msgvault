@@ -15,6 +15,47 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
+func TestSemanticCoverageContextNarrowsSources(t *testing.T) {
+	scope := vector.NewBuildScope(nil, []int64{3, 7})
+
+	t.Run("unfiltered context adopts the scope sources", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{}, scope)
+		assert.Equal(t, []int64{3, 7}, got.SourceIDs)
+	})
+
+	t.Run("account filter intersects the scope", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{3, 9}}, scope)
+		assert.Equal(t, []int64{3}, got.SourceIDs)
+	})
+
+	t.Run("disjoint account filter keeps zero eligibility", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{9}}, scope)
+		assert.Equal(t, []int64{9}, got.SourceIDs,
+			"the source predicate must stay untouched so an identity pairing remains valid")
+		assert.Equal(t, []string{noSemanticEligibleMessageType}, got.MessageTypes,
+			"the sentinel keeps the eligible set empty instead of widening to all sources")
+	})
+
+	t.Run("unscoped generation leaves sources alone", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{9}}, vector.BuildScope{})
+		assert.Equal(t, []int64{9}, got.SourceIDs)
+	})
+
+	t.Run("sources-only scope leaves message types alone", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{MessageTypes: []string{"email"}}, scope)
+		assert.Equal(t, []string{"email"}, got.MessageTypes)
+	})
+
+	t.Run("message types and sources narrow together", func(t *testing.T) {
+		combined := vector.NewBuildScope([]string{"sms"}, []int64{3})
+		got := semanticCoverageContext(
+			query.Context{MessageTypes: []string{"email", "sms"}, SourceIDs: []int64{3, 9}},
+			combined)
+		assert.Equal(t, []string{"sms"}, got.MessageTypes)
+		assert.Equal(t, []int64{3}, got.SourceIDs)
+	})
+}
+
 type filteredCoverageBackend struct {
 	vector.Backend
 
@@ -277,6 +318,38 @@ func TestSearchCoverageResolvesIdentityFilterOnce(t *testing.T) {
 	assertions.Equal(1, fixture.store.resolveCalls)
 }
 
+// TestSearchCoverageReportsZeroForIdentityOutsideEmbedScope guards the
+// identity/source pairing: an identity filter pins Identity.SourceID to the
+// selected source, so a disjoint embed scope must report zero eligibility
+// rather than rewrite the source predicate into something the query
+// validator rejects.
+func TestSearchCoverageReportsZeroForIdentityOutsideEmbedScope(t *testing.T) {
+	assertions := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	backend := &filteredCoverageBackend{
+		active: vector.Generation{
+			ID: 7, Fingerprint: "model:2", State: vector.GenerationActive,
+		},
+		embeddedIDs: map[int64]struct{}{2: {}},
+	}
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}}
+	cfg.Vector.Embed.Scope.SourceIDs = []int64{2}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: cfg, Store: fixture.store, Engine: fixture.server.QueryEngine(), Backend: backend,
+		VectorCfg: cfg.Vector, VectorStatus: VectorStatusReady, Logger: testLogger(),
+	})
+
+	body := getSearchCoverage(t, srv, `{"filters":[
+		{"dimension":"source","values":["1"]},
+		{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+	]}`)
+
+	assertions.Equal(SearchCoverageReady, body.Status)
+	assertions.Zero(body.EligibleCount)
+	assertions.Zero(body.EmbeddedCount)
+	assertions.InDelta(100.0, body.Percentage, 0.001)
+}
+
 func TestSearchCoverageOpenAPIContract(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -287,6 +360,12 @@ func TestSearchCoverageOpenAPIContract(t *testing.T) {
 	for _, status := range []string{"200", "400", "503"} {
 		assert.Contains(op.Responses, status)
 	}
+	unavailable := op.Responses["503"].Content[applicationJSONMediaType].Schema
+	require.Len(unavailable.AnyOf, 2)
+	assert.ElementsMatch([]string{
+		"#/components/schemas/ExploreCacheUnavailableResponse",
+		"#/components/schemas/ErrorResponse",
+	}, []string{unavailable.AnyOf[0].Ref, unavailable.AnyOf[1].Ref})
 	schema := doc.Components.Schemas.Map()["SearchCoverageResponse"]
 	require.NotNil(schema)
 	assert.ElementsMatch(
@@ -476,6 +555,33 @@ func TestSearchCoverageContextHashSeparatesEmailIdentifier(t *testing.T) {
 	assert.Equal(aliasA, aliasARepeat, "identical contexts must share a cache key")
 	assert.NotEqual(aliasA, aliasB,
 		"aliases resolving to the same participants must not share a cache key")
+}
+
+// TestSearchCoverageDetectsScopeDrift pins the coverage endpoint's drift
+// detection: the UI polls coverage, so it must be able to be the event that
+// re-resolves the embedding scope and report stale — otherwise a daemon
+// with no embed schedule keeps reporting ready coverage computed from
+// obsolete startup source IDs until some vector search fires the preflight.
+func TestSearchCoverageDetectsScopeDrift(t *testing.T) {
+	assert := assert.New(t)
+	engine := &coverageScanEngine{revision: "cache:test", total: 3}
+	backend := &filteredCoverageBackend{
+		active:   vector.Generation{ID: 7, Fingerprint: "", State: vector.GenerationActive},
+		countAll: true,
+	}
+	srv := newCoverageScanServer(t, engine, backend)
+	checks := 0
+	srv.SetVectorScopeCheck(func(context.Context) (string, error) {
+		checks++
+		return "configured embedding scope now resolves to \"src-9\" but vector search was initialized with \"src-7\"", nil
+	})
+
+	body := getSearchCoverage(t, srv, `{}`)
+
+	assert.Equal(SearchCoverageStale, body.Status,
+		"drifted scope must surface as stale, not ready")
+	assert.Contains(body.Detail, "src-9")
+	assert.Equal(1, checks, "the coverage request runs the drift check")
 }
 
 func TestSearchCoverageRejectsGenerationActivationDuringScan(t *testing.T) {

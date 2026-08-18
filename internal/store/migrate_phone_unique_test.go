@@ -56,6 +56,15 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		    WHERE phone_number IS NOT NULL
 	`)
 	require.NoError(err, "create legacy non-unique idx")
+	_, err = st.db.Exec(`DROP INDEX idx_identity_match_candidates_application_pending`)
+	require.NoError(err, "drop index on post-legacy candidate column")
+	for _, column := range []string{
+		"observation_conflict_origin", "pre_conflict_state", "application_pending",
+	} {
+		_, err = st.db.Exec(`
+			ALTER TABLE identity_match_candidates DROP COLUMN ` + column)
+		require.NoError(err, "restore candidate table before merge column %s", column)
+	}
 
 	// Seed two duplicate-phone participants directly (the public API
 	// no longer allows this, which is exactly the bug the unique
@@ -265,6 +274,22 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	loser := insertParticipant("+15555551234", "Alice (dup)")
 	third, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
 	require.NoError(err, "EnsureParticipant third")
+	candidate, created, err := st.UpsertIdentityMatchCandidateContext(
+		t.Context(), IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: loser,
+			RightKind: IdentityMatchParticipant, RightID: third,
+			Basis:           IdentityMatchStableProviderID,
+			NormalizedValue: new("beeper:phone-dedupe"),
+			State:           IdentityMatchStateCandidate,
+			Source:          ProvenanceSystem,
+		},
+	)
+	require.NoError(err, "create accepted candidate on loser")
+	require.True(created, "candidate must be new")
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), candidate.ID, IdentityMatchStateAccepted, "system", nil,
+	)
+	require.NoError(err, "accept candidate on loser")
 
 	// Link the loser (not the winner) to a third participant, mirroring a
 	// user having asserted "loser and carol are the same person" before an
@@ -292,6 +317,193 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	canonical := min(winner, third)
 	assert.Equal(map[int64]int64{winner: canonical, third: canonical}, clusters,
 		"link must repoint from loser to winner")
+
+	rewritten, err := st.GetIdentityMatchCandidateContext(t.Context(), candidate.ID)
+	require.NoError(err, "reload candidate after phone dedupe")
+	assert.Equal(IdentityMatchStateAccepted, rewritten.State,
+		"phone dedupe must preserve the durable decision")
+	assert.ElementsMatch(
+		[]int64{winner, third},
+		[]int64{rewritten.LeftID, rewritten.RightID},
+		"phone dedupe must not leave a candidate pointing at the deleted participant",
+	)
+}
+
+func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMatches(
+	t *testing.T,
+) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "phone_unique_observations.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "InitSchema")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy non-unique idx")
+
+	insertParticipant := func(phone, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	winner := insertParticipant("+15555550123", "Winner")
+	loser := insertParticipant("+15555550123", "Loser")
+	third, err := st.EnsureParticipant("third@example.org", "Third", "example.org")
+	require.NoError(err, "insert third participant")
+	source, err := st.GetOrCreateSource("beeper", "phone-dedupe-observations")
+	require.NoError(err, "create observation source")
+
+	matchedProviderID := "provider-before-dedupe"
+	winnerProviderID := "different-winner-provider"
+	input := ParticipantContactObservationInput{
+		SourceID: &source.ID, AddressKind: ContactAddressEmail,
+		OriginalValue: "shared@example.org",
+		Envelope:      ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+	}
+	input.ProviderUserID = &matchedProviderID
+	loserObservation, err := st.RecordContactObservationContext(t.Context(), loser, input)
+	require.NoError(err, "record loser observation")
+	input.ProviderUserID = &winnerProviderID
+	_, err = st.RecordContactObservationContext(t.Context(), winner, input)
+	require.NoError(err, "record winner observation")
+	input.ProviderUserID = &matchedProviderID
+	_, err = st.RecordContactObservationContext(t.Context(), third, input)
+	require.NoError(err, "record third observation")
+
+	observationCandidate, _, err := st.UpsertIdentityMatchCandidateContext(
+		t.Context(), IdentityMatchCandidateInput{
+			LeftKind:  IdentityMatchObservation,
+			LeftID:    loserObservation.Observation.Envelope.ID,
+			RightKind: IdentityMatchParticipant, RightID: third,
+			Basis: IdentityMatchDisplayName, State: IdentityMatchStateCandidate,
+			Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+		},
+	)
+	require.NoError(err, "create observation-endpoint candidate")
+	stableCandidate, _, err := st.UpsertIdentityMatchCandidateContext(
+		t.Context(), IdentityMatchCandidateInput{
+			LeftKind: IdentityMatchParticipant, LeftID: loser,
+			RightKind: IdentityMatchParticipant, RightID: third,
+			Basis: IdentityMatchStableProviderID, NormalizedValue: &matchedProviderID,
+			State:  IdentityMatchStateCandidate,
+			Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+		},
+	)
+	require.NoError(err, "create stable-provider candidate")
+	_, _, err = st.AcceptIdentityMatchCandidateContext(
+		t.Context(), stableCandidate.ID, "system", nil,
+	)
+	require.NoError(err, "accept stable-provider candidate")
+
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
+		"ensureParticipantsPhoneUniqueIndex")
+
+	var observationOwner int64
+	err = st.db.QueryRow(`
+		SELECT participant_id FROM participant_contact_observations WHERE id = ?`,
+		loserObservation.Observation.Envelope.ID,
+	).Scan(&observationOwner)
+	require.NoError(err, "absorbed observation must survive the participant delete")
+	assert.Equal(winner, observationOwner, "absorbed observation must point to the winner")
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), observationCandidate.ID)
+	require.NoError(err, "candidate observation endpoint must remain valid")
+
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), stableCandidate.ID)
+	require.ErrorIs(err, ErrIdentityMatchNotFound,
+		"system match without a current provider pair must be withdrawn")
+	lo, hi := normalizeEdge(winner, third)
+	var linkCount int
+	require.NoError(st.db.QueryRow(`
+		SELECT COUNT(*) FROM participant_links
+		WHERE participant_a = ? AND participant_b = ?`, lo, hi,
+	).Scan(&linkCount), "count surviving identity link")
+	assert.Zero(linkCount, "unsupported automated link must be withdrawn")
+}
+
+// TestInitSchema_LegacyPhoneDedupeAddsParticipantLinkOwnershipColumn covers
+// an archive whose participant_links table predates identity-match ownership.
+// The phone-index migration runs before the general legacy-column loop, but
+// its merge path must still be able to read and rewrite linked duplicate-phone
+// participants during the same InitSchema upgrade.
+func TestInitSchema_LegacyPhoneDedupeAddsParticipantLinkOwnershipColumn(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "legacy-phone-links.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "initial schema")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear phone migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop current phone index")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy phone index")
+	_, err = st.db.Exec(`
+		ALTER TABLE participant_links DROP COLUMN identity_match_candidate_id
+	`)
+	require.NoError(err, "remove ownership column from legacy schema")
+
+	insertParticipant := func(phone, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	winner := insertParticipant("+15555550123", "Alice")
+	loser := insertParticipant("+15555550123", "Alice duplicate")
+	third, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
+	require.NoError(err, "insert linked participant")
+	_, err = st.LinkParticipants(loser, third)
+	require.NoError(err, "link duplicate-phone loser")
+
+	require.NoError(st.InitSchema(), "upgrade legacy schema")
+
+	var ownerColumnCount int
+	require.NoError(st.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('participant_links')
+		WHERE name = 'identity_match_candidate_id'
+	`).Scan(&ownerColumnCount), "check participant-link ownership column")
+	assert.Equal(1, ownerColumnCount, "legacy upgrade must add participant-link ownership")
+
+	var loserCount int
+	require.NoError(st.db.QueryRow(
+		`SELECT COUNT(*) FROM participants WHERE id = ?`, loser,
+	).Scan(&loserCount), "count merged participant")
+	assert.Zero(loserCount, "duplicate-phone loser must be merged")
+
+	lo, hi := normalizeEdge(winner, third)
+	var owner sql.NullInt64
+	require.NoError(st.db.QueryRow(`
+		SELECT identity_match_candidate_id
+		FROM participant_links
+		WHERE participant_a = ? AND participant_b = ?
+	`, lo, hi).Scan(&owner), "read rewritten participant link")
+	assert.False(owner.Valid, "manual legacy link must remain unowned")
 }
 
 // TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata verifies that

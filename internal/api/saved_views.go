@@ -99,7 +99,7 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 func addSavedViewIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "id", In: "path", Required: true, Description: "Saved View ID",
-		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
@@ -113,7 +113,7 @@ func addSavedViewIfMatchParameter(operation *huma.Operation) {
 
 func addSavedViewETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong Saved View revision tag for optimistic concurrency",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},
@@ -173,7 +173,7 @@ func (s *Server) handleCreateSavedView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", savedViewETag(*created))
+	w.Header().Set(etagHeaderName, savedViewETag(*created))
 	w.Header().Set("Location", savedViewsPath+"/"+strconv.FormatInt(created.ID, 10))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, response)
@@ -197,7 +197,7 @@ func (s *Server) handleGetSavedView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", savedViewETag(*view))
+	w.Header().Set(etagHeaderName, savedViewETag(*view))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
 }
@@ -262,7 +262,7 @@ func (s *Server) handlePatchSavedView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", savedViewETag(*updated))
+	w.Header().Set(etagHeaderName, savedViewETag(*updated))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
 }

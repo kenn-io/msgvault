@@ -115,8 +115,14 @@ func contentChangedTriggerColumnList() string {
 //
 // distinctOp is "IS NOT" for SQLite, "IS DISTINCT FROM" for PostgreSQL.
 func contentChangedValueGuard(distinctOp string) string {
-	clauses := make([]string, 0, len(MessagesContentColumns))
-	for _, c := range MessagesContentColumns {
+	return columnValueGuard(MessagesContentColumns, distinctOp)
+}
+
+// columnValueGuard renders `(OLD.a <op> NEW.a OR OLD.b <op> NEW.b ...)` for a
+// trigger WHEN clause or plpgsql IF over the given columns.
+func columnValueGuard(columns []string, distinctOp string) string {
+	clauses := make([]string, 0, len(columns))
+	for _, c := range columns {
 		clauses = append(clauses, fmt.Sprintf("OLD.%s %s NEW.%s", c, distinctOp, c))
 	}
 	return "(" + strings.Join(clauses, " OR ") + ")"

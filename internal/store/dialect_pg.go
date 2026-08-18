@@ -606,8 +606,12 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS service_id BIGINT REFERENCES communication_services(id) ON DELETE SET NULL`, "pi_service_id"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_kind TEXT`, "pi_scope_kind"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_value TEXT`, "pi_scope_value"},
-		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
-		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
+		{postgresParticipantLinkIdentityMatchCandidateMigration, "participant_links.identity_match_candidate_id"},
+		{postgresIdentityMatchObservationConflictOriginMigration, identityMatchObservationConflictOriginMigrationDesc},
+		{postgresIdentityMatchCandidateSourcesMigration, "identity_match_candidate_sources"},
+		{postgresIdentityMatchEvidenceSourcesMigration, "identity_match_evidence_sources"},
+		{postgresIdentityMatchPreConflictStateMigration, "identity_match_candidates.pre_conflict_state"},
+		{postgresIdentityMatchApplicationPendingMigration, "identity_match_candidates.application_pending"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
@@ -1246,6 +1250,148 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 	return nil
 }
 
+// EnsureActivityProjectionTriggers installs the PostgreSQL triggers that keep
+// the dated-activity projection queue current. They live in a separate
+// migration from EnsureTriggers because the message watermark migration is
+// already recorded on upgraded archives and must not be rerun just to add
+// activity support.
+func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_insert ON messages`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_messages_update ON messages`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_insert ON message_recipients`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_update ON message_recipients`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_delete ON message_recipients`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_insert ON conversation_participants`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_update ON conversation_participants`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_delete ON conversation_participants`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update ON conversations`,
+		`DROP TRIGGER IF EXISTS trg_activity_direct_link_delete_dirty ON activity_event_persons`,
+		`CREATE OR REPLACE FUNCTION enqueue_activity_projection_message(p_message_id BIGINT) RETURNS VOID AS $$
+		 BEGIN
+		     IF p_message_id IS NULL OR NOT EXISTS (
+		         SELECT 1 FROM messages WHERE id = p_message_id
+		     ) THEN
+		         RETURN;
+		     END IF;
+		     INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		     VALUES (p_message_id, 1, CURRENT_TIMESTAMP)
+		     ON CONFLICT (message_id) DO UPDATE SET
+		         revision = activity_projection_queue.revision + 1,
+		         queued_at = CURRENT_TIMESTAMP;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION enqueue_activity_projection_conversation(p_conversation_id BIGINT) RETURNS VOID AS $$
+		 DECLARE
+		     message_record RECORD;
+		 BEGIN
+		     FOR message_record IN
+		         SELECT id FROM messages WHERE conversation_id = p_conversation_id
+		     LOOP
+		         PERFORM enqueue_activity_projection_message(message_record.id);
+		     END LOOP;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION queue_activity_messages() RETURNS trigger AS $$
+		 BEGIN
+		     IF %s THEN
+		         PERFORM enqueue_activity_projection_message(NEW.id);
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`, activityValueGuard("IS DISTINCT FROM")),
+		`CREATE OR REPLACE FUNCTION queue_activity_recipient_insert() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_message(NEW.message_id);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_recipient_update() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_message(OLD.message_id);
+		     PERFORM enqueue_activity_projection_message(NEW.message_id);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_recipient_delete() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_message(OLD.message_id);
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_update() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
+		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_delete() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION queue_activity_conversation_type_update() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.conversation_type IS DISTINCT FROM NEW.conversation_type THEN
+		         PERFORM enqueue_activity_projection_conversation(NEW.id);
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION dirty_activity_direct_link_delete() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.evidence = 'direct' THEN
+		         UPDATE person_contact_state
+		         SET dirty_at = CURRENT_TIMESTAMP
+		         WHERE person_id = OLD.person_id;
+		     END IF;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		fmt.Sprintf(`CREATE TRIGGER trg_activity_queue_messages_update
+		     AFTER UPDATE OF %s ON messages FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_messages()`, activityTriggerColumnList()),
+		`CREATE TRIGGER trg_activity_queue_recipients_insert
+		     AFTER INSERT ON message_recipients FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_recipient_insert()`,
+		`CREATE TRIGGER trg_activity_queue_recipients_update
+		     AFTER UPDATE ON message_recipients FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_recipient_update()`,
+		`CREATE TRIGGER trg_activity_queue_recipients_delete
+		     AFTER DELETE ON message_recipients FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_recipient_delete()`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_insert
+		     AFTER INSERT ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_conversation_people_insert()`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_update
+		     AFTER UPDATE ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_conversation_people_update()`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_delete
+		     AFTER DELETE ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_conversation_people_delete()`,
+		`CREATE TRIGGER trg_activity_queue_conversation_type_update
+		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+		     EXECUTE FUNCTION queue_activity_conversation_type_update()`,
+		`CREATE TRIGGER trg_activity_direct_link_delete_dirty
+		     AFTER DELETE ON activity_event_persons FOR EACH ROW
+		     EXECUTE FUNCTION dirty_activity_direct_link_delete()`,
+	}
+	for _, stmt := range stmts {
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure activity projection triggers: %w", err)
+		}
+	}
+	return nil
+}
+
 // DatabaseSize queries pg_database_size() for the current database.
 func (d *PostgreSQLDialect) DatabaseSize(
 	ctx context.Context,
@@ -1357,11 +1503,17 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions",
-	"participant_contact_observations", "identity_match_candidates", "identity_match_evidence",
+	"participant_contact_observations", "identity_match_candidates", "identity_match_candidate_sources",
+	"identity_match_evidence", "identity_match_evidence_sources",
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.
 	"persons", "person_participants",
+	// Activity projection rows are written from and cascade with the sync
+	// archive. The queue is trigger-written by every message/participant
+	// mutation, so it belongs to the same exclusive write set.
+	"activity_events", "activity_event_persons", "person_contact_state",
+	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state",

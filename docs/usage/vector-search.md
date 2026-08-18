@@ -340,6 +340,55 @@ or preprocessing policy. Scoped generations are useful when you want semantic
 search for a newer corpus such as Teams or SMS without embedding decades of
 email immediately.
 
+Generations can also be scoped to selected accounts, either durably in config
+(so the daemon's scheduled embeds obey it too):
+
+```toml
+[vector.embed.scope]
+accounts = ["you@gmail.com"]
+```
+
+or per run from the CLI (overriding the configured accounts for that run):
+
+```bash
+msgvault embeddings build --full-rebuild --account you@gmail.com
+msgvault embeddings build --account you@gmail.com --account you@work.com
+msgvault embeddings build --collection family   # every account in the collection
+```
+
+!!! warning
+    `--account` and `--collection` are one-run overrides. After they activate
+    a scoped generation, add the equivalent stable account identifiers under
+    `[vector.embed.scope].accounts` and restart the daemon before searching.
+    Otherwise the daemon expects a different generation fingerprint and
+    returns `index_stale`. Prefer the config form when the scoped index is
+    meant to persist.
+
+The `--account` flag accepts an identifier or display name like elsewhere,
+but the durable `[vector.embed.scope] accounts` list requires canonical
+account identifiers — display names are rejected because they are not
+stable identities for a privacy boundary. Unknown identifiers fail the run
+instead of silently embedding more than requested. Account scoping acts as a privacy boundary —
+message text from accounts *outside* the scope is never sent to the embedding
+endpoint — and is the cheapest way to pilot semantic search on one mailbox
+before paying to embed the whole archive.
+
+Account-scope caveats:
+
+- The fingerprint records the scope as source IDs, which are archive-local.
+  Removing and re-adding an account (or restoring a backup) can renumber its
+  source ID, producing a new fingerprint and requiring a full rebuild.
+- A scoped account resolves to *all* of its sources, including linked ones
+  such as a Google Calendar synced for the same account. Adding such a
+  source after a scoped generation activates changes the resolved source
+  set and therefore the fingerprint, so vector search reports `index_stale`
+  until a full rebuild.
+- Unlike a message-type scope, an account scope does NOT gate search:
+  unfiltered vector/hybrid queries keep working, and accounts outside the
+  scope simply have no vector matches (hybrid search ranks them on the BM25
+  signal alone). The web UI's semantic-coverage readout counts only in-scope
+  accounts as eligible.
+
 A scoped index is intentionally partial, so vector and hybrid search require an
 explicit compatible message-type filter:
 
@@ -445,7 +494,7 @@ body keywords.
 | Error | Meaning | Recovery |
 |---|---|---|
 | `vector_not_enabled` | The server or MCP process did not wire a vector backend, usually because `[vector] enabled = false`. | Set `enabled = true`, configure `[vector.embeddings]`, and start with a build that includes the needed backend (`sqlite_vec` or `pgvector`). |
-| `index_stale` | Active generation's fingerprint does not match the current model, dimension, preprocessing policy, `max_input_chars`, or embedding output policy. | Run `msgvault embeddings build --full-rebuild --yes`. |
+| `index_stale` | Active generation's fingerprint does not match the current embedding settings: model, dimension, preprocessing policy, `max_input_chars`, output policy, or scope. | For an existing account-scoped index built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon. Otherwise run `msgvault embeddings build --full-rebuild --yes`. |
 | `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build`, wait for the scheduler, or use the appropriate non-vector fallback. |
 | `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or use the appropriate non-vector fallback. |
 | `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use the appropriate non-vector fallback, or rebuild an unscoped generation. |

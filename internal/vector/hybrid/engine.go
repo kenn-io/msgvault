@@ -137,7 +137,7 @@ func (e *Engine) BuildFilter(ctx context.Context, q *search.Query) (vector.Filte
 // family of sentinel errors:
 //
 //   - ErrIndexStale: an active generation exists but its fingerprint
-//     differs from the configured model+dimension.
+//     differs from the configured embedding settings.
 //   - ErrIndexBuilding: no active yet, but a build is in progress.
 //   - ErrNotEnabled: no generation at all (vector search unused).
 //
@@ -243,7 +243,11 @@ func (e *Engine) validateBuildScope(filter vector.Filter) error {
 // embedding index. A non-empty build scope only covers those message types, so
 // callers must make the query scope explicit and compatible before running ANN.
 func ValidateBuildScope(buildScope vector.BuildScope, filter vector.Filter) error {
-	scope := vector.NewBuildScope(buildScope.MessageTypes)
+	// Only the message-type dimension is validated. A source-scoped index
+	// simply has no vectors for out-of-scope accounts and hybrid search
+	// degrades to the BM25 signal for them — rejecting those queries would
+	// break ordinary unfiltered search against a partially-embedded corpus.
+	scope := vector.NewBuildScope(buildScope.MessageTypes, nil)
 	if scope.IsEmpty() {
 		return nil
 	}
@@ -255,7 +259,7 @@ func ValidateBuildScope(buildScope vector.BuildScope, filter vector.Filter) erro
 		return fmt.Errorf("%w: index is scoped to message_type=%s, query requested message_type=%s",
 			vector.ErrIndexScopeMismatch,
 			strings.Join(scope.MessageTypes, ","),
-			strings.Join(vector.NewBuildScope(filter.MessageTypes).MessageTypes, ","))
+			strings.Join(vector.NewBuildScope(filter.MessageTypes, nil).MessageTypes, ","))
 	}
 	return nil
 }

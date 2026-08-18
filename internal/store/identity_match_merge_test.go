@@ -150,6 +150,288 @@ func TestMergeParticipantsMarksOpposingCandidateDecisionsConflict(t *testing.T) 
 	require.NotNil(candidates[0].DecidedAt)
 }
 
+func TestMergeParticipantsPreservesAppliedAcceptedCandidate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant("applied-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant("applied-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant("applied-third@example.com", "Third", "example.com")
+
+	absorbedCandidate := createParticipantMatchCandidate(t, st, absorbed, third, 0.60)
+	survivorCandidate := createParticipantMatchCandidate(t, st, survivor, third, 0.70)
+	accepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		t.Context(), absorbedCandidate.ID, "user", new("confirmed before merge"))
+	requirements.NoError(err, "accept and apply absorbed candidate")
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), survivorCandidate.ID, store.IdentityMatchStateRejected,
+		"user", new("rejected duplicate"))
+	requirements.NoError(err, "reject survivor candidate")
+	requirements.True(linkedPair(t, st, absorbed, third),
+		"precondition: accepted candidate created the participant link")
+
+	requirements.NoError(st.MergeParticipants(absorbed, survivor))
+
+	candidates, err := st.ListIdentityMatchCandidatesContext(
+		t.Context(), nil, 100, 0)
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	merged := candidates[0]
+	assertions.Equal(store.IdentityMatchStateAccepted, merged.State,
+		"candidate state must agree with the retained participant link")
+	assertions.Equal(accepted.DecidedBy, merged.DecidedBy)
+	assertions.Equal(accepted.Notes, merged.Notes)
+	assertions.True(linkedPair(t, st, survivor, third),
+		"participant merge must retain the applied identity relation")
+}
+
+func TestMergeParticipantsPrefersUserAcceptanceMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant(
+		"decision-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant(
+		"decision-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant(
+		"decision-third@example.com", "Third", "example.com")
+
+	olderSystem := upsertPairCandidate(
+		t, st, absorbed, third, store.IdentityMatchStableProviderID)
+	newerUser := upsertPairCandidate(
+		t, st, survivor, third, store.IdentityMatchStableProviderID)
+	_, _, err := st.AcceptIdentityMatchCandidateContext(
+		t.Context(), olderSystem.ID, "system", new("automatic match"))
+	require.NoError(err)
+	userNote := "confirmed by profile owner"
+	userAccepted, _, err := st.AcceptIdentityMatchCandidateContext(
+		t.Context(), newerUser.ID, string(store.ProvenanceUser), &userNote)
+	require.NoError(err)
+
+	require.NoError(st.MergeParticipants(absorbed, survivor))
+	candidates, err := st.ListIdentityMatchCandidatesContext(
+		t.Context(), nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	merged := candidates[0]
+	assert.Equal(store.IdentityMatchStateAccepted, merged.State)
+	assert.Equal(userAccepted.DecidedBy, merged.DecidedBy,
+		"an explicit user acceptance must outrank older system metadata")
+	assert.Equal(userAccepted.Notes, merged.Notes)
+}
+
+func TestMergeParticipantsTransfersCollapsedSystemMatchOwnership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant("owned-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant("owned-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant("owned-third@example.com", "Third", "example.com")
+
+	absorbedCandidate := upsertPairCandidate(
+		t, st, absorbed, third, store.IdentityMatchStableProviderID,
+	)
+	survivorCandidate := upsertPairCandidate(
+		t, st, survivor, third, store.IdentityMatchStableProviderID,
+	)
+	_, _, err := st.AcceptIdentityMatchCandidateContext(
+		t.Context(), absorbedCandidate.ID, "system", nil,
+	)
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(
+		t.Context(), survivorCandidate.ID, "system", nil,
+	)
+	require.NoError(err)
+
+	require.NoError(st.MergeParticipants(absorbed, survivor))
+	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	merged := candidates[0]
+	assert.Equal(absorbedCandidate.ID, merged.ID)
+	assert.Equal(store.IdentityMatchStateAccepted, merged.State)
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(survivor, third), maxInt64(survivor, third),
+	).Scan(&owner))
+	assert.Equal(merged.ID, owner)
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), merged.ID, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.False(linkedPair(t, st, survivor, third))
+}
+
+func TestMergeParticipantsPreservesManualSupportWhenEdgesCollapse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant("manual-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant("manual-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant("manual-third@example.com", "Third", "example.com")
+
+	_, err := st.LinkParticipants(absorbed, third)
+	require.NoError(err)
+	candidate := upsertPairCandidate(
+		t, st, survivor, third, store.IdentityMatchStableProviderID,
+	)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(
+		t.Context(), candidate.ID, "system", nil,
+	)
+	require.NoError(err)
+
+	require.NoError(st.MergeParticipants(absorbed, survivor))
+	var owner *int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(survivor, third), maxInt64(survivor, third),
+	).Scan(&owner))
+	assert.Nil(owner, "manual support must make the collapsed edge unowned")
+
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), candidate.ID, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.True(linkedPair(t, st, survivor, third),
+		"rejecting the automated explanation must preserve manual support")
+}
+
+func TestMergeParticipantsRetainsDeterministicOwnerForCollapsedAutomatedEdges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant("multiple-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant("multiple-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant("multiple-third@example.com", "Third", "example.com")
+
+	createAccepted := func(left int64, providerID string) *store.IdentityMatchCandidate {
+		candidate, created, err := st.UpsertIdentityMatchCandidateContext(
+			t.Context(), store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: left,
+				RightKind: store.IdentityMatchParticipant, RightID: third,
+				Basis: store.IdentityMatchStableProviderID, NormalizedValue: &providerID,
+				State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+			},
+		)
+		require.NoError(err)
+		require.True(created)
+		_, _, err = st.AcceptIdentityMatchCandidateContext(
+			t.Context(), candidate.ID, "system", nil,
+		)
+		require.NoError(err)
+		return candidate
+	}
+	first := createAccepted(absorbed, "provider-first")
+	second := createAccepted(survivor, "provider-second")
+
+	require.NoError(st.MergeParticipants(absorbed, survivor))
+	var owner int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT identity_match_candidate_id FROM participant_links
+		 WHERE participant_a = ? AND participant_b = ?`),
+		minInt64(survivor, third), maxInt64(survivor, third),
+	).Scan(&owner))
+	assert.Equal(minInt64(first.ID, second.ID), owner)
+
+	_, err := st.DecideIdentityMatchCandidateContext(
+		t.Context(), owner, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.True(linkedPair(t, st, survivor, third),
+		"the other accepted candidate must take ownership")
+	remainingOwner := maxInt64(first.ID, second.ID)
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), remainingOwner, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.False(linkedPair(t, st, survivor, third),
+		"rejecting every automated contribution must remove the link")
+}
+
+func TestMergeParticipantsPreservesAutomatedChainEdgeProvenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("chain-a@example.com", "A", "example.com")
+	b := f.EnsureParticipant("chain-b@example.com", "B", "example.com")
+	c := f.EnsureParticipant("chain-c@example.com", "C", "example.com")
+	d := f.EnsureParticipant("chain-d@example.com", "D", "example.com")
+
+	var tailCandidate *store.IdentityMatchCandidate
+	for index, pair := range [][2]int64{{a, b}, {b, c}, {c, d}} {
+		candidate := upsertPairCandidate(
+			t, st, pair[0], pair[1], store.IdentityMatchStableProviderID,
+		)
+		_, _, err := st.AcceptIdentityMatchCandidateContext(
+			t.Context(), candidate.ID, "system", nil,
+		)
+		require.NoError(err)
+		if index == 2 {
+			tailCandidate = candidate
+		}
+	}
+	require.NotNil(tailCandidate)
+
+	require.NoError(st.MergeParticipants(c, b))
+	assert.True(linkedPair(t, st, a, d),
+		"contracting the middle of the chain must preserve the cluster")
+
+	_, err := st.DecideIdentityMatchCandidateContext(
+		t.Context(), tailCandidate.ID, store.IdentityMatchStateRejected, "user", nil,
+	)
+	require.NoError(err)
+	assert.False(linkedPair(t, st, a, d),
+		"rejecting the surviving tail contribution must detach the tail")
+}
+
+func TestMergeParticipantsPreservesAcceptedCandidateLinkedByContraction(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	absorbed := f.EnsureParticipant("contracted-absorbed@example.com", "Absorbed", "example.com")
+	survivor := f.EnsureParticipant("contracted-survivor@example.com", "Survivor", "example.com")
+	third := f.EnsureParticipant("contracted-third@example.com", "Third", "example.com")
+
+	_, err := st.LinkParticipants(absorbed, third)
+	requirements.NoError(err, "create the identity edge that the merge will contract")
+	absorbedCandidate := createParticipantMatchCandidate(t, st, absorbed, third, 0.60)
+	survivorCandidate := createParticipantMatchCandidate(t, st, survivor, third, 0.70)
+	_, err = st.DecideIdentityMatchCandidateContext(
+		t.Context(), absorbedCandidate.ID, store.IdentityMatchStateRejected,
+		"user", new("rejected duplicate"))
+	requirements.NoError(err, "reject absorbed candidate")
+	accepted, err := st.DecideIdentityMatchCandidateContext(
+		t.Context(), survivorCandidate.ID, store.IdentityMatchStateAccepted,
+		"user", new("confirmed survivor candidate"))
+	requirements.NoError(err, "accept survivor candidate without applying it")
+	requirements.False(linkedPair(t, st, survivor, third),
+		"precondition: the survivor pair is linked only after contraction")
+
+	requirements.NoError(st.MergeParticipants(absorbed, survivor))
+
+	candidates, err := st.ListIdentityMatchCandidatesContext(
+		t.Context(), nil, 100, 0)
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	merged := candidates[0]
+	assertions.Equal(store.IdentityMatchStateAccepted, merged.State,
+		"post-merge connectivity must preserve the accepted decision")
+	assertions.Equal(accepted.DecidedBy, merged.DecidedBy)
+	assertions.Equal(accepted.Notes, merged.Notes)
+	assertions.True(linkedPair(t, st, survivor, third))
+}
+
 func TestMergeParticipantsCarriesConfidenceProvenanceFromDuplicate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

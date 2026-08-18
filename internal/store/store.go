@@ -1075,6 +1075,23 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// The source-support tables were added after generated identity candidates
+	// and evidence. Preserve old rows before source-removal cleanup starts using
+	// support absence as proof that a row is stale.
+	if err := s.ensureIdentityMatchCandidateSourceSupportColumns(ctx); err != nil {
+		return fmt.Errorf("prepare identity match source support provenance: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationIdentityMatchSourceSupport, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.backfillLegacyIdentityMatchSourceSupport(ctx, tx)
+			})
+		},
+	); err != nil {
+		return err
+	}
+
 	// Legacy databases may have idx_participants_phone as a non-unique
 	// partial index (it was created that way before the schema flipped
 	// to UNIQUE). `CREATE UNIQUE INDEX IF NOT EXISTS` in schema.sql
@@ -1122,6 +1139,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	// Recovery reads only acceptances whose link transaction may not have
+	// committed. Create this after the legacy-column loop: schema.sql is
+	// executed before that loop, so an upgraded table does not have the column
+	// yet when its CREATE TABLE IF NOT EXISTS is skipped.
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_application_pending
+		ON identity_match_candidates(application_pending, id)
+		WHERE state = 'accepted'
+	`); err != nil {
+		return fmt.Errorf("index pending identity match applications: %w", err)
 	}
 	if err := s.ensureParticipantIdentifierServiceScopeIndex(ctx); err != nil {
 		return fmt.Errorf("create participant identifier service-scope index: %w", err)
@@ -1219,6 +1247,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationActivityProjectionTriggers, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureActivityProjectionTriggers(
+					boundQuerier{ctx: ctx, q: tx},
+				)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
 
 	// Initialize explicit attribution provenance for every legacy message once

@@ -9,9 +9,10 @@ var (
 	// [vector] is not configured.
 	ErrNotEnabled = errors.New("vector search not enabled")
 
-	// ErrIndexStale is returned when the configured model/dimension
-	// differs from the active generation's fingerprint.
-	ErrIndexStale = errors.New("index stale: configured model does not match active generation")
+	// ErrIndexStale is returned when the configured embedding settings
+	// differ from the active generation's fingerprint. Settings include the
+	// model, preprocessing policy, and embedding scope.
+	ErrIndexStale = errors.New("index stale: configured embedding settings do not match active generation")
 
 	// ErrIndexBuilding is returned when no active generation exists and
 	// a first-ever rebuild is in progress.
@@ -46,6 +47,24 @@ var (
 	// fingerprint, so the caller can surface an actionable message
 	// instead of a raw unique-index violation.
 	ErrBuildingInProgress = errors.New("a rebuild with a different fingerprint is already in progress")
+
+	// ErrScopeUnresolvable marks a DETERMINISTIC failure to re-resolve the
+	// durable embedding scope: a configured account was removed, became
+	// ambiguous, or otherwise no longer names a source set. Unlike a
+	// transient resolution failure (a busy database), this cannot heal on
+	// retry — the daemon's drift detection latches vector search stale so
+	// queries stop serving an index whose scope no longer matches the
+	// configuration.
+	ErrScopeUnresolvable = errors.New("embedding scope unresolvable")
+
+	// ErrRefuseActivateEmptyScope is returned by ActivateGeneration when
+	// force is false and the backend's source-scoped build scope matches no
+	// live messages. Activating would swap in an empty index and auto-retire
+	// the serving generation (deleting its embeddings on pgvector), so every
+	// non-forced activation path — the CLI drain, the daemon scheduler, and
+	// `embeddings activate` — is refused at the backend gate. The usual
+	// cause is a scoped account that exists but has never been synced.
+	ErrRefuseActivateEmptyScope = errors.New("refusing to activate: the source-scoped build scope matches no live messages")
 
 	// ErrRefuseRetireActive is returned by RetireGeneration when force is
 	// false and the target generation is in state='active'. Retiring the

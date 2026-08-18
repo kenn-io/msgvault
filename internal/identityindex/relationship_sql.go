@@ -195,7 +195,8 @@ WITH message_facts AS (
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
-	       m.sender_id::BIGINT AS sender_id
+	       m.sender_id::BIGINT AS sender_id,
+	       m.owner_participant_id::BIGINT AS owner_participant_id
 	FROM read_parquet('%s', hive_partitioning=true, union_by_name=true) m
 	JOIN read_parquet('%s') s ON s.id = m.source_id
 	LEFT JOIN read_parquet('%s') c ON c.id = m.conversation_id
@@ -218,18 +219,22 @@ WITH message_facts AS (
 	SELECT mr.message_id::BIGINT AS message_id,
 	       mr.participant_id::BIGINT AS participant_id,
 	       true AS is_direct,
-	       false AS is_sender,
+	       (mr.recipient_type = 'from'
+	        AND mr.participant_id = m.owner_participant_id) AS is_sender,
+	       (mr.recipient_type = 'from'
+	        AND mr.participant_id = m.owner_participant_id) AS is_owner_sender,
 	       (mr.recipient_type = 'from') AS is_author
 	FROM read_parquet('%s') mr
 	JOIN message_facts m ON m.message_id = mr.message_id
 
 	UNION ALL
 
-	SELECT m.message_id, m.sender_id, true, true, true
+	SELECT m.message_id, m.sender_id, true, true,
+	       coalesce(m.sender_id = m.owner_participant_id, false), true
 	FROM message_facts m
 	WHERE m.sender_id IS NOT NULL
 ), direct_canon AS (
-	SELECT e.message_id, e.is_direct, e.is_sender, e.is_author,
+	SELECT e.message_id, e.is_direct, e.is_sender, e.is_owner_sender, e.is_author,
 	       c.canonical_id, c.participant_domain
 	FROM direct_edges e
 	LEFT JOIN canon c USING (participant_id)
@@ -237,6 +242,7 @@ WITH message_facts AS (
 	SELECT message_id, canonical_id, participant_domain,
 	       bool_or(is_direct) AS is_direct,
 	       bool_or(is_sender) AS is_sender,
+	       bool_or(is_owner_sender) AS is_owner_sender,
 	       bool_or(is_author) AS is_author
 	FROM direct_canon
 	WHERE canonical_id IS NOT NULL
@@ -261,7 +267,8 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        true AS is_conversation_member,
        coalesce(d.is_sender, false) AS is_sender,
        coalesce(d.is_author, false) AS is_author,
-       (o.canonical_id IS NOT NULL) AS is_owner,
+       (o.canonical_id IS NOT NULL OR
+        (m.is_from_me AND coalesce(d.is_owner_sender, false))) AS is_owner,
        m.occurred_year
 FROM message_facts m
 	JOIN conv_members_canon cm USING (conversation_id)
@@ -282,7 +289,8 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        false AS is_conversation_member,
        d.is_sender,
        d.is_author,
-       (o.canonical_id IS NOT NULL) AS is_owner,
+       (o.canonical_id IS NOT NULL OR
+        (m.is_from_me AND d.is_owner_sender)) AS is_owner,
        m.occurred_year
 FROM message_facts m
 	JOIN direct_agg d USING (message_id)

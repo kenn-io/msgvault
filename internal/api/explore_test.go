@@ -1,14 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestExploreRejectsUnknownFilterDimension(t *testing.T) {
@@ -52,6 +55,62 @@ func TestExploreUnavailableReturnsNamedReadinessAndRecovery(t *testing.T) {
 	assertions.Equal("analytical_cache_unavailable", body.Error)
 	assertions.Equal(query.CacheAbsent, body.Readiness)
 	assertions.NotEmpty(body.RecoveryAction)
+}
+
+func TestExploreReportsTransientCacheInitialization(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeInitializing
+	srv := NewServerWithOptions(opts)
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{}`)
+	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Equal("analytical_cache_unavailable", body.Error)
+	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
+	assertions.Equal("The analytical cache is being prepared", body.Message)
+	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+	var generatedBody generated.ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &generatedBody))
+	requirements.NoError(generatedBody.Validate(), "the generated client must accept the server's building response")
+}
+
+func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeSQLFallback
+	opts.AnalyticsInitializationActive = true
+	srv := NewServerWithOptions(opts)
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{}`)
+	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
+	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+}
+
+func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeSQLFallback
+	opts.AnalyticsInitializationActive = true
+	srv := NewServerWithOptions(opts)
+	snapshot := srv.currentAnalyticsState()
+	srv.SetAnalyticsInitializationActive(false)
+
+	response := httptest.NewRecorder()
+	ctx := context.WithValue(context.Background(), analyticsEngineContextKey{}, snapshot)
+	srv.writeExploreUnavailable(ctx, response, query.CacheAbsent)
+
+	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ExploreCacheUnavailableResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
 }
 
 func TestExploreServerStateBoundsAndExpiresTransientCapabilities(t *testing.T) {

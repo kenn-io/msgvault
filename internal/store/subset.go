@@ -19,6 +19,8 @@ type CopyResult struct {
 	Participants  int64
 	Labels        int64
 	Sources       int64
+	Organizations int64
+	Employments   int64
 	DBSize        int64
 	Elapsed       time.Duration
 }
@@ -63,12 +65,17 @@ func CopySubset(
 }
 
 // CopySubsetWithOptions copies a subset with explicitly selected sensitive
-// metadata. IncludeAttributes copies current and historical attribute values,
-// including their value content, provenance references, and actor metadata.
-// IncludeProfiles copies current and historical structured profile values,
-// media, contact observations, identity-review candidates and evidence,
-// relationship types and edges between copied persons with their decision
-// ledger, and their provenance dependencies.
+// metadata. IncludeAttributes copies current and historical attribute values —
+// person- and organization-scoped — including their value content, provenance
+// references, and actor metadata. IncludeProfiles copies current and
+// historical structured profile values, media, contact observations,
+// identity-review candidates and evidence, relationship types and edges
+// between copied persons with their decision ledger, their provenance
+// dependencies, and employment history: employments of copied people together
+// with the organizations they reference and those organizations' profile
+// rows. Organization attribute values ride IncludeAttributes but only exist
+// in the subset when IncludeProfiles also ran, because the organizations
+// themselves cross the boundary through employment references.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
@@ -354,6 +361,44 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// every included identity cluster and person profile is complete —
 	// components can pass through participants with no copied messages.
 	if options.IncludeIdentity {
+		// Reference edges follow person-valued attribute record references out
+		// of the included identity set. Organization attributes reached through
+		// an included person's employments contribute the same kind of edge,
+		// but only on sources whose schema has those tables, and only when the
+		// organizations themselves cross the boundary (IncludeProfiles) with
+		// attributes opted in.
+		referenceEdges := `SELECT owner_pp.participant_id, target_pp.participant_id
+					FROM src.person_attribute_values value
+					JOIN src.person_participants owner_pp
+					  ON owner_pp.person_id = value.person_id
+					JOIN src.person_participants target_pp
+					  ON target_pp.person_id = value.value_record_id
+					WHERE value.value_record_type = 'person'
+					  AND ?`
+		args := []any{options.IncludeAttributes}
+		hasEmployments, err := sourceTableExists(tx, "employments")
+		if err != nil {
+			return nil, fmt.Errorf("check employment schema: %w", err)
+		}
+		hasOrganizationValues, err := sourceTableExists(tx, "organization_attribute_values")
+		if err != nil {
+			return nil, fmt.Errorf("check organization attribute schema: %w", err)
+		}
+		if hasEmployments && hasOrganizationValues {
+			referenceEdges += `
+					UNION ALL
+					SELECT owner_pp.participant_id, target_pp.participant_id
+					FROM src.employments employment
+					JOIN src.person_participants owner_pp
+					  ON owner_pp.person_id = employment.person_id
+					JOIN src.organization_attribute_values value
+					  ON value.organization_id = employment.organization_id
+					JOIN src.person_participants target_pp
+					  ON target_pp.person_id = value.value_record_id
+					WHERE value.value_record_type = 'person'
+					  AND ?`
+			args = append(args, options.IncludeAttributes && options.IncludeProfiles)
+		}
 		res, err = copyByName(tx, "participants", `id IN (
 				WITH RECURSIVE symmetric_edge(a, b) AS (
 					SELECT participant_a, participant_b FROM src.participant_links
@@ -364,14 +409,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 					  ON pp2.person_id = pp1.person_id
 					 AND pp2.participant_id != pp1.participant_id
 				), reference_edge(a, b) AS (
-					SELECT owner_pp.participant_id, target_pp.participant_id
-					FROM src.person_attribute_values value
-					JOIN src.person_participants owner_pp
-					  ON owner_pp.person_id = value.person_id
-					JOIN src.person_participants target_pp
-					  ON target_pp.person_id = value.value_record_id
-					WHERE value.value_record_type = 'person'
-					  AND ?
+					`+referenceEdges+`
 				), identity(id) AS (
 					SELECT id FROM participants
 					UNION
@@ -387,7 +425,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 				)
 				SELECT id FROM identity
 			)
-			  AND id NOT IN (SELECT id FROM participants)`, options.IncludeAttributes)
+			  AND id NOT IN (SELECT id FROM participants)`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("copy identity-closure participants: %w", err)
 		}
@@ -398,10 +436,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		result.Participants += identityMates
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO participant_links SELECT * FROM src.participant_links
-		WHERE participant_a IN (SELECT id FROM participants)
-		  AND participant_b IN (SELECT id FROM participants)`); err != nil {
+	if err := copyParticipantLinks(tx, options.IncludeProfiles); err != nil {
 		return nil, fmt.Errorf("copy participant_links: %w", err)
 	}
 
@@ -449,6 +484,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		if err := copySubsetRelationships(tx); err != nil {
 			return nil, err
 		}
+		if err := copyEmploymentData(tx, result); err != nil {
+			return nil, err
+		}
 	}
 
 	if options.IncludeAttributes {
@@ -472,7 +510,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
 		FROM src.attribute_definitions
-		WHERE object_type = 'person'
+		WHERE object_type IN ('person', 'organization')
 		ON CONFLICT(universal_id) DO UPDATE SET
 		    object_type = excluded.object_type,
 		    slug = excluded.slug,
@@ -536,6 +574,49 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    )
 		  )`); err != nil {
 			return nil, fmt.Errorf("copy person attribute values: %w", err)
+		}
+
+		// Organization attribute values follow the same universal_id mapping and
+		// record-reference boundary. The organizations themselves only cross the
+		// subset boundary through employment references (IncludeProfiles), so
+		// without that opt-in this copy is vacuous.
+		hasOrganizationValues, err := sourceTableExists(tx, "organization_attribute_values")
+		if err != nil {
+			return nil, fmt.Errorf("check organization attribute schema: %w", err)
+		}
+		if hasOrganizationValues {
+			if _, err := tx.Exec(`
+			INSERT INTO organization_attribute_values (
+			    id, organization_id, definition_id, ordinal,
+			    value_text, value_integer, value_real, value_boolean,
+			    value_date, value_timestamp, value_json,
+			    value_record_type, value_record_id,
+			    active_from, active_until, created_at, superseded_at,
+			    source, source_ref, confidence, actor
+			)
+			SELECT
+			    value.id, value.organization_id, destination_definition.id,
+			    value.ordinal, value.value_text, value.value_integer,
+			    value.value_real, value.value_boolean, value.value_date,
+			    value.value_timestamp, value.value_json, value.value_record_type,
+			    value.value_record_id, value.active_from, value.active_until,
+			    value.created_at, value.superseded_at, value.source,
+			    value.source_ref, value.confidence, value.actor
+			FROM src.organization_attribute_values value
+			JOIN src.attribute_definitions source_definition
+			  ON source_definition.id = value.definition_id
+			JOIN attribute_definitions destination_definition
+			  ON destination_definition.universal_id = source_definition.universal_id
+			WHERE value.organization_id IN (SELECT id FROM organizations)
+			  AND (
+			    value.value_record_type IS NULL
+			    OR (
+			      value.value_record_type = 'person'
+			      AND value.value_record_id IN (SELECT id FROM persons)
+			    )
+			  )`); err != nil {
+				return nil, fmt.Errorf("copy organization attribute values: %w", err)
+			}
 		}
 	}
 
@@ -680,6 +761,36 @@ type subsetServiceReference struct {
 	where string
 }
 
+// copyParticipantLinks copies the link forest by name. The identity-match
+// ownership column was added to upgraded databases after created_at, while a
+// fresh schema declares it before created_at; a positional copy would swap
+// those values. Ownership is profile metadata, so omit it when profiles are
+// not requested even if the source has the column.
+func copyParticipantLinks(tx *sql.Tx, includeProfiles bool) error {
+	hasCandidateOwner, err := sourceColumnExists(
+		tx, "participant_links", "identity_match_candidate_id",
+	)
+	if err != nil {
+		return err
+	}
+	ownerExpression := "NULL"
+	if includeProfiles && hasCandidateOwner {
+		ownerExpression = "source_row.identity_match_candidate_id"
+	}
+	_, err = tx.Exec(fmt.Sprintf(`
+		INSERT INTO participant_links (
+			participant_a, participant_b, identity_match_candidate_id, created_at
+		)
+		SELECT source_row.participant_a, source_row.participant_b, %s,
+		       source_row.created_at
+		FROM src.participant_links source_row
+		WHERE source_row.participant_a IN (SELECT id FROM participants)
+		  AND source_row.participant_b IN (SELECT id FROM participants)`,
+		ownerExpression,
+	))
+	return err
+}
+
 const subsetSourceIdentityMatchCandidateWhere = `(
 	(left_kind = 'participant' AND left_id IN (SELECT id FROM participants))
 	OR (left_kind = 'person' AND left_id IN (SELECT id FROM persons))
@@ -739,6 +850,19 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 				where: subsetSourceIdentityMatchCandidateWhere,
 			},
 		)
+		hasEmployments, err := sourceTableExists(tx, "employments")
+		if err != nil {
+			return fmt.Errorf("check employment schema: %w", err)
+		}
+		if hasEmployments {
+			references = append(references, subsetServiceReference{
+				table: "organization_contact_points",
+				where: `organization_id IN (
+					SELECT DISTINCT organization_id FROM src.employments
+					WHERE person_id IN (SELECT id FROM persons)
+				)`,
+			})
+		}
 	}
 	for _, reference := range references {
 		hasServiceID, err := sourceColumnExists(tx, reference.table, "service_id")
@@ -826,6 +950,22 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			  ON service_map.source_id = alias.service_id
 			ON CONFLICT(alias) DO UPDATE SET service_id = excluded.service_id`); err != nil {
 			return fmt.Errorf("copy communication service aliases: %w", err)
+		}
+	}
+	hasDiscoveries, err := sourceTableExists(tx, "communication_service_discoveries")
+	if err != nil {
+		return fmt.Errorf("check communication service discovery schema: %w", err)
+	}
+	if hasDiscoveries {
+		if _, err := tx.Exec(`INSERT INTO communication_service_discoveries (
+				service_id, provider, discovery_kind
+			)
+			SELECT service_map.destination_id, discovery.provider, discovery.discovery_kind
+			FROM src.communication_service_discoveries discovery
+			JOIN selected_profile_service_map service_map
+			  ON service_map.source_id = discovery.service_id
+			ON CONFLICT(service_id, provider, discovery_kind) DO NOTHING`); err != nil {
+			return fmt.Errorf("copy communication service discoveries: %w", err)
 		}
 	}
 	return nil
@@ -974,6 +1114,55 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	return nil
 }
 
+// copyEmploymentData copies the employments of copied people together with
+// the organizations those employments reference and the organizations'
+// profile rows. Employment history is curated person data, so it rides the
+// same IncludeProfiles opt-in as structured person profiles. Employments
+// cannot reference merged organizations, so the copied organizations never
+// need a merge-redirect closure.
+func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
+	hasEmployments, err := sourceTableExists(tx, "employments")
+	if err != nil {
+		return fmt.Errorf("check employment schema: %w", err)
+	}
+	if !hasEmployments {
+		return nil
+	}
+	organizationsCopied, err := copyByName(tx, "organizations", `id IN (
+			SELECT DISTINCT organization_id FROM src.employments
+			WHERE person_id IN (SELECT id FROM persons)
+		)`)
+	if err != nil {
+		return fmt.Errorf("copy organizations: %w", err)
+	}
+	if result.Organizations, err = organizationsCopied.RowsAffected(); err != nil {
+		return fmt.Errorf("organizations rows affected: %w", err)
+	}
+	for _, table := range []string{
+		"organization_names", "organization_identifiers",
+		"organization_addresses", "organization_media",
+		"organization_categories",
+	} {
+		if _, err := copyByName(tx, table,
+			`organization_id IN (SELECT id FROM organizations)`); err != nil {
+			return fmt.Errorf("copy %s: %w", table, err)
+		}
+	}
+	if err := copyByNameWithCommunicationServiceMap(tx, "organization_contact_points",
+		`organization_id IN (SELECT id FROM organizations)`); err != nil {
+		return fmt.Errorf("copy organization_contact_points: %w", err)
+	}
+	employmentsCopied, err := copyByName(tx, "employments",
+		`person_id IN (SELECT id FROM persons)`)
+	if err != nil {
+		return fmt.Errorf("copy employments: %w", err)
+	}
+	if result.Employments, err = employmentsCopied.RowsAffected(); err != nil {
+		return fmt.Errorf("employments rows affected: %w", err)
+	}
+	return nil
+}
+
 func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 	hasProfiles, err := sourceTableExists(tx, "person_names")
 	if err != nil {
@@ -1033,6 +1222,65 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			if _, err := copyByName(tx, "identity_match_evidence",
 				`candidate_id IN (SELECT id FROM identity_match_candidates)`); err != nil {
 				return 0, fmt.Errorf("copy identity_match_evidence: %w", err)
+			}
+		}
+
+		supportTables := []struct {
+			table      string
+			ownerTable string
+			ownerKey   string
+		}{
+			{
+				table: "identity_match_candidate_sources", ownerTable: "identity_match_candidates",
+				ownerKey: "candidate_id",
+			},
+			{
+				table: "identity_match_evidence_sources", ownerTable: "identity_match_evidence",
+				ownerKey: "evidence_id",
+			},
+		}
+		for _, support := range supportTables {
+			hasSupport, err := sourceTableExists(tx, support.table)
+			if err != nil {
+				return 0, fmt.Errorf("check %s schema: %w", support.table, err)
+			}
+			if !hasSupport {
+				continue
+			}
+			// Archives upgraded before source-support provenance existed
+			// carry conservative associations to every source. They keep
+			// source-removal cleanup safe, but must not pull unrelated source
+			// metadata into a shared subset. Explicit rows may expand the
+			// subset's source set; conservative rows are retained only when
+			// their source is already present for another reason.
+			hasConservativeMarker, err := sourceColumnExists(
+				tx, support.table, "is_conservative",
+			)
+			if err != nil {
+				return 0, fmt.Errorf("check %s provenance schema: %w", support.table, err)
+			}
+			if !hasConservativeMarker {
+				continue
+			}
+			ownerWhere := support.ownerKey + ` IN (SELECT id FROM ` + support.ownerTable + `)`
+			explicitSupportWhere := ownerWhere + `
+				AND is_conservative = FALSE`
+			sourceResult, err := copyByName(tx, "sources", `id IN (
+				SELECT source_id FROM src.`+support.table+`
+				WHERE `+explicitSupportWhere+`
+			) AND id NOT IN (SELECT id FROM sources)`)
+			if err != nil {
+				return 0, fmt.Errorf("copy %s sources: %w", support.table, err)
+			}
+			copiedSources, err := sourceResult.RowsAffected()
+			if err != nil {
+				return 0, fmt.Errorf("%s sources rows affected: %w", support.table, err)
+			}
+			extraSources += copiedSources
+			if _, err := copyByName(tx, support.table,
+				ownerWhere+`
+					 AND source_id IN (SELECT id FROM sources)`); err != nil {
+				return 0, fmt.Errorf("copy %s: %w", support.table, err)
 			}
 		}
 	}

@@ -57,8 +57,12 @@ func defaultCORSAllowedHeaders() []string {
 // only non-safelisted response header clients read (settings and saved-view
 // concurrency tokens).
 const (
-	corsExposedHeaders = "ETag"
+	corsExposedHeaders = etagHeaderName
+	etagHeaderName     = "ETag"
 	ifMatchHeaderName  = "If-Match"
+
+	// formatInt64 is the OpenAPI schema format for 64-bit identifiers.
+	formatInt64 = "int64"
 )
 
 // CORSMiddleware returns a middleware that handles CORS headers.

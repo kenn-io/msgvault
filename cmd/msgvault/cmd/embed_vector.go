@@ -45,6 +45,15 @@ func runEmbed(cmd *cobra.Command) error {
 		return fmt.Errorf("init schema: %w", err)
 	}
 
+	// Resolve the account dimension of the build scope before anything
+	// derives a fingerprint or coverage predicate from the config: the
+	// --account/--collection flags (or [vector.embed.scope] accounts)
+	// become source IDs here, and unknown identifiers fail the run loudly
+	// rather than silently widening the embedded corpus.
+	if err := resolveEmbedScopeSourceIDs(s); err != nil {
+		return err
+	}
+
 	var (
 		backend   vector.Backend
 		vectorsDB *sql.DB
@@ -118,9 +127,24 @@ func runEmbed(cmd *cobra.Command) error {
 	// this generation (embed_gen <> gen), read from the main DB coverage
 	// rather than a queue table.
 	scope := cfg.Vector.Embed.Scope.BuildScope()
-	missing, err := s.MissingCountScoped(ctx, int64(gen), scope.MessageTypes)
+	if !scope.IsEmpty() {
+		_, _ = fmt.Fprintf(errOut, "Embedding scope: %s\n", scope.Fingerprint())
+	}
+	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return fmt.Errorf("coverage counts: %w", err)
+	}
+	if len(scope.SourceIDs) > 0 && live == 0 {
+		if rebuildInProgress {
+			// Draining a build whose scope matches nothing would reach
+			// remaining == 0 immediately and activate an EMPTY generation,
+			// auto-retiring the currently active index (on pgvector that
+			// deletes its embeddings). An existing-but-unsynced account is
+			// the likely cause, so refuse instead of destroying a working
+			// index behind a stderr notice.
+			return fmt.Errorf("embedding scope %s matched 0 live messages; activating generation %d would replace the current index with an empty one — sync the scoped account(s) first, or retire the building generation (msgvault embeddings retire %d) and fix [vector.embed.scope]/--account/--collection", scope.Fingerprint(), gen, gen)
+		}
+		_, _ = fmt.Fprintln(errOut, "Embedding scope matched 0 live messages.")
 	}
 	totalPending := int(missing)
 
@@ -147,9 +171,13 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		if _, err := activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
-			cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut); err != nil {
+		activated, err := activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
+			cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut)
+		if err != nil {
 			return err
+		}
+		if activated && (len(embedAccounts) > 0 || len(embedCollections) > 0) {
+			_, _ = fmt.Fprintln(errOut, "This active generation was scoped with --account/--collection. To keep it usable after a daemon restart, add equivalent accounts to [vector.embed.scope] in config.toml and restart the daemon; otherwise vector search reports index_stale.")
 		}
 	}
 	return nil
@@ -253,7 +281,7 @@ type embedGenerationOpts struct {
 //     for a mismatch.
 //   - default mode with a building generation matching the configured
 //     fingerprint: resume it. Building takes precedence over active so
-//     that an in-flight rebuild for the configured model gets drained
+//     that an in-flight rebuild for the configured embedding settings gets drained
 //     to completion before the next activation, even if a stale active
 //     generation from a different model still exists.
 //   - default mode with no matching building but an active generation
@@ -311,7 +339,7 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 				building.ID, building.Fingerprint)
 			return building.ID, true, nil
 		}
-		return 0, false, fmt.Errorf("in-progress rebuild has fingerprint=%q, config has %q — activate or retire it before running with a different model",
+		return 0, false, fmt.Errorf("in-progress rebuild has fingerprint=%q, config has %q — activate or retire it before running with a different model or embed scope (the fingerprint folds in [vector.embed.scope] message_types/accounts and any --account/--collection flags)",
 			building.Fingerprint, opts.Fingerprint)
 	}
 

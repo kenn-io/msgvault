@@ -71,7 +71,8 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	countArgs := append(append([]any{}, conditionArgs...), candidateRankArgs...)
 	args := append(append([]any{}, countArgs...), limit, request.Page.Offset)
 	var queryText string
-	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request) {
+	fastPath := !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request)
+	if fastPath {
 		queryText = buildExploreFastListingSQL(conditions, candidateRankExpression,
 			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
 		args = append(args, conditionArgs...) // membership rescan
@@ -136,7 +137,11 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 		return nil, fmt.Errorf("iterate analytical entries: %w", err)
 	}
 	if len(response.Rows) == 0 && request.Page.Offset > 0 {
-		if err := e.db.QueryRowContext(ctx, buildExploreCountSQL(conditions, candidateRankExpression), countArgs...).Scan(&response.TotalCount); err != nil {
+		countSQL := buildExploreCountSQL(conditions, candidateRankExpression)
+		if fastPath {
+			countSQL = buildExploreFastCountSQL(conditions, candidateRankExpression)
+		}
+		if err := e.db.QueryRowContext(ctx, countSQL, countArgs...).Scan(&response.TotalCount); err != nil {
 			return nil, fmt.Errorf("count analytical entries beyond page: %w", err)
 		}
 	}
@@ -449,7 +454,15 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 	// they keep the participant rules that mirror baked is_from_me
 	// attribution (see ResolveAccountIdentityContext). Email comparison
 	// stays case-insensitive, matching attribution's email rule.
-	recipientRowMatch := func(alias string) string {
+	//
+	// fallbackGuard scopes the email-identifier fallback beyond the row. For
+	// the sender it must mirror attribution's message-level rule: ANY
+	// non-empty From envelope on the message suppresses participant
+	// matching, so a mixed message (one populated snapshot, one legacy NULL
+	// row) is not selected through the NULL row when attribution stored it
+	// as not-from-me. The identifier-less participant mode is deliberately
+	// broader than attribution parity and takes no guard.
+	recipientRowMatch := func(alias, fallbackGuard string) string {
 		if identity.EmailIdentifier == "" {
 			return participantMatch(alias + ".participant_id")
 		}
@@ -459,14 +472,20 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			return envelope
 		}
 		return "(" + envelope + " OR (COALESCE(" + alias + ".email_address, '') = '' AND " +
-			participantMatch(alias+".participant_id") + "))"
+			participantMatch(alias+".participant_id") + fallbackGuard + "))"
 	}
 	senderCondition := func() string {
+		senderFallbackGuard := ` AND NOT EXISTS (
+			SELECT 1 FROM message_recipients identity_mr_sender_envelope
+			WHERE identity_mr_sender_envelope.message_id = ` + outerPrefix + `message_id
+			  AND identity_mr_sender_envelope.recipient_type = 'from'
+			  AND COALESCE(identity_mr_sender_envelope.email_address, '') <> ''
+		)`
 		explicitFrom := `EXISTS (
 			SELECT 1 FROM message_recipients identity_mr_sender
 			WHERE identity_mr_sender.message_id = ` + outerPrefix + `message_id
 			  AND identity_mr_sender.recipient_type = 'from'
-			  AND ` + recipientRowMatch("identity_mr_sender") + `
+			  AND ` + recipientRowMatch("identity_mr_sender", senderFallbackGuard) + `
 		)`
 		directFallback := `(
 			NOT EXISTS (
@@ -483,7 +502,7 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			SELECT 1 FROM message_recipients identity_mr_recipient
 			WHERE identity_mr_recipient.message_id = ` + outerPrefix + `message_id
 			  AND identity_mr_recipient.recipient_type IN ('to', 'cc', 'bcc')
-			  AND ` + recipientRowMatch("identity_mr_recipient") + `
+			  AND ` + recipientRowMatch("identity_mr_recipient", "") + `
 		)`
 	}
 	var directionCondition string
@@ -503,11 +522,12 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 // analytics: owners are unioned across sources (an address confirmed
 // as "me" on any account is never "the other side" of an entry, even in a
 // different source's archive) and expanded through participant_clusters so
-// an owner's clustered alias is still recognized as the owner, and the
-// smallest non-owner participant ID on the entry is returned. If the
-// owner_participants dataset has no rows at all, the owner is unknown and
-// the column is NULL — never a guess at "the other side" from
-// participant_ids[0] alone.
+// an owner's clustered alias is still recognized as the owner. An outbound
+// entry also treats its message-relative owner cluster as the owner, covering
+// aliases that the global primary-email guard intentionally excludes. The
+// smallest remaining participant ID on the entry is returned. If neither a
+// global owner nor a message-relative outbound owner is known, the column is
+// NULL — never a guess at "the other side" from participant_ids[0] alone.
 func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression) + fmt.Sprintf(`
 ), counted AS (
@@ -525,6 +545,11 @@ func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGl
 ), owner_participant_ids AS (
     SELECT DISTINCT cn.participant_id FROM canon cn
     WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
+), message_owner_canon AS (
+    SELECT m.id AS message_id, cn.canonical_id
+    FROM messages m
+    JOIN canon cn ON cn.participant_id = m.owner_participant_id
+    WHERE m.is_from_me
 )
 SELECT
     entry_key,
@@ -548,17 +573,32 @@ SELECT
     attachment_size,
     deleted_from_source,
     total_count,
-    CASE WHEN NOT EXISTS (SELECT 1 FROM owners) THEN NULL
+    CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
+                  AND NOT (is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(participant_ids) AS u(pid)
-              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids))
+              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
+                AND NOT (is_from_me AND EXISTS (
+                    SELECT 1 FROM canon participant_canon
+                    WHERE participant_canon.participant_id = pid
+                      AND participant_canon.canonical_id = message_owner.canonical_id
+                )))
     END AS counterpart_participant_id
 FROM counted
+LEFT JOIN message_owner_canon message_owner
+  ON message_owner.message_id = counted.anchor_message_id
 ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
 LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
 }
 
 func buildExploreCountSQL(conditions, candidateRankExpression string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression) + `
+)
+SELECT COUNT(*) FROM logical_entries`
+}
+
+func buildExploreFastCountSQL(conditions, candidateRankExpression string) string {
+	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
+		exploreLogicalEntriesCTE(false) + `
 )
 SELECT COUNT(*) FROM logical_entries`
 }
@@ -602,7 +642,7 @@ func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
 func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
-	return buildExploreFilteredClassifiedCTE(conditions, candidateRankExpression) +
+	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
 		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
 ), page AS (
     SELECT * FROM logical_entries
@@ -610,7 +650,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     LIMIT ? OFFSET ?
 ), membership AS (
     SELECT source_id, conversation_id, message_id
-    FROM analytical_entries
+    FROM entry_core AS analytical_entries
     WHERE (%s) AND (%s)
 ), page_messages AS (
     SELECT p.entry_key, p.anchor_message_id AS message_id
@@ -644,7 +684,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     FROM (
         SELECT source_id, conversation_id,
             %s AS is_chat
-        FROM analytical_entries
+        FROM entry_core AS analytical_entries
         WHERE %s
     )
 ), clusters AS (
@@ -659,6 +699,11 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
 ), owner_participant_ids AS (
     SELECT DISTINCT cn.participant_id FROM canon cn
     WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
+), message_owner_canon AS (
+    SELECT m.id AS message_id, cn.canonical_id
+    FROM messages m
+    JOIN canon cn ON cn.participant_id = m.owner_participant_id
+    WHERE m.is_from_me
 )
 SELECT
     p.entry_key,
@@ -682,11 +727,19 @@ SELECT
     p.attachment_size,
     p.deleted_from_source,
     (SELECT total_count FROM total) AS total_count,
-    CASE WHEN NOT EXISTS (SELECT 1 FROM owners) THEN NULL
+    CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
+                  AND NOT (p.is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(COALESCE(f.participant_ids, []::BIGINT[])) AS u(pid)
-              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids))
+              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
+                AND NOT (p.is_from_me AND EXISTS (
+                    SELECT 1 FROM canon participant_canon
+                    WHERE participant_canon.participant_id = pid
+                      AND participant_canon.canonical_id = message_owner.canonical_id
+                )))
     END AS counterpart_participant_id
-FROM page p LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
+FROM page p
+LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
+LEFT JOIN message_owner_canon message_owner ON message_owner.message_id = p.anchor_message_id
 ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
 		conditions, sqlIsChatPredicate("message_type", "conversation_type"),
 		sqlAnalyticalEntriesParticipantLabel("pt"),
@@ -739,6 +792,22 @@ WITH filtered AS (
         ` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
         ` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
     FROM filtered
+)`
+}
+
+// buildExploreNarrowFilteredClassifiedCTE is the listing-only counterpart to
+// buildExploreFilteredClassifiedCTE. It shadows the wide convenience-view name
+// while evaluating conditions so identity predicates keep their established
+// qualification without forcing participant-list aggregation.
+func buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression string) string {
+	return "WITH " + buildNarrowAnalyticalEntriesCTE("entry_core") + `,
+filtered AS (
+	SELECT * FROM entry_core AS analytical_entries WHERE ` + conditions + `
+), classified AS (
+	SELECT *, ` + candidateRankExpression + ` AS candidate_rank,
+		` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
+		` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
+	FROM filtered
 )`
 }
 

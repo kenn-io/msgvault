@@ -209,7 +209,7 @@ func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	grouper, ok := s.queryEngineForContext(r.Context()).(query.FileGrouper)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := grouper.GroupFiles(r.Context(), query.FileGroupRequest{
@@ -219,7 +219,7 @@ func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" && cursor.Revision != result.CacheRevision {
@@ -327,7 +327,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 	}
 	searcher, ok := s.queryEngineForContext(r.Context()).(query.FileSearcher)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := searcher.SearchFiles(r.Context(), query.FileSearchRequest{
@@ -337,7 +337,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		Page:         query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {

@@ -195,8 +195,18 @@ func TestResolveAccountIdentityContextReturnsStoredIdentityAndAllParticipants(t 
 	assert := assert.New(t)
 	fx := storetest.New(t)
 	primary := fx.EnsureParticipant("owner@example.test", "Primary", "example.test")
-	alias := fx.EnsureParticipant("alias@example.test", "Alias", "example.test")
+	var alias int64
+	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES ('Alias', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id
+	`)).Scan(&alias), "create email-less alias participant")
 	require.NoError(fx.Store.SetParticipantIdentifier(alias, "email", "OWNER@EXAMPLE.TEST"))
+	// Carries the owner identifier, but its own primary email makes it a
+	// different person for attribution — the resolver must apply the same
+	// primary-email guard as messageIdentityAttributionMatch.
+	suppressed := fx.EnsureParticipant("suppressed@example.test", "Suppressed", "example.test")
+	require.NoError(fx.Store.SetParticipantIdentifier(suppressed, "email", "owner@example.test"))
 	require.NoError(fx.Store.AddAccountIdentity(fx.Source.ID, "Owner@Example.test", "manual"))
 
 	resolved, err := fx.Store.ResolveAccountIdentityContext(
@@ -205,6 +215,8 @@ func TestResolveAccountIdentityContextReturnsStoredIdentityAndAllParticipants(t 
 	assert.Equal(fx.Source.ID, resolved.SourceID)
 	assert.Equal("Owner@Example.test", resolved.Identifier)
 	assert.Equal([]int64{primary, alias}, resolved.ParticipantIDs)
+	assert.NotContains(resolved.ParticipantIDs, suppressed,
+		"a participant with its own primary email must not resolve via an email identifier")
 }
 
 func TestResolveAccountIdentityContextRequiresExactSourceConfirmation(t *testing.T) {
@@ -423,7 +435,12 @@ func TestResolveAccountIdentityEmailRemainsCaseInsensitive(t *testing.T) {
 	assert := assert.New(t)
 	fx := storetest.New(t)
 	owner := fx.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	alias := fx.EnsureParticipant("alias@example.test", "Alias", "example.test")
+	var alias int64
+	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES ('Alias', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id
+	`)).Scan(&alias), "create email-less alias participant")
 	require.NoError(fx.Store.SetParticipantIdentifier(alias, "email", "User@Example.Com"))
 	require.NoError(fx.Store.AddAccountIdentity(fx.Source.ID, "user@example.com", "manual"))
 
@@ -500,6 +517,160 @@ func TestMatchMessageIdentitiesPrefersEnvelopeAddressAfterParticipantMerge(t *te
 		"alias B's own sent mail keeps its envelope badge")
 	assert.Equal([]string{"alias-a@example.test"}, matches[receivedAtA].Recipients,
 		"a merge must not rebadge alias A's received mail as alias B")
+}
+
+func TestMessageAttributionPrefersNonEmptyEnvelopeOverCurrentParticipantAliases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fx := storetest.New(t)
+	sender := fx.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	require.NoError(fx.Store.AddAccountIdentity(
+		fx.Source.ID, "owner@example.test", "manual"))
+
+	message := &store.Message{
+		ConversationID:  fx.ConvID,
+		SourceID:        fx.Source.ID,
+		SourceMessageID: "envelope-authority",
+		MessageType:     "email",
+		SenderID:        sql.NullInt64{Int64: sender, Valid: true},
+		SentAt:          sql.NullTime{Time: time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC), Valid: true},
+	}
+	messageID, err := fx.Store.PersistMessage(&store.MessagePersistData{
+		Message: message,
+		Recipients: []store.RecipientSet{{
+			Type:           "from",
+			ParticipantIDs: []int64{sender},
+			DisplayNames:   []string{"Owner"},
+			EmailAddresses: []string{"outside@example.test"},
+		}},
+	})
+	require.NoError(err)
+
+	isFromMe, err := fx.Store.GetMessageIsFromMe(messageID)
+	require.NoError(err)
+	assert.False(isFromMe,
+		"a non-empty envelope must suppress current participant aliases")
+
+	legacyMessage := fx.NewMessage().WithSourceMessageID("envelope-fallback").Build()
+	legacyMessage.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+	legacyID, err := fx.Store.UpsertMessage(legacyMessage)
+	require.NoError(err)
+	require.NoError(fx.Store.ReplaceMessageRecipients(
+		legacyID, "from", []int64{sender}, []string{"Owner"}))
+	legacyIsFromMe, err := fx.Store.GetMessageIsFromMe(legacyID)
+	require.NoError(err)
+	assert.True(legacyIsFromMe,
+		"a row without an envelope snapshot must use the participant fallback")
+}
+
+// TestMatchMessageIdentitiesSuppressesSenderFallbackWhenAnyEnvelopeExists
+// mirrors attribution's message-level rule: one populated From envelope makes
+// the envelope authoritative for the whole message, so a coexisting legacy
+// NULL From row must not badge the sender through the participant fallback
+// when attribution stored the message as not-from-me.
+func TestMatchMessageIdentitiesSuppressesSenderFallbackWhenAnyEnvelopeExists(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fx := storetest.New(t)
+	owner := fx.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	require.NoError(fx.Store.AddAccountIdentity(fx.Source.ID, "owner@example.test", "manual"))
+
+	messageID, err := fx.Store.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			ConversationID:  fx.ConvID,
+			SourceID:        fx.Source.ID,
+			SourceMessageID: "mixed-envelope-from",
+			MessageType:     "email",
+			SenderID:        sql.NullInt64{Int64: owner, Valid: true},
+		},
+		Recipients: []store.RecipientSet{{
+			Type:           "from",
+			ParticipantIDs: []int64{owner, owner},
+			DisplayNames:   []string{"Owner", "Outside"},
+			EmailAddresses: []string{"", "outside@example.test"},
+		}},
+	})
+	require.NoError(err, "persist message with mixed From envelope rows")
+
+	isFromMe, err := fx.Store.GetMessageIsFromMe(messageID)
+	require.NoError(err)
+	require.False(isFromMe, "the populated envelope is authoritative for attribution")
+
+	matches, err := fx.Store.MatchMessageIdentitiesContext(t.Context(), []int64{messageID})
+	require.NoError(err)
+	assert.Empty(matches[messageID].Sender,
+		"the NULL-envelope row must not badge the sender attribution rejected")
+}
+
+// TestUpsertMessageAttributionMirrorsPrimaryEmailGuard locks the message
+// upsert's attribution CTE to messageIdentityAttributionMatch's fallback rule:
+// an email-typed identifier row only claims ownership when the sender carries
+// no primary email of its own.
+func TestUpsertMessageAttributionMirrorsPrimaryEmailGuard(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fx := storetest.New(t)
+
+	guarded := fx.EnsureParticipant("primary@example.test", "Primary", "example.test")
+	require.NoError(fx.Store.SetParticipantIdentifier(
+		guarded, "email", "confirmed-alias@example.test"))
+	require.NoError(fx.Store.AddAccountIdentity(
+		fx.Source.ID, "confirmed-alias@example.test", "manual"))
+
+	guardedMessage := fx.NewMessage().WithSourceMessageID("guarded-alias").Build()
+	guardedMessage.SenderID = sql.NullInt64{Int64: guarded, Valid: true}
+	guardedID, err := fx.Store.UpsertMessage(guardedMessage)
+	require.NoError(err)
+	guardedIsFromMe, err := fx.Store.GetMessageIsFromMe(guardedID)
+	require.NoError(err)
+	assert.False(guardedIsFromMe,
+		"a primary email must suppress alternate email identifiers, matching the canonical predicate")
+
+	var aliasOnly int64
+	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES ('Alias Only', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id
+	`)).Scan(&aliasOnly), "create email-less participant")
+	require.NoError(fx.Store.SetParticipantIdentifier(
+		aliasOnly, "email", "confirmed-alias@example.test"))
+
+	fallbackMessage := fx.NewMessage().WithSourceMessageID("emailless-alias").Build()
+	fallbackMessage.SenderID = sql.NullInt64{Int64: aliasOnly, Valid: true}
+	fallbackID, err := fx.Store.UpsertMessage(fallbackMessage)
+	require.NoError(err)
+	fallbackIsFromMe, err := fx.Store.GetMessageIsFromMe(fallbackID)
+	require.NoError(err)
+	assert.True(fallbackIsFromMe,
+		"an email identifier still claims ownership when no primary email exists")
+}
+
+// TestReplaceFromRecipientsRefreshesAttribution covers the granular importer
+// path (UpsertMessage + ReplaceMessageRecipients): replacing 'from' rows
+// changes attribution evidence the message upsert's CTE never saw, so the
+// replacement itself must settle the persisted flag.
+func TestReplaceFromRecipientsRefreshesAttribution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fx := storetest.New(t)
+	colleague := fx.EnsureParticipant("colleague@example.test", "Colleague", "example.test")
+	require.NoError(fx.Store.AddAccountIdentity(
+		fx.Source.ID, "owner-alias@example.test", "manual"))
+
+	messageID := persistEnvelopeMessage(
+		t, fx, "granular-refresh", "from", colleague, "owner-alias@example.test")
+	before, err := fx.Store.GetMessageIsFromMe(messageID)
+	require.NoError(err)
+	require.True(before, "the owner-alias envelope attributes the message")
+
+	require.NoError(fx.Store.ReplaceMessageRecipients(
+		messageID, "from", []int64{colleague}, []string{"Colleague"}),
+		"granular re-import replaces the From rows without an envelope snapshot")
+
+	after, err := fx.Store.GetMessageIsFromMe(messageID)
+	require.NoError(err)
+	assert.False(after,
+		"losing the owning envelope must recompute attribution in the same transaction")
 }
 
 // TestMatchMessageIdentitiesFallsBackToParticipantEmailWithoutEnvelope locks

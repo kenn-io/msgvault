@@ -32,7 +32,13 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-const serveLifecycleTestTimeout = 30 * time.Second
+// serveLifecycleTestTimeout bounds waits for daemon-startup milestones (API
+// seam entered, analytics build started, health ready). Every use is a
+// positive wait, so the value only stretches the failure path — passing runs
+// are unaffected. It must absorb a full InitSchema on the slowest CI
+// environment: the sharded Windows runner has been observed taking over two
+// minutes to execute schema.sql under filesystem load.
+const serveLifecycleTestTimeout = 180 * time.Second
 
 func TestServeConfigParsing(t *testing.T) {
 	require := require.New(t)

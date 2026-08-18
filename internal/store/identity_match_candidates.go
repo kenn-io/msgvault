@@ -74,26 +74,27 @@ func (s IdentityMatchState) valid() bool {
 }
 
 type IdentityMatchCandidate struct {
-	ID              int64                     `json:"id"`
-	LeftKind        IdentityMatchEndpointKind `json:"left_kind"`
-	LeftID          int64                     `json:"left_id"`
-	RightKind       IdentityMatchEndpointKind `json:"right_kind"`
-	RightID         int64                     `json:"right_id"`
-	Basis           IdentityMatchBasis        `json:"basis"`
-	ServiceSlug     *string                   `json:"service_slug,omitempty"`
-	ScopeKind       *string                   `json:"scope_kind,omitempty"`
-	ScopeValue      *string                   `json:"scope_value,omitempty"`
-	NormalizedValue *string                   `json:"normalized_value,omitempty"`
-	State           IdentityMatchState        `json:"state"`
-	Confidence      *float64                  `json:"confidence,omitempty"`
-	Source          Provenance                `json:"source"`
-	SourceRef       *string                   `json:"source_ref,omitempty"`
-	DecidedBy       *string                   `json:"decided_by,omitempty"`
-	DecidedAt       *time.Time                `json:"decided_at,omitempty"`
-	Notes           *string                   `json:"notes,omitempty"`
-	Evidence        []IdentityMatchEvidence   `json:"evidence"`
-	CreatedAt       time.Time                 `json:"created_at"`
-	UpdatedAt       time.Time                 `json:"updated_at"`
+	ID                 int64                     `json:"id"`
+	LeftKind           IdentityMatchEndpointKind `json:"left_kind"`
+	LeftID             int64                     `json:"left_id"`
+	RightKind          IdentityMatchEndpointKind `json:"right_kind"`
+	RightID            int64                     `json:"right_id"`
+	Basis              IdentityMatchBasis        `json:"basis"`
+	ServiceSlug        *string                   `json:"service_slug,omitempty"`
+	ScopeKind          *string                   `json:"scope_kind,omitempty"`
+	ScopeValue         *string                   `json:"scope_value,omitempty"`
+	NormalizedValue    *string                   `json:"normalized_value,omitempty"`
+	State              IdentityMatchState        `json:"state"`
+	Confidence         *float64                  `json:"confidence,omitempty"`
+	Source             Provenance                `json:"source"`
+	SourceRef          *string                   `json:"source_ref,omitempty"`
+	DecidedBy          *string                   `json:"decided_by,omitempty"`
+	DecidedAt          *time.Time                `json:"decided_at,omitempty"`
+	Notes              *string                   `json:"notes,omitempty"`
+	Evidence           []IdentityMatchEvidence   `json:"evidence"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
+	applicationPending bool
 }
 
 type IdentityMatchEvidence struct {
@@ -116,11 +117,20 @@ type IdentityMatchCandidateInput struct {
 	ScopeKind       *string
 	ScopeValue      *string
 	NormalizedValue *string
-	State           IdentityMatchState
-	Confidence      *float64
-	Source          Provenance
-	SourceRef       *string
-	Notes           *string
+	// CrossScope marks a review candidate that intentionally compares the same
+	// service-scoped username across different scopes. It keeps the candidate
+	// itself unscoped while retaining the service namespace; it never permits
+	// automatic acceptance.
+	CrossScope bool
+	State      IdentityMatchState
+	Confidence *float64
+	Source     Provenance
+	SourceRef  *string
+	// SourceID records the archive source that supports this generated
+	// candidate. It is kept in a separate many-to-many table because one
+	// candidate can be corroborated by several sources.
+	SourceID *int64
+	Notes    *string
 }
 
 type IdentityMatchEvidenceInput struct {
@@ -128,6 +138,9 @@ type IdentityMatchEvidenceInput struct {
 	EvidenceRef  *string
 	Detail       *string
 	Source       Provenance
+	// SourceID records the archive source that supports this generated
+	// evidence. Multiple sources may support one evidence row.
+	SourceID *int64
 }
 
 var (
@@ -138,6 +151,9 @@ var (
 	ErrIdentityMatchNotFound         = errors.New("identity match candidate not found")
 	ErrIdentityMatchEndpointNotFound = errors.New("identity match endpoint not found")
 	ErrIdentityMatchNotAcceptable    = errors.New("a username-only match requires stable provider corroboration or explicit confirmation")
+	ErrIdentityMatchRejected         = errors.New("identity match candidate was rejected")
+	ErrIdentityMatchAlreadyAccepted  = errors.New("an accepted identity match candidate cannot be rejected")
+	ErrIdentityMatchAlreadyApplied   = errors.New("an applied identity match candidate cannot leave accepted state")
 )
 
 func (s *Store) UpsertIdentityMatchCandidateContext(
@@ -176,7 +192,11 @@ func (s *Store) UpsertIdentityMatchCandidateContext(
 	if err != nil {
 		return nil, false, err
 	}
-	if err := ValidateServiceScope(service, input.ScopeKind, input.ScopeValue); err != nil {
+	allowCrossScope := input.CrossScope && hasService &&
+		input.Basis == IdentityMatchServiceScopeUsername &&
+		input.ScopeKind == nil && input.ScopeValue == nil
+	if err := ValidateServiceScope(service, input.ScopeKind, input.ScopeValue); err != nil &&
+		!allowCrossScope {
 		return nil, false, err
 	}
 	var serviceID any
@@ -256,6 +276,11 @@ func (s *Store) upsertIdentityMatchCandidateTx(
 		s.dialect.SelectForUpdate(),
 	)
 	if err == nil {
+		if err := s.recordIdentityMatchCandidateSourceTx(
+			ctx, tx, candidate.ID, input.SourceID,
+		); err != nil {
+			return nil, false, err
+		}
 		if candidate.State == IdentityMatchStateCandidate &&
 			input.State == IdentityMatchStateConflict {
 			query := `UPDATE identity_match_candidates SET
@@ -303,7 +328,65 @@ func (s *Store) upsertIdentityMatchCandidateTx(
 		return nil, false, fmt.Errorf("insert identity match candidate: %w", err)
 	}
 	candidate, err = getIdentityMatchCandidateTx(ctx, tx, id)
-	return candidate, err == nil, err
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.recordIdentityMatchCandidateSourceTx(
+		ctx, tx, id, input.SourceID,
+	); err != nil {
+		return nil, false, err
+	}
+	return candidate, true, nil
+}
+
+func (s *Store) recordIdentityMatchCandidateSourceTx(
+	ctx context.Context, tx *loggedTx, candidateID int64, sourceID *int64,
+) error {
+	if sourceID == nil || *sourceID == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO identity_match_candidate_sources
+			(candidate_id, source_id, is_conservative) VALUES (?, ?, FALSE)
+		ON CONFLICT (candidate_id, source_id) DO UPDATE
+		SET is_conservative = FALSE`, candidateID, *sourceID); err != nil {
+		return fmt.Errorf("record identity match candidate source: %w", err)
+	}
+	return nil
+}
+
+// AttachIdentityMatchCandidateSourceContext records another archive source
+// supporting an existing generated candidate. A candidate can be corroborated
+// by observations from several sources, so source removal only drops it after
+// its final support disappears.
+func (s *Store) AttachIdentityMatchCandidateSourceContext(
+	ctx context.Context, candidateID, sourceID int64,
+) error {
+	if candidateID == 0 || sourceID == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var exists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM identity_match_candidates WHERE id = ?`, candidateID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check identity match candidate: %w", err)
+		}
+		if exists == 0 {
+			return ErrIdentityMatchNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO identity_match_candidate_sources
+				(candidate_id, source_id, is_conservative) VALUES (?, ?, FALSE)
+			ON CONFLICT (candidate_id, source_id) DO UPDATE
+			SET is_conservative = FALSE`, candidateID, sourceID); err != nil {
+			return fmt.Errorf("attach identity match candidate source: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *Store) AddIdentityMatchEvidenceContext(
@@ -331,24 +414,83 @@ func (s *Store) AddIdentityMatchEvidenceContext(
 			return ErrIdentityMatchNotFound
 		}
 		var id int64
-		if err := tx.QueryRowContext(ctx, `INSERT INTO identity_match_evidence (
-			candidate_id, evidence_kind, evidence_ref, detail, source
-		) VALUES (?, ?, ?, ?, ?) RETURNING id`,
-			candidateID, kind, stringValue(input.EvidenceRef),
-			stringValue(input.Detail), input.Source,
-		).Scan(&id); err != nil {
-			return fmt.Errorf("add identity match evidence: %w", err)
+		evidenceRef := stringValue(input.EvidenceRef)
+		detail := stringValue(input.Detail)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM identity_match_evidence
+			WHERE candidate_id = ? AND evidence_kind = ?
+			  AND evidence_ref IS NOT DISTINCT FROM ?
+			  AND detail IS NOT DISTINCT FROM ?
+			  AND source = ?
+			ORDER BY id LIMIT 1`,
+			candidateID, kind, evidenceRef, detail, input.Source,
+		).Scan(&id)
+		inserted := false
+		if errors.Is(err, sql.ErrNoRows) {
+			if err := tx.QueryRowContext(ctx, `INSERT INTO identity_match_evidence (
+				candidate_id, evidence_kind, evidence_ref, detail, source
+			) VALUES (?, ?, ?, ?, ?) RETURNING id`,
+				candidateID, kind, evidenceRef, detail, input.Source,
+			).Scan(&id); err != nil {
+				return fmt.Errorf("add identity match evidence: %w", err)
+			}
+			inserted = true
+		} else if err != nil {
+			return fmt.Errorf("find matching identity match evidence: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates
-			SET updated_at = `+s.dialect.Now()+` WHERE id = ?`, candidateID,
-		); err != nil {
-			return fmt.Errorf("touch identity match candidate: %w", err)
+		if input.SourceID != nil && *input.SourceID != 0 {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO identity_match_evidence_sources
+					(evidence_id, source_id, is_conservative) VALUES (?, ?, FALSE)
+				ON CONFLICT (evidence_id, source_id) DO UPDATE
+				SET is_conservative = FALSE`, id, *input.SourceID); err != nil {
+				return fmt.Errorf("record identity match evidence source: %w", err)
+			}
 		}
-		var err error
+		if inserted {
+			if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates
+				SET updated_at = `+s.dialect.Now()+` WHERE id = ?`, candidateID,
+			); err != nil {
+				return fmt.Errorf("touch identity match candidate: %w", err)
+			}
+		}
 		evidence, err = getIdentityMatchEvidenceTx(ctx, tx, id)
 		return err
 	})
 	return evidence, err
+}
+
+// AttachIdentityMatchEvidenceSourceContext records another archive source
+// supporting an existing generated evidence row. Evidence can be corroborated
+// by multiple sources, so source removal only drops the row after its final
+// support disappears.
+func (s *Store) AttachIdentityMatchEvidenceSourceContext(
+	ctx context.Context, evidenceID, sourceID int64,
+) error {
+	if evidenceID == 0 || sourceID == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var exists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`, evidenceID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check identity match evidence: %w", err)
+		}
+		if exists == 0 {
+			return ErrIdentityMatchNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO identity_match_evidence_sources
+				(evidence_id, source_id, is_conservative) VALUES (?, ?, FALSE)
+			ON CONFLICT (evidence_id, source_id) DO UPDATE
+			SET is_conservative = FALSE`, evidenceID, sourceID); err != nil {
+			return fmt.Errorf("attach identity match evidence source: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *Store) ListIdentityMatchCandidatesContext(
@@ -378,6 +520,61 @@ func (s *Store) ListIdentityMatchCandidatesContext(
 	}
 	query += ` ORDER BY c.id LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
+	return s.queryIdentityMatchCandidatesContext(ctx, query, args...)
+}
+
+func (s *Store) identityMatchCandidatesByIDContext(
+	ctx context.Context, candidateIDs []int64,
+) ([]IdentityMatchCandidate, error) {
+	if len(candidateIDs) == 0 {
+		return []IdentityMatchCandidate{}, nil
+	}
+	placeholders := make([]string, len(candidateIDs))
+	args := make([]any, len(candidateIDs))
+	for i, id := range candidateIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return s.queryIdentityMatchCandidatesContext(ctx,
+		identityMatchCandidateSelect+` WHERE c.id IN (`+
+			strings.Join(placeholders, ",")+`) ORDER BY c.id`,
+		args...,
+	)
+}
+
+func (s *Store) queryIdentityMatchCandidatesContext(
+	ctx context.Context, query string, args ...any,
+) ([]IdentityMatchCandidate, error) {
+	candidates, err := s.queryIdentityMatchCandidateRowsContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.loadCandidateEvidencePageContext(ctx, candidates); err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
+// listPendingAcceptedIdentityMatchCandidatesContext reads only recovery work
+// and deliberately leaves Evidence unloaded. Applying an already-decided
+// participant assertion does not consult its explanatory evidence.
+func (s *Store) listPendingAcceptedIdentityMatchCandidatesContext(
+	ctx context.Context, limit int,
+) ([]IdentityMatchCandidate, error) {
+	limit = observationLookupLimit(limit)
+	return s.queryIdentityMatchCandidateRowsContext(ctx,
+		identityMatchCandidateSelect+` WHERE c.state = ?
+			AND c.application_pending = TRUE
+			AND c.left_kind = ? AND c.right_kind = ?
+			ORDER BY c.id LIMIT ?`,
+		IdentityMatchStateAccepted,
+		IdentityMatchParticipant, IdentityMatchParticipant, limit,
+	)
+}
+
+func (s *Store) queryIdentityMatchCandidateRowsContext(
+	ctx context.Context, query string, args ...any,
+) ([]IdentityMatchCandidate, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list identity match candidates: %w", err)
@@ -393,9 +590,6 @@ func (s *Store) ListIdentityMatchCandidatesContext(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list identity match candidates: %w", err)
-	}
-	if err := s.loadCandidateEvidencePageContext(ctx, candidates); err != nil {
-		return nil, err
 	}
 	return candidates, nil
 }
@@ -419,10 +613,50 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		if err != nil {
 			return err
 		}
+		if current.State == IdentityMatchStateAccepted && state == IdentityMatchStateRejected {
+			if current.DecidedBy != nil && *current.DecidedBy == string(ProvenanceUser) {
+				return ErrIdentityMatchAlreadyAccepted
+			}
+			if current.LeftKind == IdentityMatchParticipant &&
+				current.RightKind == IdentityMatchParticipant {
+				if err := s.rejectSystemAcceptedIdentityMatchTxContext(
+					ctx, tx, current.LeftID, current.RightID, current.ID,
+				); err != nil {
+					return err
+				}
+			}
+		}
+		// A system decision is a compare-and-set from the reviewable candidate
+		// state. In particular, a user rejection that wins the identity lock
+		// must not be overwritten by a stale importer snapshot. Explicit users
+		// may still reverse their own rejection through the accept endpoint.
+		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
+			current.State == IdentityMatchStateRejected {
+			return ErrIdentityMatchRejected
+		}
+		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
+			current.State != IdentityMatchStateCandidate {
+			// System acceptance is a compare-and-set from the reviewable
+			// candidate state. Conflict and every other terminal state must
+			// survive a stale importer snapshot just like rejection does.
+			return ErrIdentityMatchNotAccepted
+		}
+		if current.State == IdentityMatchStateAccepted && state != IdentityMatchStateAccepted &&
+			state != IdentityMatchStateRejected &&
+			current.LeftKind == IdentityMatchParticipant &&
+			current.RightKind == IdentityMatchParticipant {
+			edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if _, linked := componentOf(current.LeftID, edges)[current.RightID]; linked {
+				return ErrIdentityMatchAlreadyApplied
+			}
+		}
 		// Only a stable-provider-id candidate that records which stable ID
 		// matched may be accepted without explicit user confirmation; the basis
 		// label alone is caller-supplied and proves nothing.
-		if state == IdentityMatchStateAccepted && decidedBy != "user" &&
+		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) &&
 			(current.Basis != IdentityMatchStableProviderID ||
 				current.NormalizedValue == nil ||
 				strings.TrimSpace(*current.NormalizedValue) == "") {
@@ -431,11 +665,12 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 			state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
 			notes = ?, pre_conflict_state = NULL,
+			application_pending = ?,
 			observation_conflict_origin = CASE WHEN ?
 				THEN NULL ELSE observation_conflict_origin END,
 			updated_at = `+s.dialect.Now()+` WHERE id = ?`,
-			state, decidedBy, stringValue(notes),
-			state == IdentityMatchStateConflict && decidedBy == "user", candidateID,
+			state, decidedBy, stringValue(notes), state == IdentityMatchStateAccepted,
+			state == IdentityMatchStateConflict && decidedBy == string(ProvenanceUser), candidateID,
 		); err != nil {
 			return fmt.Errorf("decide identity match candidate: %w", err)
 		}
@@ -443,6 +678,154 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		return err
 	})
 	return candidate, err
+}
+
+// rejectSystemAcceptedIdentityMatchTxContext withdraws the direct edge that
+// was created for one automated match, if no other accepted match still
+// supports it. The caller already holds the identity-mutation lock. Ownership
+// transfers to another system-accepted candidate, or becomes manual when a
+// user-accepted candidate protects the pair.
+func (s *Store) rejectSystemAcceptedIdentityMatchTxContext(
+	ctx context.Context, tx *loggedTx, leftID, rightID, candidateID int64,
+) error {
+	originalEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	if err != nil {
+		return err
+	}
+	lo, hi := normalizeEdge(leftID, rightID)
+	var replacementID int64
+	var decidedBy sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT id, decided_by
+		FROM identity_match_candidates
+		WHERE id <> ? AND state = ?
+		  AND left_kind = ? AND left_id = ?
+		  AND right_kind = ? AND right_id = ?
+		ORDER BY CASE WHEN decided_by = 'user' THEN 0 ELSE 1 END, id
+		LIMIT 1`,
+		candidateID, IdentityMatchStateAccepted,
+		IdentityMatchParticipant, lo, IdentityMatchParticipant, hi,
+	).Scan(&replacementID, &decidedBy)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("find replacement identity match link owner: %w", err)
+	}
+
+	var result sql.Result
+	if err == nil && decidedBy.String == string(ProvenanceUser) {
+		result, err = tx.ExecContext(ctx, `UPDATE participant_links
+			SET identity_match_candidate_id = NULL
+			WHERE participant_a = ? AND participant_b = ?
+			  AND identity_match_candidate_id = ?`, lo, hi, candidateID)
+	} else if err == nil {
+		result, err = tx.ExecContext(ctx, `UPDATE participant_links
+			SET identity_match_candidate_id = ?
+			WHERE participant_a = ? AND participant_b = ?
+			  AND identity_match_candidate_id = ?`, replacementID, lo, hi, candidateID)
+	} else {
+		result, err = tx.ExecContext(ctx, `DELETE FROM participant_links
+			WHERE participant_a = ? AND participant_b = ?
+			  AND identity_match_candidate_id = ?`, lo, hi, candidateID)
+	}
+	if err != nil {
+		return fmt.Errorf("replace rejected identity match link owner: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count replaced identity match link owner: %w", err)
+	}
+	if changed == 0 {
+		return nil
+	}
+	if err := s.reapplyAcceptedIdentityMatchAfterRejectionTxContext(
+		ctx, tx, candidateID, originalEdges,
+	); err != nil {
+		return err
+	}
+	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+		return fmt.Errorf("bump identity revision after identity match rejection: %w", err)
+	}
+	return nil
+}
+
+// reapplyAcceptedIdentityMatchAfterRejectionTxContext restores an accepted
+// assertion that crossed the split made by withdrawing an owned link. The
+// candidate being rejected is still accepted until the caller updates its
+// decision row, so it must be excluded explicitly.
+func (s *Store) reapplyAcceptedIdentityMatchAfterRejectionTxContext(
+	ctx context.Context,
+	tx *loggedTx,
+	rejectedCandidateID int64,
+	originalEdges []linkEdge,
+) error {
+	currentEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	if err != nil {
+		return err
+	}
+	originalClusters := clustersFromEdges(originalEdges)
+	currentClusters := clustersFromEdges(currentEdges)
+	rows, err := tx.QueryContext(ctx, `SELECT id, left_id, right_id, decided_by
+		FROM identity_match_candidates
+		WHERE id <> ? AND state = ?
+		  AND left_kind = ? AND right_kind = ?
+		ORDER BY CASE WHEN decided_by = 'user' THEN 0 ELSE 1 END, id`,
+		rejectedCandidateID, IdentityMatchStateAccepted,
+		IdentityMatchParticipant, IdentityMatchParticipant,
+	)
+	if err != nil {
+		return fmt.Errorf("list accepted identity matches after rejection: %w", err)
+	}
+	type acceptedPair struct {
+		id, left, right int64
+		decidedBy       sql.NullString
+	}
+	accepted := make([]acceptedPair, 0)
+	for rows.Next() {
+		var candidate acceptedPair
+		if err := rows.Scan(
+			&candidate.id, &candidate.left, &candidate.right, &candidate.decidedBy,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan accepted identity match after rejection: %w", err)
+		}
+		accepted = append(accepted, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate accepted identity matches after rejection: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close accepted identity matches after rejection: %w", err)
+	}
+
+	for _, candidate := range accepted {
+		originalLeft, leftWasLinked := originalClusters[candidate.left]
+		originalRight, rightWasLinked := originalClusters[candidate.right]
+		if !leftWasLinked || !rightWasLinked || originalLeft != originalRight {
+			continue
+		}
+		currentLeft, leftStillLinked := currentClusters[candidate.left]
+		currentRight, rightStillLinked := currentClusters[candidate.right]
+		if leftStillLinked && rightStillLinked && currentLeft == currentRight {
+			continue
+		}
+		lo, hi := normalizeEdge(candidate.left, candidate.right)
+		if candidate.decidedBy.String == string(ProvenanceUser) {
+			_, err = tx.ExecContext(ctx, `INSERT INTO participant_links
+				(participant_a, participant_b) VALUES (?, ?)`, lo, hi)
+		} else {
+			_, err = tx.ExecContext(ctx, `INSERT INTO participant_links
+				(participant_a, participant_b, identity_match_candidate_id)
+				VALUES (?, ?, ?)`, lo, hi, candidate.id)
+		}
+		if err != nil {
+			return fmt.Errorf("reapply accepted identity match %d after rejection: %w",
+				candidate.id, err)
+		}
+		// Removing one edge from the link forest creates exactly two components;
+		// the first accepted assertion crossing that split restores the original
+		// connectivity, so no further candidate can require a new edge.
+		return nil
+	}
+	return nil
 }
 
 type identityMatchCandidateMergeRow struct {
@@ -503,9 +886,74 @@ func scanIdentityMatchCandidateMergeRows(
 	return candidates, rows.Err()
 }
 
-func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
-	ctx context.Context, tx *loggedTx, oldID, newID int64,
+func recordIdentityMatchCandidateRedirectTx(
+	ctx context.Context,
+	tx *loggedTx,
+	retiredCandidateID, survivingCandidateID int64,
+	endpointsCollapsed bool,
 ) error {
+	if retiredCandidateID <= 0 || endpointsCollapsed == (survivingCandidateID > 0) {
+		return errors.New("invalid identity match candidate redirect")
+	}
+	var survivor any
+	if survivingCandidateID > 0 {
+		survivor = survivingCandidateID
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidate_redirects
+		SET surviving_candidate_id = ?, endpoints_collapsed = ?
+		WHERE surviving_candidate_id = ?`,
+		survivor, endpointsCollapsed, retiredCandidateID,
+	); err != nil {
+		return fmt.Errorf("repoint identity match candidate redirects: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_match_candidate_redirects (
+		retired_candidate_id, surviving_candidate_id, endpoints_collapsed
+	) VALUES (?, ?, ?)
+	ON CONFLICT (retired_candidate_id) DO UPDATE SET
+		surviving_candidate_id = excluded.surviving_candidate_id,
+		endpoints_collapsed = excluded.endpoints_collapsed`,
+		retiredCandidateID, survivor, endpointsCollapsed,
+	); err != nil {
+		return fmt.Errorf("record identity match candidate redirect: %w", err)
+	}
+	return nil
+}
+
+func identityMatchCandidateRedirectTx(
+	ctx context.Context, tx *loggedTx, retiredCandidateID int64,
+) (survivingCandidateID int64, endpointsCollapsed, found bool, err error) {
+	var survivor sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT
+		surviving_candidate_id, endpoints_collapsed
+		FROM identity_match_candidate_redirects
+		WHERE retired_candidate_id = ?`, retiredCandidateID,
+	).Scan(&survivor, &endpointsCollapsed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, false, nil
+	}
+	if err != nil {
+		return 0, false, false,
+			fmt.Errorf("load identity match candidate redirect: %w", err)
+	}
+	if endpointsCollapsed {
+		return 0, true, true, nil
+	}
+	if !survivor.Valid || survivor.Int64 <= 0 {
+		return 0, false, false, errors.New("identity match candidate redirect has no survivor")
+	}
+	return survivor.Int64, false, true, nil
+}
+
+func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
+	ctx context.Context, tx *loggedTx, oldID, newID int64, edges []linkEdge,
+) error {
+	// The participant merge contracts oldID into newID after candidate
+	// reconciliation. Add that virtual edge now so an accepted survivor-side
+	// collision sees the connectivity that the same transaction will retain.
+	contractedEdges := make([]linkEdge, 0, len(edges)+1)
+	contractedEdges = append(contractedEdges, edges...)
+	contractedEdges = append(contractedEdges, linkEdge{a: oldID, b: newID})
+	linkAdjacency := buildAdjacency(contractedEdges)
 	rows, err := tx.QueryContext(ctx, identityMatchCandidateMergeSelect+`
 		WHERE (left_kind = ? AND left_id = ?)
 		   OR (right_kind = ? AND right_id = ?)
@@ -521,6 +969,7 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 	}
 
 	for _, candidate := range candidates {
+		appliedAccepted := acceptedMergeCandidateIsLinked(candidate, linkAdjacency)
 		if candidate.LeftKind == IdentityMatchParticipant && candidate.LeftID == oldID {
 			candidate.LeftID = newID
 		}
@@ -531,6 +980,16 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 			candidate.LeftKind, candidate.LeftID, candidate.RightKind, candidate.RightID,
 		)
 		if errors.Is(canonicalErr, ErrIdentityMatchSelfLink) {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE participant_links SET identity_match_candidate_id = NULL
+				 WHERE identity_match_candidate_id = ?`, candidate.ID); err != nil {
+				return fmt.Errorf("clear owner of self-link candidate: %w", err)
+			}
+			if err := recordIdentityMatchCandidateRedirectTx(
+				ctx, tx, candidate.ID, 0, true,
+			); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM identity_match_candidates WHERE id = ?`, candidate.ID,
 			); err != nil {
@@ -549,6 +1008,10 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 			return err
 		}
 		group := append([]identityMatchCandidateMergeRow{candidate}, collisions...)
+		for _, collision := range collisions {
+			appliedAccepted = appliedAccepted ||
+				acceptedMergeCandidateIsLinked(collision, linkAdjacency)
+		}
 		if len(group) == 1 {
 			if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 				left_kind = ?, left_id = ?, right_kind = ?, right_id = ?,
@@ -560,7 +1023,9 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 			continue
 		}
 
-		if err := s.collapseIdentityMatchCandidateMergeGroupTx(ctx, tx, group); err != nil {
+		if err := s.collapseIdentityMatchCandidateMergeGroupTx(
+			ctx, tx, group, appliedAccepted,
+		); err != nil {
 			return err
 		}
 	}
@@ -597,20 +1062,46 @@ func (s *Store) loadIdentityMatchCandidateMergeCollisionsTx(
 }
 
 func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
-	ctx context.Context, tx *loggedTx, group []identityMatchCandidateMergeRow,
+	ctx context.Context,
+	tx *loggedTx,
+	group []identityMatchCandidateMergeRow,
+	appliedAccepted bool,
 ) error {
 	sort.Slice(group, func(i, j int) bool { return group[i].ID < group[j].ID })
 	winner := group[0]
-	state, decidedBy, decidedAt, notes := reconcileIdentityMatchCandidateMergeState(group)
+	state, decidedBy, decidedAt, notes := reconcileIdentityMatchCandidateMergeState(
+		group, appliedAccepted)
 	confidence, source, sourceRef := identityMatchCandidateMergeConfidenceProvenance(group)
 	observationOrigin := reconcileIdentityMatchCandidateMergeObservationOrigin(group, state)
 	preConflict := reconcileIdentityMatchCandidateMergePreConflictState(group, state)
 
 	for _, loser := range group[1:] {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO identity_match_candidate_sources
+				(candidate_id, source_id, is_conservative)
+			SELECT ?, source_id, is_conservative
+			FROM identity_match_candidate_sources
+			WHERE candidate_id = ?
+			ON CONFLICT (candidate_id, source_id) DO UPDATE
+			SET is_conservative =
+				identity_match_candidate_sources.is_conservative AND excluded.is_conservative`,
+			winner.ID, loser.ID); err != nil {
+			return fmt.Errorf("move identity match candidate source support: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_evidence
 			SET candidate_id = ? WHERE candidate_id = ?`, winner.ID, loser.ID,
 		); err != nil {
 			return fmt.Errorf("move identity match candidate evidence: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE participant_links
+			SET identity_match_candidate_id = ?
+			WHERE identity_match_candidate_id = ?`, winner.ID, loser.ID); err != nil {
+			return fmt.Errorf("move identity match link ownership: %w", err)
+		}
+		if err := recordIdentityMatchCandidateRedirectTx(
+			ctx, tx, loser.ID, winner.ID, false,
+		); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM identity_match_candidates WHERE id = ?`, loser.ID,
@@ -622,11 +1113,12 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 		left_kind = ?, left_id = ?, right_kind = ?, right_id = ?, state = ?,
 		confidence = ?, source = ?, source_ref = ?,
 		observation_conflict_origin = ?, pre_conflict_state = ?,
-		decided_by = ?, decided_at = ?, notes = ?,
+		decided_by = ?, decided_at = ?, notes = ?, application_pending = ?,
 		updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 		winner.LeftKind, winner.LeftID, winner.RightKind, winner.RightID, state,
 		confidence, source, sourceRef, observationOrigin, preConflict,
-		decidedBy, decidedAt, notes, winner.ID,
+		decidedBy, decidedAt, notes,
+		state == IdentityMatchStateAccepted && !appliedAccepted, winner.ID,
 	); err != nil {
 		return fmt.Errorf("reconcile duplicate identity match candidate: %w", err)
 	}
@@ -698,7 +1190,7 @@ func reconcileIdentityMatchCandidateMergeObservationOrigin(
 }
 
 func reconcileIdentityMatchCandidateMergeState(
-	group []identityMatchCandidateMergeRow,
+	group []identityMatchCandidateMergeRow, appliedAccepted bool,
 ) (IdentityMatchState, sql.NullString, sql.NullTime, sql.NullString) {
 	hasAccepted, hasRejected := false, false
 	state := IdentityMatchStateCandidate
@@ -713,6 +1205,15 @@ func reconcileIdentityMatchCandidateMergeState(
 		case IdentityMatchStateRejected:
 			hasRejected = true
 		}
+	}
+	if appliedAccepted && hasAccepted {
+		if decidedBy, decidedAt, notes, ok := preferredMergeDecisionMetadata(
+			group, IdentityMatchStateAccepted,
+		); ok {
+			return IdentityMatchStateAccepted, decidedBy, decidedAt, notes
+		}
+		return IdentityMatchStateAccepted,
+			sql.NullString{}, sql.NullTime{}, sql.NullString{}
 	}
 	generatedConflict := state != IdentityMatchStateConflict && hasAccepted && hasRejected
 	if generatedConflict {
@@ -732,10 +1233,10 @@ func reconcileIdentityMatchCandidateMergeState(
 			state = IdentityMatchStateRejected
 		}
 	}
-	for _, candidate := range group {
-		if candidate.State == state && hasMergeDecisionMetadata(candidate) {
-			return state, candidate.DecidedBy, candidate.DecidedAt, candidate.Notes
-		}
+	if decidedBy, decidedAt, notes, ok := preferredMergeDecisionMetadata(
+		group, state,
+	); ok {
+		return state, decidedBy, decidedAt, notes
 	}
 	// A conflict outranks terminal decisions when states collapse, but the
 	// review that produced those decisions must survive the merge: without
@@ -756,8 +1257,41 @@ func reconcileIdentityMatchCandidateMergeState(
 	return state, sql.NullString{}, sql.NullTime{}, sql.NullString{}
 }
 
+func preferredMergeDecisionMetadata(
+	group []identityMatchCandidateMergeRow,
+	state IdentityMatchState,
+) (sql.NullString, sql.NullTime, sql.NullString, bool) {
+	for _, requireUser := range []bool{true, false} {
+		for _, candidate := range group {
+			if candidate.State != state || !hasMergeDecisionMetadata(candidate) {
+				continue
+			}
+			isUser := candidate.DecidedBy.Valid &&
+				candidate.DecidedBy.String == string(ProvenanceUser)
+			if requireUser != isUser {
+				continue
+			}
+			return candidate.DecidedBy, candidate.DecidedAt, candidate.Notes, true
+		}
+	}
+	return sql.NullString{}, sql.NullTime{}, sql.NullString{}, false
+}
+
 func hasMergeDecisionMetadata(candidate identityMatchCandidateMergeRow) bool {
 	return candidate.DecidedBy.Valid || candidate.DecidedAt.Valid || candidate.Notes.Valid
+}
+
+func acceptedMergeCandidateIsLinked(
+	candidate identityMatchCandidateMergeRow,
+	linkAdjacency map[int64][]int64,
+) bool {
+	if candidate.State != IdentityMatchStateAccepted ||
+		candidate.LeftKind != IdentityMatchParticipant ||
+		candidate.RightKind != IdentityMatchParticipant {
+		return false
+	}
+	_, linked := componentOfAdj(candidate.LeftID, linkAdjacency)[candidate.RightID]
+	return linked
 }
 
 func identityMatchCandidateMergeConfidenceProvenance(
@@ -795,7 +1329,7 @@ const identityMatchCandidateSelect = `SELECT
 	c.id, c.left_kind, c.left_id, c.right_kind, c.right_id, c.basis,
 	cs.slug, c.scope_kind, c.scope_value, c.normalized_value, c.state,
 	c.confidence, c.source, c.source_ref, c.decided_by, c.decided_at,
-	c.notes, c.created_at, c.updated_at
+	c.notes, c.created_at, c.updated_at, c.application_pending
 	FROM identity_match_candidates c
 	LEFT JOIN communication_services cs ON cs.id = c.service_id`
 
@@ -838,6 +1372,17 @@ func findIdentityMatchCandidateTx(
 func getIdentityMatchCandidateTx(
 	ctx context.Context, tx *loggedTx, id int64,
 ) (*IdentityMatchCandidate, error) {
+	candidate, err := getIdentityMatchCandidateWithoutEvidenceTx(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	candidate.Evidence, err = loadCandidateEvidenceTx(ctx, tx, id)
+	return candidate, err
+}
+
+func getIdentityMatchCandidateWithoutEvidenceTx(
+	ctx context.Context, tx *loggedTx, id int64,
+) (*IdentityMatchCandidate, error) {
 	candidate, err := scanIdentityMatchCandidate(tx.QueryRowContext(ctx,
 		identityMatchCandidateSelect+` WHERE c.id = ?`, id,
 	))
@@ -847,8 +1392,7 @@ func getIdentityMatchCandidateTx(
 	if err != nil {
 		return nil, err
 	}
-	candidate.Evidence, err = loadCandidateEvidenceTx(ctx, tx, id)
-	return candidate, err
+	return candidate, nil
 }
 
 func scanIdentityMatchCandidate(row scanner) (*IdentityMatchCandidate, error) {
@@ -863,6 +1407,7 @@ func scanIdentityMatchCandidate(row scanner) (*IdentityMatchCandidate, error) {
 		&serviceSlug, &scopeKind, &scopeValue, &normalizedValue,
 		&candidate.State, &confidence, &candidate.Source, &sourceRef,
 		&decidedBy, &decidedAt, &notes, &candidate.CreatedAt, &candidate.UpdatedAt,
+		&candidate.applicationPending,
 	); err != nil {
 		return nil, err
 	}

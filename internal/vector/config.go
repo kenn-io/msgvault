@@ -251,10 +251,21 @@ type EmbedScheduleConfig struct {
 // embedding generations. The zero value means the full corpus.
 type EmbedScopeConfig struct {
 	MessageTypes []string `toml:"message_types"`
+	// Accounts limits embedding to the given account identifiers (the same
+	// syntax the --account flag accepts). Identifiers live in config rather
+	// than source IDs so the file survives archive rebuilds that renumber
+	// sources; the command layer resolves them to SourceIDs against the
+	// open store at startup, where unknown identifiers are a hard error.
+	Accounts []string `toml:"accounts"`
+	// SourceIDs is the resolved form of Accounts (or of a CLI
+	// --account/--collection override), filled in by the command layer
+	// before the scope is used for building, coverage, or fingerprinting.
+	// It is never read from TOML.
+	SourceIDs []int64 `toml:"-"`
 }
 
 func (s EmbedScopeConfig) BuildScope() BuildScope {
-	return NewBuildScope(s.MessageTypes)
+	return NewBuildScope(s.MessageTypes, s.SourceIDs)
 }
 
 // Fingerprint returns the "<model>:<dimension>" identifier for the

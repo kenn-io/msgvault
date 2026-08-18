@@ -2865,8 +2865,8 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 	// Build Parquet data with empty-string and whitespace display_names on recipients
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Hello', 'Snippet', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
-			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'World', 'Snippet', TIMESTAMP '2024-01-16 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Hello', 'Snippet', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'World', 'Snippet', TIMESTAMP '2024-01-16 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `
 			(1::BIGINT, 'test@gmail.com', 'gmail')
@@ -2913,8 +2913,8 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipientName(t *testing.T) {
 	// Build Parquet data with a message that has no recipients
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Has Recipient', 'Snippet', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
-			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'No Recipient', 'Snippet', TIMESTAMP '2024-01-16 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Has Recipient', 'Snippet', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'No Recipient', 'Snippet', TIMESTAMP '2024-01-16 10:00:00', 1000::BIGINT, false, 0, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `
 			(1::BIGINT, 'test@gmail.com', 'gmail')
@@ -3541,8 +3541,8 @@ func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
 	// string, to reproduce type mismatches in COALESCE, JOINs, and TRY_CAST paths.
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'msg1', '100', 'Hello World', 'snippet1', TIMESTAMP '2024-01-15 10:00:00', '1000', '0', '0', NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
-			(2::BIGINT, 1::BIGINT, 'msg2', '101', 'Goodbye', 'snippet2', TIMESTAMP '2024-01-16 10:00:00', '2000', '1', '0', NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'msg1', '100', 'Hello World', 'snippet1', TIMESTAMP '2024-01-15 10:00:00', '1000', '0', '0', NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', '101', 'Goodbye', 'snippet2', TIMESTAMP '2024-01-16 10:00:00', '2000', '1', '0', NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `
 			(1::BIGINT, 'test@gmail.com', 'gmail')
@@ -3893,8 +3893,8 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Stale Hello', 'snip1', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
-			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'Stale Goodbye', 'snip2', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, true, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Stale Hello', 'snip1', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'Stale Goodbye', 'snip2', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, true, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `
 			(1::BIGINT, 'test@gmail.com', 'gmail')

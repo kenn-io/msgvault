@@ -54,6 +54,59 @@ components:
         - next_run
         - schedule
       type: object
+    ActivityRef:
+      properties:
+        channel:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        date_origin:
+          type: string
+        date_precision:
+          type: string
+        direction:
+          type: string
+        evidence:
+          type: string
+        kind:
+          type: string
+        local_date:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+        ref:
+          type: string
+        role:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        timezone:
+          type: string
+        utc_offset_minutes:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - message_id
+        - kind
+        - channel
+        - occurred_at
+        - local_date
+        - timezone
+        - utc_offset_minutes
+        - date_origin
+        - date_precision
+        - direction
+        - source_id
+        - role
+        - evidence
+      type: object
     AddAccountRequest:
       additionalProperties: false
       properties:
@@ -1372,6 +1425,60 @@ components:
       required:
         - services
       type: object
+    ContactState:
+      properties:
+        cadence_due_at:
+          format: date-time
+          type: string
+        cadence_status:
+          type: string
+        computed_at:
+          format: date-time
+          type: string
+        first_contact_at:
+          format: date-time
+          type: string
+        first_contact_ref:
+          type: string
+        inferred_channel:
+          type: string
+        interaction_count:
+          format: int64
+          type: integer
+        last_contact_at:
+          format: date-time
+          type: string
+        last_contact_channel:
+          type: string
+        last_contact_owner:
+          type: string
+        last_contact_ref:
+          type: string
+        last_contact_source_id:
+          format: int64
+          type: integer
+        last_inbound_at:
+          format: date-time
+          type: string
+        last_inbound_ref:
+          type: string
+        last_outbound_at:
+          format: date-time
+          type: string
+        last_outbound_ref:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        stale:
+          type: boolean
+      required:
+        - person_id
+        - interaction_count
+        - cadence_status
+        - stale
+        - computed_at
+      type: object
     ConversationResponse:
       properties:
         anchor_id:
@@ -1498,6 +1605,23 @@ components:
         - scope_policy
         - normalization
       type: object
+    CreateDailyNoteEntryRequest:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        person_ids:
+          items:
+            format: int64
+            minimum: 1
+            type: integer
+          nullable: true
+          type: array
+      required:
+        - body
+      type: object
     CreatePersonRelationshipRequest:
       additionalProperties: false
       properties:
@@ -1588,6 +1712,120 @@ components:
         - name
         - canonical_state
         - schema_version
+      type: object
+    DailyNoteEntriesResponse:
+      properties:
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+      required:
+        - entries
+      type: object
+    DailyNoteEntry:
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        person_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+        source:
+          type: string
+        source_ref:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - local_date
+        - ordinal
+        - body
+        - author
+        - source
+        - person_ids
+        - created_at
+        - updated_at
+      type: object
+    DayPage:
+      properties:
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+        entry_total_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        person_total_count:
+          format: int64
+          type: integer
+        persons:
+          items:
+            $ref: "#/components/schemas/DayPerson"
+          type: array
+      required:
+        - local_date
+        - persons
+        - entries
+        - person_total_count
+        - entry_total_count
+      type: object
+    DayPerson:
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ActivityRef"
+          type: array
+        activity_truncated:
+          type: boolean
+        direct_count:
+          format: int64
+          type: integer
+        display_name:
+          type: string
+        event_count:
+          format: int64
+          type: integer
+        last_at:
+          format: date-time
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        vcard_uid:
+          type: string
+      required:
+        - person_id
+        - vcard_uid
+        - event_count
+        - direct_count
+        - last_at
+        - activity
+        - activity_truncated
+      type: object
+    DecideIdentityMatchRequest:
+      additionalProperties: false
+      properties:
+        notes:
+          type: string
       type: object
     DeepSearchResponse:
       properties:
@@ -2083,6 +2321,183 @@ components:
         - last_at
         - cache_revision
       type: object
+    Employment:
+      properties:
+        address_id:
+          format: int64
+          type: integer
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        department:
+          type: string
+        description:
+          type: string
+        end_date:
+          $ref: "#/components/schemas/PartialDate"
+        id:
+          format: int64
+          type: integer
+        is_current:
+          type: boolean
+        is_primary:
+          type: boolean
+        location:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        role:
+          type: string
+        source:
+          type: string
+        source_ref:
+          type: string
+        start_date:
+          $ref: "#/components/schemas/PartialDate"
+        title:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - person_id
+        - organization_id
+        - is_current
+        - is_primary
+        - source
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    EmploymentBody:
+      additionalProperties: false
+      properties:
+        address_id:
+          format: int64
+          nullable: true
+          type: integer
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        department:
+          nullable: true
+          type: string
+        description:
+          nullable: true
+          type: string
+        end_date:
+          nullable: true
+          type: string
+        is_current:
+          nullable: true
+          type: boolean
+        is_primary:
+          nullable: true
+          type: boolean
+        location:
+          nullable: true
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        role:
+          nullable: true
+          type: string
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        start_date:
+          nullable: true
+          type: string
+        title:
+          nullable: true
+          type: string
+      required:
+        - person_id
+        - organization_id
+        - source
+      type: object
+    EmploymentProjectionResponse:
+      properties:
+        department:
+          type: string
+        employment_id:
+          format: int64
+          type: integer
+        organization_id:
+          format: int64
+          type: integer
+        organization_name:
+          type: string
+        role:
+          type: string
+        title:
+          type: string
+        vcard:
+          $ref: "#/components/schemas/EmploymentVCard"
+      required:
+        - employment_id
+        - organization_id
+        - organization_name
+        - vcard
+      type: object
+    EmploymentVCard:
+      properties:
+        org:
+          items:
+            type: string
+          nullable: true
+          type: array
+        role:
+          type: string
+        title:
+          type: string
+      type: object
+    EmploymentsResponse:
+      properties:
+        employments:
+          items:
+            $ref: "#/components/schemas/Employment"
+          nullable: true
+          type: array
+        projection:
+          $ref: "#/components/schemas/EmploymentProjectionResponse"
+      required:
+        - employments
+      type: object
+    EndEmploymentBody:
+      additionalProperties: false
+      properties:
+        end_date:
+          type: string
+      required:
+        - end_date
+      type: object
     EntryRow:
       properties:
         anchor_message_id:
@@ -2234,17 +2649,21 @@ components:
         readiness:
           enum:
             - absent
+            - building
             - interrupted
             - stale_schema
             - drifted
           type: string
           x-enum-names:
             - ExploreCacheUnavailableResponseReadinessAbsent
+            - ExploreCacheUnavailableResponseReadinessBuilding
             - ExploreCacheUnavailableResponseReadinessInterrupted
             - ExploreCacheUnavailableResponseReadinessStaleSchema
             - ExploreCacheUnavailableResponseReadinessDrifted
         recovery_action:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
       required:
         - error
         - message
@@ -3287,6 +3706,149 @@ components:
         - identity_revision
         - cache_state
       type: object
+    IdentityMatchAcceptResponse:
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        candidate:
+          $ref: "#/components/schemas/IdentityMatchCandidate"
+        identity_revision:
+          format: int64
+          type: integer
+      required:
+        - candidate
+        - identity_revision
+        - cache_state
+      type: object
+    IdentityMatchCandidate:
+      properties:
+        basis:
+          type: string
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        decided_at:
+          format: date-time
+          type: string
+        decided_by:
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/IdentityMatchEvidence"
+          nullable: true
+          type: array
+        id:
+          format: int64
+          type: integer
+        left_id:
+          format: int64
+          type: integer
+        left_kind:
+          type: string
+        normalized_value:
+          type: string
+        notes:
+          type: string
+        right_id:
+          format: int64
+          type: integer
+        right_kind:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        source:
+          type: string
+        source_ref:
+          type: string
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - left_kind
+        - left_id
+        - right_kind
+        - right_id
+        - basis
+        - state
+        - source
+        - evidence
+        - created_at
+        - updated_at
+      type: object
+    IdentityMatchCandidatesResponse:
+      properties:
+        candidates:
+          items:
+            $ref: "#/components/schemas/IdentityMatchCandidate"
+          nullable: true
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - candidates
+        - limit
+        - offset
+      type: object
+    IdentityMatchEvidence:
+      properties:
+        candidate_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        detail:
+          type: string
+        evidence_kind:
+          type: string
+        evidence_ref:
+          type: string
+        id:
+          format: int64
+          type: integer
+        source:
+          type: string
+      required:
+        - id
+        - candidate_id
+        - evidence_kind
+        - source
+        - created_at
+      type: object
+    IdentityMatchRejectResponse:
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        candidate:
+          $ref: "#/components/schemas/IdentityMatchCandidate"
+        identity_revision:
+          format: int64
+          type: integer
+      required:
+        - candidate
+        - identity_revision
+        - cache_state
+      type: object
     IdentitySearchHTTPRequest:
       additionalProperties: false
       properties:
@@ -3535,6 +4097,19 @@ components:
       required:
         - email
       type: object
+    MergeOrganizationBody:
+      additionalProperties: false
+      properties:
+        losing_organization_id:
+          format: int64
+          type: integer
+        losing_revision:
+          format: int64
+          type: integer
+      required:
+        - losing_organization_id
+        - losing_revision
+      type: object
     MessageDetail:
       properties:
         attachments:
@@ -3725,6 +4300,913 @@ components:
           type: string
       required:
         - busy
+      type: object
+    Organization:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        id:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        merged_into_id:
+          format: int64
+          type: integer
+        name:
+          type: string
+        primary_domain:
+          type: string
+        retired_at:
+          format: date-time
+          type: string
+        revision:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - kind
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    OrganizationAddress:
+      properties:
+        address_kind:
+          type: string
+        country_code:
+          type: string
+        country_name:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        extended_address:
+          type: string
+        extended_components:
+          type: string
+        free_text:
+          type: string
+        geo_uri:
+          type: string
+        label:
+          type: string
+        locality:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        original_value:
+          type: string
+        place_uri:
+          type: string
+        post_office_box:
+          type: string
+        postal_code:
+          type: string
+        region:
+          type: string
+        street_address:
+          type: string
+        timezone:
+          type: string
+      required:
+        - envelope
+        - organization_id
+        - address_kind
+        - original_value
+      type: object
+    OrganizationAddressBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        address_kind:
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        country_code:
+          nullable: true
+          type: string
+        country_name:
+          nullable: true
+          type: string
+        extended_address:
+          nullable: true
+          type: string
+        extended_components:
+          nullable: true
+          type: string
+        free_text:
+          nullable: true
+          type: string
+        geo_uri:
+          nullable: true
+          type: string
+        label:
+          nullable: true
+          type: string
+        locality:
+          nullable: true
+          type: string
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        original_value:
+          type: string
+        place_uri:
+          nullable: true
+          type: string
+        post_office_box:
+          nullable: true
+          type: string
+        postal_code:
+          nullable: true
+          type: string
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        region:
+          nullable: true
+          type: string
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        street_address:
+          nullable: true
+          type: string
+        timezone:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - address_kind
+        - source
+      type: object
+    OrganizationAttributeValue:
+      properties:
+        active_from:
+          format: date-time
+          type: string
+        active_until:
+          format: date-time
+          type: string
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        definition_id:
+          format: int64
+          type: integer
+        definition_slug:
+          type: string
+        id:
+          format: int64
+          type: integer
+        ordinal:
+          format: int64
+          type: integer
+        organization_id:
+          format: int64
+          type: integer
+        source:
+          type: string
+        source_ref:
+          type: string
+        superseded_at:
+          format: date-time
+          type: string
+        value:
+          $ref: "#/components/schemas/AttributeValue"
+      required:
+        - id
+        - organization_id
+        - definition_id
+        - definition_slug
+        - ordinal
+        - value
+        - active_from
+        - created_at
+        - source
+      type: object
+    OrganizationAttributeWrite:
+      properties:
+        dry_run:
+          type: boolean
+        superseded:
+          $ref: "#/components/schemas/OrganizationAttributeValue"
+        value:
+          $ref: "#/components/schemas/OrganizationAttributeValue"
+      required:
+        - dry_run
+      type: object
+    OrganizationAttributesResponse:
+      properties:
+        values:
+          items:
+            $ref: "#/components/schemas/OrganizationAttributeValue"
+          nullable: true
+          type: array
+      required:
+        - values
+      type: object
+    OrganizationBody:
+      additionalProperties: false
+      properties:
+        description:
+          nullable: true
+          type: string
+        kind:
+          enum:
+            - company
+            - nonprofit
+            - school
+            - government
+            - household
+            - other
+          type: string
+        name:
+          type: string
+        primary_domain:
+          nullable: true
+          type: string
+        retired:
+          nullable: true
+          type: boolean
+      required:
+        - name
+      type: object
+    OrganizationCategory:
+      properties:
+        category:
+          type: string
+        category_normalized:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        organization_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - organization_id
+        - category
+        - category_normalized
+      type: object
+    OrganizationCategoryBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        category:
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - category
+        - source
+      type: object
+    OrganizationContactPoint:
+      properties:
+        address_kind:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        normalization:
+          type: string
+        normalization_version:
+          format: int64
+          type: integer
+        normalized_value:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        original_value:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        uri:
+          type: string
+      required:
+        - envelope
+        - organization_id
+        - address_kind
+        - original_value
+        - normalized_value
+        - normalization
+        - normalization_version
+      type: object
+    OrganizationContactPointBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        contact_kind:
+          enum:
+            - email
+            - phone
+            - username
+            - impp
+            - url
+            - social
+            - calendar
+            - contact_uri
+            - org_directory
+            - language
+          type: string
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        original_value:
+          type: string
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        scope_kind:
+          nullable: true
+          type: string
+        scope_value:
+          nullable: true
+          type: string
+        service_slug:
+          nullable: true
+          type: string
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        uri:
+          nullable: true
+          type: string
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - contact_kind
+        - original_value
+        - source
+      type: object
+    OrganizationCreateBody:
+      additionalProperties: false
+      properties:
+        description:
+          nullable: true
+          type: string
+        kind:
+          enum:
+            - company
+            - nonprofit
+            - school
+            - government
+            - household
+            - other
+          type: string
+        name:
+          type: string
+        primary_domain:
+          nullable: true
+          type: string
+      required:
+        - name
+      type: object
+    OrganizationIdentifier:
+      properties:
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        identifier_kind:
+          type: string
+        identifier_value:
+          type: string
+        normalized_value:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - organization_id
+        - identifier_kind
+        - identifier_value
+        - normalized_value
+      type: object
+    OrganizationIdentifierBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        identifier_kind:
+          enum:
+            - domain
+            - linkedin
+            - duns
+            - tax_id
+            - registry
+            - other
+          type: string
+        identifier_value:
+          type: string
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - identifier_kind
+        - identifier_value
+        - source
+      type: object
+    OrganizationMedia:
+      properties:
+        byte_size:
+          format: int64
+          type: integer
+        content_hash:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        has_data:
+          type: boolean
+        media_kind:
+          type: string
+        media_type:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        original_value:
+          type: string
+        uri:
+          type: string
+      required:
+        - envelope
+        - organization_id
+        - media_kind
+        - has_data
+        - original_value
+      type: object
+    OrganizationMediaBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        content_hash:
+          nullable: true
+          type: string
+        data:
+          format: base64
+          type: string
+        media_kind:
+          enum:
+            - photo
+            - logo
+            - sound
+            - key
+          type: string
+        media_type:
+          nullable: true
+          type: string
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        original_value:
+          type: string
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        uri:
+          nullable: true
+          type: string
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - media_kind
+        - source
+      type: object
+    OrganizationName:
+      properties:
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        name:
+          type: string
+        name_kind:
+          type: string
+        name_normalized:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - organization_id
+        - name
+        - name_normalized
+        - name_kind
+      type: object
+    OrganizationNameBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        name:
+          type: string
+        name_kind:
+          enum:
+            - alias
+            - legal
+            - former
+            - abbreviation
+            - sort
+          type: string
+        ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        pref:
+          format: int64
+          nullable: true
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        type_label:
+          nullable: true
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_altid:
+          nullable: true
+          type: string
+        vcard_group:
+          nullable: true
+          type: string
+        vcard_pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        vcard_prop_id:
+          nullable: true
+          type: string
+        vcard_property:
+          nullable: true
+          type: string
+      required:
+        - name
+        - name_kind
+        - source
+      type: object
+    OrganizationProfile:
+      properties:
+        addresses:
+          items:
+            $ref: "#/components/schemas/OrganizationAddress"
+          nullable: true
+          type: array
+        categories:
+          items:
+            $ref: "#/components/schemas/OrganizationCategory"
+          nullable: true
+          type: array
+        contact_points:
+          items:
+            $ref: "#/components/schemas/OrganizationContactPoint"
+          nullable: true
+          type: array
+        identifiers:
+          items:
+            $ref: "#/components/schemas/OrganizationIdentifier"
+          nullable: true
+          type: array
+        media:
+          items:
+            $ref: "#/components/schemas/OrganizationMedia"
+          nullable: true
+          type: array
+        names:
+          items:
+            $ref: "#/components/schemas/OrganizationName"
+          nullable: true
+          type: array
+        organization:
+          $ref: "#/components/schemas/Organization"
+      required:
+        - organization
+        - names
+        - identifiers
+        - addresses
+        - contact_points
+        - media
+        - categories
+      type: object
+    OrganizationProfileBody:
+      additionalProperties: false
+      properties:
+        addresses:
+          items:
+            $ref: "#/components/schemas/OrganizationAddressBody"
+          nullable: true
+          type: array
+        categories:
+          items:
+            $ref: "#/components/schemas/OrganizationCategoryBody"
+          nullable: true
+          type: array
+        contact_points:
+          items:
+            $ref: "#/components/schemas/OrganizationContactPointBody"
+          nullable: true
+          type: array
+        identifiers:
+          items:
+            $ref: "#/components/schemas/OrganizationIdentifierBody"
+          nullable: true
+          type: array
+        media:
+          items:
+            $ref: "#/components/schemas/OrganizationMediaBody"
+          nullable: true
+          type: array
+        names:
+          items:
+            $ref: "#/components/schemas/OrganizationNameBody"
+          nullable: true
+          type: array
+      type: object
+    OrganizationsResponse:
+      properties:
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        organizations:
+          items:
+            $ref: "#/components/schemas/Organization"
+          nullable: true
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - organizations
+        - total
+        - limit
+        - offset
       type: object
     PartialDate:
       additionalProperties: false
@@ -4296,6 +5778,71 @@ components:
             type: integer
           nullable: true
           type: array
+      type: object
+    PersonDay:
+      properties:
+        direct_count:
+          format: int64
+          type: integer
+        entry_count:
+          format: int64
+          type: integer
+        event_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+      required:
+        - local_date
+        - event_count
+        - direct_count
+        - entry_count
+      type: object
+    PersonDayPage:
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ActivityRef"
+          type: array
+        activity_total_count:
+          format: int64
+          type: integer
+        entries:
+          items:
+            $ref: "#/components/schemas/DailyNoteEntry"
+          type: array
+        entry_total_count:
+          format: int64
+          type: integer
+        local_date:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - local_date
+        - activity
+        - entries
+        - activity_total_count
+        - entry_total_count
+      type: object
+    PersonDaysPage:
+      properties:
+        days:
+          items:
+            $ref: "#/components/schemas/PersonDay"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - days
+        - total_count
       type: object
     PersonIdentifier:
       properties:
@@ -5441,6 +6988,56 @@ components:
         - https
         - plain_http_warning
       type: object
+    SetOrganizationAttributeBody:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        active_until:
+          format: date-time
+          nullable: true
+          type: string
+        actor:
+          nullable: true
+          type: string
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        definition_slug:
+          type: string
+        dry_run:
+          type: boolean
+        expected_value_id:
+          format: int64
+          nullable: true
+          type: integer
+        ordinal:
+          format: int64
+          nullable: true
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        value:
+          $ref: "#/components/schemas/AttributeValue"
+      required:
+        - definition_slug
+        - value
+        - source
+      type: object
     SetPersonAttributeRequest:
       additionalProperties: false
       properties:
@@ -6529,7 +8126,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.40.0
+  version: 1.44.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -8870,6 +10467,324 @@ paths:
       summary: Get a bounded containing conversation
       tags:
         - API
+  /api/v1/days/entries/{id}:
+    delete:
+      operationId: deleteDayEntry
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete an authored daily entry
+      tags:
+        - API
+  /api/v1/days/{date}:
+    get:
+      operationId: getActivityDay
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum authored entries to return independently
+          in: query
+          name: entry_limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based authored-entry offset
+          in: query
+          name: entry_offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum activity references previewed for each person
+          in: query
+          name: activity_limit_per_person
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DayPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get people, activity, and notes for a day
+      tags:
+        - API
+  /api/v1/days/{date}/entries:
+    get:
+      operationId: listDayEntries
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyNoteEntriesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List authored entries for a day
+      tags:
+        - API
+    post:
+      operationId: createDayEntry
+      parameters:
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDailyNoteEntryRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyNoteEntry"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create an authored entry for a day
+      tags:
+        - API
   /api/v1/deletions:
     get:
       operationId: listDeletions
@@ -9193,6 +11108,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/DomainSummary"
           description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
         default:
           content:
             application/json:
@@ -9366,6 +11289,393 @@ paths:
       summary: Get one domain's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/employments:
+    post:
+      operationId: createEmployment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmploymentBody"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employment"
+          description: Created
+          headers:
+            ETag:
+              description: Strong employment revision tag for optimistic concurrency
+              schema:
+                type: string
+            Location:
+              description: Canonical URL of the created employment record
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create an employment record
+      tags:
+        - API
+  /api/v1/employments/{id}:
+    delete:
+      operationId: deleteEmployment
+      parameters:
+        - description: Employment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest employment read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete an employment record
+      tags:
+        - API
+    get:
+      operationId: getEmployment
+      parameters:
+        - description: Employment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employment"
+          description: OK
+          headers:
+            ETag:
+              description: Strong employment revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get an employment record
+      tags:
+        - API
+    patch:
+      operationId: patchEmployment
+      parameters:
+        - description: Employment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest employment read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmploymentBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employment"
+          description: OK
+          headers:
+            ETag:
+              description: Strong employment revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace an employment record's mutable fields
+      tags:
+        - API
+  /api/v1/employments/{id}/end:
+    post:
+      operationId: endEmployment
+      parameters:
+        - description: Employment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest employment read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EndEmploymentBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employment"
+          description: OK
+          headers:
+            ETag:
+              description: Strong employment revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End an employment record
+      tags:
+        - API
+  /api/v1/employments/{id}/primary:
+    post:
+      operationId: setPrimaryEmployment
+      parameters:
+        - description: Employment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest employment read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employment"
+          description: OK
+          headers:
+            ETag:
+              description: Strong employment revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set the primary current employment
+      tags:
+        - API
   /api/v1/explore:
     post:
       operationId: explore
@@ -9831,6 +12141,158 @@ paths:
       security:
         - apiKey: []
       summary: Assert two participants are the same person
+      tags:
+        - API
+  /api/v1/identity/match-candidates:
+    get:
+      description: Candidates are evidence-backed suggestions, never applied links. Only a repeated stable provider or Beeper user ID is confirmed automatically; a username, phone, email, display name, or shared conversation is evidence and waits for an explicit decision.
+      operationId: listIdentityMatchCandidates
+      parameters:
+        - description: Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values
+          in: query
+          name: state
+          schema:
+            type: string
+        - description: Maximum candidates to return (default 100, max 500)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based candidate offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchCandidatesResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List reviewable identity match candidates
+      tags:
+        - API
+  /api/v1/identity/match-candidates/{id}/accept:
+    post:
+      description: Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
+      operationId: acceptIdentityMatchCandidate
+      parameters:
+        - description: Identity match candidate ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchAcceptResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Accept an identity match candidate
+      tags:
+        - API
+  /api/v1/identity/match-candidates/{id}/reject:
+    post:
+      description: A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
+      operationId: rejectIdentityMatchCandidate
+      parameters:
+        - description: Identity match candidate ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchRejectResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Reject an identity match candidate
       tags:
         - API
   /api/v1/identity/unlinks:
@@ -10524,6 +12986,830 @@ paths:
       summary: Unlink a task from an archived email
       tags:
         - API
+  /api/v1/organizations:
+    get:
+      operationId: listOrganizations
+      parameters:
+        - description: Maximum results
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Results to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Include retired organizations
+          in: query
+          name: include_retired
+          schema:
+            type: boolean
+        - description: Normalized-name search
+          in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List organizations
+      tags:
+        - API
+    post:
+      operationId: createOrganization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizationCreateBody"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+          description: Created
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+            Location:
+              description: Canonical URL of the created organization
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create an organization
+      tags:
+        - API
+  /api/v1/organizations/{id}:
+    delete:
+      operationId: deleteOrganization
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest organization read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete an organization without employment records
+      tags:
+        - API
+    get:
+      operationId: getOrganization
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get an organization
+      tags:
+        - API
+    patch:
+      operationId: patchOrganization
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest organization read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizationBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+          description: OK
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace an organization's mutable fields
+      tags:
+        - API
+  /api/v1/organizations/{id}/attributes:
+    get:
+      operationId: listOrganizationAttributes
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Include superseded values
+          in: query
+          name: include_superseded
+          schema:
+            type: boolean
+        - description: Restrict to one definition
+          in: query
+          name: definition_slug
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationAttributesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List organization typed attributes
+      tags:
+        - API
+    post:
+      operationId: setOrganizationAttribute
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetOrganizationAttributeBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationAttributeWrite"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationAttributeWrite"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set an organization typed attribute
+      tags:
+        - API
+  /api/v1/organizations/{id}/attributes/{slug}:
+    delete:
+      operationId: clearOrganizationAttribute
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Immutable attribute definition slug
+          in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - description: Ordinal for a multi-valued definition
+          in: query
+          name: ordinal
+          schema:
+            format: int64
+            type: integer
+        - description: "Compare-and-swap: the current value ID expected to be superseded"
+          in: query
+          name: expected_value_id
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Supersede an organization typed attribute
+      tags:
+        - API
+  /api/v1/organizations/{id}/employments:
+    get:
+      operationId: listOrganizationEmployments
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Only current employments
+          in: query
+          name: current_only
+          schema:
+            type: boolean
+        - description: Maximum results
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Results to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmploymentsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List an organization's employment records
+      tags:
+        - API
+  /api/v1/organizations/{id}/history:
+    get:
+      operationId: getOrganizationHistory
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get organization profile history
+      tags:
+        - API
+  /api/v1/organizations/{id}/merge:
+    post:
+      operationId: mergeOrganization
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest organization read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeOrganizationBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+          description: OK
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Merge another organization into this organization
+      tags:
+        - API
+  /api/v1/organizations/{id}/profile:
+    put:
+      operationId: putOrganizationProfile
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest organization read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizationProfileBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong organization revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace organization profile collections
+      tags:
+        - API
+  /api/v1/organizations/{id}/profile/media/{media_id}/content:
+    get:
+      description: Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
+      operationId: getOrganizationProfileMediaContent
+      parameters:
+        - description: Organization ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Structured organization profile media value ID
+          in: path
+          name: media_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            "*/*":
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Download stored inline content for one organization profile media value
+      tags:
+        - API
   /api/v1/people/search:
     post:
       operationId: searchPeople
@@ -10589,6 +13875,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonSummary"
           description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
         default:
           content:
             application/json:
@@ -11518,6 +14812,338 @@ paths:
       security:
         - apiKey: []
       summary: Set a person's attribute value
+      tags:
+        - API
+  /api/v1/persons/{id}/contact-state:
+    get:
+      operationId: getPersonContactState
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactState"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get computed contact state for a person
+      tags:
+        - API
+  /api/v1/persons/{id}/days:
+    get:
+      operationId: listPersonActivityDays
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Inclusive first local calendar date
+          in: query
+          name: from
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Inclusive last local calendar date
+          in: query
+          name: to
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDaysPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List calendar days intersecting a person
+      tags:
+        - API
+  /api/v1/persons/{id}/days/{date}:
+    get:
+      operationId: getPersonActivityDay
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum authored entries to return independently
+          in: query
+          name: entry_limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based authored-entry offset
+          in: query
+          name: entry_offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDayPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person's activity and notes for a day
+      tags:
+        - API
+  /api/v1/persons/{id}/employments:
+    get:
+      operationId: listPersonEmployments
+      parameters:
+        - description: Person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Only current employments
+          in: query
+          name: current_only
+          schema:
+            type: boolean
+        - description: Maximum results
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Results to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmploymentsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's employment history
       tags:
         - API
   /api/v1/persons/{id}/profile:
@@ -12600,8 +16226,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
         default:
           content:
             application/json:

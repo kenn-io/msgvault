@@ -106,6 +106,59 @@ func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) 
 	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen))
 }
 
+// TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope pins the
+// contextual counterpart of the ordinary empty-scope activation guard: a
+// source scope matching no live messages satisfies both the convergence and
+// the no-missing gates trivially, and the sequence-bound activation must
+// refuse rather than demote the serving generation for an empty index.
+func TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	mainDB, err := sql.Open("sqlite3", mainPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mainDB.Close() })
+	_, err = mainDB.Exec(`
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER NOT NULL DEFAULT 0,
+			message_type TEXT,
+			deleted_at DATETIME,
+			deleted_from_source_at DATETIME,
+			embed_gen INTEGER
+		);
+		CREATE TABLE embedding_change_clock (
+			singleton INTEGER PRIMARY KEY,
+			sequence INTEGER NOT NULL
+		);
+		INSERT INTO embedding_change_clock (singleton, sequence) VALUES (1, 0);
+		INSERT INTO messages (id, source_id, message_type) VALUES (1, 1, 'beeper');`)
+	require.NoError(t, err)
+
+	b, err := Open(t.Context(), Options{
+		Path: filepath.Join(dir, "vectors.db"), MainPath: mainPath,
+		Dimension: 4, MainDB: mainDB,
+		BuildScope: vector.NewBuildScope(nil, []int64{99}),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(t.Context(), "m", 4, "")
+	require.NoError(t, err)
+	require.NoError(t, b.AdvanceDocumentChangeWatermark(t.Context(), gen, 0))
+	require.NoError(t, b.SetDocumentReconcileCursor(t.Context(), gen, "done:0"))
+
+	err = b.ActivateGenerationIfConverged(t.Context(), gen, 0)
+	require.ErrorIs(t, err, vector.ErrRefuseActivateEmptyScope,
+		"an empty source scope must be refused, not activated as an empty index")
+	assert.Equal(t, vector.GenerationBuilding, genStateSV(t, b, gen))
+
+	// A live in-scope message (stamped, so coverage stays complete) lifts
+	// the guard and the converged activation proceeds.
+	_, err = mainDB.Exec(`INSERT INTO messages (id, source_id, message_type, embed_gen) VALUES (2, 99, 'beeper', ?)`, int64(gen))
+	require.NoError(t, err)
+	require.NoError(t, b.ActivateGenerationIfConverged(t.Context(), gen, 0))
+	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen))
+}
+
 // missingCountSV returns the number of live messages still needing
 // embedding for gen (embed_gen <> gen) in the backend's main DB. This is
 // the scan-and-fill coverage count that replaced pending_embeddings.
@@ -446,7 +499,7 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		Path:       filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension:  768,
 		MainDB:     main,
-		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
+		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}, nil),
 	})
 	require.NoError(
 		err, "Open")

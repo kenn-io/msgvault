@@ -42,8 +42,10 @@ type ContactPointQuery struct {
 }
 
 var (
-	ErrInvalidContactAddressKind = errors.New("invalid contact address kind")
-	ErrContactPointValueMissing  = errors.New("contact point requires a non-empty value")
+	ErrInvalidContactAddressKind     = errors.New("invalid contact address kind")
+	ErrContactPointValueMissing      = errors.New("contact point requires a non-empty value")
+	ErrProviderIdentityNotExportable = errors.New(
+		"provider identity evidence cannot be exported as a contact point")
 )
 
 func (s *Store) AddPersonContactPointContext(
@@ -152,7 +154,10 @@ func (s *Store) addPersonContactPointTx(
 	personID int64,
 	input PersonContactPointInput,
 ) (*PersonContactPoint, error) {
-	if !input.AddressKind.Valid() {
+	if !input.AddressKind.Exportable() {
+		if input.AddressKind.Valid() {
+			return nil, ErrProviderIdentityNotExportable
+		}
 		return nil, ErrInvalidContactAddressKind
 	}
 	if strings.TrimSpace(input.OriginalValue) == "" {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -391,10 +392,66 @@ type Config struct {
 	Backup       BackupConfig                    `toml:"backup"`
 	Discord      DiscordConfig                   `toml:"discord"`
 	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
+	Activity     ActivityConfig                  `toml:"activity"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
 	configPath string // resolved path to the loaded config file
+}
+
+// ActivityConfig controls dated activity projection and contact-state
+// maintenance. An empty schedule disables the scheduled job while retaining
+// the CLI/backstop commands.
+type ActivityConfig struct {
+	Timezone              string `toml:"timezone"`
+	MaxDirectCounterparts int    `toml:"max_direct_counterparts"`
+	BatchSize             int    `toml:"batch_size"`
+	Schedule              string `toml:"schedule"`
+}
+
+func (a *ActivityConfig) ApplyDefaults() {
+	if a.Timezone == "" {
+		a.Timezone = "UTC"
+	}
+	if a.MaxDirectCounterparts == 0 {
+		a.MaxDirectCounterparts = 25
+	}
+	if a.BatchSize == 0 {
+		a.BatchSize = 500
+	}
+}
+
+func (a *ActivityConfig) Validate() error {
+	a.ApplyDefaults()
+	// "Local" resolves against the host's TZ setting, but the projection
+	// keys replay on the persisted zone NAME: a host TZ change would leave
+	// existing rows unreplayed while new rows use different local dates.
+	if a.Timezone == "Local" {
+		return fmt.Errorf(
+			"invalid [activity] timezone %q: host-dependent timezones are not supported; use UTC or an IANA zone name",
+			a.Timezone)
+	}
+	if _, err := time.LoadLocation(a.Timezone); err != nil {
+		return fmt.Errorf("invalid [activity] timezone %q: %w", a.Timezone, err)
+	}
+	if a.MaxDirectCounterparts < 1 || a.MaxDirectCounterparts > 10_000 {
+		return fmt.Errorf(
+			"invalid [activity] max_direct_counterparts %d (want 1-10000)",
+			a.MaxDirectCounterparts)
+	}
+	if a.BatchSize < 1 || a.BatchSize > 10_000 {
+		return fmt.Errorf("invalid [activity] batch_size %d (want 1-10000)",
+			a.BatchSize)
+	}
+	if a.Schedule == "" {
+		return nil
+	}
+	parser := cron.NewParser(
+		cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	if _, err := parser.Parse(a.Schedule); err != nil {
+		return fmt.Errorf("invalid [activity] schedule %q: %w", a.Schedule, err)
+	}
+	return nil
 }
 
 // LogConfig holds logging configuration. File logging is opt-in:
@@ -577,6 +634,12 @@ func NewDefaultConfig() *Config {
 		Integrations: IntegrationsConfig{
 			Tasks: TaskIntegrationConfig{DefaultProject: "msgvault"},
 		},
+		Activity: ActivityConfig{
+			Timezone:              "UTC",
+			MaxDirectCounterparts: 25,
+			BatchSize:             500,
+			Schedule:              "17 * * * *",
+		},
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
@@ -587,6 +650,7 @@ func NewDefaultConfig() *Config {
 	cfg.Discord.ApplyDefaults()
 	cfg.Web.ApplyDefaults()
 	cfg.Integrations.Tasks.ApplyDefaults()
+	cfg.Activity.ApplyDefaults()
 	return cfg
 }
 
@@ -732,6 +796,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.Activity.ApplyDefaults()
+	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {

@@ -247,7 +247,12 @@ func registerExploreRoute[Req any, Resp any](api huma.API, operationID, path, su
 	op.RequestBody = jsonRequestBodyFor[Req](api)
 	op.Responses = jsonResponsesFor[Resp](api)
 	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusServiceUnavailable)
-	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = &huma.Response{
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
+	registerRawHumaRoute(api, op, handler)
+}
+
+func exploreUnavailableResponseFor(api huma.API) *huma.Response {
+	return &huma.Response{
 		Description: http.StatusText(http.StatusServiceUnavailable),
 		Content: map[string]*huma.MediaType{
 			applicationJSONMediaType: {Schema: &huma.Schema{AnyOf: []*huma.Schema{
@@ -256,7 +261,6 @@ func registerExploreRoute[Req any, Resp any](api huma.API, operationID, path, su
 			}}},
 		},
 	}
-	registerRawHumaRoute(api, op, handler)
 }
 
 func (s *Server) handleExplore(w http.ResponseWriter, r *http.Request) {
@@ -300,12 +304,12 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := explorer.Explore(r.Context(), prepared.query)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if snapshotID != "" {
@@ -488,7 +492,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
@@ -497,7 +501,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {
@@ -559,12 +563,12 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 	engine := s.queryEngineForContext(r.Context())
 	analyzer, ok := engine.(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if selection.CacheRevision != stats.CacheRevision {
@@ -669,7 +673,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	request.RowKeys = slices.Compact(request.RowKeys)
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
-		writeExploreUnavailable(w, query.CacheAbsent)
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	state := s.exploreState
@@ -681,7 +685,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		Explore: predicate.query, IncludedKeys: []string{},
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	cacheRequest := predicate.request
@@ -707,7 +711,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		Explore: matchRequest, RowKeys: request.RowKeys,
 	})
 	if err != nil {
-		s.writeExploreError(w, err)
+		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	state.putMatchCounts(cacheKey, result.Counts)
@@ -1417,6 +1421,12 @@ func requireCompleteCandidatePool(w http.ResponseWriter, spec query.SearchSpec) 
 }
 
 func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.ResponseWriter, request ExploreHTTPRequest) (query.SearchSpec, string, bool) {
+	// Gate BEFORE the snapshot branch: a cached candidate snapshot would
+	// otherwise keep serving a wrongly-scoped index after scope drift
+	// without touching any fingerprint check at all.
+	if !s.vectorSearchPreflight(ctx, w) {
+		return query.SearchSpec{}, "", false
+	}
 	requestHash := exploreSnapshotRequestHash(request)
 	state := s.exploreState
 	if state == nil {
@@ -1427,6 +1437,34 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		snapshot, ok := state.snapshot(request.CandidateSnapshotID, requestHash)
 		if !ok {
 			writeError(w, http.StatusConflict, "candidate_snapshot_expired", "The semantic candidate snapshot is missing, expired, or belongs to another predicate")
+			return query.SearchSpec{}, "", false
+		}
+		// A snapshot pins the generation its candidates were drawn from, so
+		// reusing it must re-run the same active-generation check the
+		// issuing path runs: a one-off scoped rebuild (or any full rebuild)
+		// can activate a NEW generation without changing the configured
+		// scope, leaving the daemon "ready" while the snapshot's generation
+		// is retired — on pgvector its embeddings are already deleted.
+		// Fresh searches would get index_stale; a cached snapshot must not
+		// slip past that. A same-fingerprint swap invalidates the snapshot
+		// too (its candidates reference the retired generation), so the
+		// snapshot must belong to the CURRENT active generation.
+		_, backend, cfg := s.vectorComponents()
+		if backend == nil {
+			writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
+			return query.SearchSpec{}, "", false
+		}
+		expectedFingerprint := ""
+		if cfg.Enabled {
+			expectedFingerprint = cfg.GenerationFingerprint()
+		}
+		active, err := vector.ResolveActiveForFingerprint(ctx, backend, expectedFingerprint)
+		if err != nil {
+			s.writeExploreVectorError(w, err)
+			return query.SearchSpec{}, "", false
+		}
+		if int64(active.ID) != snapshot.Generation {
+			writeError(w, http.StatusConflict, "candidate_snapshot_expired", "The semantic candidate snapshot belongs to a retired vector generation; re-run the search")
 			return query.SearchSpec{}, "", false
 		}
 		generation := snapshot.Generation
@@ -1757,7 +1795,7 @@ func (s *Server) writeExploreVectorError(w http.ResponseWriter, err error) {
 	case errors.Is(err, vector.ErrNotEnabled):
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
 	case errors.Is(err, vector.ErrIndexStale):
-		writeError(w, http.StatusServiceUnavailable, "index_stale", "The vector index does not match the configured model")
+		writeError(w, http.StatusServiceUnavailable, "index_stale", "The vector index does not match configured embedding settings")
 	case errors.Is(err, vector.ErrIndexBuilding):
 		writeError(w, http.StatusServiceUnavailable, "index_building", "The vector index is still being built")
 	case errors.Is(err, vector.ErrEmbeddingTimeout):
@@ -1826,14 +1864,14 @@ func decodeExploreJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
+func (s *Server) writeExploreError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unavailable *query.CacheUnavailableError
 	if errors.As(err, &unavailable) || errors.Is(err, query.ErrCacheUnavailable) {
 		readiness := query.CacheInterrupted
 		if unavailable != nil {
 			readiness = unavailable.Readiness
 		}
-		writeExploreUnavailable(w, readiness)
+		s.writeExploreUnavailable(ctx, w, readiness)
 		return
 	}
 	if errors.Is(err, query.ErrInvalidExploreRequest) {
@@ -1850,11 +1888,22 @@ func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
 type ExploreCacheUnavailableResponse struct {
 	Error          string               `json:"error"`
 	Message        string               `json:"message"`
-	Readiness      query.CacheReadiness `json:"readiness" enum:"absent,interrupted,stale_schema,drifted"`
+	Readiness      query.CacheReadiness `json:"readiness" enum:"absent,building,interrupted,stale_schema,drifted"`
 	RecoveryAction string               `json:"recovery_action"`
 }
 
-func writeExploreUnavailable(w http.ResponseWriter, readiness query.CacheReadiness) {
+func (s *Server) writeExploreUnavailable(
+	ctx context.Context,
+	w http.ResponseWriter,
+	readiness query.CacheReadiness,
+) {
+	if s.analyticsCacheInitializingForContext(ctx) {
+		writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
+			Error: "analytical_cache_unavailable", Message: "The analytical cache is being prepared",
+			Readiness: query.CacheReadiness("building"),
+		})
+		return
+	}
 	writeJSON(w, http.StatusServiceUnavailable, ExploreCacheUnavailableResponse{
 		Error: "analytical_cache_unavailable", Message: "The committed analytical cache is unavailable",
 		Readiness: readiness, RecoveryAction: "Run msgvault build-cache --full-rebuild and retry",

@@ -157,6 +157,12 @@ this on the default SQLite backend with denormalized Parquet files queried by
 an embedded DuckDB engine, delivering aggregate queries hundreds of times
 faster than SQLite.
 
+Ungrouped Everything and Files listings page a scalar message or attachment
+population before resolving participant lists for the returned rows. Exact
+totals use separate narrow scans. This page-before-enrichment boundary keeps
+multi-million-message listings inside the daemon's interactive DuckDB memory
+budget without changing cache format or query semantics.
+
 The Parquet cache is disposable and can be rebuilt at any time. The daemon
 starts HTTP health and API routing before analytics cache maintenance, and
 aggregate views never trigger a build mid-session. With
@@ -165,8 +171,11 @@ the background after HTTP is ready. In `engine = "auto"`, aggregate views use
 live SQL while that work runs and switch to DuckDB after the cache is ready and
 opens successfully; a failed build or open keeps live SQL. In
 `engine = "duckdb"`, analytics remain unavailable until the required cache is
-ready, with no SQL fallback. Set `auto_build_cache = false` to skip automatic
-startup maintenance; scheduled syncs, ingest commands, and
+ready, with no SQL fallback. While that automatic initialization is active,
+cache-dependent Web UI views report that preparation is in progress and retry
+until the cache becomes ready; terminal unavailable states retain the explicit
+rebuild action. Set `auto_build_cache = false` to skip automatic startup
+maintenance; scheduled syncs, ingest commands, and
 `msgvault build-cache` can refresh or build the cache explicitly.
 
 Each build writes and verifies a same-filesystem staging tree before publishing

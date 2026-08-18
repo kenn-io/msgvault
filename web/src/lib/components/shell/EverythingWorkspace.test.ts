@@ -96,6 +96,40 @@ describe('EverythingWorkspace', () => {
     }
   });
 
+  it('polls a structured cache-building coverage response until coverage is ready', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let coverageCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/coverage')) {
+        coverageCalls += 1;
+        if (coverageCalls === 1) return Response.json({
+          error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+          readiness: 'building', recovery_action: ''
+        }, { status: 503 });
+        return Response.json({
+          status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
+          cache_revision: 'cache-1', actions: []
+        });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceSearchDraft('', 'semantic');
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      expect(await screen.findByText('Semantic index is initializing.')).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await screen.findByText('Semantic index: 100% of 2 items.')).toBeDefined();
+      expect(coverageCalls).toBe(2);
+    } finally {
+      rendered.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
 
   it('backs off exponentially while semantic coverage stays initializing', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

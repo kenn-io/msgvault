@@ -50,6 +50,8 @@ type CreateCommunicationServiceBody = CreateCommunicationServiceRequest
 
 type GetRemoteImageBody = RemoteImageRequest
 
+type CreateDayEntryBody = CreateDailyNoteEntryRequest
+
 type StageDeletionBody = StageDeletionRequest
 
 type SearchDomainsBody = IdentitySearchHTTPRequest
@@ -59,6 +61,10 @@ type SearchDomainFilesBody = FileSearchHTTPRequest
 type GetDomainContextSummaryBody = ExploreHTTPRequest
 
 type GetDomainTimelineBody = ExploreHTTPRequest
+
+type CreateEmploymentBody = EmploymentBody
+
+type PatchEmploymentBody = EmploymentBody
 
 type ExploreBody = ExploreHTTPRequest
 
@@ -76,11 +82,21 @@ type SearchFilesBody = FileSearchHTTPRequest
 
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
+type AcceptIdentityMatchCandidateBody = DecideIdentityMatchRequest
+
+type RejectIdentityMatchCandidateBody = DecideIdentityMatchRequest
+
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
+
+type CreateOrganizationBody = OrganizationCreateBody
+
+type PatchOrganizationBody = OrganizationBody
+
+type PutOrganizationProfileBody = OrganizationProfileBody
 
 type SearchPeopleBody = IdentitySearchHTTPRequest
 

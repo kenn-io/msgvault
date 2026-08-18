@@ -802,6 +802,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/days/entries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an authored daily entry */
+        delete: operations["deleteDayEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get people, activity, and notes for a day */
+        get: operations["getActivityDay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/days/{date}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List authored entries for a day */
+        get: operations["listDayEntries"];
+        put?: never;
+        /** Create an authored entry for a day */
+        post: operations["createDayEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/deletions": {
         parameters: {
             query?: never;
@@ -951,6 +1003,76 @@ export interface paths {
         put?: never;
         /** Get one domain's canonical activity timeline */
         post: operations["getDomainTimeline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an employment record */
+        post: operations["createEmployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an employment record */
+        get: operations["getEmployment"];
+        put?: never;
+        post?: never;
+        /** Delete an employment record */
+        delete: operations["deleteEmployment"];
+        options?: never;
+        head?: never;
+        /** Replace an employment record's mutable fields */
+        patch: operations["patchEmployment"];
+        trace?: never;
+    };
+    "/api/v1/employments/{id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End an employment record */
+        post: operations["endEmployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employments/{id}/primary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set the primary current employment */
+        post: operations["setPrimaryEmployment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1138,6 +1260,66 @@ export interface paths {
         put?: never;
         /** Assert two participants are the same person */
         post: operations["linkIdentityParticipants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity/match-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List reviewable identity match candidates
+         * @description Candidates are evidence-backed suggestions, never applied links. Only a repeated stable provider or Beeper user ID is confirmed automatically; a username, phone, email, display name, or shared conversation is evidence and waits for an explicit decision.
+         */
+        get: operations["listIdentityMatchCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity/match-candidates/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept an identity match candidate
+         * @description Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
+         */
+        post: operations["acceptIdentityMatchCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity/match-candidates/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject an identity match candidate
+         * @description A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
+         */
+        post: operations["rejectIdentityMatchCandidate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1366,6 +1548,166 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organizations */
+        get: operations["listOrganizations"];
+        put?: never;
+        /** Create an organization */
+        post: operations["createOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an organization */
+        get: operations["getOrganization"];
+        put?: never;
+        post?: never;
+        /** Delete an organization without employment records */
+        delete: operations["deleteOrganization"];
+        options?: never;
+        head?: never;
+        /** Replace an organization's mutable fields */
+        patch: operations["patchOrganization"];
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/attributes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organization typed attributes */
+        get: operations["listOrganizationAttributes"];
+        put?: never;
+        /** Set an organization typed attribute */
+        post: operations["setOrganizationAttribute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/attributes/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Supersede an organization typed attribute */
+        delete: operations["clearOrganizationAttribute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/employments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an organization's employment records */
+        get: operations["listOrganizationEmployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get organization profile history */
+        get: operations["getOrganizationHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge another organization into this organization */
+        post: operations["mergeOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace organization profile collections */
+        put: operations["putOrganizationProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{id}/profile/media/{media_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download stored inline content for one organization profile media value
+         * @description Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
+         */
+        get: operations["getOrganizationProfileMediaContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/search": {
         parameters: {
             query?: never;
@@ -1580,6 +1922,74 @@ export interface paths {
         post?: never;
         /** Supersede a person's attribute value */
         delete: operations["clearPersonAttribute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/contact-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get computed contact state for a person */
+        get: operations["getPersonContactState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List calendar days intersecting a person */
+        get: operations["listPersonActivityDays"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one person's activity and notes for a day */
+        get: operations["getPersonActivityDay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/employments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a person's employment history */
+        get: operations["listPersonEmployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2146,6 +2556,30 @@ export interface components {
             next_run: string;
             running: boolean;
             schedule: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ActivityRef: {
+            channel: string;
+            /** Format: int64 */
+            conversation_id?: number;
+            date_origin: string;
+            date_precision: string;
+            direction: string;
+            evidence: string;
+            kind: string;
+            local_date: string;
+            /** Format: int64 */
+            message_id: number;
+            /** Format: date-time */
+            occurred_at: string;
+            ref: string;
+            role: string;
+            /** Format: int64 */
+            source_id: number;
+            timezone: string;
+            /** Format: int64 */
+            utc_offset_minutes: number;
         } & {
             [key: string]: unknown;
         };
@@ -2802,6 +3236,37 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        ContactState: {
+            /** Format: date-time */
+            cadence_due_at?: string;
+            cadence_status: string;
+            /** Format: date-time */
+            computed_at: string;
+            /** Format: date-time */
+            first_contact_at?: string;
+            first_contact_ref?: string;
+            inferred_channel?: string;
+            /** Format: int64 */
+            interaction_count: number;
+            /** Format: date-time */
+            last_contact_at?: string;
+            last_contact_channel?: string;
+            last_contact_owner?: string;
+            last_contact_ref?: string;
+            /** Format: int64 */
+            last_contact_source_id?: number;
+            /** Format: date-time */
+            last_inbound_at?: string;
+            last_inbound_ref?: string;
+            /** Format: date-time */
+            last_outbound_at?: string;
+            last_outbound_ref?: string;
+            /** Format: int64 */
+            person_id: number;
+            stale: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         ConversationResponse: {
             /** Format: int64 */
             anchor_id: number;
@@ -2848,6 +3313,11 @@ export interface components {
             slug: string;
             uri_scheme?: string;
         };
+        CreateDailyNoteEntryRequest: {
+            author?: string;
+            body: string;
+            person_ids?: number[] | null;
+        };
         CreatePersonRelationshipRequest: {
             end_date?: string;
             notes?: string | null;
@@ -2882,6 +3352,59 @@ export interface components {
             name: string;
             /** Format: int64 */
             schema_version: number;
+        };
+        DailyNoteEntriesResponse: {
+            entries: components["schemas"]["DailyNoteEntry"][];
+        } & {
+            [key: string]: unknown;
+        };
+        DailyNoteEntry: {
+            author: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            local_date: string;
+            /** Format: int64 */
+            ordinal: number;
+            person_ids: number[] | null;
+            source: string;
+            source_ref?: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DayPage: {
+            entries: components["schemas"]["DailyNoteEntry"][];
+            /** Format: int64 */
+            entry_total_count: number;
+            local_date: string;
+            /** Format: int64 */
+            person_total_count: number;
+            persons: components["schemas"]["DayPerson"][];
+        } & {
+            [key: string]: unknown;
+        };
+        DayPerson: {
+            activity: components["schemas"]["ActivityRef"][];
+            activity_truncated: boolean;
+            /** Format: int64 */
+            direct_count: number;
+            display_name?: string;
+            /** Format: int64 */
+            event_count: number;
+            /** Format: date-time */
+            last_at: string;
+            /** Format: int64 */
+            person_id: number;
+            vcard_uid: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DecideIdentityMatchRequest: {
+            notes?: string;
         };
         DeepSearchResponse: {
             body_contexts?: components["schemas"]["BodySearchContext"][] | null;
@@ -3122,6 +3645,88 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Employment: {
+            /** Format: int64 */
+            address_id?: number;
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            department?: string;
+            description?: string;
+            end_date?: components["schemas"]["PartialDate"];
+            /** Format: int64 */
+            id: number;
+            is_current: boolean;
+            is_primary: boolean;
+            location?: string;
+            /** Format: int64 */
+            organization_id: number;
+            /** Format: int64 */
+            person_id: number;
+            /** Format: int64 */
+            revision: number;
+            role?: string;
+            source: string;
+            source_ref?: string;
+            start_date?: components["schemas"]["PartialDate"];
+            title?: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        EmploymentBody: {
+            /** Format: int64 */
+            address_id?: number | null;
+            /** Format: double */
+            confidence?: number | null;
+            department?: string | null;
+            description?: string | null;
+            end_date?: string | null;
+            is_current?: boolean | null;
+            is_primary?: boolean | null;
+            location?: string | null;
+            /** Format: int64 */
+            organization_id: number;
+            /** Format: int64 */
+            person_id: number;
+            role?: string | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            start_date?: string | null;
+            title?: string | null;
+        };
+        EmploymentProjectionResponse: {
+            department?: string;
+            /** Format: int64 */
+            employment_id: number;
+            /** Format: int64 */
+            organization_id: number;
+            organization_name: string;
+            role?: string;
+            title?: string;
+            vcard: components["schemas"]["EmploymentVCard"];
+        } & {
+            [key: string]: unknown;
+        };
+        EmploymentVCard: {
+            org?: string[] | null;
+            role?: string;
+            title?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        EmploymentsResponse: {
+            employments: components["schemas"]["Employment"][] | null;
+            projection?: components["schemas"]["EmploymentProjectionResponse"];
+        } & {
+            [key: string]: unknown;
+        };
+        EndEmploymentBody: {
+            end_date: string;
+        };
         EntryRow: {
             /** Format: int64 */
             anchor_message_id?: number;
@@ -3189,7 +3794,7 @@ export interface components {
             error: string;
             message: string;
             /** @enum {string} */
-            readiness: "absent" | "interrupted" | "stale_schema" | "drifted";
+            readiness: "absent" | "building" | "interrupted" | "stale_schema" | "drifted";
             recovery_action: string;
         } & {
             [key: string]: unknown;
@@ -3604,6 +4209,78 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        IdentityMatchAcceptResponse: {
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            candidate: components["schemas"]["IdentityMatchCandidate"];
+            /** Format: int64 */
+            identity_revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchCandidate: {
+            basis: string;
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+            decided_by?: string;
+            evidence: components["schemas"]["IdentityMatchEvidence"][] | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            left_id: number;
+            left_kind: string;
+            normalized_value?: string;
+            notes?: string;
+            /** Format: int64 */
+            right_id: number;
+            right_kind: string;
+            scope_kind?: string;
+            scope_value?: string;
+            service_slug?: string;
+            source: string;
+            source_ref?: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchCandidatesResponse: {
+            candidates: components["schemas"]["IdentityMatchCandidate"][] | null;
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchEvidence: {
+            /** Format: int64 */
+            candidate_id: number;
+            /** Format: date-time */
+            created_at: string;
+            detail?: string;
+            evidence_kind: string;
+            evidence_ref?: string;
+            /** Format: int64 */
+            id: number;
+            source: string;
+        } & {
+            [key: string]: unknown;
+        };
+        IdentityMatchRejectResponse: {
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            candidate: components["schemas"]["IdentityMatchCandidate"];
+            /** Format: int64 */
+            identity_revision: number;
+        } & {
+            [key: string]: unknown;
+        };
         IdentitySearchHTTPRequest: {
             cursor?: string;
             identity_query?: string;
@@ -3714,6 +4391,12 @@ export interface components {
             email: string;
             name?: string;
         };
+        MergeOrganizationBody: {
+            /** Format: int64 */
+            losing_organization_id: number;
+            /** Format: int64 */
+            losing_revision: number;
+        };
         MessageDetail: {
             attachments: components["schemas"]["AttachmentInfo"][] | null;
             bcc?: string[] | null;
@@ -3795,6 +4478,351 @@ export interface components {
             label?: string;
             /** Format: date-time */
             started_at?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        Organization: {
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            /** Format: int64 */
+            id: number;
+            kind: string;
+            /** Format: int64 */
+            merged_into_id?: number;
+            name: string;
+            primary_domain?: string;
+            /** Format: date-time */
+            retired_at?: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationAddress: {
+            address_kind: string;
+            country_code?: string;
+            country_name?: string;
+            envelope: components["schemas"]["ValueEnvelope"];
+            extended_address?: string;
+            extended_components?: string;
+            free_text?: string;
+            geo_uri?: string;
+            label?: string;
+            locality?: string;
+            /** Format: int64 */
+            organization_id: number;
+            original_value: string;
+            place_uri?: string;
+            post_office_box?: string;
+            postal_code?: string;
+            region?: string;
+            street_address?: string;
+            timezone?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationAddressBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            address_kind: string;
+            /** Format: double */
+            confidence?: number | null;
+            country_code?: string | null;
+            country_name?: string | null;
+            extended_address?: string | null;
+            extended_components?: string | null;
+            free_text?: string | null;
+            geo_uri?: string | null;
+            label?: string | null;
+            locality?: string | null;
+            /** Format: int64 */
+            ordinal?: number;
+            original_value?: string;
+            place_uri?: string | null;
+            post_office_box?: string | null;
+            postal_code?: string | null;
+            /** Format: int64 */
+            pref?: number | null;
+            region?: string | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            street_address?: string | null;
+            timezone?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationAttributeValue: {
+            /** Format: date-time */
+            active_from: string;
+            /** Format: date-time */
+            active_until?: string;
+            actor?: string;
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            definition_id: number;
+            definition_slug: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            ordinal: number;
+            /** Format: int64 */
+            organization_id: number;
+            source: string;
+            source_ref?: string;
+            /** Format: date-time */
+            superseded_at?: string;
+            value: components["schemas"]["AttributeValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationAttributeWrite: {
+            dry_run: boolean;
+            superseded?: components["schemas"]["OrganizationAttributeValue"];
+            value?: components["schemas"]["OrganizationAttributeValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationAttributesResponse: {
+            values: components["schemas"]["OrganizationAttributeValue"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationBody: {
+            description?: string | null;
+            /** @enum {string} */
+            kind?: "company" | "nonprofit" | "school" | "government" | "household" | "other";
+            name: string;
+            primary_domain?: string | null;
+            retired?: boolean | null;
+        };
+        OrganizationCategory: {
+            category: string;
+            category_normalized: string;
+            envelope: components["schemas"]["ValueEnvelope"];
+            /** Format: int64 */
+            organization_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationCategoryBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            category: string;
+            /** Format: double */
+            confidence?: number | null;
+            /** Format: int64 */
+            ordinal?: number;
+            /** Format: int64 */
+            pref?: number | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationContactPoint: {
+            address_kind: string;
+            envelope: components["schemas"]["ValueEnvelope"];
+            normalization: string;
+            /** Format: int64 */
+            normalization_version: number;
+            normalized_value: string;
+            /** Format: int64 */
+            organization_id: number;
+            original_value: string;
+            scope_kind?: string;
+            scope_value?: string;
+            service_slug?: string;
+            uri?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationContactPointBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: double */
+            confidence?: number | null;
+            /** @enum {string} */
+            contact_kind: "email" | "phone" | "username" | "impp" | "url" | "social" | "calendar" | "contact_uri" | "org_directory" | "language";
+            /** Format: int64 */
+            ordinal?: number;
+            original_value: string;
+            /** Format: int64 */
+            pref?: number | null;
+            scope_kind?: string | null;
+            scope_value?: string | null;
+            service_slug?: string | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            uri?: string | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationCreateBody: {
+            description?: string | null;
+            /** @enum {string} */
+            kind?: "company" | "nonprofit" | "school" | "government" | "household" | "other";
+            name: string;
+            primary_domain?: string | null;
+        };
+        OrganizationIdentifier: {
+            envelope: components["schemas"]["ValueEnvelope"];
+            identifier_kind: string;
+            identifier_value: string;
+            normalized_value: string;
+            /** Format: int64 */
+            organization_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationIdentifierBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: double */
+            confidence?: number | null;
+            /** @enum {string} */
+            identifier_kind: "domain" | "linkedin" | "duns" | "tax_id" | "registry" | "other";
+            identifier_value: string;
+            /** Format: int64 */
+            ordinal?: number;
+            /** Format: int64 */
+            pref?: number | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationMedia: {
+            /** Format: int64 */
+            byte_size?: number;
+            content_hash?: string;
+            envelope: components["schemas"]["ValueEnvelope"];
+            has_data: boolean;
+            media_kind: string;
+            media_type?: string;
+            /** Format: int64 */
+            organization_id: number;
+            original_value: string;
+            uri?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationMediaBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: double */
+            confidence?: number | null;
+            content_hash?: string | null;
+            data?: string;
+            /** @enum {string} */
+            media_kind: "photo" | "logo" | "sound" | "key";
+            media_type?: string | null;
+            /** Format: int64 */
+            ordinal?: number;
+            original_value?: string;
+            /** Format: int64 */
+            pref?: number | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            uri?: string | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationName: {
+            envelope: components["schemas"]["ValueEnvelope"];
+            name: string;
+            name_kind: string;
+            name_normalized: string;
+            /** Format: int64 */
+            organization_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationNameBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: double */
+            confidence?: number | null;
+            name: string;
+            /** @enum {string} */
+            name_kind: "alias" | "legal" | "former" | "abbreviation" | "sort";
+            /** Format: int64 */
+            ordinal?: number;
+            /** Format: int64 */
+            pref?: number | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            type_label?: string | null;
+            type_tokens?: string[] | null;
+            vcard_altid?: string | null;
+            vcard_group?: string | null;
+            vcard_pid?: string[] | null;
+            vcard_prop_id?: string | null;
+            vcard_property?: string | null;
+        };
+        OrganizationProfile: {
+            addresses: components["schemas"]["OrganizationAddress"][] | null;
+            categories: components["schemas"]["OrganizationCategory"][] | null;
+            contact_points: components["schemas"]["OrganizationContactPoint"][] | null;
+            identifiers: components["schemas"]["OrganizationIdentifier"][] | null;
+            media: components["schemas"]["OrganizationMedia"][] | null;
+            names: components["schemas"]["OrganizationName"][] | null;
+            organization: components["schemas"]["Organization"];
+        } & {
+            [key: string]: unknown;
+        };
+        OrganizationProfileBody: {
+            addresses?: components["schemas"]["OrganizationAddressBody"][] | null;
+            categories?: components["schemas"]["OrganizationCategoryBody"][] | null;
+            contact_points?: components["schemas"]["OrganizationContactPointBody"][] | null;
+            identifiers?: components["schemas"]["OrganizationIdentifierBody"][] | null;
+            media?: components["schemas"]["OrganizationMediaBody"][] | null;
+            names?: components["schemas"]["OrganizationNameBody"][] | null;
+        };
+        OrganizationsResponse: {
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            organizations: components["schemas"]["Organization"][] | null;
+            /** Format: int64 */
+            total: number;
         } & {
             [key: string]: unknown;
         };
@@ -4061,6 +5089,39 @@ export interface components {
         PersonDatePatchRequest: {
             add?: components["schemas"]["PersonDateInputRequest"][] | null;
             supersede?: number[] | null;
+        };
+        PersonDay: {
+            /** Format: int64 */
+            direct_count: number;
+            /** Format: int64 */
+            entry_count: number;
+            /** Format: int64 */
+            event_count: number;
+            local_date: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonDayPage: {
+            activity: components["schemas"]["ActivityRef"][];
+            /** Format: int64 */
+            activity_total_count: number;
+            entries: components["schemas"]["DailyNoteEntry"][];
+            /** Format: int64 */
+            entry_total_count: number;
+            local_date: string;
+            /** Format: int64 */
+            person_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonDaysPage: {
+            days: components["schemas"]["PersonDay"][];
+            /** Format: int64 */
+            person_id: number;
+            /** Format: int64 */
+            total_count: number;
+        } & {
+            [key: string]: unknown;
         };
         PersonIdentifier: {
             display_value?: string;
@@ -4584,6 +5645,25 @@ export interface components {
             plain_http_warning: boolean;
         } & {
             [key: string]: unknown;
+        };
+        SetOrganizationAttributeBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: date-time */
+            active_until?: string | null;
+            actor?: string | null;
+            /** Format: double */
+            confidence?: number | null;
+            definition_slug: string;
+            dry_run?: boolean;
+            /** Format: int64 */
+            expected_value_id?: number | null;
+            /** Format: int64 */
+            ordinal?: number | null;
+            /** @enum {string} */
+            source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string | null;
+            value: components["schemas"]["AttributeValue"];
         };
         SetPersonAttributeRequest: {
             /** Format: date-time */
@@ -7769,6 +8849,366 @@ export interface operations {
             };
         };
     };
+    deleteDayEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getActivityDay: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+                /** @description Maximum authored entries to return independently */
+                entry_limit?: number;
+                /** @description Zero-based authored-entry offset */
+                entry_offset?: number;
+                /** @description Maximum activity references previewed for each person */
+                activity_limit_per_person?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDayEntries: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyNoteEntriesResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createDayEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDailyNoteEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyNoteEntry"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listDeletions: {
         parameters: {
             query?: {
@@ -8115,6 +9555,15 @@ export interface operations {
                     "application/json": components["schemas"]["DomainSummary"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Error */
             default: {
                 headers: {
@@ -8302,6 +9751,463 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createEmployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmploymentBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong employment revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Canonical URL of the created employment record */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Employment"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEmployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Employment ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong employment revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Employment"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteEmployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest employment read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Employment ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchEmployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest employment read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Employment ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmploymentBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong employment revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Employment"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    endEmployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest employment read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Employment ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndEmploymentBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong employment revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Employment"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setPrimaryEmployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest employment read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Employment ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong employment revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Employment"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -8893,6 +10799,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityLinkResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listIdentityMatchCandidates: {
+        parameters: {
+            query?: {
+                /** @description Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values */
+                state?: string;
+                /** @description Maximum candidates to return (default 100, max 500) */
+                limit?: number;
+                /** @description Zero-based candidate offset */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchCandidatesResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    acceptIdentityMatchCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identity match candidate ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DecideIdentityMatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchAcceptResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rejectIdentityMatchCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identity match candidate ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DecideIdentityMatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMatchRejectResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -9559,6 +11636,942 @@ export interface operations {
             };
         };
     };
+    listOrganizations: {
+        parameters: {
+            query?: {
+                /** @description Maximum results */
+                limit?: number;
+                /** @description Results to skip */
+                offset?: number;
+                /** @description Include retired organizations */
+                include_retired?: boolean;
+                /** @description Normalized-name search */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationCreateBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Canonical URL of the created organization */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationProfile"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest organization read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest organization read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOrganizationAttributes: {
+        parameters: {
+            query?: {
+                /** @description Include superseded values */
+                include_superseded?: boolean;
+                /** @description Restrict to one definition */
+                definition_slug?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationAttributesResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setOrganizationAttribute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetOrganizationAttributeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationAttributeWrite"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    clearOrganizationAttribute: {
+        parameters: {
+            query?: {
+                /** @description Ordinal for a multi-valued definition */
+                ordinal?: number;
+                /** @description Compare-and-swap: the current value ID expected to be superseded */
+                expected_value_id?: number;
+                /** @description Validate and preview without writing */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+                /** @description Immutable attribute definition slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOrganizationEmployments: {
+        parameters: {
+            query?: {
+                /** @description Only current employments */
+                current_only?: boolean;
+                /** @description Maximum results */
+                limit?: number;
+                /** @description Results to skip */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmploymentsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOrganizationHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationProfile"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    mergeOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest organization read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeOrganizationBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    putOrganizationProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest organization read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Organization ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationProfileBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong organization revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationProfile"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOrganizationProfileMediaContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization ID */
+                id: number;
+                /** @description Structured organization profile media value ID */
+                media_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     searchPeople: {
         parameters: {
             query?: never;
@@ -9638,6 +12651,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonSummary"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -10688,6 +13710,350 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonContactState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactState"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonActivityDays: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first local calendar date */
+                from?: string;
+                /** @description Inclusive last local calendar date */
+                to?: string;
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDaysPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonActivityDay: {
+        parameters: {
+            query?: {
+                /** @description Maximum primary rows to return */
+                limit?: number;
+                /** @description Zero-based primary row offset */
+                offset?: number;
+                /** @description Maximum authored entries to return independently */
+                entry_limit?: number;
+                /** @description Zero-based authored-entry offset */
+                entry_offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Positive durable identifier */
+                id: number;
+                /** @description Exact local calendar date */
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDayPage"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonEmployments: {
+        parameters: {
+            query?: {
+                /** @description Only current employments */
+                current_only?: boolean;
+                /** @description Maximum results */
+                limit?: number;
+                /** @description Results to skip */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmploymentsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11972,13 +15338,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Error */
+            /** @description Service Unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

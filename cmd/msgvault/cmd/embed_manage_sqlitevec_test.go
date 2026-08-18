@@ -69,7 +69,7 @@ func TestFillFullCoverageUsesEmbeddingScopeForEmbeddedCount(t *testing.T) {
 	}), "upsert in-scope and out-of-scope vectors")
 
 	row := embeddingGenerationRow{ID: 2}
-	require.NoError(fillFullCoverage(ctx, backend, &row))
+	require.NoError(fillFullCoverage(ctx, backend, cfg.Vector.Embed.Scope.BuildScope(), &row))
 
 	assert.Equal(int64(1), row.LiveCount, "only sms is in scope")
 	assert.Equal(int64(1), row.EmbeddedCount, "out-of-scope email vector is excluded")

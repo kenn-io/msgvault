@@ -335,14 +335,6 @@ func validateAttachmentConsumerKey(key string) error {
 	return nil
 }
 
-func nullInt64Pointer(value sql.NullInt64) *int64 {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Int64
-	return &result
-}
-
 func nullStringPointer(value sql.NullString) *string {
 	if !value.Valid {
 		return nil

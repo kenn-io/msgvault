@@ -33,10 +33,10 @@ const identityRevisionKey = "identity_revision"
 // linkEdge is one row of participant_links, always normalized so a < b.
 type linkEdge struct{ a, b int64 }
 
-// edgeRows is satisfied by both *sql.Rows (non-transactional queries) and
-// *loggedRows (queries issued through a *loggedTx), letting loadLinkEdges
-// and loadLinkEdgesTx share one scan routine.
-type edgeRows interface {
+// rowsScanner is satisfied by both *sql.Rows (non-transactional queries) and
+// *loggedRows (queries issued through a *loggedTx), letting store read paths
+// share scan routines without depending on one concrete query type.
+type rowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
 	Close() error
@@ -45,7 +45,7 @@ type edgeRows interface {
 
 // scanLinkEdges drains rows into a slice of edges, closing rows before
 // returning.
-func scanLinkEdges(rows edgeRows) ([]linkEdge, error) {
+func scanLinkEdges(rows rowsScanner) ([]linkEdge, error) {
 	defer func() { _ = rows.Close() }()
 	var edges []linkEdge
 	for rows.Next() {
@@ -61,7 +61,13 @@ func scanLinkEdges(rows edgeRows) ([]linkEdge, error) {
 // loadLinkEdges reads every participant_links row outside of a transaction.
 // Used by the read-only cluster resolvers.
 func (s *Store) loadLinkEdges() ([]linkEdge, error) {
-	rows, err := s.db.Query(`SELECT participant_a, participant_b FROM participant_links`)
+	return s.loadLinkEdgesContext(context.Background())
+}
+
+// loadLinkEdgesContext is the context-aware form of loadLinkEdges.
+func (s *Store) loadLinkEdgesContext(ctx context.Context) ([]linkEdge, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT participant_a, participant_b FROM participant_links`)
 	if err != nil {
 		return nil, fmt.Errorf("query participant links: %w", err)
 	}
@@ -142,20 +148,33 @@ func normalizeEdge(a, b int64) (int64, int64) {
 	return a, b
 }
 
-// rowQuerier is satisfied by both *loggedDB and *loggedTx, letting
-// readIdentityRevision serve both the non-transactional IdentityRevision
-// and the in-transaction currentIdentityRevisionTx from one implementation.
+// rowQuerier is satisfied by both *loggedDB and *loggedTx, letting revision
+// readers share one interface.
 type rowQuerier interface {
 	QueryRow(query string, args ...any) *sql.Row
+}
+
+type contextRowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // readIdentityRevision reads the archive_metadata identity revision
 // through q (0 if the row does not exist yet).
 func readIdentityRevision(q rowQuerier) (int64, error) {
-	var value string
-	err := q.QueryRow(
+	return scanIdentityRevision(q.QueryRow(
 		`SELECT value FROM archive_metadata WHERE key = ?`, identityRevisionKey,
-	).Scan(&value)
+	))
+}
+
+func readIdentityRevisionContext(ctx context.Context, q contextRowQuerier) (int64, error) {
+	return scanIdentityRevision(q.QueryRowContext(ctx,
+		`SELECT value FROM archive_metadata WHERE key = ?`, identityRevisionKey,
+	))
+}
+
+func scanIdentityRevision(row scanner) (int64, error) {
+	var value string
+	err := row.Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -180,6 +199,12 @@ func (s *Store) IdentityRevision() (int64, error) {
 // it, for idempotent Link/Unlink calls that made no change.
 func (s *Store) currentIdentityRevisionTx(tx *loggedTx) (int64, error) {
 	return readIdentityRevision(tx)
+}
+
+func (s *Store) currentIdentityRevisionTxContext(
+	ctx context.Context, tx *loggedTx,
+) (int64, error) {
+	return readIdentityRevisionContext(ctx, tx)
 }
 
 // bumpIdentityRevision increments the revision inside tx and returns the
@@ -254,8 +279,14 @@ func (s *Store) lockIdentityMutationTxContext(
 // caller hit an opaque foreign key violation from the INSERT (LinkParticipants)
 // or silently no-op on a nonexistent pair (UnlinkParticipants).
 func (s *Store) verifyParticipantsExistTx(tx *loggedTx, lo, hi int64) error {
+	return s.verifyParticipantsExistTxContext(context.Background(), tx, lo, hi)
+}
+
+func (s *Store) verifyParticipantsExistTxContext(
+	ctx context.Context, tx *loggedTx, lo, hi int64,
+) error {
 	var count int
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`, lo, hi,
 	).Scan(&count); err != nil {
 		return fmt.Errorf("verify participants exist: %w", err)
@@ -278,61 +309,131 @@ func (s *Store) verifyParticipantsExistTx(tx *loggedTx, lo, hi int64) error {
 // revision), so person membership never drifts behind cluster membership.
 // Returns the identity revision after the call.
 func (s *Store) LinkParticipants(a, b int64) (int64, error) {
+	revision, _, err := s.linkParticipantsContext(context.Background(), a, b)
+	return revision, err
+}
+
+// linkParticipantsContext is the shared participant-link transaction. The
+// boolean reports whether this call inserted a new edge.
+func (s *Store) linkParticipantsContext(
+	ctx context.Context, a, b int64,
+) (revision int64, linked bool, err error) {
+	return s.linkParticipantsContextGuarded(ctx, a, b, nil)
+}
+
+func (s *Store) linkParticipantsContextGuarded(
+	ctx context.Context,
+	a, b int64,
+	guard func(context.Context, *loggedTx) error,
+) (revision int64, linked bool, err error) {
+	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, guard)
+}
+
+// linkParticipantsContextGuardedOwned is the guarded link transaction with an
+// optional identity-match-candidate owner. A zero owner preserves the
+// ordinary user/import link path. The owner is written with the edge itself,
+// under the identity mutation lock, so a later system rejection can
+// distinguish an edge this candidate inserted from a pre-existing manual edge.
+func (s *Store) linkParticipantsContextGuardedOwned(
+	ctx context.Context,
+	a, b, ownerCandidateID int64,
+	guard func(context.Context, *loggedTx) error,
+) (revision int64, linked bool, err error) {
 	if a == b || a <= 0 || b <= 0 {
-		return 0, fmt.Errorf("link participants: ids must be distinct positive IDs (got %d, %d): %w",
+		return 0, false, fmt.Errorf("link participants: ids must be distinct positive IDs (got %d, %d): %w",
 			a, b, ErrInvalidParticipantID)
 	}
 	lo, hi := normalizeEdge(a, b)
 
-	var revision int64
-	err := s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.verifyParticipantsExistTx(tx, lo, hi); err != nil {
+		if guard != nil {
+			if err := guard(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTx(tx)
+		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
 		personID, unionMembers, err := s.personForClusterUnionTx(
-			context.Background(), tx, lo, hi, edges,
+			ctx, tx, lo, hi, edges,
 		)
 		if err != nil {
 			return err
 		}
 		for _, e := range edges {
 			if e.a == lo && e.b == hi {
-				revision, err = s.currentIdentityRevisionTx(tx)
+				if ownerCandidateID == 0 {
+					result, updateErr := tx.ExecContext(ctx, `UPDATE participant_links
+						SET identity_match_candidate_id = NULL
+						WHERE participant_a = ? AND participant_b = ?
+						  AND identity_match_candidate_id IS NOT NULL`, lo, hi)
+					if updateErr != nil {
+						return fmt.Errorf("confirm participant link: %w", updateErr)
+					}
+					changed, updateErr := result.RowsAffected()
+					if updateErr != nil {
+						return fmt.Errorf("count confirmed participant link: %w", updateErr)
+					}
+					if changed > 0 {
+						revision, updateErr = s.bumpIdentityRevisionContext(ctx, tx)
+						return updateErr
+					}
+				}
+				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
 				return err
 			}
 		}
 		if _, connected := componentOf(lo, edges)[hi]; connected {
+			// An accepted identity assertion that is already satisfied through
+			// another path has completed its application work. Its guard may
+			// have cleared durable recovery state, so commit that update while
+			// preserving ErrAlreadyLinked for ordinary manual link callers.
+			if ownerCandidateID > 0 {
+				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				return err
+			}
 			return ErrAlreadyLinked
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`,
-			lo, hi); err != nil {
-			return fmt.Errorf("insert participant link: %w", err)
+		var insertErr error
+		if ownerCandidateID > 0 {
+			_, insertErr = tx.ExecContext(ctx,
+				`INSERT INTO participant_links
+				 (participant_a, participant_b, identity_match_candidate_id)
+				 VALUES (?, ?, ?)`, lo, hi, ownerCandidateID)
+		} else {
+			_, insertErr = tx.ExecContext(ctx,
+				`INSERT INTO participant_links (participant_a, participant_b)
+				 VALUES (?, ?)`, lo, hi)
+		}
+		if insertErr != nil {
+			return fmt.Errorf("insert participant link: %w", insertErr)
 		}
 		if personID != 0 {
 			changed, err := s.bindPersonParticipantsTx(
-				context.Background(), tx, personID, unionMembers)
+				ctx, tx, personID, unionMembers)
 			if err != nil {
 				return err
 			}
 			if changed {
-				if err := s.bumpPersonRevisionsTx(
-					context.Background(), tx, personID); err != nil {
+				if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 					return err
 				}
 			}
 		}
-		revision, err = s.bumpIdentityRevision(tx)
+		revision, err = s.bumpIdentityRevisionContext(ctx, tx)
+		if err == nil {
+			linked = true
+		}
 		return err
 	})
-	return revision, err
+	return revision, linked, err
 }
 
 // UnlinkParticipants removes the edge between a and b, if present. Returns
@@ -350,6 +451,21 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 		if err := s.verifyParticipantsExistTx(tx, lo, hi); err != nil {
 			return err
 		}
+		edges, err := s.loadLinkEdgesTx(tx)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, edge := range edges {
+			if edge.a == lo && edge.b == hi {
+				found = true
+				break
+			}
+		}
+		if !found {
+			revision, err = s.currentIdentityRevisionTx(tx)
+			return err
+		}
 		res, err := tx.Exec(
 			`DELETE FROM participant_links WHERE participant_a = ? AND participant_b = ?`,
 			lo, hi)
@@ -364,10 +480,109 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			revision, err = s.currentIdentityRevisionTx(tx)
 			return err
 		}
+		if err := s.rejectAcceptedIdentityMatchesAcrossUnlinkTx(
+			tx, lo, hi, edges,
+		); err != nil {
+			return err
+		}
 		revision, err = s.bumpIdentityRevision(tx)
 		return err
 	})
 	return revision, err
+}
+
+// rejectAcceptedIdentityMatchesAcrossUnlinkTx suppresses every accepted
+// participant candidate whose endpoints would cross the two components made
+// by removing (a, b). The direct edge owner is not sufficient: another
+// accepted candidate may have observed the pair already connected and can
+// otherwise recreate the edge during accepted-match recovery. The candidate
+// scan is restricted to the component that contained the removed edge, and
+// the caller already holds the identity-mutation lock.
+func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
+	tx *loggedTx, a, b int64, edges []linkEdge,
+) error {
+	original := componentOf(a, edges)
+	if _, ok := original[b]; !ok {
+		return nil
+	}
+	remaining := make([]linkEdge, 0, len(edges)-1)
+	removed := false
+	for _, edge := range edges {
+		if edge.a == a && edge.b == b {
+			removed = true
+			continue
+		}
+		remaining = append(remaining, edge)
+	}
+	if !removed {
+		return nil
+	}
+	left := componentOf(a, remaining)
+	right := componentOf(b, remaining)
+	if _, stillConnected := left[b]; stillConnected {
+		return nil
+	}
+
+	// Scan accepted participant candidates without interpolating the component
+	// into an IN list: a large identity cluster can exceed SQLite or PostgreSQL
+	// bind-parameter limits. The component and split checks below keep the
+	// result bounded to the original cluster in memory.
+	rows, err := tx.Query(`
+		SELECT id, left_id, right_id
+		FROM identity_match_candidates
+		WHERE state = ? AND left_kind = ? AND right_kind = ?`,
+		IdentityMatchStateAccepted,
+		IdentityMatchParticipant,
+		IdentityMatchParticipant,
+	)
+	if err != nil {
+		return fmt.Errorf("find accepted identity matches crossing unlink: %w", err)
+	}
+	candidateIDs := make([]int64, 0)
+	for rows.Next() {
+		var candidateID, leftID, rightID int64
+		if err := rows.Scan(&candidateID, &leftID, &rightID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan accepted identity match crossing unlink: %w", err)
+		}
+		_, leftInOriginal := original[leftID]
+		_, rightInOriginal := original[rightID]
+		if !leftInOriginal || !rightInOriginal {
+			continue
+		}
+		_, leftInLeft := left[leftID]
+		_, leftInRight := right[leftID]
+		_, rightInLeft := left[rightID]
+		_, rightInRight := right[rightID]
+		if (leftInLeft && rightInRight) || (leftInRight && rightInLeft) {
+			candidateIDs = append(candidateIDs, candidateID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate accepted identity matches crossing unlink: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close accepted identity matches crossing unlink: %w", err)
+	}
+	if len(candidateIDs) == 0 {
+		return nil
+	}
+
+	for _, candidateID := range candidateIDs {
+		if _, err := tx.Exec(`
+			UPDATE identity_match_candidates SET
+				state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
+				pre_conflict_state = NULL, application_pending = FALSE,
+				updated_at = `+s.dialect.Now()+`
+			WHERE state = ? AND id = ?`,
+			IdentityMatchStateRejected, "user", IdentityMatchStateAccepted,
+			candidateID,
+		); err != nil {
+			return fmt.Errorf("reject identity match %d crossing unlink: %w", candidateID, err)
+		}
+	}
+	return nil
 }
 
 // rewriteLinksForMerge repoints link edges from loser to winner when a
@@ -381,8 +596,9 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 // create a cycle. Links a-x, x-y, y-b form a path; merging b into a
 // collapses the path's endpoints together, and repointing y-b to y-a alone
 // would yield the cycle a-x-y-a. So instead of repointing in place, this
-// rebuilds the entire affected cluster as a canonical star rooted at its
-// smallest member ID, which is always cycle-free.
+// rebuilds the affected cluster as a cycle-free spanning tree of the remapped
+// original edges. Keeping those edges, rather than inventing a canonical
+// shape, gives every rebuilt edge real manual or candidate provenance.
 //
 // Both callers (MergeParticipants, mergeParticipant) bump the identity
 // revision unconditionally after calling this, regardless of whether it
@@ -419,7 +635,11 @@ func (s *Store) rewriteLinksForMergeContext(
 		// simply disappears rather than being replaced by a self-loop.
 		return deleteMergeEdge(ctx, tx, loser, winner)
 	}
-	return rebuildClusterAsStar(ctx, tx, members)
+	owners, err := loadParticipantLinkOwnersTxContext(ctx, tx)
+	if err != nil {
+		return err
+	}
+	return rebuildClusterAsSpanningTree(ctx, tx, members, owners, loser, winner)
 }
 
 // linksReference reports whether any edge in edges has loser or winner as
@@ -459,11 +679,44 @@ func deleteMergeEdge(ctx context.Context, tx *loggedTx, loser, winner int64) err
 	return nil
 }
 
-// rebuildClusterAsStar deletes every link edge touching a member of the
-// cluster, then reinserts a canonical star rooted at the smallest member
-// ID — the one shape vertex contraction can never turn into a cycle.
-func rebuildClusterAsStar(
+type participantLinkOwner struct {
+	a, b  int64
+	owner int64
+}
+
+func loadParticipantLinkOwnersTxContext(
+	ctx context.Context, tx *loggedTx,
+) ([]participantLinkOwner, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT participant_a, participant_b,
+			COALESCE(identity_match_candidate_id, 0)
+		 FROM participant_links`)
+	if err != nil {
+		return nil, fmt.Errorf("query participant link ownership: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	owners := make([]participantLinkOwner, 0)
+	for rows.Next() {
+		var owner participantLinkOwner
+		if err := rows.Scan(&owner.a, &owner.b, &owner.owner); err != nil {
+			return nil, fmt.Errorf("scan participant link ownership: %w", err)
+		}
+		owners = append(owners, owner)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query participant link ownership: %w", err)
+	}
+	return owners, nil
+}
+
+// rebuildClusterAsSpanningTree deletes every link edge touching a member of
+// the cluster, then reinserts a deterministic spanning tree selected from the
+// remapped original edges. Manual support wins when old edges collapse;
+// otherwise the lowest candidate ID owns the edge. Because no replacement
+// edge is invented, every rebuilt edge retains real provenance.
+func rebuildClusterAsSpanningTree(
 	ctx context.Context, tx *loggedTx, members map[int64]struct{},
+	owners []participantLinkOwner, loser, winner int64,
 ) error {
 	ids := make([]int64, 0, len(members))
 	for m := range members {
@@ -471,21 +724,120 @@ func rebuildClusterAsStar(
 	}
 	slices.Sort(ids)
 
+	contributions := mergeParticipantLinkOwners(owners, loser, winner)
+	newEdges := participantLinkSpanningTree(members, contributions)
+	if len(newEdges) != len(ids)-1 {
+		return errors.New("rebuild merged participant cluster: remapped links are disconnected")
+	}
 	if err := deleteClusterEdges(ctx, tx, ids); err != nil {
 		return err
 	}
 
-	canonical := ids[0]
-	for _, other := range ids[1:] {
-		lo, hi := normalizeEdge(canonical, other)
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`,
-			lo, hi,
-		); err != nil {
-			return fmt.Errorf("insert canonical star link: %w", err)
+	for _, edge := range newEdges {
+		var insertErr error
+		if owner := contributions[edge]; owner != 0 {
+			_, insertErr = tx.ExecContext(ctx,
+				`INSERT INTO participant_links
+				 (participant_a, participant_b, identity_match_candidate_id)
+				 VALUES (?, ?, ?)`, edge[0], edge[1], owner)
+		} else {
+			_, insertErr = tx.ExecContext(ctx,
+				`INSERT INTO participant_links (participant_a, participant_b)
+				 VALUES (?, ?)`, edge[0], edge[1])
+		}
+		if insertErr != nil {
+			return fmt.Errorf("insert merged participant link: %w", insertErr)
 		}
 	}
 	return nil
+}
+
+func mergeParticipantLinkOwners(
+	owners []participantLinkOwner,
+	loser, winner int64,
+) map[[2]int64]int64 {
+	result := make(map[[2]int64]int64)
+	manual := make(map[[2]int64]struct{})
+	for _, old := range owners {
+		a, b := old.a, old.b
+		if a == loser {
+			a = winner
+		}
+		if b == loser {
+			b = winner
+		}
+		if a == b {
+			continue
+		}
+		a, b = normalizeEdge(a, b)
+		edge := [2]int64{a, b}
+		if old.owner == 0 {
+			result[edge] = 0
+			manual[edge] = struct{}{}
+			continue
+		}
+		if _, manualEdge := manual[edge]; manualEdge {
+			continue
+		}
+		if prior, exists := result[edge]; !exists || old.owner < prior {
+			result[edge] = old.owner
+		}
+	}
+	return result
+}
+
+func participantLinkSpanningTree(
+	members map[int64]struct{},
+	contributions map[[2]int64]int64,
+) [][2]int64 {
+	edges := make([][2]int64, 0, len(contributions))
+	for edge := range contributions {
+		if _, ok := members[edge[0]]; !ok {
+			continue
+		}
+		if _, ok := members[edge[1]]; !ok {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	slices.SortFunc(edges, func(a, b [2]int64) int {
+		aManual, bManual := contributions[a] == 0, contributions[b] == 0
+		if aManual != bManual {
+			if aManual {
+				return -1
+			}
+			return 1
+		}
+		if a[0] < b[0] || (a[0] == b[0] && a[1] < b[1]) {
+			return -1
+		}
+		if a == b {
+			return 0
+		}
+		return 1
+	})
+
+	parent := make(map[int64]int64, len(members))
+	for member := range members {
+		parent[member] = member
+	}
+	var find func(int64) int64
+	find = func(node int64) int64 {
+		if parent[node] != node {
+			parent[node] = find(parent[node])
+		}
+		return parent[node]
+	}
+	tree := make([][2]int64, 0, len(members)-1)
+	for _, edge := range edges {
+		aRoot, bRoot := find(edge[0]), find(edge[1])
+		if aRoot == bRoot {
+			continue
+		}
+		parent[bRoot] = aRoot
+		tree = append(tree, edge)
+	}
+	return tree
 }
 
 // deleteClusterEdges removes every link edge with an endpoint in ids. Any

@@ -117,6 +117,21 @@ func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.Import
 	if sum.ChatsReopened > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d chats reopened for backfilled history", sum.ChatsReopened)
 	}
+	if sum.ObservationsRecorded > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d address observations", sum.ObservationsRecorded)
+	}
+	if sum.IdentityAutoResolved > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identities resolved", sum.IdentityAutoResolved)
+	}
+	if sum.IdentityCandidates > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity suggestions", sum.IdentityCandidates)
+	}
+	if sum.IdentityConflicts > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity conflicts", sum.IdentityConflicts)
+	}
+	if sum.IdentityReplayErrors > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d identity replay pending", sum.IdentityReplayErrors)
+	}
 	if sum.AttachmentsDownloaded > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d attachments", sum.AttachmentsDownloaded)
 	}

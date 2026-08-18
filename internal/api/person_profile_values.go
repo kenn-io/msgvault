@@ -372,6 +372,7 @@ func isPersonProfileValidationError(err error) bool {
 		store.ErrInvalidProfilePref, store.ErrInvalidProfileOrdinal, store.ErrInvalidPartialDate,
 		store.ErrInvalidPersonNameKind, store.ErrPersonNameValueMissing,
 		store.ErrInvalidContactAddressKind, store.ErrContactPointValueMissing,
+		store.ErrProviderIdentityNotExportable,
 		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing,
 		store.ErrInvalidPersonDateKind, store.ErrPersonDateValueMissing,
 		store.ErrPersonCategoryEmpty, store.ErrInvalidPersonMediaKind,
@@ -391,7 +392,7 @@ func isPersonProfileValidationError(err error) bool {
 func writePersonStructuredProfile(
 	w http.ResponseWriter, status int, profile *store.PersonProfile,
 ) {
-	w.Header().Set("ETag", personETag(profile.Person))
+	w.Header().Set(etagHeaderName, personETag(profile.Person))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, profile)
 }

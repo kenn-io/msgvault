@@ -113,6 +113,7 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("vector.embed.schedule.cron", "search", nil, func(c *config.Config) string { return c.Vector.Embed.Schedule.Cron }),
 	boolSetting("vector.embed.schedule.run_after_sync", "search", func(c *config.Config) bool { return c.Vector.Embed.Schedule.RunAfterSync }),
 	stringArraySetting("vector.embed.scope.message_types", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.MessageTypes }),
+	stringArraySetting("vector.embed.scope.accounts", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.Accounts }),
 	intSetting("vector.search.rrf_k", "search", func(c *config.Config) int { return c.Vector.Search.RRFK }),
 	intSetting("vector.search.k_per_signal", "search", func(c *config.Config) int { return c.Vector.Search.KPerSignal }),
 	numberSetting("vector.search.subject_boost", "search", func(c *config.Config) float64 { return c.Vector.Search.SubjectBoost }),
@@ -155,7 +156,7 @@ func (s *Server) registerSettingsRoutes(api huma.API) {
 
 func addSettingsETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong content hash for optimistic concurrency",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},
@@ -212,7 +213,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", snapshot.ETag)
+	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, buildSettingsResponse(cfg, s.settingsPendingRestart.Load()))
 }
@@ -287,7 +288,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", snapshot.ETag)
+	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, buildSettingsResponse(loaded, true))
 }

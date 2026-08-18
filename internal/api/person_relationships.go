@@ -158,7 +158,7 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 	listReviews := rawAPIV1Operation("listPersonRelationshipReviews", http.MethodGet, "/person-relationship-reviews", "List imported RELATED values awaiting review")
 	listReviews.Parameters = append(listReviews.Parameters,
 		&huma.Param{Name: "status", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"pending", "accepted", "rejected"}}},
-		&huma.Param{Name: "person_id", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}},
+		&huma.Param{Name: "person_id", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}},
 	)
 	listReviews.Responses = jsonResponsesFor[RelationshipReviewsResponse](api)
 	addErrorResponses(api, listReviews.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
@@ -497,30 +497,30 @@ func (s *Server) writeRelationshipError(w http.ResponseWriter, err error) {
 }
 
 func writeRelationshipType(w http.ResponseWriter, status int, relationshipType *store.RelationshipType) {
-	w.Header().Set("ETag", fmt.Sprintf(`"relationship-type-%d-r%d"`, relationshipType.ID, relationshipType.Revision))
+	w.Header().Set(etagHeaderName, fmt.Sprintf(`"relationship-type-%d-r%d"`, relationshipType.ID, relationshipType.Revision))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, relationshipType)
 }
 func writePersonRelationship(w http.ResponseWriter, status int, edge *store.PersonRelationship) {
-	w.Header().Set("ETag", fmt.Sprintf(`"person-relationship-%d-r%d"`, edge.ID, edge.Revision))
+	w.Header().Set(etagHeaderName, fmt.Sprintf(`"person-relationship-%d-r%d"`, edge.ID, edge.Revision))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, edge)
 }
 
 func addRelationshipIDParameter(operation *huma.Operation, description string) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: description, Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: description, Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
 }
 func addRelationshipIfMatchParameter(operation *huma.Operation, subject string) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: "header", Required: true, Description: "Strong ETag returned by the latest " + subject + " read", Schema: &huma.Schema{Type: huma.TypeString}})
 }
 func addRelationshipTypeHeaders(response *huma.Response, location bool) {
-	response.Headers = map[string]*huma.Param{"ETag": {Description: "Strong relationship type revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
+	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong relationship type revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
 	if location {
 		response.Headers["Location"] = &huma.Param{Description: "Created relationship type", Schema: &huma.Schema{Type: huma.TypeString}}
 	}
 }
 func addPersonRelationshipHeaders(response *huma.Response, location bool) {
-	response.Headers = map[string]*huma.Param{"ETag": {Description: "Strong person relationship revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
+	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong person relationship revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
 	if location {
 		response.Headers["Location"] = &huma.Param{Description: "Created person relationship", Schema: &huma.Schema{Type: huma.TypeString}}
 	}

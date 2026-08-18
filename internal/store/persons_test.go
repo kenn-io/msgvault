@@ -20,10 +20,15 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	alias := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
 	_, err := f.Store.LinkParticipants(alice, alias)
 	require.NoError(err)
+	revisionBeforePromotion, err := f.Store.IdentityRevision()
+	require.NoError(err)
 
 	created, wasCreated, err := f.Store.CreatePersonFromParticipant(alias)
 	require.NoError(err)
 	assert.True(wasCreated)
+	revisionAfterPromotion, err := f.Store.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBeforePromotion+1, revisionAfterPromotion)
 	assert.Positive(created.ID)
 	assert.Regexp(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, created.VCardUID)
 	assert.Nil(created.DisplayName)
@@ -33,6 +38,9 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	promotedAgain, wasCreated, err := f.Store.CreatePersonFromParticipant(alice)
 	require.NoError(err)
 	assert.False(wasCreated)
+	revisionAfterRepromotion, err := f.Store.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionAfterPromotion, revisionAfterRepromotion)
 	assert.Equal(created.ID, promotedAgain.ID)
 	assert.Equal(created.VCardUID, promotedAgain.VCardUID)
 
@@ -161,6 +169,37 @@ func TestLinkWithoutPersonsBindsNothing(t *testing.T) {
 	assert.Empty(persons)
 }
 
+func TestRepromotionThatFillsBindingBumpsIdentityRevisionOnce(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant(
+		"promotion-fill@example.com", "Promotion Fill", "example.com")
+	aliasID := f.EnsureParticipant(
+		"promotion-fill-alias@example.com", "Promotion Fill Alias", "example.com")
+	person, created, err := f.Store.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	require.True(created)
+
+	// Simulate a pre-chokepoint archive where the cluster edge exists but its
+	// newly connected member was never carried into person_participants.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)
+	`), participantID, aliasID)
+	require.NoError(err)
+	revisionBefore, err := f.Store.IdentityRevision()
+	require.NoError(err)
+
+	promoted, wasCreated, err := f.Store.CreatePersonFromParticipant(aliasID)
+	require.NoError(err)
+	assert.False(wasCreated)
+	assert.Equal(person.ID, promoted.ID)
+	assert.Equal([]int64{participantID, aliasID}, promoted.ParticipantIDs)
+	revisionAfter, err := f.Store.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBefore+1, revisionAfter)
+}
+
 func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -243,13 +282,21 @@ func TestDeletePersonRetiresProfileAndUnblocksLinking(t *testing.T) {
 	require.NoError(err)
 	bobPerson, _, err := f.Store.CreatePersonFromParticipant(bob)
 	require.NoError(err)
+	revisionBeforeFailedDeletes, err := f.Store.IdentityRevision()
+	require.NoError(err)
 
 	err = f.Store.DeletePerson(bobPerson.ID, bobPerson.Revision+1)
 	require.ErrorIs(err, store.ErrPersonRevisionConflict)
 	err = f.Store.DeletePerson(bobPerson.ID+1000, 1)
 	require.ErrorIs(err, store.ErrPersonNotFound)
+	revisionAfterFailedDeletes, err := f.Store.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBeforeFailedDeletes, revisionAfterFailedDeletes)
 
 	require.NoError(f.Store.DeletePerson(bobPerson.ID, bobPerson.Revision))
+	revisionAfterDelete, err := f.Store.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(revisionBeforeFailedDeletes+1, revisionAfterDelete)
 	_, err = f.Store.GetPerson(bobPerson.ID)
 	require.ErrorIs(err, store.ErrPersonNotFound)
 
