@@ -34,6 +34,11 @@ var (
 	multimodalRetryHash       string
 )
 
+const (
+	multimodalStatusSubcommand = "status"
+	multimodalBuildSubcommand  = "build"
+)
+
 var multimodalCmd = &cobra.Command{Use: "multimodal", Short: "Manage and search visual attachment embeddings"}
 
 var multimodalSearchCmd = &cobra.Command{
@@ -122,7 +127,7 @@ var multimodalSearchCmd = &cobra.Command{
 }
 
 var multimodalStatusCmd = &cobra.Command{
-	Use: "status", Short: "Show visual attachment embedding status", Args: cobra.NoArgs,
+	Use: multimodalStatusSubcommand, Short: "Show visual attachment embedding status", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -147,7 +152,7 @@ var multimodalStatusCmd = &cobra.Command{
 }
 
 var multimodalBuildCmd = &cobra.Command{
-	Use: "build", Short: "Consent and build visual attachment embeddings", Args: cobra.NoArgs,
+	Use: multimodalBuildSubcommand, Short: "Consent and build visual attachment embeddings", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !multimodalBuildYes {
 			return usageErr(cmd, errors.New("hosted visual processing sends eligible attachment bytes and bounded message context to the configured provider; pass --yes to continue"))
