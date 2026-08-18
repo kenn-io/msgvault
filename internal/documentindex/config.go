@@ -351,10 +351,14 @@ func (c *DocumentsConfig) ResolveAPIKey() (string, error) {
 	return value, nil
 }
 
-// ProfileFingerprint binds consent and immutable extraction output to every
-// policy field that can change uploaded bytes, output, or privacy posture.
-func (c *DocumentsConfig) ProfileFingerprint(allowedMediaTypes []string) (string, error) {
-	encoded, err := c.ProfilePolicyJSON(allowedMediaTypes)
+// ProfileFingerprint binds consent and immutable extraction output to the
+// validated capability evidence and every policy field that can change
+// uploaded bytes, output, or privacy posture.
+func (c *DocumentsConfig) ProfileFingerprint(
+	manifest mistral.CapabilityManifest,
+	allowedMediaTypes []string,
+) (string, error) {
+	encoded, err := c.ProfilePolicyJSON(manifest, allowedMediaTypes)
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +368,10 @@ func (c *DocumentsConfig) ProfileFingerprint(allowedMediaTypes []string) (string
 
 // ProfilePolicyJSON is the canonical non-secret policy persisted with an
 // immutable extraction profile. Its digest is the consent fingerprint.
-func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte, error) {
+func (c *DocumentsConfig) ProfilePolicyJSON(
+	manifest mistral.CapabilityManifest,
+	allowedMediaTypes []string,
+) ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -374,6 +381,10 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 	policy, err := c.MistralPolicy()
 	if err != nil {
 		return nil, err
+	}
+	documentPolicyFingerprint, err := policy.Fingerprint(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint reusable document policy: %w", err)
 	}
 	values := policy.Values()
 	normalizePolicy := values.Normalization
@@ -396,6 +407,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 		MaxEstimatedCostUSDPerRun float64  `json:"max_estimated_cost_usd_per_run"`
 		MessageTypes              []string `json:"message_types"`
 		AllowedMediaTypes         []string `json:"allowed_media_types"`
+		DocumentPolicyFingerprint string   `json:"document_policy_fingerprint"`
 		Lexical                   bool     `json:"lexical"`
 		StoreChunkText            bool     `json:"store_chunk_text"`
 		ExtractHeader             bool     `json:"extract_header"`
@@ -418,7 +430,8 @@ func (c *DocumentsConfig) ProfilePolicyJSON(allowedMediaTypes []string) ([]byte,
 		MaxPagesPerRun:            c.MaxPagesPerRun,
 		MaxEstimatedCostUSDPerRun: c.MaxEstimatedCostUSDPerRun,
 		MessageTypes:              slices.Clone(c.Scope.MessageTypes), AllowedMediaTypes: mediaTypes,
-		Lexical: c.LexicalEnabled(), StoreChunkText: c.StoresChunkText(),
+		DocumentPolicyFingerprint: documentPolicyFingerprint,
+		Lexical:                   c.LexicalEnabled(), StoreChunkText: c.StoresChunkText(),
 		ExtractHeader: true, ExtractFooter: true,
 		NormalizationVersion: normalizePolicy.Version,
 		MaxUnitChars:         normalizePolicy.MaxUnitChars, MaxSourceUnitBytes: normalizePolicy.MaxSourceUnitBytes,

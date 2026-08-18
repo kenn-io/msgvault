@@ -1078,11 +1078,11 @@ func documentProfileForConfig(
 			"no format has authorized upload authority; run the authenticated capability probe and supply its manifest",
 		)
 	}
-	fingerprint, err := documentsConfig.ProfileFingerprint(allowedMediaTypes)
+	fingerprint, err := documentsConfig.ProfileFingerprint(manifest, allowedMediaTypes)
 	if err != nil {
 		return nil, store.DocumentExtractionProfile{}, err
 	}
-	policyJSON, err := documentsConfig.ProfilePolicyJSON(allowedMediaTypes)
+	policyJSON, err := documentsConfig.ProfilePolicyJSON(manifest, allowedMediaTypes)
 	if err != nil {
 		return nil, store.DocumentExtractionProfile{}, err
 	}

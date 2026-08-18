@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -288,8 +290,8 @@ func newTestMistralWorker(
 	processor MistralProcessor,
 ) *MistralWorker {
 	t.Helper()
-	spoolDirectory := t.TempDir()
-	require.NoError(t, os.Chmod(spoolDirectory, 0o700))
+	spoolDirectory := filepath.Join(t.TempDir(), "spool")
+	require.NoError(t, fileutil.SecureMkdirAll(spoolDirectory, 0o700))
 	policy := testMistralPolicy(t)
 	worker, err := NewMistralWorker(catalog, opener, processor, MistralWorkerConfig{
 		ProfileID: "profile-test", LeaseOwner: "worker-test", LeaseDuration: 30 * time.Minute,

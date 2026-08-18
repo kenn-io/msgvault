@@ -11,12 +11,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// This is the RED regression for the current-main trigger-migration conflict.
-// The helper initializes an archive through the current watermark migration,
-// then this test proves that activity triggers are installed even though
-// message_watermark_triggers_v1 is already recorded. Keep the implementation
-// paused until the remote PostgreSQL lease can run this regression.
-func TestPostgresActivityTriggersInstallAfterWatermarkMigration(t *testing.T) {
+// The helper initializes an archive through the combined message and attachment
+// trigger migration, then this test proves that activity triggers are installed.
+func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing.T) {
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") &&
 		!strings.HasPrefix(dbURL, "postgresql://") {
@@ -30,7 +27,7 @@ func TestPostgresActivityTriggersInstallAfterWatermarkMigration(t *testing.T) {
 	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT EXISTS (
 			SELECT 1 FROM applied_migrations
-			WHERE name = 'message_watermark_triggers_v1'
+			WHERE name = 'message_and_attachment_triggers_v2'
 		)
 	`).Scan(&watermarkMigrationApplied)
 	require.NoError(err)
