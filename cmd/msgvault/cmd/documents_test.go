@@ -693,11 +693,15 @@ func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 	assert := assert.New(t)
 	fixture := storetest.New(t)
 	contents := make(map[string][]byte)
+	var failedDigest string
 	for index, text := range []string{"timed out document", "searchable document"} {
 		content := mistraltest.MinimalPDF(text)
 		digestBytes := sha256.Sum256(content)
 		digest := hex.EncodeToString(digestBytes[:])
 		contents[digest] = content
+		if index == 0 {
+			failedDigest = digest
+		}
 		messageID := fixture.CreateMessage("documents-timeout-" + string(rune('a'+index)))
 		require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
 			Filename: "synthetic.pdf", MIMEType: "application/pdf", Size: int64(len(content)),
@@ -729,8 +733,14 @@ func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 		"documents-timeout-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorContains(err, "1 extraction failure")
+	require.ErrorContains(err, failedDigest)
+	require.ErrorContains(err, "provider_interrupted")
 	assert.Equal(1, result.Processed)
 	assert.Equal(1, result.Failed)
+	assert.Equal([]documentBuildFailure{{
+		CanonicalBlobHash: failedDigest,
+		ReasonCode:        "provider_interrupted",
+	}}, result.Failures)
 	assert.Equal(2, result.Processed+result.Failed)
 }
 

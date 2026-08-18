@@ -170,11 +170,13 @@ func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
 	processor := &workerProcessor{err: mistral.ErrTransientResponse}
 	worker := newTestMistralWorker(t, catalog, &workerOpener{content: content}, processor)
 
-	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+	result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
 		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
 	})
 	require.ErrorIs(err, mistral.ErrTransientResponse)
+	assert.Equal(hex.EncodeToString(hash[:]), result.CanonicalBlobHash)
+	assert.Equal("provider_transient", result.FailureReasonCode)
 	require.NotNil(catalog.failure)
 	assert.False(catalog.failure.Terminal)
 	assert.Equal("provider_transient", catalog.failure.ReasonCode)

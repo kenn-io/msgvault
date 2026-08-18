@@ -76,6 +76,7 @@ type MistralWorker struct {
 type DocumentExtractionResult struct {
 	ExtractionID      string
 	CanonicalBlobHash string
+	FailureReasonCode string
 	Units             int
 	Chunks            int
 	Truncated         bool
@@ -137,6 +138,12 @@ func (w *MistralWorker) ProcessCandidate(
 	ctx context.Context,
 	candidate store.DocumentExtractionCandidate,
 ) (result DocumentExtractionResult, runErr error) {
+	result.CanonicalBlobHash = candidate.CanonicalBlobHash
+	defer func() {
+		if runErr != nil {
+			_, result.FailureReasonCode = classifyDocumentExtractionFailure(runErr)
+		}
+	}()
 	authorized, allowed := w.formats[candidate.MIMEType]
 	if !allowed {
 		return result, fmt.Errorf("document media type %q lacks passing capability authority", candidate.MIMEType)

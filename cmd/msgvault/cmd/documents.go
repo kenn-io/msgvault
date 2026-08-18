@@ -72,6 +72,12 @@ type documentBuildResult struct {
 	RebuildID       string
 	Remaining       int64
 	Completed       bool
+	Failures        []documentBuildFailure
+}
+
+type documentBuildFailure struct {
+	CanonicalBlobHash string
+	ReasonCode        string
 }
 
 type documentsCommandDeps struct {
@@ -726,6 +732,10 @@ func executeDocumentBuild(
 		}
 		if processErr != nil {
 			result.Failed++
+			result.Failures = append(result.Failures, documentBuildFailure{
+				CanonicalBlobHash: extraction.CanonicalBlobHash,
+				ReasonCode:        extraction.FailureReasonCode,
+			})
 			continue
 		}
 		result.Processed++
@@ -752,7 +762,14 @@ func executeDocumentBuild(
 		}
 	}
 	if result.Failed > 0 {
-		return result, fmt.Errorf("document build completed with %d extraction failure(s)", result.Failed)
+		var details strings.Builder
+		for _, failure := range result.Failures {
+			fmt.Fprintf(&details, "\n%s: %s", failure.CanonicalBlobHash, failure.ReasonCode)
+		}
+		return result, fmt.Errorf(
+			"document build completed with %d extraction failure(s):%s\nretry one with `msgvault documents retry --capabilities <manifest> --hash <sha256>`",
+			result.Failed, details.String(),
+		)
 	}
 	return result, nil
 }
