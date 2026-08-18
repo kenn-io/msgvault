@@ -281,6 +281,47 @@ func TestDocumentIndexScopedStatusClassifiesOwnersAndRoleExclusions(t *testing.T
 	assert.Equal(int64(1), status.MissingProviderByteReports)
 }
 
+func TestDocumentIndexScopedStatusUsesCurrentTerminalAttempt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	transientClaim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "status-transient-attempt", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "status-transient-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1, RequireNoHead: true,
+	}))
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: transientClaim, ReasonCode: "provider_transient",
+		RetryAt: time.Now().UTC().Add(time.Hour),
+	}))
+	terminalClaim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "status-terminal-attempt", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "status-terminal-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1, RequireNoHead: true,
+	}))
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: terminalClaim, ReasonCode: "provider_rejected", Terminal: true,
+	}))
+
+	status, err := f.Store.GetDocumentIndexStatusForScope(
+		t.Context(), profile.ID, "original", []string{"application/pdf"}, nil,
+	)
+	require.NoError(err)
+	assert.Zero(status.RetryOwners)
+	assert.Equal(int64(1), status.TerminalOwners)
+	var retryConsumed bool
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT next_retry_at IS NULL FROM document_extractions WHERE id = ?`),
+		transientClaim.ExtractionID,
+	).Scan(&retryConsumed))
+	assert.True(retryConsumed)
+}
+
 func TestDocumentIndexStatusCountsCompletedAttemptOutcomes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

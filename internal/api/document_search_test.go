@@ -128,6 +128,8 @@ func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	oldLimit := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
@@ -136,7 +138,7 @@ func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
 	gate := NewSerialOperationGate()
 	server.operationGate = gate
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "document build")
-	require.True(t, ok)
+	require.True(ok)
 	t.Cleanup(release)
 	calls := 0
 	catalog.documentSearchFunc = func(
@@ -150,9 +152,9 @@ func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	assert.Equal(t, 0, calls)
-	assert.Contains(t, response.Body.String(), "document build")
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Equal(0, calls)
+	assert.Contains(response.Body.String(), "document build")
 }
 
 func TestDocumentSearchHTTPLeavesReconciliationToSearchStore(t *testing.T) {

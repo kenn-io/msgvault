@@ -73,12 +73,14 @@ func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-				assert.Equal(t, test.wantArgs, req.Args)
+				assert.Equal(test.wantArgs, req.Args)
 				if test.wantAPIKey {
-					assert.Equal(t, apiKey, req.Env[apiKeyEnv])
+					assert.Equal(apiKey, req.Env[apiKeyEnv])
 				} else {
-					assert.Empty(t, req.Env)
+					assert.Empty(req.Env)
 				}
 			}, `{"type":"complete"}`)
 			configureRemoteDaemonForTest(t, server.URL)
@@ -93,12 +95,12 @@ func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
 
 			err := root.ExecuteContext(t.Context())
 			if test.localFile {
-				require.ErrorContains(t, err, "run it on the daemon host with --local")
-				assert.Equal(t, 0, int(requests.Load()))
+				require.ErrorContains(err, "run it on the daemon host with --local")
+				assert.Equal(0, int(requests.Load()))
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, 1, int(requests.Load()))
+			require.NoError(err)
+			assert.Equal(1, int(requests.Load()))
 		})
 	}
 }

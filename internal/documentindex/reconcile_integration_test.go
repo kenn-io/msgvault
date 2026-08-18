@@ -53,6 +53,49 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 	assert.Equal([]int64{secondID}, documentOccurrenceAttachmentIDs(t, f))
 }
 
+func TestReconcilerReenableUsesDurableJournalHighWater(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("document-reconcile-reenable")
+	attachmentID := createReconcileAttachment(t, f, messageID, "9")
+	reconciler, err := NewReconciler(f.Store, ReconcilerConfig{
+		AttachmentPageSize: 10, ChangePageSize: 10,
+	})
+	require.NoError(err)
+	_, err = reconciler.Reconcile(t.Context())
+	require.NoError(err)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET filename = ? WHERE id = ?`), "updated.pdf", attachmentID)
+	require.NoError(err)
+	_, err = reconciler.Reconcile(t.Context())
+	require.NoError(err)
+	var sourceSequence int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT source_sequence FROM document_occurrences WHERE attachment_id = ?`),
+		attachmentID,
+	).Scan(&sourceSequence))
+	assert.Positive(sourceSequence)
+
+	require.NoError(f.Store.UnregisterAttachmentChangeConsumer(
+		t.Context(), DocumentAttachmentConsumerKey,
+	))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE attachments SET attachment_role = ?, role_source = ? WHERE id = ?`),
+		store.AttachmentRoleInline, store.AttachmentRoleSourceMIMEDisposition, attachmentID)
+	require.NoError(err)
+
+	result, err := reconciler.Reconcile(t.Context())
+	require.NoError(err)
+	assert.True(result.ConsumerCreated)
+	assert.True(result.FullScanCompleted)
+	assert.Empty(documentOccurrenceAttachmentIDs(t, f))
+	consumer, err := f.Store.GetAttachmentChangeConsumer(t.Context(), DocumentAttachmentConsumerKey)
+	require.NoError(err)
+	assert.Equal(sourceSequence, consumer.BaselineSequence)
+}
+
 func TestConcurrentReconciliationTreatsAlreadyAdvancedCursorAsSuccess(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

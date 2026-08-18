@@ -212,6 +212,17 @@ func (s *Store) ClaimDocumentExtraction(
 		}
 		if _, err := q.Exec(`
 			UPDATE document_extractions
+			SET next_retry_at = NULL, updated_at = `+s.dialect.Now()+`
+			WHERE profile_id = ? AND canonical_blob_hash = ?
+			  AND extraction_input_key = ? AND state = 'tombstoned'
+			  AND next_retry_at IS NOT NULL AND id != ?`,
+			input.ProfileID, input.CanonicalBlobHash, input.ExtractionInputKey,
+			input.ExtractionID,
+		); err != nil {
+			return fmt.Errorf("consume document extraction retry markers: %w", err)
+		}
+		if _, err := q.Exec(`
+			UPDATE document_extractions
 			SET state = 'tombstoned', updated_at = `+s.dialect.Now()+`
 			WHERE profile_id = ? AND canonical_blob_hash = ?
 			  AND extraction_input_key = ? AND state = 'staging' AND id != ?`,

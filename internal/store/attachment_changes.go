@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 )
+
+const attachmentChangeHighWaterKey = "attachment_change_high_water"
 
 type AttachmentChangeConsumer struct {
 	ConsumerKey            string
@@ -70,9 +73,9 @@ func (s *Store) RegisterAttachmentChangeConsumer(
 		}
 		created = rows == 1
 		if created {
-			var baseline int64
-			if err := q.QueryRow(`SELECT COALESCE(MAX(sequence), 0) FROM attachment_change_log`).Scan(&baseline); err != nil {
-				return fmt.Errorf("capture attachment consumer baseline: %w", err)
+			baseline, err := attachmentChangeBaseline(q)
+			if err != nil {
+				return err
 			}
 			if _, err := q.Exec(`
 				UPDATE attachment_change_consumers
@@ -312,6 +315,9 @@ func scanAttachmentChangeConsumer(q querier, key string, consumer *AttachmentCha
 }
 
 func pruneAttachmentChanges(q querier) error {
+	if err := persistAttachmentChangeHighWater(q); err != nil {
+		return err
+	}
 	if _, err := q.Exec(`
 		DELETE FROM attachment_change_log
 		WHERE sequence <= COALESCE(
@@ -319,6 +325,39 @@ func pruneAttachmentChanges(q querier) error {
 			(SELECT COALESCE(MAX(sequence), 0) FROM attachment_change_log)
 		)`); err != nil {
 		return fmt.Errorf("prune consumed attachment changes: %w", err)
+	}
+	return nil
+}
+
+func attachmentChangeBaseline(q querier) (int64, error) {
+	if _, err := q.Exec(`
+		INSERT INTO archive_metadata (key, value) VALUES (?, '0')
+		ON CONFLICT (key) DO NOTHING`, attachmentChangeHighWaterKey); err != nil {
+		return 0, fmt.Errorf("initialize attachment change high-water mark: %w", err)
+	}
+	var durable, retained int64
+	if err := q.QueryRow(`
+		SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key = ?`,
+		attachmentChangeHighWaterKey).Scan(&durable); err != nil {
+		return 0, fmt.Errorf("read attachment change high-water mark: %w", err)
+	}
+	if err := q.QueryRow(`SELECT COALESCE(MAX(sequence), 0) FROM attachment_change_log`).Scan(&retained); err != nil {
+		return 0, fmt.Errorf("read retained attachment change high-water mark: %w", err)
+	}
+	return max(durable, retained), nil
+}
+
+func persistAttachmentChangeHighWater(q querier) error {
+	highWater, err := attachmentChangeBaseline(q)
+	if err != nil {
+		return err
+	}
+	value := strconv.FormatInt(highWater, 10)
+	if _, err := q.Exec(`
+		UPDATE archive_metadata SET value = ?
+		WHERE key = ? AND CAST(value AS BIGINT) < ?`,
+		value, attachmentChangeHighWaterKey, highWater); err != nil {
+		return fmt.Errorf("persist attachment change high-water mark: %w", err)
 	}
 	return nil
 }
