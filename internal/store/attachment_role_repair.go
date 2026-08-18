@@ -1,13 +1,23 @@
 package store
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 
 	internalmime "go.kenn.io/msgvault/internal/mime"
 )
+
+const (
+	attachmentRoleRepairMaxMessageBytes = 64 << 20
+	attachmentRoleRepairMaxBatchBytes   = 128 << 20
+)
+
+var errAttachmentRoleRepairMessageTooLarge = errors.New("attachment role repair message exceeds decompression limit")
 
 // AttachmentRoleRepairProgress describes one committed repair batch. Counts
 // cover this call; LastMessageID and Completed are the durable cursor state.
@@ -25,11 +35,6 @@ type attachmentRoleRepairUpdate struct {
 	role         AttachmentRole
 	partKey      string
 	contentID    string
-}
-
-type attachmentRoleRepairMessage struct {
-	id  int64
-	raw []byte
 }
 
 // RepairHistoricalAttachmentRolesBatch repairs at most batchSize historical
@@ -51,17 +56,44 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 	if err != nil {
 		return AttachmentRoleRepairProgress{}, err
 	}
-	messages, hasMore, err := s.nextAttachmentRoleRepairMessages(
+	messageIDs, hasMore, err := s.nextAttachmentRoleRepairMessageIDs(
 		ctx, progress.LastMessageID, batchSize)
 	if err != nil {
 		return AttachmentRoleRepairProgress{}, err
 	}
 	updates := make([]attachmentRoleRepairUpdate, 0)
-	for _, message := range messages {
+	lastMessageID := progress.LastMessageID
+	messagesScanned := 0
+	decompressedBytes := int64(0)
+	for _, messageID := range messageIDs {
 		if err := ctx.Err(); err != nil {
 			return AttachmentRoleRepairProgress{}, err
 		}
-		messageUpdates, err := s.prepareAttachmentRoleRepair(message.id, message.raw)
+		remainingBytes := int64(attachmentRoleRepairMaxBatchBytes) - decompressedBytes
+		if remainingBytes <= 0 {
+			hasMore = true
+			break
+		}
+		compressed, compression, err := s.attachmentRoleRepairMessageRaw(ctx, messageID)
+		if err != nil {
+			return AttachmentRoleRepairProgress{}, err
+		}
+		decodeLimit := min(int64(attachmentRoleRepairMaxMessageBytes), remainingBytes)
+		raw, bytesRead, decodeErr := decodeMessageRawBounded(compressed, compression, decodeLimit)
+		if errors.Is(decodeErr, errAttachmentRoleRepairMessageTooLarge) &&
+			decodeLimit < attachmentRoleRepairMaxMessageBytes {
+			hasMore = true
+			break
+		}
+		decompressedBytes += bytesRead
+		messagesScanned++
+		lastMessageID = messageID
+		// Corrupt or individually oversized MIME is not authoritative evidence.
+		// Advancing the cursor keeps one bad record from blocking later repairs.
+		if decodeErr != nil {
+			continue
+		}
+		messageUpdates, err := s.prepareAttachmentRoleRepair(messageID, raw)
 		if err != nil {
 			return AttachmentRoleRepairProgress{}, err
 		}
@@ -71,11 +103,7 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 		s.attachmentRoleRepairPreparedHook()
 	}
 
-	lastMessageID := progress.LastMessageID
-	if len(messages) > 0 {
-		lastMessageID = messages[len(messages)-1].id
-	}
-	completed := !hasMore
+	completed := !hasMore && messagesScanned == len(messageIDs)
 	updated := 0
 	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, update := range updates {
@@ -132,7 +160,7 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 	}
 	return AttachmentRoleRepairProgress{
 		LastMessageID:      lastMessageID,
-		MessagesScanned:    len(messages),
+		MessagesScanned:    messagesScanned,
 		AttachmentsUpdated: updated,
 		Completed:          completed,
 	}, nil
@@ -195,13 +223,13 @@ func (s *Store) attachmentRoleRepairCursor(ctx context.Context) (AttachmentRoleR
 	return progress, nil
 }
 
-func (s *Store) nextAttachmentRoleRepairMessages(
+func (s *Store) nextAttachmentRoleRepairMessageIDs(
 	ctx context.Context,
 	afterMessageID int64,
 	batchSize int,
-) ([]attachmentRoleRepairMessage, bool, error) {
+) ([]int64, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, mr.raw_data, mr.compression
+		SELECT m.id
 		FROM messages m
 		JOIN message_raw mr ON mr.message_id = m.id AND mr.raw_format = 'mime'
 		WHERE m.id > ?
@@ -216,28 +244,71 @@ func (s *Store) nextAttachmentRoleRepairMessages(
 		return nil, false, fmt.Errorf("list attachment role repair messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	messages := make([]attachmentRoleRepairMessage, 0, batchSize+1)
+	messageIDs := make([]int64, 0, batchSize+1)
 	for rows.Next() {
-		var message attachmentRoleRepairMessage
-		var compressed []byte
-		var compression sql.NullString
-		if err := rows.Scan(&message.id, &compressed, &compression); err != nil {
+		var messageID int64
+		if err := rows.Scan(&messageID); err != nil {
 			return nil, false, err
 		}
-		// Corrupt archived MIME is not authoritative evidence. Keep it in the
-		// scanned batch with nil raw data so the durable cursor advances rather
-		// than wedging every future repair batch behind it.
-		message.raw, _ = decodeMessageRaw(compressed, compression)
-		messages = append(messages, message)
+		messageIDs = append(messageIDs, messageID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	hasMore := len(messages) > batchSize
+	hasMore := len(messageIDs) > batchSize
 	if hasMore {
-		messages = messages[:batchSize]
+		messageIDs = messageIDs[:batchSize]
 	}
-	return messages, hasMore, nil
+	return messageIDs, hasMore, nil
+}
+
+func (s *Store) attachmentRoleRepairMessageRaw(
+	ctx context.Context,
+	messageID int64,
+) ([]byte, sql.NullString, error) {
+	var compressed []byte
+	var compression sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT raw_data, compression
+		FROM message_raw
+		WHERE message_id = ? AND raw_format = 'mime'
+	`, messageID).Scan(&compressed, &compression); err != nil {
+		return nil, sql.NullString{}, fmt.Errorf("read message %d for attachment role repair: %w", messageID, err)
+	}
+	return compressed, compression, nil
+}
+
+func decodeMessageRawBounded(
+	compressed []byte,
+	compression sql.NullString,
+	maxBytes int64,
+) ([]byte, int64, error) {
+	if maxBytes <= 0 {
+		return nil, 0, errAttachmentRoleRepairMessageTooLarge
+	}
+	if !compression.Valid || compression.String != "zlib" {
+		if int64(len(compressed)) > maxBytes {
+			return nil, maxBytes + 1, errAttachmentRoleRepairMessageTooLarge
+		}
+		return compressed, int64(len(compressed)), nil
+	}
+	reader, err := zlib.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, 0, fmt.Errorf("zlib reader: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	closeErr := reader.Close()
+	bytesRead := int64(len(data))
+	if bytesRead > maxBytes {
+		return nil, bytesRead, errAttachmentRoleRepairMessageTooLarge
+	}
+	if readErr != nil {
+		return nil, bytesRead, readErr
+	}
+	if closeErr != nil {
+		return nil, bytesRead, fmt.Errorf("close zlib reader: %w", closeErr)
+	}
+	return data, bytesRead, nil
 }
 
 func (s *Store) prepareAttachmentRoleRepair(messageID int64, raw []byte) ([]attachmentRoleRepairUpdate, error) {
