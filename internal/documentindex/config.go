@@ -199,23 +199,6 @@ func (c *DocumentsConfig) MaxDocumentsWithinRunBudget(requested int) (int, error
 	return limit, nil
 }
 
-// Endpoint returns the one documented v1 regional endpoint currently shipped.
-// More regions require an explicit documented-host addition and new consent.
-func (c *DocumentsConfig) Endpoint() (string, error) {
-	effective := *c
-	if effective.RetentionPosture == RetentionUnknown {
-		effective.RetentionPosture = mistral.RetentionStandard
-	}
-	if effective.TrainingPosture == TrainingUnknown {
-		effective.TrainingPosture = mistral.TrainingDefaultOptOut
-	}
-	policy, err := effective.MistralPolicy()
-	if err != nil {
-		return "", err
-	}
-	return policy.Values().Endpoint, nil
-}
-
 // Validate checks the complete effective policy without resolving credentials.
 // Disabled configurations are validated too so enabling later cannot expose
 // bytes under an already-invalid policy.

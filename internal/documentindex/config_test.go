@@ -29,9 +29,6 @@ func TestDocumentsConfigDefaultsAreValidAndOptIn(t *testing.T) {
 	assert.Equal("vector.embeddings", config.Index.Embeddings.Profile)
 	assert.Equal(int64(512<<20), config.MaxSpoolBytes)
 	assert.Equal(int64(1<<30), config.MinFreeSpaceBytes)
-	endpoint, err := config.Endpoint()
-	require.NoError(t, err)
-	assert.Equal("https://api.eu.mistral.ai/v1/ocr", endpoint)
 }
 
 func TestDocumentsConfigDoesNotDefaultExplicitZeroSafetyLimits(t *testing.T) {
