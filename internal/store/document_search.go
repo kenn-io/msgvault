@@ -23,8 +23,8 @@ const (
 	maxDocumentSearchQueryBytes = 1_024
 	maxDocumentSearchTerms      = 20
 	maxDocumentSearchPageSize   = 100
-	maxDocumentSearchOffset     = 200_000
-	maxDocumentSearchCandidates = 100_000
+	maxDocumentSearchOffset     = 10_000
+	maxDocumentSearchCandidates = 10_000
 	maxDocumentSearchExcerpt    = 320
 )
 

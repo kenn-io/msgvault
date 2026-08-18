@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,6 +81,99 @@ func TestDocumentSearchHTTPMapsUnavailableFTS(t *testing.T) {
 	server.Router().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
 	assert.Contains(t, response.Body.String(), "document_search_unavailable")
+}
+
+func TestDocumentSearchHTTPRejectsCrossOriginKeylessRequest(t *testing.T) {
+	server, catalog := newTestServerWithMockStore(t)
+	calls := 0
+	catalog.documentSearchFunc = func(
+		context.Context,
+		store.DocumentSearchRequest,
+	) (store.DocumentSearchResponse, error) {
+		calls++
+		return store.DocumentSearchResponse{}, nil
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("Origin", "https://cross-origin.example")
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assert.Equal(t, 0, calls)
+	assert.Contains(t, response.Body.String(), "cross_origin_loopback")
+}
+
+func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
+	server, catalog := newTestServerWithMockStore(t)
+	server.documentSearchRateLimiter.Close()
+	server.documentSearchRateLimiter = NewRateLimiter(1, 1)
+	t.Cleanup(server.documentSearchRateLimiter.Close)
+	calls := 0
+	catalog.documentSearchFunc = func(
+		context.Context,
+		store.DocumentSearchRequest,
+	) (store.DocumentSearchResponse, error) {
+		calls++
+		return store.DocumentSearchResponse{}, nil
+	}
+
+	for _, wantStatus := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, request)
+		assert.Equal(t, wantStatus, response.Code, response.Body.String())
+	}
+	assert.Equal(t, 1, calls)
+}
+
+func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	server, catalog := newTestServerWithMockStore(t)
+	gate := NewSerialOperationGate()
+	server.operationGate = gate
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "document build")
+	require.True(t, ok)
+	t.Cleanup(release)
+	calls := 0
+	catalog.documentSearchFunc = func(
+		context.Context,
+		store.DocumentSearchRequest,
+	) (store.DocumentSearchResponse, error) {
+		calls++
+		return store.DocumentSearchResponse{}, nil
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Equal(t, 0, calls)
+	assert.Contains(t, response.Body.String(), "document build")
+}
+
+func TestDocumentSearchHTTPLeavesReconciliationToSearchStore(t *testing.T) {
+	server, catalog := newTestServerWithMockStore(t)
+	reconcileCalls := 0
+	catalog.documentReconcileFunc = func(context.Context) error {
+		reconcileCalls++
+		return nil
+	}
+	catalog.documentSearchFunc = func(
+		context.Context,
+		store.DocumentSearchRequest,
+	) (store.DocumentSearchResponse, error) {
+		return store.DocumentSearchResponse{}, nil
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, 0, reconcileCalls)
 }
 
 func TestDocumentSearchHTTPDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) {

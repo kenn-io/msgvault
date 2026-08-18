@@ -26,6 +26,7 @@ func newChangeFeedGuardTestServer(
 	t.Cleanup(func() {
 		srv.rateLimiter.Close()
 		srv.changesRateLimiter.Close()
+		srv.documentSearchRateLimiter.Close()
 	})
 	return srv, lister
 }

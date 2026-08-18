@@ -79,6 +79,7 @@ type DocumentExtractionResult struct {
 	Units             int
 	Chunks            int
 	Truncated         bool
+	CleanupError      error
 }
 
 // NewMistralWorker binds runtime upload authority to the exact complete probe
@@ -199,7 +200,15 @@ func (w *MistralWorker) ProcessCandidate(
 	if err != nil {
 		return result, failPreparation(err)
 	}
-	defer func() { runErr = errors.Join(runErr, prepared.Release()) }()
+	published := false
+	defer func() {
+		cleanupErr := prepared.Release()
+		if published {
+			result.CleanupError = cleanupErr
+			return
+		}
+		runErr = errors.Join(runErr, cleanupErr)
+	}()
 
 	providerStarted := time.Now()
 	providerResult, err := w.processor.Process(workCtx, prepared, authorized.authorization)
@@ -242,10 +251,12 @@ func (w *MistralWorker) ProcessCandidate(
 		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
 		return result, err
 	}
-	return DocumentExtractionResult{
+	result = DocumentExtractionResult{
 		ExtractionID: extractionID, CanonicalBlobHash: candidate.CanonicalBlobHash,
 		Units: len(normalized.Units), Chunks: len(normalized.Chunks), Truncated: normalized.Truncated,
-	}, nil
+	}
+	published = true
+	return result, nil
 }
 
 func (w *MistralWorker) keepClaimAlive(

@@ -7,8 +7,12 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
+)
+
+const (
+	documentSearchRequestsPerSecond = 1
+	documentSearchRequestBurst      = 2
 )
 
 // DocumentSearchStore is the optional dedicated extracted-document search
@@ -42,14 +46,6 @@ type DocumentStatusStore interface {
 	) (int64, error)
 }
 
-type documentOccurrenceSearchCatalog interface {
-	documentindex.DocumentOccurrenceCatalog
-	GetAttachmentChangeConsumer(
-		ctx context.Context,
-		consumerKey string,
-	) (store.AttachmentChangeConsumer, error)
-}
-
 type documentOccurrenceStatusReconciler interface {
 	ReconcileDocumentOccurrences(ctx context.Context) error
 }
@@ -60,14 +56,46 @@ var _ DocumentStatusStore = (*store.Store)(nil)
 func (s *Server) registerDocumentSearchRoute(api huma.API) {
 	registerAPIV1RawHumaJSONRouteWithErrors[store.DocumentSearchResponse](
 		api, "searchDocuments", http.MethodGet, "/documents/search",
-		"Search extracted document attachments", s.handleDocumentSearch,
-		http.StatusBadRequest, http.StatusConflict, http.StatusServiceUnavailable,
+		"Search extracted document attachments",
+		s.documentSearchGuard("document search", s.handleDocumentSearch),
+		http.StatusBadRequest, http.StatusForbidden, http.StatusConflict,
+		http.StatusTooManyRequests, http.StatusServiceUnavailable,
 	)
 	registerAPIV1RawHumaJSONRouteWithErrors[store.DocumentIndexStatusResponse](
 		api, "getDocumentIndexStatus", http.MethodGet, "/documents/status",
-		"Get extracted document index status", s.handleDocumentIndexStatus,
-		http.StatusBadRequest, http.StatusServiceUnavailable,
+		"Get extracted document index status",
+		s.documentSearchGuard("document status", s.handleDocumentIndexStatus),
+		http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests,
+		http.StatusServiceUnavailable,
 	)
+}
+
+// documentSearchGuard protects the document reads that reconcile attachment
+// state before querying. It runs inside requestSecurityMiddleware, so the
+// effective authentication mode and origin are already available.
+func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.requestAuthentication(r).Mode == AuthModeLoopback &&
+			s.crossOriginAmbientReadRequest(r) {
+			writeError(w, http.StatusForbidden, "cross_origin_loopback",
+				"Keyless loopback document requests must be same-origin; "+
+					"configure an API key for cross-origin access")
+			return
+		}
+		if !s.documentSearchRateLimiter.Allow(clientIP(r)) {
+			writeRateLimitExceeded(w)
+			return
+		}
+		if s.operationGate != nil {
+			done, ok := beginGateWorkBounded(r.Context(), s.operationGate, label)
+			if !ok {
+				writeOperationGateBusy(w, s.operationGate)
+				return
+			}
+			defer done()
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) handleDocumentIndexStatus(w http.ResponseWriter, r *http.Request) {
@@ -146,30 +174,6 @@ func (s *Server) handleDocumentSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.rejectBadParam(w, err)
 		return
-	}
-	if catalog, ok := s.store.(documentOccurrenceSearchCatalog); ok {
-		if _, lookupErr := catalog.GetAttachmentChangeConsumer(
-			r.Context(), documentindex.DocumentAttachmentConsumerKey,
-		); lookupErr == nil {
-			reconciler, reconcileErr := documentindex.NewReconciler(catalog, documentindex.ReconcilerConfig{
-				AttachmentPageSize: 1000,
-				ChangePageSize:     1000,
-			})
-			if reconcileErr != nil {
-				s.logger.Error("configure document search reconciliation", "error", reconcileErr)
-				writeError(w, http.StatusInternalServerError, "internal_error", "Document search failed")
-				return
-			}
-			if _, reconcileErr = reconciler.Reconcile(r.Context()); reconcileErr != nil {
-				s.logger.Error("reconcile document search index", "error", reconcileErr)
-				writeError(w, http.StatusInternalServerError, "internal_error", "Document search failed")
-				return
-			}
-		} else if !errors.Is(lookupErr, store.ErrAttachmentChangeConsumerMissing) {
-			s.logger.Error("read document search reconciliation state", "error", lookupErr)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Document search failed")
-			return
-		}
 	}
 	response, err := searcher.SearchDocuments(r.Context(), request)
 	if err != nil {

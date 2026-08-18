@@ -255,15 +255,16 @@ type Server struct {
 	// serverMu protects the HTTP server pointer and listener-start state. The
 	// daemon starts Serve in a goroutine while shutdown can begin from a
 	// cancelled root context, so Shutdown must not race the assignment below.
-	serverMu           sync.RWMutex
-	server             *http.Server
-	started            chan struct{}
-	startErr           error
-	startOnce          sync.Once
-	rateLimiter        *RateLimiter
-	changesRateLimiter *RateLimiter
-	idleTracker        *IdleTracker
-	operationGate      OperationGate
+	serverMu                  sync.RWMutex
+	server                    *http.Server
+	started                   chan struct{}
+	startErr                  error
+	startOnce                 sync.Once
+	rateLimiter               *RateLimiter
+	changesRateLimiter        *RateLimiter
+	documentSearchRateLimiter *RateLimiter
+	idleTracker               *IdleTracker
+	operationGate             OperationGate
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -560,6 +561,8 @@ func (s *Server) setupRouter() http.Handler {
 	s.rateLimiter = NewRateLimiter(10, 20)
 	s.changesRateLimiter = NewRateLimiter(
 		changeFeedRequestsPerSecond, changeFeedRequestBurst)
+	s.documentSearchRateLimiter = NewRateLimiter(
+		documentSearchRequestsPerSecond, documentSearchRequestBurst)
 
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
@@ -753,6 +756,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.changesRateLimiter != nil {
 		s.changesRateLimiter.Close()
+	}
+	if s.documentSearchRateLimiter != nil {
+		s.documentSearchRateLimiter.Close()
 	}
 	if s.sessions != nil {
 		s.sessions.Close()

@@ -62,15 +62,16 @@ type documentRebuildStatus struct {
 }
 
 type documentBuildResult struct {
-	Reconciled int
-	Changes    int
-	Processed  int
-	Units      int
-	Skipped    int
-	Failed     int
-	RebuildID  string
-	Remaining  int64
-	Completed  bool
+	Reconciled      int
+	Changes         int
+	Processed       int
+	Units           int
+	Skipped         int
+	Failed          int
+	CleanupFailures int
+	RebuildID       string
+	Remaining       int64
+	Completed       bool
 }
 
 type documentsCommandDeps struct {
@@ -567,6 +568,11 @@ func runBuildDocuments(
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Reconciled %d attachment(s), consumed %d change(s); indexed %d document(s), %d unit(s), skipped %d, failed %d.\n",
 		result.Reconciled, result.Changes, result.Processed, result.Units, result.Skipped, result.Failed)
+	if result.CleanupFailures > 0 {
+		_, _ = fmt.Fprintf(command.ErrOrStderr(),
+			"Warning: %d private document spool file(s) could not be removed; a later cleanup pass will retry.\n",
+			result.CleanupFailures)
+	}
 	if result.RebuildID != "" {
 		if result.Completed {
 			_, _ = fmt.Fprintln(command.OutOrStdout(), "Full document rebuild completed.")
@@ -724,6 +730,9 @@ func executeDocumentBuild(
 		}
 		result.Processed++
 		result.Units += extraction.Units
+		if extraction.CleanupError != nil {
+			result.CleanupFailures++
+		}
 		if result.Units > documentsConfig.MaxPagesPerRun {
 			return result, errors.New("document provider output exceeded max_pages_per_run")
 		}

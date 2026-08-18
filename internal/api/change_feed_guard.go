@@ -16,7 +16,7 @@ const (
 func (s *Server) changeFeedGuard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.requestAuthentication(r).Mode == AuthModeLoopback &&
-			s.crossOriginChangeFeedRequest(r) {
+			s.crossOriginAmbientReadRequest(r) {
 			writeError(w, http.StatusForbidden, "cross_origin_loopback",
 				"Keyless loopback change-feed requests must be same-origin; "+
 					"configure an API key for cross-origin access")
@@ -33,7 +33,7 @@ func (s *Server) changeFeedGuard(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) crossOriginChangeFeedRequest(r *http.Request) bool {
+func (s *Server) crossOriginAmbientReadRequest(r *http.Request) bool {
 	if len(r.Header.Values("Origin")) > 0 {
 		security, ok := securityFromRequest(r)
 		if !ok || !ambientOriginAllowed(r, security.scheme, security.host) {
