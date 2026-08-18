@@ -164,9 +164,10 @@ func (w *MistralWorker) ProcessCandidate(
 	if err != nil {
 		return result, err
 	}
-	workCtx, cancelWork, renewalDone, renewalErr := w.keepClaimAlive(ctx, claim)
+	workCtx, cancelWork, cancelRenewal, renewalDone, renewalErr := w.keepClaimAlive(ctx, claim)
 	defer func() {
 		cancelWork()
+		cancelRenewal()
 		<-renewalDone
 	}()
 	failPreparation := func(cause error) error {
@@ -242,12 +243,24 @@ func (w *MistralWorker) ProcessCandidate(
 		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
 		return result, err
 	}
+	cancelRenewal()
+	<-renewalDone
+	if renewErr := readRenewalError(renewalErr); renewErr != nil {
+		err = errors.Join(renewErr, w.recordFailureAfterError(ctx, claim, renewErr, providerMetrics))
+		return result, err
+	}
+	renewCtx, cancelRenew := context.WithTimeout(workCtx, documentFailureCleanupTimeout)
+	err = w.catalog.RenewDocumentExtractionClaim(
+		renewCtx, claim, time.Now().UTC().Add(w.config.LeaseDuration),
+	)
+	cancelRenew()
+	if err != nil {
+		err = fmt.Errorf("%w: %w", errDocumentLeaseRenewal, err)
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		return result, err
+	}
 	if err := w.catalog.PublishDocumentExtraction(workCtx, publication); err != nil {
-		if renewErr := readRenewalError(renewalErr); renewErr != nil {
-			err = errors.Join(err, renewErr)
-		} else {
-			err = fmt.Errorf("%w: %w", errDocumentPublication, err)
-		}
+		err = fmt.Errorf("%w: %w", errDocumentPublication, err)
 		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
 		return result, err
 	}
@@ -262,8 +275,9 @@ func (w *MistralWorker) ProcessCandidate(
 func (w *MistralWorker) keepClaimAlive(
 	ctx context.Context,
 	claim store.DocumentExtractionClaim,
-) (context.Context, context.CancelFunc, <-chan struct{}, <-chan error) {
+) (context.Context, context.CancelFunc, context.CancelFunc, <-chan struct{}, <-chan error) {
 	workCtx, cancelWork := context.WithCancel(ctx)
+	renewalCtx, cancelRenewal := context.WithCancel(workCtx)
 	done := make(chan struct{})
 	errCh := make(chan error, 1)
 	interval := min(max(w.config.LeaseDuration/3, time.Millisecond), time.Minute)
@@ -273,7 +287,7 @@ func (w *MistralWorker) keepClaimAlive(
 		defer ticker.Stop()
 		for {
 			select {
-			case <-workCtx.Done():
+			case <-renewalCtx.Done():
 				return
 			case <-ticker.C:
 				renewCtx, cancelRenew := context.WithTimeout(
@@ -291,7 +305,7 @@ func (w *MistralWorker) keepClaimAlive(
 			}
 		}
 	}()
-	return workCtx, cancelWork, done, errCh
+	return workCtx, cancelWork, cancelRenewal, done, errCh
 }
 
 func readRenewalError(errCh <-chan error) error {

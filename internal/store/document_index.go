@@ -1205,8 +1205,24 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 			&existing.CanonicalBlobHash, &existing.Filename, &existing.MIMEType,
 			&existing.AttachmentRole, &existing.RoleSource, &existing.SourceSequence,
 		)
-		if err == nil && existing == occurrence {
-			return nil
+		if err == nil {
+			existingSequence := existing.SourceSequence
+			existing.SourceSequence = occurrence.SourceSequence
+			if existing == occurrence {
+				if existingSequence >= occurrence.SourceSequence {
+					return nil
+				}
+				if _, err := tx.Exec(`
+					UPDATE document_occurrences
+					SET source_sequence = ?, reconciled_at = CURRENT_TIMESTAMP
+					WHERE occurrence_key = ? AND source_sequence = ?`,
+					occurrence.SourceSequence, occurrence.OccurrenceKey, existingSequence,
+				); err != nil {
+					return fmt.Errorf("advance document occurrence source sequence: %w", err)
+				}
+				return nil
+			}
+			existing.SourceSequence = existingSequence
 		}
 		if err == nil && existing.SourceSequence > occurrence.SourceSequence {
 			return nil

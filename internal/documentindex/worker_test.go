@@ -32,6 +32,10 @@ type workerCatalog struct {
 	publishErr        error
 	renewErr          error
 	renewals          atomic.Int32
+	publishing        atomic.Bool
+	renewedPublishing atomic.Bool
+	publishStarted    chan struct{}
+	releasePublish    <-chan struct{}
 }
 
 func (c *workerCatalog) ClaimDocumentExtraction(
@@ -46,10 +50,20 @@ func (c *workerCatalog) ClaimDocumentExtraction(
 }
 
 func (c *workerCatalog) PublishDocumentExtraction(
-	_ context.Context,
+	ctx context.Context,
 	publication store.DocumentExtractionPublication,
 ) error {
 	c.publication = &publication
+	if c.publishStarted != nil {
+		c.publishing.Store(true)
+		close(c.publishStarted)
+		defer c.publishing.Store(false)
+		select {
+		case <-c.releasePublish:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return c.publishErr
 }
 
@@ -59,6 +73,9 @@ func (c *workerCatalog) RenewDocumentExtractionClaim(
 	_ time.Time,
 ) error {
 	c.renewals.Add(1)
+	if c.publishing.Load() {
+		c.renewedPublishing.Store(true)
+	}
 	return c.renewErr
 }
 
@@ -214,6 +231,43 @@ func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
 	require.NotNil(catalog.failure)
 	assert.False(catalog.failure.Terminal)
 	assert.Equal("publication_failed", catalog.failure.ReasonCode)
+}
+
+func TestMistralWorkerSuspendsLeaseRenewalDuringPublication(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := mistraltest.MinimalPDF("worker test")
+	hash := sha256.Sum256(content)
+	releasePublish := make(chan struct{})
+	catalog := &workerCatalog{
+		publishStarted: make(chan struct{}),
+		releasePublish: releasePublish,
+	}
+	worker := newTestMistralWorker(
+		t, catalog, &workerOpener{content: content},
+		&workerProcessor{result: successfulWorkerResult("searchable evidence")},
+	)
+	worker.config.LeaseDuration = 15 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+			AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
+			Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
+		})
+		done <- err
+	}()
+	select {
+	case <-catalog.publishStarted:
+	case <-time.After(time.Second):
+		close(releasePublish)
+		require.Fail("publication did not start")
+	}
+	time.Sleep(40 * time.Millisecond)
+	close(releasePublish)
+	require.NoError(<-done)
+	assert.False(catalog.renewedPublishing.Load())
+	assert.Positive(catalog.renewals.Load(), "the claim is renewed immediately before publication")
 }
 
 func TestMistralWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {

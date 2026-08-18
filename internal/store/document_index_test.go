@@ -82,17 +82,23 @@ func TestReconcileDocumentOccurrenceUsesTrustedCASAndLiveRole(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), revision)
 
-	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 10)
+	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 11)
 	require.NoError(err)
 	assert.True(eligible)
 	revision, err = f.Store.GetDocumentIndexRevision(t.Context())
 	require.NoError(err)
-	assert.Equal(int64(1), revision, "idempotent reconciliation must not invalidate search cursors")
+	assert.Equal(int64(1), revision, "sequence-only reconciliation must not invalidate search cursors")
+	var sourceSequence int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT source_sequence FROM document_occurrences WHERE attachment_id = ?`),
+		attachmentID,
+	).Scan(&sourceSequence))
+	assert.Equal(int64(11), sourceSequence)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
-	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 11)
+	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 12)
 	require.NoError(err)
 	assert.False(eligible)
 	revision, err = f.Store.GetDocumentIndexRevision(t.Context())
