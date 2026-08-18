@@ -716,8 +716,8 @@ func executeDocumentBuild(
 			continue
 		}
 		extraction, processErr := worker.ProcessCandidate(ctx, candidate)
-		if errors.Is(processErr, context.Canceled) || errors.Is(processErr, context.DeadlineExceeded) {
-			return result, processErr
+		if processErr != nil && ctx.Err() != nil {
+			return result, ctx.Err()
 		}
 		if errors.Is(processErr, store.ErrDocumentExtractionClaimed) ||
 			errors.Is(processErr, store.ErrDocumentExtractionCurrent) {

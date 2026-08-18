@@ -673,9 +673,10 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
 	}))
 
+	ctx, cancel := context.WithCancel(t.Context())
 	result, err := executeDocumentBuild(
-		t.Context(), fixture.Store, commandAttachmentMapOpener{contents: map[string][]byte{digest: content}},
-		commandCancelingProcessor{}, &documentsConfig, manifest, allowed, profile, 1,
+		ctx, fixture.Store, commandAttachmentMapOpener{contents: map[string][]byte{digest: content}},
+		commandCancelingProcessor{cancel: cancel}, &documentsConfig, manifest, allowed, profile, 1,
 		"documents-cancellation-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorIs(err, context.Canceled)
@@ -685,6 +686,52 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(status.StagingOwners, "provider cancellation must release the claim")
 	assert.Equal(int64(1), status.RetryOwners)
+}
+
+func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := storetest.New(t)
+	contents := make(map[string][]byte)
+	for index, text := range []string{"timed out document", "searchable document"} {
+		content := mistraltest.MinimalPDF(text)
+		digestBytes := sha256.Sum256(content)
+		digest := hex.EncodeToString(digestBytes[:])
+		contents[digest] = content
+		messageID := fixture.CreateMessage("documents-timeout-" + string(rune('a'+index)))
+		require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+			Filename: "synthetic.pdf", MIMEType: "application/pdf", Size: int64(len(content)),
+			StoragePath: digest[:2] + "/" + digest, ContentHash: digest,
+			Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+			SourcePartKey: "part:" + string(rune('1'+index)),
+		}))
+	}
+	documentsConfig := documentindex.DefaultDocumentsConfig()
+	documentsConfig.Enabled = true
+	documentsConfig.RetentionPosture = documentindex.RetentionStandard
+	documentsConfig.TrainingPosture = documentindex.TrainingOptedOut
+	manifestPath := writeCommandCapabilityManifest(t, documentsConfig.MaxPagesPerDocument)
+	manifest, err := loadDocumentCapabilityManifest(manifestPath)
+	require.NoError(err)
+	allowed, profile, err := documentProfileForConfig(&documentsConfig, manifest)
+	require.NoError(err)
+	_, err = fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	require.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+
+	result, err := executeDocumentBuild(
+		t.Context(), fixture.Store, commandAttachmentMapOpener{contents: contents},
+		&commandBuildProcessor{firstErr: context.DeadlineExceeded},
+		&documentsConfig, manifest, allowed, profile, 2,
+		"documents-timeout-test", t.TempDir(), documentBuildIncremental, nil,
+	)
+	require.ErrorContains(err, "1 extraction failure")
+	assert.Equal(1, result.Processed)
+	assert.Equal(1, result.Failed)
+	assert.Equal(2, result.Processed+result.Failed)
 }
 
 func TestScheduledDocumentFullReconcileRepairsMissedLifecycleEvent(t *testing.T) {
@@ -854,16 +901,20 @@ func (c commandDocumentReadClient) GetDocumentIndexStatus(
 }
 
 type commandBuildProcessor struct {
-	calls int
+	calls    int
+	firstErr error
 }
 
-type commandCancelingProcessor struct{}
+type commandCancelingProcessor struct {
+	cancel context.CancelFunc
+}
 
-func (commandCancelingProcessor) Process(
+func (p commandCancelingProcessor) Process(
 	context.Context,
 	*mistral.PreparedDocument,
 	mistral.FormatAuthorization,
 ) (mistral.Result, error) {
+	p.cancel()
 	return mistral.Result{}, context.Canceled
 }
 
@@ -873,6 +924,9 @@ func (p *commandBuildProcessor) Process(
 	mistral.FormatAuthorization,
 ) (mistral.Result, error) {
 	p.calls++
+	if p.calls == 1 && p.firstErr != nil {
+		return mistral.Result{}, p.firstErr
+	}
 	text := "# Indexed\nSynthetic evidence"
 	if p.calls > 1 {
 		text = "# Indexed\nReplacement evidence"
