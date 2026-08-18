@@ -165,6 +165,15 @@ func TestMistralWorkerRecordsSanitizedRetryWithoutPublishing(t *testing.T) {
 	assert.Nil(catalog.publication)
 }
 
+func TestClassifyDocumentExtractionFailurePreservesRetryablePreparation(t *testing.T) {
+	terminal, reason := classifyDocumentExtractionFailure(
+		errors.Join(errDocumentPreparation, mistral.ErrSpoolCapacity),
+	)
+
+	assert.False(t, terminal)
+	assert.Equal(t, "spool_capacity_unavailable", reason)
+}
+
 func TestMistralWorkerReleasesClaimAfterRequestCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

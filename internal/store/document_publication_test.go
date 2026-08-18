@@ -258,8 +258,9 @@ func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone
 	assert.Equal(revisionBefore+1, revisionAfter)
 }
 
-func TestGarbageCollectDocumentDerivativesInvalidatesTerminalSuppression(t *testing.T) {
+func TestGarbageCollectDocumentDerivativesKeepsTerminalSuppressionUntilFinalOccurrenceIsGone(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -283,10 +284,32 @@ func TestGarbageCollectDocumentDerivativesInvalidatesTerminalSuppression(t *test
 		t.Context(), time.Now().UTC().Add(-24*time.Hour), 10,
 	)
 	require.NoError(err)
-	assert.Equal(t, store.DocumentDerivativeGCResult{ExtractionsRemoved: 1}, result)
+	assert.Equal(store.DocumentDerivativeGCResult{}, result)
 	revisionAfter, err := f.Store.GetDocumentIndexRevision(t.Context())
 	require.NoError(err)
-	assert.Equal(t, revisionBefore+1, revisionAfter,
+	assert.Equal(revisionBefore, revisionAfter)
+
+	var attachmentID, messageID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT attachment_id, message_id FROM document_occurrences
+		WHERE canonical_blob_hash = ?`), hash).Scan(&attachmentID, &messageID))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
+	require.NoError(err)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	require.NoError(err)
+	assert.False(eligible)
+	revisionBeforeCollection, err := f.Store.GetDocumentIndexRevision(t.Context())
+	require.NoError(err)
+
+	result, err = f.Store.GarbageCollectDocumentDerivatives(
+		t.Context(), time.Now().UTC().Add(-24*time.Hour), 10,
+	)
+	require.NoError(err)
+	assert.Equal(store.DocumentDerivativeGCResult{ExtractionsRemoved: 1}, result)
+	revisionAfter, err = f.Store.GetDocumentIndexRevision(t.Context())
+	require.NoError(err)
+	assert.Equal(revisionBeforeCollection+1, revisionAfter,
 		"removing a terminal marker may restore older-profile fallback evidence")
 }
 

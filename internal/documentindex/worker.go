@@ -333,13 +333,13 @@ func classifyDocumentExtractionFailure(err error) (bool, string) {
 		return false, "publication_failed"
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return false, "provider_interrupted"
-	case errors.Is(err, errDocumentPreparation):
-		return true, "invalid_local_source"
 	case mistral.IsRetryable(err):
 		if errors.Is(err, mistral.ErrSpoolCapacity) {
 			return false, "spool_capacity_unavailable"
 		}
 		return false, "provider_transient"
+	case errors.Is(err, errDocumentPreparation):
+		return true, "invalid_local_source"
 	case errors.Is(err, mistral.ErrPermanentResponse):
 		return true, "provider_rejected"
 	case errors.Is(err, mistral.ErrResponseTooLarge):
