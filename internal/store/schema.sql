@@ -407,6 +407,15 @@ CREATE TABLE IF NOT EXISTS attachments (
     source_attachment_id TEXT,      -- original ID from platform
     attachment_metadata JSON,       -- EXIF, etc.
 
+    -- Source-authoritative occurrence role and provenance. Unknown fails
+    -- closed for any hosted attachment processing.
+    attachment_role TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown')),
+    role_source TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown')),
+    source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != ''),
+    content_id TEXT,
+
     -- Encryption
     encryption_version INTEGER DEFAULT 0,
 
@@ -503,6 +512,102 @@ CREATE TABLE IF NOT EXISTS message_raw (
 
     compression TEXT DEFAULT 'zlib',
     encryption_version INTEGER DEFAULT 0
+);
+
+-- Resumable cursor for the bounded, raw-MIME-only attachment role repair.
+CREATE TABLE IF NOT EXISTS attachment_role_repair_progress (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    last_message_id INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Shared database-owned attachment lifecycle journal. It deliberately omits
+-- filenames, paths, and content; consumers re-read current attachment
+-- authority before acting. Capture triggers append only while at least one
+-- independently-cursored derived feature is registered.
+CREATE TABLE IF NOT EXISTS attachment_change_log (
+    sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_kind              TEXT NOT NULL CHECK (event_kind IN (
+                                'attachment_insert', 'attachment_update',
+                                'attachment_delete', 'message_live_enter',
+                                'message_live_exit', 'message_content_change')),
+    old_message_id          INTEGER,
+    new_message_id          INTEGER,
+    old_attachment_id       INTEGER,
+    new_attachment_id       INTEGER,
+    old_content_hash        TEXT,
+    new_content_hash        TEXT,
+    old_source_part_key     TEXT,
+    new_source_part_key     TEXT,
+    old_role                TEXT,
+    new_role                TEXT,
+    created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS attachment_change_consumers (
+    consumer_key            TEXT PRIMARY KEY,
+    baseline_sequence       INTEGER NOT NULL,
+    last_sequence           INTEGER NOT NULL,
+    reconciliation_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (baseline_sequence >= 0),
+    CHECK (last_sequence >= baseline_sequence)
+);
+
+-- Provider-independent visual indexing lifecycle. Dense vectors live in the
+-- selected vector backend; only opaque publication tokens are authoritative
+-- here, which keeps SQLite cross-database publication crash-safe.
+CREATE TABLE IF NOT EXISTS visual_generations (
+    id INTEGER PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    model TEXT NOT NULL,
+    dimension INTEGER NOT NULL CHECK (dimension = 1024),
+    state TEXT NOT NULL DEFAULT 'building'
+        CHECK (state IN ('building', 'active', 'retired')),
+    source_fence INTEGER NOT NULL DEFAULT 0,
+    consented_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    activated_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_active
+    ON visual_generations(state) WHERE state = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_building
+    ON visual_generations(state) WHERE state = 'building';
+
+CREATE TABLE IF NOT EXISTS visual_publications (
+    generation_id INTEGER NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    published_revision TEXT,
+    prepared_revision TEXT,
+    source_fence INTEGER NOT NULL DEFAULT 0,
+    representative_attachment_id INTEGER,
+    attachment_role TEXT NOT NULL,
+    role_source TEXT NOT NULL,
+    current_vector_token TEXT,
+    pending_vector_token TEXT,
+    state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'tombstoned')),
+    outcome_kind TEXT,
+    outcome_reason TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key)
+);
+
+CREATE TABLE IF NOT EXISTS visual_work_claims (
+    generation_id INTEGER NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    proposed_revision TEXT NOT NULL,
+    lease_owner TEXT NOT NULL,
+    lease_expires_at DATETIME NOT NULL,
+    fencing_token INTEGER NOT NULL,
+    source_fence INTEGER NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key, proposed_revision)
 );
 
 -- ============================================================================

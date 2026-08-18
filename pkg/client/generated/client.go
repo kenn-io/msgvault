@@ -443,6 +443,26 @@ type ClientInterface interface {
 	UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResponse, error)
 	UnlinkMessageTaskWithResponse(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResp, error)
 
+	// StartVisualAttachmentBuild Consent and run one bounded visual attachment embedding pass
+	StartVisualAttachmentBuild(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResponse, error)
+	StartVisualAttachmentBuildWithResponse(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResp, error)
+
+	// RetireVisualAttachmentGeneration Retire the visual attachment generation
+	RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	RetireVisualAttachmentGenerationWithResponse(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireVisualAttachmentGenerationResp, error)
+
+	// RetryVisualAttachmentOwner Retry one visual attachment owner
+	RetryVisualAttachmentOwner(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResponse, error)
+	RetryVisualAttachmentOwnerWithResponse(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResp, error)
+
+	// ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
+	ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error)
+	ResumeVisualAttachmentBuildWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResp, error)
+
+	// GetVisualAttachmentStatus Get visual attachment embedding status
+	GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error)
+	GetVisualAttachmentStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResp, error)
+
 	// ListOrganizations List organizations
 	ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error)
 	ListOrganizationsWithResponse(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResp, error)
@@ -662,6 +682,10 @@ type ClientInterface interface {
 	// SearchMessages Search messages
 	SearchMessages(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResponse, error)
 	SearchMessagesWithResponse(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResp, error)
+
+	// SearchVisualAttachments Search visual attachment content
+	SearchVisualAttachments(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResponse, error)
+	SearchVisualAttachmentsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResp, error)
 
 	// GetSearchCoverage Get semantic index coverage for an analytical context
 	GetSearchCoverage(ctx context.Context, options *GetSearchCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSearchCoverageResponse, error)
@@ -7041,6 +7065,288 @@ func (c *Client) UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTa
 	return responseParser(ctx, resp)
 }
 
+// StartVisualAttachmentBuild Consent and run one bounded visual attachment embedding pass
+func (c *Client) StartVisualAttachmentBuild(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/build",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartVisualAttachmentBuildResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(StartVisualAttachmentBuildErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "StartVisualAttachmentBuildErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(StartVisualAttachmentBuildResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "StartVisualAttachmentBuildResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/build")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireVisualAttachmentGeneration Retire the visual attachment generation
+func (c *Client) RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/retire",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		if resp.StatusCode != 204 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetryVisualAttachmentOwner Retry one visual attachment owner
+func (c *Client) RetryVisualAttachmentOwner(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/retry",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RetryVisualAttachmentOwnerResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RetryVisualAttachmentOwnerErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RetryVisualAttachmentOwnerErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RetryVisualAttachmentOwnerResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RetryVisualAttachmentOwnerResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/retry")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
+func (c *Client) ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/run",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResumeVisualAttachmentBuildResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ResumeVisualAttachmentBuildErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ResumeVisualAttachmentBuildErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ResumeVisualAttachmentBuildResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ResumeVisualAttachmentBuildResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/run")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetVisualAttachmentStatus Get visual attachment embedding status
+func (c *Client) GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetVisualAttachmentStatusResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetVisualAttachmentStatusErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetVisualAttachmentStatusErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetVisualAttachmentStatusResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetVisualAttachmentStatusResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListOrganizations List organizations
 func (c *Client) ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error) {
 	var err error
@@ -10415,6 +10721,68 @@ func (c *Client) SearchMessages(ctx context.Context, options *SearchMessagesRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchVisualAttachments Search visual attachment content
+func (c *Client) SearchVisualAttachments(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/search/attachments/visual",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchVisualAttachmentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchVisualAttachmentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchVisualAttachmentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchVisualAttachmentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchVisualAttachmentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/attachments/visual")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

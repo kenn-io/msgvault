@@ -22,20 +22,21 @@ import (
 
 // Tool name constants.
 const (
-	ToolSearchMessages         = "search_messages"
-	ToolSearchMetadata         = "search_metadata"
-	ToolSearchMessageBodies    = "search_message_bodies"
-	ToolSemanticSearchMessages = "semantic_search_messages"
-	ToolGetMessage             = "get_message"
-	ToolGetAttachment          = "get_attachment"
-	ToolExportAttachment       = "export_attachment"
-	ToolListMessages           = "list_messages"
-	ToolGetStats               = "get_stats"
-	ToolAggregate              = "aggregate"
-	ToolStageDeletion          = "stage_deletion"
-	ToolSearchByDomains        = "search_by_domains"
-	ToolFindSimilarMessages    = "find_similar_messages"
-	ToolSearchInMessage        = "search_in_message"
+	ToolSearchMessages          = "search_messages"
+	ToolSearchMetadata          = "search_metadata"
+	ToolSearchMessageBodies     = "search_message_bodies"
+	ToolSemanticSearchMessages  = "semantic_search_messages"
+	ToolGetMessage              = "get_message"
+	ToolGetAttachment           = "get_attachment"
+	ToolExportAttachment        = "export_attachment"
+	ToolListMessages            = "list_messages"
+	ToolGetStats                = "get_stats"
+	ToolAggregate               = "aggregate"
+	ToolStageDeletion           = "stage_deletion"
+	ToolSearchByDomains         = "search_by_domains"
+	ToolFindSimilarMessages     = "find_similar_messages"
+	ToolSearchVisualAttachments = "search_visual_attachments"
+	ToolSearchInMessage         = "search_in_message"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -68,7 +69,8 @@ type ServeOptions struct {
 	VectorCfg vector.Config
 	// Backend is optional. When nil, find_similar_messages rejects all
 	// calls with a vector_not_enabled error.
-	Backend vector.Backend
+	Backend        vector.Backend
+	VisualSearcher VisualSearcher
 }
 
 type HTTPOptions struct {
@@ -185,12 +187,17 @@ func newMCPServerWithPolicy(
 		hybridEngine:     opts.HybridEngine,
 		vectorCfg:        opts.VectorCfg,
 		backend:          opts.Backend,
+		visualSearcher:   opts.VisualSearcher,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
 		if definition.security == toolSecurityWrite && !allowWrites {
 			continue
 		}
+		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h)))
+	}
+	if opts.VisualSearcher != nil {
+		definition := searchVisualAttachmentsDefinition()
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h)))
 	}
 	registerAttachmentResources(s, h)

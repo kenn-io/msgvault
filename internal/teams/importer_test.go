@@ -147,6 +147,8 @@ func fakeChannelGraph(t *testing.T) *httptest.Server {
 }
 
 func TestInlineImageDownloaded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -174,9 +176,14 @@ func TestInlineImageDownloaded(t *testing.T) {
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir})
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, sum.InlineImagesCopied)
-	assert.EqualValues(t, 0, sum.Errors)
+	require.NoError(err)
+	assert.EqualValues(1, sum.InlineImagesCopied)
+	assert.EqualValues(0, sum.Errors)
+	var role, roleSource string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_role, role_source FROM attachments LIMIT 1`).Scan(&role, &roleSource))
+	assert.Equal("inline", role)
+	assert.Equal("importer_semantics", roleSource)
 }
 
 func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T) {

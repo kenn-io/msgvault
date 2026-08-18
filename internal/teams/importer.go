@@ -766,6 +766,8 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 			ContentHash:        att.ContentHash,
 			Size:               len(data),
 			SourceAttachmentID: "teams:inline:" + fetchPath,
+			Role:               store.AttachmentRoleInline,
+			RoleSource:         store.AttachmentRoleSourceImporterSemantics,
 		})
 	}
 	if err := imp.store.ReplaceMessageInlineAttachments(messageID, refs); err != nil {

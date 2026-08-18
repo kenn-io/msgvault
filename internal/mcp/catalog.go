@@ -10,6 +10,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const (
@@ -28,6 +29,28 @@ type catalogCapabilities struct {
 	semanticSearch  bool
 	vectorInMessage bool
 	similarMessages bool
+}
+
+func searchVisualAttachmentsDefinition() toolDefinition {
+	return readDefinition(
+		ToolSearchVisualAttachments,
+		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance.",
+		closedObject(map[string]*jsonschema.Schema{
+			"text":             stringSchema("Natural-language visual query"),
+			"image_base64":     stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
+			"limit":            nonNegativeIntegerSchema("Maximum results (1-100, default 20)", 20),
+			"sender_person_id": safeIDSchema("Only attachments sent by this person ID"),
+			"source_id":        safeIDSchema("Only attachments from this source ID"),
+			"message_id":       safeIDSchema("Only attachments owned by this message ID"),
+			"filename":         stringSchema("Case-insensitive filename substring filter"),
+			"mime_prefix":      stringSchema("Case-insensitive MIME prefix filter, such as image/"),
+			"cursor":           stringSchema("Opaque next_cursor from the previous response"),
+			"after":            stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before":           stringSchema("Only messages before YYYY-MM-DD"),
+		}),
+		outputSchemaFor[visual.SearchResponse](),
+		(*handlers).searchVisualAttachments,
+	)
 }
 
 type catalogToolHandler func(*handlers, context.Context, toolRequest) (*toolResult, error)

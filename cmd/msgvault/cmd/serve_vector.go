@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const contextualDocumentUTF8Limit = 100_000
@@ -187,7 +189,7 @@ func newConvergenceChecker(vectorCfg vector.Config, mainStore *store.Store, back
 // setupVectorFeatures would only discover the gap later inside the
 // background init goroutine.
 func precheckVectorFeatures(mainPath string) error {
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil
 	}
 	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
@@ -203,9 +205,14 @@ func precheckVectorFeatures(mainPath string) error {
 	if err := cfg.Vector.Validate(); err != nil {
 		return fmt.Errorf("vector config: %w", err)
 	}
-	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cronExpr != "" {
+	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cfg.Vector.Enabled && cronExpr != "" {
 		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
 			return fmt.Errorf("invalid embed cron expression %q: %w", cronExpr, err)
+		}
+	}
+	if cronExpr := cfg.Vector.Multimodal.Schedule.Cron; cfg.Vector.Multimodal.Enabled && cronExpr != "" {
+		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
+			return fmt.Errorf("invalid multimodal cron expression %q: %w", cronExpr, err)
 		}
 	}
 	return nil
@@ -236,8 +243,8 @@ func precheckVectorFeatures(mainPath string) error {
 // through the main handle — is skipped (the query-only handle would reject
 // those writes); Migrate still runs there because it only touches the
 // separate vectors.db, which is read-write regardless.
-func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool) (*vectorFeatures, error) {
-	if !cfg.Vector.Enabled {
+func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool, openers ...visual.StreamOpener) (*vectorFeatures, error) {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	if err := cfg.Vector.Validate(); err != nil {
@@ -330,37 +337,112 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		closeFn = sb.Close
 	}
 
-	runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
-		Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
-		Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
+	features := &vectorFeatures{Backend: backend, Cfg: vecCfg, Close: closeFn}
+	if vecCfg.Enabled {
+		runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
+			Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
+			Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
+		})
+		if err != nil {
+			_ = closeFn()
+			return nil, fmt.Errorf("configure embedding runtime: %w", err)
+		}
+		features.Runner = runtime.Runner
+		features.Convergence = runtime.Convergence
+		features.HybridEngine = hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
+			ExpectedFingerprint: vecCfg.GenerationFingerprint(),
+			RRFK:                vecCfg.Search.RRFK,
+			KPerSignal:          vecCfg.Search.KPerSignal,
+			SubjectBoost:        vecCfg.Search.SubjectBoost,
+			// BuildFilter's participant/label lookups run against mainDB with ?
+			// placeholders. On PG those must become $N or pgx rejects them, so
+			// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
+			// carries the dialect's Rebind. SQLite's Rebind is identity.
+			Rebind:     dialect.Rebind,
+			BuildScope: vecCfg.Embed.Scope.BuildScope(),
+		})
+	}
+	if vecCfg.Multimodal.Enabled && !readOnly {
+		if len(openers) == 0 || openers[0] == nil {
+			_ = closeFn()
+			return nil, errors.New("configure multimodal runtime: attachment content store is unavailable")
+		}
+		visualRuntime, err := newVisualRuntime(ctx, vecCfg, mainStore, backend, openers[0])
+		if err != nil {
+			_ = closeFn()
+			return nil, fmt.Errorf("configure multimodal runtime: %w", err)
+		}
+		features.Visual = visualRuntime
+	}
+	return features, nil
+}
+
+func newVisualRuntime(ctx context.Context, vecCfg vector.Config, mainStore *store.Store, backend vector.Backend, opener visual.StreamOpener) (*visualFeatures, error) {
+	fingerprint := vecCfg.MultimodalGenerationFingerprint()
+	var visualBackend visual.Backend
+	switch typed := backend.(type) {
+	case *sqlitevec.Backend:
+		visualBackend = typed.Visual()
+	case *pgvector.Backend:
+		visualBackend = typed.Visual()
+	default:
+		return nil, errors.New("selected vector backend has no visual lane")
+	}
+	if building, err := mainStore.BuildingVisualGeneration(ctx); err == nil && building.Fingerprint != fingerprint {
+		tokens, tokenErr := mainStore.ListVisualGenerationTokens(ctx, building.ID)
+		if tokenErr != nil {
+			return nil, tokenErr
+		}
+		vectorTokens := make([]visual.VectorToken, len(tokens))
+		for i, token := range tokens {
+			vectorTokens[i] = visual.VectorToken(token)
+		}
+		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
+			return nil, err
+		}
+		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
+			return nil, err
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	generation, err := mainStore.EnsureVisualGeneration(ctx, store.VisualGenerationSpec{
+		Fingerprint: fingerprint, Model: vecCfg.Multimodal.Model,
+		Dimension: vecCfg.Multimodal.Dimension,
 	})
 	if err != nil {
-		_ = closeFn()
-		return nil, fmt.Errorf("configure embedding runtime: %w", err)
+		return nil, err
 	}
-
-	engine := hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
-		ExpectedFingerprint: vecCfg.GenerationFingerprint(),
-		RRFK:                vecCfg.Search.RRFK,
-		KPerSignal:          vecCfg.Search.KPerSignal,
-		SubjectBoost:        vecCfg.Search.SubjectBoost,
-		// BuildFilter's participant/label lookups run against mainDB with ?
-		// placeholders. On PG those must become $N or pgx rejects them, so
-		// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
-		// carries the dialect's Rebind. SQLite's Rebind is identity.
-		Rebind:     dialect.Rebind,
-		BuildScope: vecCfg.Embed.Scope.BuildScope(),
+	provider, err := visual.NewVoyageClient(visual.VoyageConfig{
+		Endpoint: vecCfg.Multimodal.Endpoint, APIKey: vecCfg.Multimodal.APIKey(),
+		Model: vecCfg.Multimodal.Model, Dimension: vecCfg.Multimodal.Dimension,
 	})
-
-	// No sync-time enqueue: newly-persisted messages get embed_gen = NULL
-	// by column default and the scan-and-fill worker picks them up.
-
-	return &vectorFeatures{
-		Backend:      backend,
-		HybridEngine: engine,
-		Runner:       runtime.Runner,
-		Convergence:  runtime.Convergence,
-		Cfg:          vecCfg,
-		Close:        closeFn,
-	}, nil
+	if err != nil {
+		return nil, err
+	}
+	consumerKey := "visual/" + fingerprint
+	reconciler, err := visual.NewReconciler(mainStore, opener, visual.ReconcileConfig{
+		GenerationID: generation.ID, ConsumerKey: consumerKey,
+		MessageTypes: vecCfg.Multimodal.Scope.BuildScope().MessageTypes,
+		// Two maximum-size media items remain below the provider's 64 MiB
+		// encoded-request ceiling. This also bounds each scheduled pass by two
+		// paid owners and roughly 40 MiB of decoded media.
+		PageSize: 2, LeaseOwner: consumerKey, LeaseDuration: 2 * time.Minute,
+		MediaPolicy: visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
+			IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
+			AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()},
+		ContextPolicy: visual.ContextPolicy{MaxChars: vecCfg.Multimodal.MaxContextChars,
+			InputVersion: fingerprint, EligibilityVersion: fingerprint},
+	})
+	if err != nil {
+		return nil, err
+	}
+	worker, err := visual.NewWorker(mainStore, provider, visualBackend, visual.WorkerConfig{
+		Dimension: vecCfg.Multimodal.Dimension, ProviderTimeout: 45 * time.Second,
+		LeaseDuration: 2 * time.Minute, MaxBatchItems: 2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &visualFeatures{Archive: mainStore, Backend: visualBackend, Provider: provider, Reconciler: reconciler, Worker: worker, Generation: generation}, nil
 }

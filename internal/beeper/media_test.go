@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // mediaChat builds a chat with one image message whose asset may or may not
@@ -70,19 +71,22 @@ func TestImportDownloadsAttachment(t *testing.T) {
 	assert.EqualValues(1, sum.AttachmentsDownloaded)
 	assert.EqualValues(0, sum.AttachmentsPending)
 
-	var filename, mimeType, storagePath, contentHash, mediaType string
+	var filename, mimeType, storagePath, contentHash, mediaType, role, roleSource string
 	var width, height int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT a.filename, a.mime_type, a.storage_path, a.content_hash, a.media_type, a.width, a.height
+		SELECT a.filename, a.mime_type, a.storage_path, a.content_hash, a.media_type,
+		       a.width, a.height, a.attachment_role, a.role_source
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "p0").
-		Scan(&filename, &mimeType, &storagePath, &contentHash, &mediaType, &width, &height))
+		Scan(&filename, &mimeType, &storagePath, &contentHash, &mediaType, &width, &height, &role, &roleSource))
 	assert.Equal("photo.png", filename)
 	assert.Equal("image/png", mimeType)
 	assert.NotEmpty(contentHash)
 	assert.Equal("image", mediaType)
 	assert.EqualValues(640, width)
 	assert.EqualValues(480, height)
+	assert.Equal("standalone", role)
+	assert.Equal("importer_semantics", roleSource)
 
 	// Bytes are content-addressed on disk.
 	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, filepath.FromSlash(storagePath)))
@@ -109,6 +113,32 @@ func TestImportDownloadsAttachment(t *testing.T) {
 		SELECT a.media_type FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "p0").Scan(&keptMediaType))
 	assert.Equal("image", keptMediaType)
+}
+
+func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
+	tests := []struct {
+		name       string
+		attachment Attachment
+		wantRole   store.AttachmentRole
+		wantSource store.AttachmentRoleSource
+	}{
+		{
+			name: "shared media", attachment: Attachment{Type: "img"},
+			wantRole: store.AttachmentRoleStandalone, wantSource: store.AttachmentRoleSourceImporterSemantics,
+		},
+		{
+			name: "sticker", attachment: Attachment{Type: "img", IsSticker: true},
+			wantRole: store.AttachmentRoleSticker, wantSource: store.AttachmentRoleSourceProviderExplicit,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ref store.AttachmentRef
+			setBeeperAttachmentRole(&ref, &tt.attachment)
+			assert.Equal(t, tt.wantRole, ref.Role)
+			assert.Equal(t, tt.wantSource, ref.RoleSource)
+		})
+	}
 }
 
 func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {

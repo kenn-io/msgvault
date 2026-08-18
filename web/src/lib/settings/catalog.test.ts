@@ -17,6 +17,8 @@ describe('settings catalog', () => {
       'voyage-contextual'
     ]);
     expect(settingsCatalog['vector.embed.scope.accounts'].group).toBe('search');
+    expect(settingsCatalog['vector.multimodal.enabled'].group).toBe('search');
+    expect(settingsCatalog['vector.multimodal.provider'].options).toEqual(['voyage']);
     expect(settingsCatalog['beeper.schedule'].group).toBe('sources');
     expect(settingsCatalog['integrations.tasks.api_key'].secret).toBe(true);
   });

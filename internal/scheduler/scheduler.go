@@ -93,12 +93,22 @@ type Scheduler struct {
 	embedEntry        cron.EntryID
 	embedEntrySet     bool
 	runEmbedAfterSync bool
+	visualPostSync    func(context.Context) error
+	visualPostRunning bool
 
 	ctx     context.Context    // cancelled on Stop
 	cancel  context.CancelFunc // cancels ctx
 	wg      sync.WaitGroup     // tracks running sync goroutines
 	started bool               // true after Start(), false after Stop()
 	stopped bool               // true after Stop()
+}
+
+// SetVisualPostSyncJob installs the independently consented visual lane's
+// bounded post-sync pass. Nil disables the hook.
+func (s *Scheduler) SetVisualPostSyncJob(run func(context.Context) error) {
+	s.mu.Lock()
+	s.visualPostSync = run
+	s.mu.Unlock()
 }
 
 // New creates a new Scheduler with the given sync callback.
@@ -418,6 +428,41 @@ func (s *Scheduler) runSync(email string) {
 		postSync.Run(embedCtx)
 		endEmbed()
 	}
+	s.startVisualPostSync()
+}
+
+// startVisualPostSync queues hosted multimodal work after the source sync has
+// committed. It deliberately does not wait in the sync goroutine: provider
+// latency must never extend or fail an otherwise successful archive sync.
+func (s *Scheduler) startVisualPostSync() {
+	s.mu.Lock()
+	if s.visualPostSync == nil || s.visualPostRunning || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	run := s.visualPostSync
+	s.visualPostRunning = true
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	go func() {
+		defer s.wg.Done()
+		defer func() {
+			s.mu.Lock()
+			s.visualPostRunning = false
+			s.mu.Unlock()
+		}()
+		done, ok := s.beginWork()
+		if !ok {
+			return
+		}
+		defer done()
+		visualCtx, endVisual := s.jobContext()
+		defer endVisual()
+		if err := run(visualCtx); err != nil {
+			s.logger.Error("post-sync multimodal pass failed", "error", err)
+		}
+	}()
 }
 
 // IsScheduled returns true if the account has been added to the scheduler.

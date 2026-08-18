@@ -2,9 +2,20 @@ package cmd
 
 import (
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
+
+type visualFeatures struct {
+	Archive    *store.Store
+	Backend    visual.Backend
+	Provider   visual.Provider
+	Reconciler *visual.Reconciler
+	Worker     *visual.Worker
+	Generation store.VisualGeneration
+}
 
 // vectorFeatures carries the optional vector-search components that the
 // serve, mcp, sync, and sync-full commands wire into their servers and
@@ -21,6 +32,7 @@ type vectorFeatures struct {
 	Runner       scheduler.EmbedRunner
 	Convergence  scheduler.ConvergenceChecker
 	Cfg          vector.Config
+	Visual       *visualFeatures
 	// Close releases the backend's resources: on SQLite it closes the
 	// vectors.db handle (so WAL checkpoints complete); on PostgreSQL it is
 	// a no-op because the pgvector backend shares the main store's handle,

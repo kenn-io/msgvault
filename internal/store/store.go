@@ -1160,9 +1160,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("classify participant identifier service scope: %w", err)
 	}
 
-	// Create the message watermark and contextual embedding journal triggers.
-	// This must run after the migration loop above, which adds last_modified and
-	// content_changed_at on legacy DBs — the triggers reference both columns.
+	// Stable source-part identity supersedes content hash for attachment rows
+	// that have it. The legacy hash index remains only for rows whose source
+	// cannot provide an occurrence key. This runs after the column migrations
+	// because upgraded archives do not have source_part_key before this point.
+	if err := s.ensureAttachmentOccurrenceUniqueIndexes(ctx); err != nil {
+		return err
+	}
+
+	// Create the message watermark and attachment maintenance triggers. Must run after the
+	// migration loop above, which adds last_modified and content_changed_at on
+	// legacy DBs — the triggers reference both columns.
 	//
 	// It runs HERE, immediately after the columns exist, rather than at the end
 	// of the upgrade: everything below is index builds and whole-table backfills
@@ -1921,6 +1929,39 @@ func (s *Store) dedupeAttachmentsBeforeUniqueIndex(ctx context.Context, tx *logg
 		  )
 	`)
 	return err
+}
+
+func (s *Store) ensureAttachmentOccurrenceUniqueIndexes(ctx context.Context) error {
+	return s.runOnceMigration(
+		ctx,
+		migrationAttachmentOccurrenceUnique,
+		false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				if _, err := tx.ExecContext(ctx,
+					`DROP INDEX IF EXISTS idx_attachments_msg_content_hash`); err != nil {
+					return fmt.Errorf("drop legacy attachment hash identity index: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `
+					CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_source_part
+					    ON attachments(message_id, source_part_key)
+					    WHERE source_part_key IS NOT NULL
+				`); err != nil {
+					return fmt.Errorf("create attachment source-part identity index: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `
+					CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+					    ON attachments(message_id, content_hash)
+					    WHERE source_part_key IS NULL
+					      AND content_hash IS NOT NULL
+					      AND content_hash != ''
+				`); err != nil {
+					return fmt.Errorf("create legacy attachment hash identity index: %w", err)
+				}
+				return nil
+			})
+		},
+	)
 }
 
 // NeedsFTSBackfill reports whether the FTS index needs to be populated.

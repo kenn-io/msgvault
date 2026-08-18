@@ -26,6 +26,10 @@ type FileMetadata struct {
 	ContentHash      string
 	StoragePath      string
 	URL              string
+	AttachmentRole   AttachmentRole
+	RoleSource       AttachmentRoleSource
+	SourcePartKey    string
+	ContentID        string
 }
 
 func (s *Store) GetFileMetadata(ctx context.Context, id int64) (*FileMetadata, error) {
@@ -72,7 +76,9 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 			m.source_id, COALESCE(m.source_message_id, ''),
 			COALESCE(m.message_type, ''), COALESCE(c.conversation_type, ''),
 			COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0),
-			COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
+			COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''),
+			a.attachment_role, a.role_source,
+			COALESCE(a.source_part_key, ''), COALESCE(a.content_id, '')
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
@@ -87,7 +93,8 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 		var file FileMetadata
 		if err := rows.Scan(&file.ID, &file.MessageID, &file.ConversationID,
 			&file.SourceID, &file.SourceMessageID, &file.MessageType, &file.ConversationType,
-			&file.Filename, &file.MimeType, &file.Size, &file.ContentHash, &file.StoragePath); err != nil {
+			&file.Filename, &file.MimeType, &file.Size, &file.ContentHash, &file.StoragePath,
+			&file.AttachmentRole, &file.RoleSource, &file.SourcePartKey, &file.ContentID); err != nil {
 			return nil, fmt.Errorf("scan file metadata: %w", err)
 		}
 		lowerPath := strings.ToLower(file.StoragePath)

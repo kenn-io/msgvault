@@ -118,6 +118,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			// refresh the share marker, so re-running over an existing archive
 			// classifies rows stored before this was recorded.
 			prev.Metadata = shareMeta
+			setBeeperAttachmentRole(&prev, att)
 			refs = append(refs, prev)
 			continue
 		}
@@ -175,6 +176,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			DurationMS:         int64(att.Duration * 1000),
 			Metadata:           shareMeta,
 		}
+		setBeeperAttachmentRole(&stored, att)
 		if att.Size != nil {
 			stored.Width = int64(att.Size.Width)
 			stored.Height = int64(att.Size.Height)
@@ -189,6 +191,16 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
 		sum.Errors++
 	}
+}
+
+func setBeeperAttachmentRole(ref *store.AttachmentRef, att *Attachment) {
+	if att.IsSticker {
+		ref.Role = store.AttachmentRoleSticker
+		ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
+		return
+	}
+	ref.Role = store.AttachmentRoleStandalone
+	ref.RoleSource = store.AttachmentRoleSourceImporterSemantics
 }
 
 // clearPendingMarkers removes a message's pending Beeper markers while

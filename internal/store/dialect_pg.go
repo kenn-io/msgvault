@@ -642,6 +642,10 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS content_id TEXT`, "attachments.content_id"},
 	}
 }
 
@@ -1120,6 +1124,298 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_embedding_changes_participant_display_name
 		     AFTER UPDATE OF display_name, email_address, phone_number ON participants FOR EACH ROW
 		     EXECUTE FUNCTION journal_beeper_participant_display_name()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' THEN
+		         INSERT INTO attachment_change_log
+		             (event_kind, new_message_id, new_attachment_id,
+		              new_content_hash, new_source_part_key, new_role)
+		         VALUES ('attachment_insert', NEW.message_id, NEW.id,
+		                 NEW.content_hash, NEW.source_part_key, NEW.attachment_role);
+		         RETURN NEW;
+		     ELSIF TG_OP = 'UPDATE' THEN
+		         INSERT INTO attachment_change_log
+		             (event_kind, old_message_id, new_message_id,
+		              old_attachment_id, new_attachment_id,
+		              old_content_hash, new_content_hash,
+		              old_source_part_key, new_source_part_key,
+		              old_role, new_role)
+		         VALUES ('attachment_update', OLD.message_id, NEW.message_id,
+		                 OLD.id, NEW.id, OLD.content_hash, NEW.content_hash,
+		                 OLD.source_part_key, NEW.source_part_key,
+		                 OLD.attachment_role, NEW.attachment_role);
+		         RETURN NEW;
+		     ELSE
+		         INSERT INTO attachment_change_log
+		             (event_kind, old_message_id, old_attachment_id,
+		              old_content_hash, old_source_part_key, old_role)
+		         VALUES ('attachment_delete', OLD.message_id, OLD.id,
+		                 OLD.content_hash, OLD.source_part_key, OLD.attachment_role);
+		         RETURN OLD;
+		     END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_insert ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_insert
+		     AFTER INSERT ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_update ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_update
+		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		         storage_path, media_type, width, height, duration_ms,
+		         source_attachment_id, attachment_metadata, attachment_role,
+		         role_source, source_part_key, content_id, encryption_version
+		     ON attachments FOR EACH ROW
+		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.filename IS DISTINCT FROM NEW.filename
+		        OR OLD.mime_type IS DISTINCT FROM NEW.mime_type
+		        OR OLD.size IS DISTINCT FROM NEW.size
+		        OR OLD.content_hash IS DISTINCT FROM NEW.content_hash
+		        OR OLD.storage_path IS DISTINCT FROM NEW.storage_path
+		        OR OLD.media_type IS DISTINCT FROM NEW.media_type
+		        OR OLD.width IS DISTINCT FROM NEW.width
+		        OR OLD.height IS DISTINCT FROM NEW.height
+		        OR OLD.duration_ms IS DISTINCT FROM NEW.duration_ms
+		        OR OLD.source_attachment_id IS DISTINCT FROM NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS DISTINCT FROM NEW.attachment_metadata
+		        OR OLD.attachment_role IS DISTINCT FROM NEW.attachment_role
+		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
+		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
+		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_delete ON attachments`,
+		`CREATE TRIGGER trg_attachment_change_delete
+		     AFTER DELETE ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION capture_attachment_change()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_message_live_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         RETURN NEW;
+		     END IF;
+		     INSERT INTO attachment_change_log
+		         (event_kind, old_message_id, new_message_id,
+		          old_attachment_id, new_attachment_id,
+		          old_content_hash, new_content_hash,
+		          old_source_part_key, new_source_part_key,
+		          old_role, new_role)
+		     SELECT
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN 'message_live_enter' ELSE 'message_live_exit' END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN OLD.id END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN NEW.id END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.id END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.id END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.content_hash END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.content_hash END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.source_part_key END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.source_part_key END,
+		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		              THEN a.attachment_role END,
+		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		              THEN a.attachment_role END
+		     FROM attachments a WHERE a.message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_live_change ON messages`,
+		`CREATE TRIGGER trg_attachment_message_live_change
+		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS DISTINCT FROM
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     EXECUTE FUNCTION capture_attachment_message_live_change()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_message_content_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         RETURN NEW;
+		     END IF;
+		     INSERT INTO attachment_change_log
+		         (event_kind, old_message_id, new_message_id,
+		          old_attachment_id, new_attachment_id,
+		          old_content_hash, new_content_hash,
+		          old_source_part_key, new_source_part_key,
+		          old_role, new_role)
+		     SELECT 'message_content_change', NEW.id, NEW.id,
+		            a.id, a.id, a.content_hash, a.content_hash,
+		            a.source_part_key, a.source_part_key,
+		            a.attachment_role, a.attachment_role
+		     FROM attachments a WHERE a.message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_content_change ON messages`,
+		`CREATE TRIGGER trg_attachment_message_content_change
+		     AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		     WHEN (OLD.subject IS DISTINCT FROM NEW.subject
+		           OR OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION capture_attachment_message_content_change()`,
+		`CREATE OR REPLACE FUNCTION capture_attachment_message_body_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM attachment_change_consumers) THEN
+		         RETURN NEW;
+		     END IF;
+		     INSERT INTO attachment_change_log
+		         (event_kind, old_message_id, new_message_id,
+		          old_attachment_id, new_attachment_id,
+		          old_content_hash, new_content_hash,
+		          old_source_part_key, new_source_part_key,
+		          old_role, new_role)
+		     SELECT 'message_content_change', NEW.message_id, NEW.message_id,
+		            a.id, a.id, a.content_hash, a.content_hash,
+		            a.source_part_key, a.source_part_key,
+		            a.attachment_role, a.attachment_role
+		     FROM attachments a WHERE a.message_id = NEW.message_id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_body_insert ON message_bodies`,
+		`CREATE TRIGGER trg_attachment_message_body_insert
+		     AFTER INSERT ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION capture_attachment_message_body_change()`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_body_update ON message_bodies`,
+		`CREATE TRIGGER trg_attachment_message_body_update
+		     AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
+		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
+		     EXECUTE FUNCTION capture_attachment_message_body_change()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_attachment() RETURNS trigger AS $$
+		 BEGIN
+		     IF TG_OP <> 'INSERT' THEN
+		         UPDATE visual_publications vp
+		         SET state = CASE WHEN EXISTS (
+		                 SELECT 1 FROM attachments a
+		                 JOIN messages m ON m.id = a.message_id
+		                 WHERE a.message_id = vp.message_id
+		                   AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                   AND a.attachment_role = 'standalone'
+		                   AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                         'importer_semantics', 'raw_mime_repair')
+		                   AND (LOWER(COALESCE(a.content_hash, '')) = vp.blob_hash
+		                        OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                            AND LOWER(a.storage_path) =
+		                                SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		             ) THEN 'stale' ELSE 'tombstoned' END,
+		             pending_vector_token = NULL,
+		             updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = OLD.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		                OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                    AND LOWER(OLD.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP <> 'DELETE'
+		        AND NEW.attachment_role = 'standalone'
+		        AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                'importer_semantics', 'raw_mime_repair')
+		        AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                    AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL) THEN
+		         UPDATE visual_publications vp
+		         SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = NEW.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		                OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                    AND LOWER(NEW.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		     AFTER INSERT ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		         storage_path, media_type, width, height, duration_ms,
+		         source_attachment_id, attachment_metadata, attachment_role,
+		         role_source, source_part_key, content_id, encryption_version
+		     ON attachments FOR EACH ROW
+		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.filename IS DISTINCT FROM NEW.filename
+		        OR OLD.mime_type IS DISTINCT FROM NEW.mime_type
+		        OR OLD.size IS DISTINCT FROM NEW.size
+		        OR OLD.content_hash IS DISTINCT FROM NEW.content_hash
+		        OR OLD.storage_path IS DISTINCT FROM NEW.storage_path
+		        OR OLD.media_type IS DISTINCT FROM NEW.media_type
+		        OR OLD.width IS DISTINCT FROM NEW.width
+		        OR OLD.height IS DISTINCT FROM NEW.height
+		        OR OLD.duration_ms IS DISTINCT FROM NEW.duration_ms
+		        OR OLD.source_attachment_id IS DISTINCT FROM NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS DISTINCT FROM NEW.attachment_metadata
+		        OR OLD.attachment_role IS DISTINCT FROM NEW.attachment_role
+		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
+		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
+		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		     AFTER DELETE ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_live() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE visual_publications
+		     SET state = CASE WHEN NEW.deleted_at IS NULL
+		                               AND NEW.deleted_from_source_at IS NULL
+		                          THEN 'stale' ELSE 'tombstoned' END,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS DISTINCT FROM
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     EXECUTE FUNCTION invalidate_visual_publication_message_live()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_content() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE visual_publications
+		     SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id AND state = 'current';
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		     AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		     WHEN (OLD.subject IS DISTINCT FROM NEW.subject
+		           OR OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_content()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_body() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE visual_publications
+		     SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.message_id AND state = 'current';
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		     AFTER INSERT ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		     AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
+		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {

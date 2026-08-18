@@ -1889,6 +1889,41 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 	assert.Equal(t, 0, run, "RunOnce calls when sync failed")
 }
 
+func TestScheduler_VisualRunAfterSyncDoesNotExtendSync(t *testing.T) {
+	requirements := require.New(t)
+	visualStarted := make(chan struct{})
+	releaseVisual := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	s.SetVisualPostSyncJob(func(context.Context) error {
+		close(visualStarted)
+		<-releaseVisual
+		return nil
+	})
+	requirements.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"))
+	s.Start()
+	t.Cleanup(func() {
+		select {
+		case <-releaseVisual:
+		default:
+			close(releaseVisual)
+		}
+		ctx := s.Stop()
+		<-ctx.Done()
+	})
+
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	select {
+	case <-visualStarted:
+	case <-time.After(time.Second):
+		requirements.Fail("visual post-sync pass did not start")
+	}
+	requirements.Eventually(func() bool {
+		statuses := s.Status()
+		return len(statuses) == 1 && !statuses[0].Running
+	}, time.Second, 5*time.Millisecond, "sync should finish while hosted visual work remains blocked")
+	close(releaseVisual)
+}
+
 func TestValidateCronExpr(t *testing.T) {
 	tests := []struct {
 		expr    string

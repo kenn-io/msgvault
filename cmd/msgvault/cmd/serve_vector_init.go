@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // setupVectorFeaturesForRun is a test seam for the build-tag-selected
@@ -94,9 +95,10 @@ func startVectorInit(
 	tracker scheduler.WorkTracker,
 	apiServer *api.Server,
 	sched *scheduler.Scheduler,
+	openers ...visual.StreamOpener,
 ) *vectorInitHandle {
 	h := &vectorInitHandle{done: make(chan struct{})}
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		close(h.done)
 		return h
 	}
@@ -113,7 +115,7 @@ func startVectorInit(
 			}
 			defer release()
 		}
-		vf, err := setupVectorFeaturesForRun(ctx, s, dbPath, false)
+		vf, err := setupVectorFeaturesForRun(ctx, s, dbPath, false, openers...)
 		if err != nil {
 			if ctx.Err() != nil {
 				logger.Info("vector init cancelled during daemon shutdown")
@@ -135,22 +137,155 @@ func startVectorInit(
 		h.mu.Lock()
 		h.vf = vf
 		h.mu.Unlock()
-		apiServer.SetVectorFeatures(vf.HybridEngine, vf.Backend, vf.Cfg)
-		// Preflight drift detection: vector-search requests re-resolve the
-		// durable account scope (throttled) so drift latches index_stale
-		// even on daemons whose embed job never runs (empty cron,
-		// run_after_sync=false). The embed job's own per-run check remains
-		// the detection path for scheduled embeds.
-		apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope()))
-		checkVectorIndexFreshness(ctx, apiServer, vf)
-		if err := registerEmbedJob(sched, vf, s, apiServer); err != nil {
-			// Cron was validated in precheckVectorFeatures, so this is an
-			// invariant violation, not user error; vector search still works.
-			logger.Error("register embed job failed", "error", err)
+		if cfg.Vector.Enabled {
+			apiServer.SetVectorFeatures(vf.HybridEngine, vf.Backend, vf.Cfg)
+			// Preflight drift detection: vector-search requests re-resolve the
+			// durable account scope (throttled) so drift latches index_stale
+			// even on daemons whose embed job never runs (empty cron,
+			// run_after_sync=false). The embed job's own per-run check remains
+			// the detection path for scheduled embeds.
+			apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope()))
+			checkVectorIndexFreshness(ctx, apiServer, vf)
+			if err := registerEmbedJob(sched, vf, s, apiServer); err != nil {
+				// Cron was validated in precheckVectorFeatures, so this is an
+				// invariant violation, not user error; vector search still works.
+				logger.Error("register embed job failed", "error", err)
+			}
+		}
+		if vf.Visual != nil {
+			searchService, searchErr := visual.NewSearchService(s, vf.Visual.Provider, vf.Visual.Backend,
+				cfg.Vector.Multimodal.ImageQueriesEnabled())
+			if searchErr != nil {
+				logger.Error("configure multimodal search failed", "error", searchErr)
+			} else {
+				apiServer.SetVisualSearch(searchService)
+			}
+			build := func(runCtx context.Context) error {
+				if err := vf.Visual.Archive.ConsentVisualGeneration(runCtx, vf.Visual.Generation.ID); err != nil {
+					return err
+				}
+				return runVisualOnce(runCtx, vf.Visual)
+			}
+			resume := func(runCtx context.Context) error {
+				generation, err := vf.Visual.Archive.GetVisualGeneration(runCtx, vf.Visual.Generation.ID)
+				if err != nil {
+					return err
+				}
+				if !generation.Consented {
+					return errors.New("visual generation requires explicit hosted-processing consent")
+				}
+				return runVisualOnce(runCtx, vf.Visual)
+			}
+			apiServer.SetVisualOperations(build, resume, func(runCtx context.Context, messageID int64, hash string) error {
+				generation, err := vf.Visual.Archive.GetVisualGeneration(runCtx, vf.Visual.Generation.ID)
+				if err != nil {
+					return err
+				}
+				if !generation.Consented {
+					return errors.New("visual generation requires explicit hosted-processing consent")
+				}
+				result, err := vf.Visual.Reconciler.RetryOwner(runCtx, messageID, hash)
+				if err != nil || len(result.Work) == 0 {
+					return err
+				}
+				_, err = vf.Visual.Worker.Run(runCtx, result.Work)
+				return err
+			}, func(statusCtx context.Context) (visual.Status, error) {
+				return vf.Visual.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false)
+			}, func(retireCtx context.Context) error {
+				tokens, err := vf.Visual.Reconciler.GenerationTokens(retireCtx)
+				if err != nil {
+					return err
+				}
+				if err := vf.Visual.Reconciler.Retire(retireCtx); err != nil {
+					return err
+				}
+				visualTokens := make([]visual.VectorToken, len(tokens))
+				for i, token := range tokens {
+					visualTokens[i] = visual.VectorToken(token)
+				}
+				return vf.Visual.Backend.DeleteTokens(retireCtx, visualTokens)
+			})
+			if err := registerVisualJob(sched, vf.Visual); err != nil {
+				logger.Error("register multimodal job failed", "error", err)
+			}
 		}
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
 	return h
+}
+
+func runVisualOnce(ctx context.Context, vf *visualFeatures) error {
+	if err := cleanupObsoleteVisualVectors(ctx, vf); err != nil {
+		return err
+	}
+	needsFull, err := vf.Reconciler.NeedsFullReconcile(ctx)
+	if err != nil {
+		return err
+	}
+	if needsFull {
+		result, reconcileErr := vf.Reconciler.FullReconcile(ctx)
+		if reconcileErr != nil {
+			return reconcileErr
+		}
+		if len(result.Work) > 0 {
+			_, err = vf.Worker.Run(ctx, result.Work)
+			return err
+		}
+	}
+	result, err := vf.Reconciler.Replay(ctx)
+	if err != nil {
+		return err
+	}
+	if len(result.Work) > 0 {
+		_, err = vf.Worker.Run(ctx, result.Work)
+		return err
+	}
+	status, err := vf.Reconciler.Status(ctx, visual.ProviderUsage{}, false)
+	if err != nil {
+		return err
+	}
+	if status.JournalLag == 0 && status.ActiveLeases == 0 && status.Stale == 0 && status.Retryable == 0 && status.Converged == status.ConvergenceTotal {
+		return vf.Reconciler.Activate(ctx)
+	}
+	return nil
+}
+
+func cleanupObsoleteVisualVectors(ctx context.Context, vf *visualFeatures) error {
+	tokens, err := vf.Reconciler.ObsoleteTokens(ctx, 100)
+	if err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		if err := vf.Backend.DeleteTokens(ctx, []visual.VectorToken{visual.VectorToken(token)}); err != nil {
+			return err
+		}
+		if err := vf.Reconciler.ClearObsoleteToken(ctx, token); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerVisualJob(sched *scheduler.Scheduler, vf *visualFeatures) error {
+	runScheduled := func(ctx context.Context) error {
+		generation, err := vf.Archive.GetVisualGeneration(ctx, vf.Generation.ID)
+		if err != nil || !generation.Consented ||
+			(generation.State != store.VisualGenerationBuilding && generation.State != store.VisualGenerationActive) {
+			return err
+		}
+		return runVisualOnce(ctx, vf)
+	}
+	if cfg.Vector.Multimodal.Schedule.RunAfterSync {
+		sched.SetVisualPostSyncJob(runScheduled)
+	}
+	schedule := cfg.Vector.Multimodal.Schedule.Cron
+	if schedule == "" {
+		return nil
+	}
+	return sched.AddJob(scheduler.Job{Name: "multimodal-attachments", Schedule: schedule, Run: func(ctx context.Context) error {
+		return runScheduled(ctx)
+	}})
 }
 
 // checkVectorIndexFreshness runs the same generation-vs-configured

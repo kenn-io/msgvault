@@ -1,7 +1,10 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const filesMaxLimit = 500
@@ -34,12 +38,14 @@ type FileSearchSort struct {
 }
 
 type FileSearchHTTPRequest struct {
-	Predicate     ExploreHTTPRequest     `json:"predicate"`
-	FilenameQuery string                 `json:"filename_query,omitempty"`
-	MIMEFamilies  []query.FileMIMEFamily `json:"mime_families,omitempty"`
-	Sort          FileSearchSort         `json:"sort"`
-	Cursor        string                 `json:"cursor,omitempty"`
-	Limit         int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Predicate         ExploreHTTPRequest     `json:"predicate"`
+	FilenameQuery     string                 `json:"filename_query,omitempty"`
+	VisualQuery       string                 `json:"visual_query,omitempty"`
+	VisualImageBase64 string                 `json:"visual_image_base64,omitempty"`
+	MIMEFamilies      []query.FileMIMEFamily `json:"mime_families,omitempty"`
+	Sort              FileSearchSort         `json:"sort"`
+	Cursor            string                 `json:"cursor,omitempty"`
+	Limit             int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
 }
 
 type FileSearchRow struct {
@@ -62,6 +68,13 @@ type FileSearchRow struct {
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
 	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
 	ContentAvailable   bool                 `json:"content_available"`
+	SearchExplain      *FileSearchExplain   `json:"search_explain,omitempty"`
+}
+
+type FileSearchExplain struct {
+	FilenameRank *int    `json:"filename_rank,omitempty"`
+	VisualRank   *int    `json:"visual_rank,omitempty"`
+	RRF          float64 `json:"rrf"`
 }
 
 type FileSearchHTTPResponse struct {
@@ -275,8 +288,25 @@ func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) {
 	var request FileSearchHTTPRequest
-	if !decodeExploreJSON(w, r, &request) {
+	if !decodeFileSearchJSON(w, r, &request) {
 		return
+	}
+	visualQuery := visual.SearchQuery{Text: strings.TrimSpace(request.VisualQuery), Limit: 100}
+	if request.VisualImageBase64 != "" {
+		if visualQuery.Text != "" {
+			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Provide visual_query or visual_image_base64, not both")
+			return
+		}
+		image, decodeErr := base64.StdEncoding.DecodeString(request.VisualImageBase64)
+		if decodeErr != nil || int64(len(image)) > visual.MaxQueryImageBytes {
+			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Visual query image is invalid or too large")
+			return
+		}
+		visualQuery.Image, decodeErr = visual.DecodeQueryImage(image)
+		if decodeErr != nil {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported_image_query", decodeErr.Error())
+			return
+		}
 	}
 	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
@@ -330,17 +360,33 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
-	result, err := searcher.SearchFiles(r.Context(), query.FileSearchRequest{
+	fileRequest := query.FileSearchRequest{
 		Explore: predicate.query, FilenameQuery: strings.TrimSpace(request.FilenameQuery),
 		MIMEFamilies: request.MIMEFamilies,
 		Sort:         query.SortSpec{Field: request.Sort.Field, Direction: request.Sort.Direction},
 		Page:         query.PageSpec{Limit: request.Limit, Offset: offset},
-	})
+	}
+	var result *query.FileSearchResponse
+	var searchExplain map[int64]FileSearchExplain
+	var visualGeneration int64
+	if visualQuery.Text != "" || visualQuery.Image != nil {
+		result, searchExplain, visualGeneration, err = s.searchFilesWithVisual(r.Context(), searcher, fileRequest, visualQuery)
+	} else {
+		result, err = searcher.SearchFiles(r.Context(), fileRequest)
+	}
 	if err != nil {
+		if errors.Is(err, visual.ErrSearchNotReady) {
+			writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", err.Error())
+			return
+		}
 		s.writeExploreError(r.Context(), w, err)
 		return
 	}
 	if request.Cursor != "" {
+		if cursor.VisualGeneration != visualGeneration {
+			writeError(w, http.StatusConflict, "visual_generation_changed", "The active visual index generation changed; restart pagination")
+			return
+		}
 		if cursor.Revision != result.CacheRevision {
 			writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
 			return
@@ -383,15 +429,161 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 			MIMEFamily: file.MIMEFamily, Size: file.Size, ParticipantIDs: file.ParticipantIDs,
 			ParticipantLabels: file.ParticipantLabels, ParticipantDomains: file.ParticipantDomains,
 			ContentState: state, ContentAvailable: available,
+			SearchExplain: fileSearchExplainFor(searchExplain, file.ID),
 		})
 	}
 	if next := offset + len(result.Files); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{
 			Offset: next, Request: requestHash, Revision: result.CacheRevision,
-			SearchRevision: exploreResolvedSearchRevision(searchSpec), Snapshot: snapshotID,
+			SearchRevision: exploreResolvedSearchRevision(searchSpec), VisualGeneration: visualGeneration, Snapshot: snapshotID,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) searchFilesWithVisual(
+	ctx context.Context,
+	searcher query.FileSearcher,
+	request query.FileSearchRequest,
+	visualQuery visual.SearchQuery,
+) (*query.FileSearchResponse, map[int64]FileSearchExplain, int64, error) {
+	s.vectorMu.RLock()
+	visualService := s.visualSearch
+	s.vectorMu.RUnlock()
+	if visualService == nil {
+		return nil, nil, 0, visual.ErrSearchNotReady
+	}
+	visualResult, err := visualService.Search(ctx, visualQuery)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	candidatePage := query.PageSpec{Limit: filesMaxLimit}
+	var lexical *query.FileSearchResponse
+	if strings.TrimSpace(request.FilenameQuery) != "" {
+		lexicalRequest := request
+		lexicalRequest.Page = candidatePage
+		lexical, err = searcher.SearchFiles(ctx, lexicalRequest)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	visualIDs := make([]int64, 0, len(visualResult.Results))
+	visualRanks := make(map[int64]int, len(visualResult.Results))
+	for _, hit := range visualResult.Results {
+		if _, exists := visualRanks[hit.AttachmentID]; exists {
+			continue
+		}
+		visualRanks[hit.AttachmentID] = hit.Rank
+		visualIDs = append(visualIDs, hit.AttachmentID)
+	}
+	var visualFiles *query.FileSearchResponse
+	if len(visualIDs) > 0 {
+		visualRequest := request
+		visualRequest.FilenameQuery = ""
+		visualRequest.AttachmentIDs = visualIDs
+		visualRequest.Page = candidatePage
+		visualFiles, err = searcher.SearchFiles(ctx, visualRequest)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	// A no-hit visual query still needs the committed cache revision for the
+	// Files cursor contract. Read one hard-filtered row and discard it.
+	if lexical == nil && visualFiles == nil {
+		probe := request
+		probe.FilenameQuery = ""
+		probe.Page = query.PageSpec{Limit: 1}
+		probeResult, probeErr := searcher.SearchFiles(ctx, probe)
+		if probeErr != nil {
+			return nil, nil, 0, probeErr
+		}
+		probeResult.Files = nil
+		probeResult.TotalCount = 0
+		return probeResult, map[int64]FileSearchExplain{}, visualResult.GenerationID, nil
+	}
+	base := lexical
+	if base == nil {
+		base = visualFiles
+	}
+	if lexical != nil && visualFiles != nil && lexical.CacheRevision != visualFiles.CacheRevision {
+		return nil, nil, 0, errors.New("analytical cache changed during visual file fusion")
+	}
+	fused, explain := fuseFileRanks(lexical, visualFiles, visualRanks)
+	total := len(fused)
+	start := min(request.Page.Offset, total)
+	end := min(start+request.Page.Limit, total)
+	base.Files = fused[start:end]
+	base.TotalCount = int64(total)
+	return base, explain, visualResult.GenerationID, nil
+}
+
+func fuseFileRanks(
+	lexical *query.FileSearchResponse,
+	visualFiles *query.FileSearchResponse,
+	visualRanks map[int64]int,
+) ([]query.FileRow, map[int64]FileSearchExplain) {
+	rows := make(map[int64]query.FileRow)
+	explain := make(map[int64]FileSearchExplain)
+	if lexical != nil {
+		for index, row := range lexical.Files {
+			rank := index + 1
+			rows[row.ID] = row
+			explain[row.ID] = FileSearchExplain{FilenameRank: &rank, RRF: 1 / float64(60+rank)}
+		}
+	}
+	if visualFiles != nil {
+		for _, row := range visualFiles.Files {
+			rank, exists := visualRanks[row.ID]
+			if !exists {
+				continue
+			}
+			rows[row.ID] = row
+			entry := explain[row.ID]
+			entry.VisualRank = &rank
+			entry.RRF += 1 / float64(60+rank)
+			explain[row.ID] = entry
+		}
+	}
+	fused := make([]query.FileRow, 0, len(rows))
+	for _, row := range rows {
+		fused = append(fused, row)
+	}
+	slices.SortFunc(fused, func(a, b query.FileRow) int {
+		if explain[a.ID].RRF > explain[b.ID].RRF {
+			return -1
+		}
+		if explain[a.ID].RRF < explain[b.ID].RRF {
+			return 1
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return fused, explain
+}
+
+func fileSearchExplainFor(explain map[int64]FileSearchExplain, id int64) *FileSearchExplain {
+	if explain == nil {
+		return nil
+	}
+	value, ok := explain[id]
+	if !ok {
+		return nil
+	}
+	return &value
+}
+
+func decodeFileSearchJSON(w http.ResponseWriter, r *http.Request, dst *FileSearchHTTPRequest) bool {
+	const envelopeBytes = (visual.MaxQueryImageBytes*4)/3 + (2 << 20)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, envelopeBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body: "+err.Error())
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "bad_request", "Request body must contain one JSON object")
+		return false
+	}
+	return true
 }
 
 func canonicalScopedFileSearchHash(request FileSearchHTTPRequest, scope *ExploreFilter) string {

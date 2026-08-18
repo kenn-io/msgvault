@@ -133,6 +133,8 @@ func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
 	assert.NotEmpty(ref.ContentHash)
 	assert.Equal(len(content), ref.Size)
 	assert.Equal("image", ref.MediaType)
+	assert.Equal(store.AttachmentRoleStandalone, ref.Role)
+	assert.Equal(store.AttachmentRoleSourceProviderExplicit, ref.RoleSource)
 	assert.EqualValues(640, ref.Width)
 	assert.EqualValues(480, ref.Height)
 	stored, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(ref.StoragePath)))
@@ -310,6 +312,9 @@ func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
 		Filename: "unavailable.bin", MimeType: "application/octet-stream", Size: 42,
 		StoragePath: "discord:pending:401", SourceAttachmentID: "discord:401", MediaType: "document",
 		Width: 640, Height: 480,
+		Role:          store.AttachmentRoleUnknown,
+		RoleSource:    store.AttachmentRoleSourceUnknown,
+		SourcePartKey: "discord:401",
 	}, refs["discord:401"])
 	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
 	require.NoError(err)

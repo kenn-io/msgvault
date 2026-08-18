@@ -17,6 +17,7 @@ import (
 // startup on a large archive).
 const (
 	migrationAttachmentsContentHashUnique = "attachments_content_hash_unique_index"
+	migrationAttachmentOccurrenceUnique   = "attachment_occurrence_unique_indexes_v1"
 	migrationMessagesLastModifiedBackfill = "messages_last_modified_backfill"
 	// v3: messageIdentityAttributionMatch became envelope-authoritative and
 	// gated email identifier matches on the sender lacking a primary email.
@@ -25,7 +26,7 @@ const (
 	migrationMessageAttributionProvenance     = "message_attribution_provenance_v3"
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
-	migrationMessageWatermarkTriggers         = "message_watermark_triggers_v1"
+	migrationMessageWatermarkTriggers         = "message_and_attachment_triggers_v3"
 	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
 	migrationIdentityMatchSourceSupport       = "identity_match_source_support_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket

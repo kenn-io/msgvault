@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // fakeCmdVectorBackend satisfies vector.Backend for the init tests. It only
@@ -59,7 +60,9 @@ func newVectorInitTestServer(t *testing.T) *api.Server {
 func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.Store, string, bool) (*vectorFeatures, error)) {
 	t.Helper()
 	prev := setupVectorFeaturesForRun
-	setupVectorFeaturesForRun = fn
+	setupVectorFeaturesForRun = func(ctx context.Context, s *store.Store, path string, readOnly bool, _ ...visual.StreamOpener) (*vectorFeatures, error) {
+		return fn(ctx, s, path, readOnly)
+	}
 	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
 }
 
@@ -116,6 +119,26 @@ func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 
 	h := startVectorInit(context.Background(), nil, "", nil, nil, nil)
 	assert.True(t, h.WaitTimeout(time.Second))
+}
+
+func TestStartVectorInitRunsForIndependentMultimodalLane(t *testing.T) {
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = false
+	c.Vector.Multimodal.Enabled = true
+	withTestConfig(t, c)
+
+	called := false
+	prev := setupVectorFeaturesForRun
+	setupVectorFeaturesForRun = func(context.Context, *store.Store, string, bool, ...visual.StreamOpener) (*vectorFeatures, error) {
+		called = true
+		return &vectorFeatures{Close: func() error { return nil }}, nil
+	}
+	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
+
+	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil,
+		newVectorInitTestServer(t), scheduler.New(nil))
+	require.True(t, h.WaitTimeout(5*time.Second))
+	assert.True(t, called, "multimodal-only enablement must initialize vector infrastructure")
 }
 
 func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {

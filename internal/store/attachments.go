@@ -33,7 +33,8 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 	rows, err := s.db.Query(`
 		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
 		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
-		       COALESCE(CAST(attachment_metadata AS TEXT), '')
+		       COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source,
+		       COALESCE(source_part_key, ''), COALESCE(content_id, '')
 		FROM attachments
 		WHERE message_id = ? AND source_attachment_id LIKE ?
 	`, messageID, providerPrefix+"%")
@@ -50,6 +51,8 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 			&ref.Filename, &ref.MimeType, &ref.StoragePath, &ref.ContentHash,
 			&size, &ref.SourceAttachmentID, &ref.MediaType, &ref.Width,
 			&ref.Height, &ref.DurationMS, &ref.Metadata,
+			&ref.Role, &ref.RoleSource,
+			&ref.SourcePartKey, &ref.ContentID,
 		); err != nil {
 			return nil, err
 		}
@@ -97,34 +100,24 @@ func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []Attachm
 	return s.replaceMessageProviderAttachments(messageID, "discord:", refs)
 }
 
-// normalizeDiscordAttachmentRefs preserves one row per stable Discord
-// attachment ID when several attachments on a message share one CAS blob. The
-// schema's (message_id, content_hash) uniqueness keeps the real hash on the
-// first row; later aliases retain the same trusted local path with an empty
-// hash. Empty source URLs become provider sentinels so generic replacement
-// never drops their metadata.
+// normalizeDiscordAttachmentRefs fills deterministic pending markers and
+// recovers hashes from trusted CAS paths. Stable Discord attachment IDs become
+// source-part keys in the generic replacement path, so duplicate bytes no
+// longer need hashless alias rows.
 func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 	normalized := append([]AttachmentRef(nil), refs...)
-	seen := make(map[string]struct{}, len(normalized))
 	for i := range normalized {
 		if normalized[i].StoragePath == "" {
 			attachmentID := strings.TrimPrefix(normalized[i].SourceAttachmentID, "discord:")
 			normalized[i].StoragePath = "discord:pending:" + attachmentID
 		}
-		contentHash := strings.ToLower(normalized[i].ContentHash)
-		if contentHash == "" {
+		if normalized[i].ContentHash == "" {
 			pathHash, ok := casPathHash(normalized[i].StoragePath)
 			if !ok {
 				continue
 			}
-			contentHash = pathHash
 			normalized[i].ContentHash = pathHash
 		}
-		if _, ok := seen[contentHash]; ok {
-			normalized[i].ContentHash = ""
-			continue
-		}
-		seen[contentHash] = struct{}{}
 	}
 	return normalized
 }

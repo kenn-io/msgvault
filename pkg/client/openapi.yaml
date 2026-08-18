@@ -239,6 +239,54 @@ components:
         - mime_type
         - size_bytes
       type: object
+    AttachmentSearchResult:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        blob_hash:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        rank:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+        sent_at:
+          format: date-time
+          type: string
+        size:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+      required:
+        - attachment_id
+        - message_id
+        - conversation_id
+        - source_id
+        - source_message_id
+        - blob_hash
+        - filename
+        - mime_type
+        - size
+        - sent_at
+        - score
+        - rank
+      type: object
     AttributeChoice:
       additionalProperties: false
       properties:
@@ -2091,6 +2139,19 @@ components:
         - last_at
         - cache_revision
       type: object
+    DuplicateCostRisk:
+      properties:
+        at_least_once:
+          type: boolean
+        detail:
+          type: string
+        provider_idempotent:
+          type: boolean
+      required:
+        - at_least_once
+        - provider_idempotent
+        - detail
+      type: object
     Employment:
       properties:
         address_id:
@@ -3035,6 +3096,20 @@ components:
         - content_state
         - content_available
       type: object
+    FileSearchExplain:
+      properties:
+        filename_rank:
+          format: int64
+          type: integer
+        rrf:
+          format: double
+          type: number
+        visual_rank:
+          format: int64
+          type: integer
+      required:
+        - rrf
+      type: object
     FileSearchHTTPRequest:
       additionalProperties: false
       properties:
@@ -3056,6 +3131,10 @@ components:
           $ref: "#/components/schemas/ExploreHTTPRequest"
         sort:
           $ref: "#/components/schemas/FileSearchSort"
+        visual_image_base64:
+          type: string
+        visual_query:
+          type: string
       required:
         - predicate
         - sort
@@ -3137,6 +3216,8 @@ components:
             type: string
           nullable: true
           type: array
+        search_explain:
+          $ref: "#/components/schemas/FileSearchExplain"
         size_bytes:
           format: int64
           type: integer
@@ -3230,6 +3311,37 @@ components:
             type: string
           nullable: true
           type: array
+      type: object
+    FormatCoverage:
+      properties:
+        bytes:
+          format: int64
+          type: integer
+        current:
+          format: int64
+          type: integer
+        eligible:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        retryable:
+          format: int64
+          type: integer
+        stale:
+          format: int64
+          type: integer
+        terminal:
+          format: int64
+          type: integer
+      required:
+        - mime_type
+        - eligible
+        - current
+        - stale
+        - terminal
+        - retryable
+        - bytes
       type: object
     GenerationSummary:
       properties:
@@ -6094,6 +6206,25 @@ components:
         - done
         - total
       type: object
+    ProviderUsage:
+      properties:
+        billed_units:
+          format: double
+          type: number
+        input_bytes:
+          format: int64
+          type: integer
+        requests:
+          format: int64
+          type: integer
+        usage_available:
+          type: boolean
+      required:
+        - requests
+        - input_bytes
+        - billed_units
+        - usage_available
+      type: object
     QueryRequest:
       additionalProperties: false
       properties:
@@ -6673,6 +6804,31 @@ components:
           format: int64
           type: integer
       type: object
+    SearchResponse:
+      properties:
+        generation_id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        next_cursor:
+          type: string
+        query_mode:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/AttachmentSearchResult"
+          nullable: true
+          type: array
+        usage:
+          $ref: "#/components/schemas/Usage"
+      required:
+        - generation_id
+        - model
+        - query_mode
+        - results
+        - usage
+      type: object
     SearchResult:
       properties:
         messages:
@@ -7242,6 +7398,85 @@ components:
         - active_generation
         - missing_embeddings_total
       type: object
+    Status:
+      properties:
+        active_leases:
+          format: int64
+          type: integer
+        converged:
+          format: int64
+          type: integer
+        convergence_ratio:
+          format: double
+          type: number
+        convergence_total:
+          format: int64
+          type: integer
+        current:
+          format: int64
+          type: integer
+        duplicate_cost:
+          $ref: "#/components/schemas/DuplicateCostRisk"
+        eligible:
+          format: int64
+          type: integer
+        formats:
+          items:
+            $ref: "#/components/schemas/FormatCoverage"
+          nullable: true
+          type: array
+        generation:
+          $ref: "#/components/schemas/VisualGeneration"
+        journal_cursor:
+          format: int64
+          type: integer
+        journal_high_water:
+          format: int64
+          type: integer
+        journal_lag:
+          format: int64
+          type: integer
+        retryable:
+          format: int64
+          type: integer
+        stale:
+          format: int64
+          type: integer
+        terminal:
+          format: int64
+          type: integer
+        tombstoned:
+          format: int64
+          type: integer
+        unavailable:
+          format: int64
+          type: integer
+        unknown_role:
+          format: int64
+          type: integer
+        usage:
+          $ref: "#/components/schemas/ProviderUsage"
+      required:
+        - generation
+        - eligible
+        - current
+        - stale
+        - tombstoned
+        - retryable
+        - terminal
+        - unknown_role
+        - unavailable
+        - active_leases
+        - journal_high_water
+        - journal_cursor
+        - journal_lag
+        - converged
+        - convergence_total
+        - convergence_ratio
+        - formats
+        - usage
+        - duplicate_cost
+      type: object
     StatusMessageResponse:
       properties:
         message:
@@ -7778,6 +8013,17 @@ components:
         - email
         - display_name
       type: object
+    Usage:
+      properties:
+        available:
+          type: boolean
+        total_tokens:
+          format: int64
+          type: integer
+      required:
+        - total_tokens
+        - available
+      type: object
     VCardIdentity:
       additionalProperties: false
       properties:
@@ -7888,6 +8134,63 @@ components:
           type: string
       required:
         - status
+      type: object
+    VisualBuildRequest:
+      additionalProperties: false
+      properties:
+        consent:
+          type: boolean
+      required:
+        - consent
+      type: object
+    VisualGeneration:
+      properties:
+        consented:
+          type: boolean
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        source_fence:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - id
+        - fingerprint
+        - model
+        - dimension
+        - state
+        - source_fence
+        - consented
+      type: object
+    VisualRetireRequest:
+      additionalProperties: false
+      properties:
+        generation_id:
+          format: int64
+          type: integer
+      required:
+        - generation_id
+      type: object
+    VisualRetryRequest:
+      additionalProperties: false
+      properties:
+        blob_hash:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - blob_hash
       type: object
   securitySchemes:
     apiKey:
@@ -12611,6 +12914,121 @@ paths:
       summary: Unlink a task from an archived email
       tags:
         - API
+  /api/v1/multimodal/build:
+    post:
+      operationId: startVisualAttachmentBuild
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisualBuildRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Consent and run one bounded visual attachment embedding pass
+      tags:
+        - API
+  /api/v1/multimodal/retire:
+    post:
+      operationId: retireVisualAttachmentGeneration
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisualRetireRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retire the visual attachment generation
+      tags:
+        - Search
+  /api/v1/multimodal/retry:
+    post:
+      operationId: retryVisualAttachmentOwner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisualRetryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retry one visual attachment owner
+      tags:
+        - API
+  /api/v1/multimodal/run:
+    post:
+      operationId: resumeVisualAttachmentBuild
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Resume one bounded visual attachment embedding pass
+      tags:
+        - API
+  /api/v1/multimodal/status:
+    get:
+      operationId: getVisualAttachmentStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get visual attachment embedding status
+      tags:
+        - API
   /api/v1/organizations:
     get:
       operationId: listOrganizations
@@ -15823,6 +16241,27 @@ paths:
       security:
         - apiKey: []
       summary: Search messages
+      tags:
+        - API
+  /api/v1/search/attachments/visual:
+    post:
+      operationId: searchVisualAttachments
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search visual attachment content
       tags:
         - API
   /api/v1/search/coverage:

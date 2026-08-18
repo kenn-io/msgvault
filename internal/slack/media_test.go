@@ -146,26 +146,31 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 	require.NoError(err)
 
 	rows, err := st.DB().Query(st.Rebind(`
-		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
+		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, ''),
+		       a.attachment_role, a.role_source
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(6))
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
-	got := map[string][2]string{}
+	got := map[string][4]string{}
 	for rows.Next() {
-		var id, hash, mediaType string
-		require.NoError(rows.Scan(&id, &hash, &mediaType))
-		got[id] = [2]string{hash, mediaType}
+		var id, hash, mediaType, role, roleSource string
+		require.NoError(rows.Scan(&id, &hash, &mediaType, &role, &roleSource))
+		got[id] = [4]string{hash, mediaType, role, roleSource}
 	}
 	require.NoError(rows.Err())
 
 	require.Len(got, 3)
 	assert.NotEmpty(got["slack:F_OK"][0], "on-host file downloads into content-addressed storage")
 	assert.Equal("image", got["slack:F_OK"][1])
+	assert.Equal("standalone", got["slack:F_OK"][2])
+	assert.Equal("provider_explicit", got["slack:F_OK"][3])
 	assert.Empty(got["slack:F_EXT"][0])
 	assert.Equal("link", got["slack:F_EXT"][1], "external file records metadata only")
+	assert.Equal("unknown", got["slack:F_EXT"][2])
 	assert.Empty(got["slack:F_BIG"][0])
 	assert.Empty(got["slack:F_BIG"][1], "over-cap file leaves a retryable pending marker")
+	assert.Equal("unknown", got["slack:F_BIG"][2])
 
 	// The pending list sees the over-cap marker but not the link row.
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -244,6 +249,9 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 				Size:               123,
 				SourceAttachmentID: "slack:F_GONE",
 				MediaType:          "link",
+				Role:               store.AttachmentRoleUnknown,
+				RoleSource:         store.AttachmentRoleSourceUnknown,
+				SourcePartKey:      "slack:F_GONE",
 			}, refs["slack:F_GONE"])
 		})
 	}

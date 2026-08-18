@@ -960,6 +960,303 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		               NULL, NULL, NULL, NULL, NEW.id
 		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
 		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_insert`,
+		`CREATE TRIGGER trg_attachment_change_insert
+		    AFTER INSERT ON attachments FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, new_message_id, new_attachment_id,
+		             new_content_hash, new_source_part_key, new_role)
+		        VALUES ('attachment_insert', NEW.message_id, NEW.id,
+		                NEW.content_hash, NEW.source_part_key, NEW.attachment_role);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_update`,
+		`CREATE TRIGGER trg_attachment_change_update
+		    AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		        storage_path, media_type, width, height, duration_ms,
+		        source_attachment_id, attachment_metadata, attachment_role,
+		        role_source, source_part_key, content_id, encryption_version
+		    ON attachments FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		      AND (OLD.message_id IS NOT NEW.message_id
+		        OR OLD.filename IS NOT NEW.filename
+		        OR OLD.mime_type IS NOT NEW.mime_type
+		        OR OLD.size IS NOT NEW.size
+		        OR OLD.content_hash IS NOT NEW.content_hash
+		        OR OLD.storage_path IS NOT NEW.storage_path
+		        OR OLD.media_type IS NOT NEW.media_type
+		        OR OLD.width IS NOT NEW.width
+		        OR OLD.height IS NOT NEW.height
+		        OR OLD.duration_ms IS NOT NEW.duration_ms
+		        OR OLD.source_attachment_id IS NOT NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS NOT NEW.attachment_metadata
+		        OR OLD.attachment_role IS NOT NEW.attachment_role
+		        OR OLD.role_source IS NOT NEW.role_source
+		        OR OLD.source_part_key IS NOT NEW.source_part_key
+		        OR OLD.content_id IS NOT NEW.content_id
+		        OR OLD.encryption_version IS NOT NEW.encryption_version)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, new_message_id,
+		             old_attachment_id, new_attachment_id,
+		             old_content_hash, new_content_hash,
+		             old_source_part_key, new_source_part_key,
+		             old_role, new_role)
+		        VALUES ('attachment_update', OLD.message_id, NEW.message_id,
+		                OLD.id, NEW.id, OLD.content_hash, NEW.content_hash,
+		                OLD.source_part_key, NEW.source_part_key,
+		                OLD.attachment_role, NEW.attachment_role);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_change_delete`,
+		`CREATE TRIGGER trg_attachment_change_delete
+		    AFTER DELETE ON attachments FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, old_attachment_id,
+		             old_content_hash, old_source_part_key, old_role)
+		        VALUES ('attachment_delete', OLD.message_id, OLD.id,
+		                OLD.content_hash, OLD.source_part_key, OLD.attachment_role);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_live_change`,
+		`CREATE TRIGGER trg_attachment_message_live_change
+		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		      AND ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS NOT
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, new_message_id,
+		             old_attachment_id, new_attachment_id,
+		             old_content_hash, new_content_hash,
+		             old_source_part_key, new_source_part_key,
+		             old_role, new_role)
+		        SELECT
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN 'message_live_enter' ELSE 'message_live_exit' END,
+		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                 THEN OLD.id END,
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN NEW.id END,
+		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                 THEN a.id END,
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN a.id END,
+		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                 THEN a.content_hash END,
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN a.content_hash END,
+		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                 THEN a.source_part_key END,
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN a.source_part_key END,
+		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                 THEN a.attachment_role END,
+		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN a.attachment_role END
+		        FROM attachments a WHERE a.message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_content_change`,
+		`CREATE TRIGGER trg_attachment_message_content_change
+		    AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		      AND (OLD.subject IS NOT NEW.subject OR OLD.message_type IS NOT NEW.message_type)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, new_message_id,
+		             old_attachment_id, new_attachment_id,
+		             old_content_hash, new_content_hash,
+		             old_source_part_key, new_source_part_key,
+		             old_role, new_role)
+		        SELECT 'message_content_change', NEW.id, NEW.id,
+		               a.id, a.id, a.content_hash, a.content_hash,
+		               a.source_part_key, a.source_part_key,
+		               a.attachment_role, a.attachment_role
+		        FROM attachments a WHERE a.message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_body_insert`,
+		`CREATE TRIGGER trg_attachment_message_body_insert
+		    AFTER INSERT ON message_bodies FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, new_message_id,
+		             old_attachment_id, new_attachment_id,
+		             old_content_hash, new_content_hash,
+		             old_source_part_key, new_source_part_key,
+		             old_role, new_role)
+		        SELECT 'message_content_change', NEW.message_id, NEW.message_id,
+		               a.id, a.id, a.content_hash, a.content_hash,
+		               a.source_part_key, a.source_part_key,
+		               a.attachment_role, a.attachment_role
+		        FROM attachments a WHERE a.message_id = NEW.message_id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_attachment_message_body_update`,
+		`CREATE TRIGGER trg_attachment_message_body_update
+		    AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
+		      AND (OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html)
+		    BEGIN
+		        INSERT INTO attachment_change_log
+		            (event_kind, old_message_id, new_message_id,
+		             old_attachment_id, new_attachment_id,
+		             old_content_hash, new_content_hash,
+		             old_source_part_key, new_source_part_key,
+		             old_role, new_role)
+		        SELECT 'message_content_change', NEW.message_id, NEW.message_id,
+		               a.id, a.id, a.content_hash, a.content_hash,
+		               a.source_part_key, a.source_part_key,
+		               a.attachment_role, a.attachment_role
+		        FROM attachments a WHERE a.message_id = NEW.message_id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		    AFTER INSERT ON attachments FOR EACH ROW
+		    WHEN NEW.attachment_role = 'standalone'
+		      AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                              'importer_semantics', 'raw_mime_repair')
+		      AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		    AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		        storage_path, media_type, width, height, duration_ms,
+		        source_attachment_id, attachment_metadata, attachment_role,
+		        role_source, source_part_key, content_id, encryption_version
+		    ON attachments FOR EACH ROW
+		    WHEN OLD.message_id IS NOT NEW.message_id
+		      OR OLD.filename IS NOT NEW.filename
+		      OR OLD.mime_type IS NOT NEW.mime_type
+		      OR OLD.size IS NOT NEW.size
+		      OR OLD.content_hash IS NOT NEW.content_hash
+		      OR OLD.storage_path IS NOT NEW.storage_path
+		      OR OLD.media_type IS NOT NEW.media_type
+		      OR OLD.width IS NOT NEW.width
+		      OR OLD.height IS NOT NEW.height
+		      OR OLD.duration_ms IS NOT NEW.duration_ms
+		      OR OLD.source_attachment_id IS NOT NEW.source_attachment_id
+		      OR OLD.attachment_metadata IS NOT NEW.attachment_metadata
+		      OR OLD.attachment_role IS NOT NEW.attachment_role
+		      OR OLD.role_source IS NOT NEW.role_source
+		      OR OLD.source_part_key IS NOT NEW.source_part_key
+		      OR OLD.content_id IS NOT NEW.content_id
+		      OR OLD.encryption_version IS NOT NEW.encryption_version
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE NEW.attachment_role = 'standalone'
+		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                  'importer_semantics', 'raw_mime_repair')
+		          AND message_id = NEW.message_id
+		          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                      AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		    AFTER DELETE ON attachments FOR EACH ROW
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		    WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		          IS NOT
+		          (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN NEW.deleted_at IS NULL
+		                              AND NEW.deleted_from_source_at IS NULL
+		                         THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		    AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		    WHEN OLD.subject IS NOT NEW.subject OR OLD.message_type IS NOT NEW.message_type
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id AND state = 'current';
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		    AFTER INSERT ON message_bodies FOR EACH ROW
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state = 'current';
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		    AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		    WHEN OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state = 'current';
+		    END`,
 	)
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
@@ -1191,6 +1488,10 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
+		{`ALTER TABLE attachments ADD COLUMN role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
+		{`ALTER TABLE attachments ADD COLUMN source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
+		{`ALTER TABLE attachments ADD COLUMN content_id TEXT`, "attachments.content_id"},
 	}
 }
 

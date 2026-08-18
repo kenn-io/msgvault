@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 var mcpForceSQL bool
@@ -94,7 +95,23 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
 		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 	}
+	if cfg.Vector.Multimodal.Enabled {
+		visualStatus, visualErr := st.VisualStatus(ctx)
+		if visualErr == nil && visualStatus.Generation.State == "active" {
+			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
+		}
+	}
 	return opts, nil
+}
+
+type daemonMCPVisualSearcher struct{ client *daemonclient.Client }
+
+func (s daemonMCPVisualSearcher) SearchVisualAttachments(ctx context.Context, request mcpserver.VisualSearchRequest) (*visual.SearchResponse, error) {
+	return s.client.SearchVisualAttachmentsFiltered(ctx, daemonclient.VisualSearchOptions{
+		Text: request.Text, Image: request.Image, Limit: request.Limit, Cursor: request.Cursor,
+		SenderPersonID: request.SenderPersonID, SourceID: request.SourceID, MessageID: request.MessageID,
+		Filename: request.Filename, MIMEPrefix: request.MIMEPrefix, After: request.After, Before: request.Before,
+	})
 }
 
 type daemonMCPHybridSearcher struct {

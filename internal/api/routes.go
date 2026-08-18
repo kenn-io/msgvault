@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const (
@@ -237,6 +238,14 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
+	registerAPIV1RawHumaJSONRoute[visual.SearchResponse](apiV1, "searchVisualAttachments", http.MethodPost, "/search/attachments/visual", "Search visual attachment content", s.handleVisualSearch)
+	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
+	registerAPIV1RawHumaJSONRouteWithRequest[visualBuildRequest, visual.Status](apiV1, "startVisualAttachmentBuild", http.MethodPost, "/multimodal/build", "Consent and run one bounded visual attachment embedding pass", s.handleVisualBuild)
+	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "resumeVisualAttachmentBuild", http.MethodPost, "/multimodal/run", "Resume one bounded visual attachment embedding pass", s.handleVisualRun)
+	registerAPIV1RawHumaJSONRouteWithRequest[visualRetryRequest, visual.Status](apiV1, "retryVisualAttachmentOwner", http.MethodPost, "/multimodal/retry", "Retry one visual attachment owner", s.handleVisualRetry)
+	retireVisualOp := withAPIKeySecurity(huma.Operation{OperationID: "retireVisualAttachmentGeneration", Method: http.MethodPost, Path: "/multimodal/retire", Tags: []string{"Search"}, Summary: "Retire the visual attachment generation", Responses: rawHumaResponses(http.StatusNoContent)})
+	retireVisualOp.RequestBody = jsonRequestBodyFor[visualRetireRequest](apiV1)
+	registerRawHumaRoute(apiV1, retireVisualOp, s.handleVisualRetire)
 	registerAPIV1RawHumaJSONRoute[cliInitDBResponse](apiV1, "initCLIArchive", http.MethodPost, "/cli/init-db", "Initialize the archive for CLI use", s.handleCLIInitDB)
 	registerAPIV1RawHumaJSONRoute[cliStatsResponse](apiV1, "getCLIStats", http.MethodGet, "/cli/stats", "Get CLI-compatible archive statistics", s.handleCLIStats)
 	registerAPIV1RawHumaJSONRoute[cliSearchResponse](apiV1, "searchCLI", http.MethodGet, "/cli/search", "Search messages for CLI output", s.handleCLISearch)

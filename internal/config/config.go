@@ -724,6 +724,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
+	// Multimodal defaults depend on the decoded credential destination. Reset
+	// the pre-filled section so changing endpoint cannot silently carry the
+	// default Voyage key environment name to another origin.
+	cfg.Vector.Multimodal = vector.MultimodalConfig{}
 	if _, err := toml.Decode(string(content), cfg); err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
 			strings.Contains(err.Error(), "hexadecimal digits after") {
@@ -770,6 +774,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	if cfg.Vector.AnyLaneEnabled() {
+		if err := cfg.Vector.Validate(); err != nil {
+			return nil, fmt.Errorf("vector config: %w", err)
+		}
+	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	if err := cfg.Server.Validate(); err != nil {

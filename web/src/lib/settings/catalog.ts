@@ -85,6 +85,26 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
     'Embedded accounts',
     'Optional account scope; only listed accounts are embedded.'
   ),
+  'vector.multimodal.enabled': entry('search', 'Visual attachment search', 'Independently enable hosted visual attachment indexing.'),
+  'vector.multimodal.provider': entry('search', 'Visual embedding provider', 'Provider used for visual attachment embeddings.', {
+    options: ['voyage']
+  }),
+  'vector.multimodal.endpoint': entry('search', 'Visual embedding endpoint', 'HTTPS API root used for multimodal embedding requests.', {
+    testable: true
+  }),
+  'vector.multimodal.api_key_env': entry('search', 'Visual embedding key environment variable', 'Local environment variable containing the provider key.'),
+  'vector.multimodal.model': entry('search', 'Visual embedding model', 'Model identifier used for visual generations.', {
+    options: ['voyage-multimodal-3.5']
+  }),
+  'vector.multimodal.dimension': entry('search', 'Visual embedding dimension', 'Vector dimension required by the multimodal model.'),
+  'vector.multimodal.max_context_chars': entry('search', 'Maximum visual context characters', 'Hard limit for normalized owning-message context.'),
+  'vector.multimodal.include_images': entry('search', 'Index still images', 'Allow authoritative standalone still images to leave the machine for indexing.'),
+  'vector.multimodal.include_animated_gifs': entry('search', 'Index animated GIFs', 'Allow animated GIFs only after provider capability is confirmed.'),
+  'vector.multimodal.include_video': entry('search', 'Index videos', 'Allow bounded authoritative standalone videos to leave the machine for indexing.'),
+  'vector.multimodal.allow_image_queries': entry('search', 'Allow image queries', 'Permit bounded query images to be sent to the visual embedding provider.'),
+  'vector.multimodal.scope.message_types': entry('search', 'Visual message types', 'Optional message-type scope for visual indexing.'),
+  'vector.multimodal.schedule.cron': entry('search', 'Visual indexing schedule', 'Cron schedule for background visual indexing.'),
+  'vector.multimodal.schedule.run_after_sync': entry('search', 'Index visuals after sync', 'Run visual indexing after a successful source sync.'),
   'vector.search.rrf_k': entry('search', 'RRF constant', 'Reciprocal rank fusion constant.'),
   'vector.search.k_per_signal': entry('search', 'Candidates per signal', 'Candidate count contributed by each hybrid signal.'),
   'vector.search.subject_boost': entry('search', 'Subject boost', 'Hybrid ranking weight for subject matches.'),

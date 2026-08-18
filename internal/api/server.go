@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	webapp "go.kenn.io/msgvault/internal/web"
 )
 
@@ -314,6 +315,12 @@ type Server struct {
 	hybridEngine *hybrid.Engine
 	vectorCfg    vector.Config
 	backend      vector.Backend
+	visualSearch *visual.SearchService
+	visualBuild  func(context.Context) error
+	visualRun    func(context.Context) error
+	visualRetry  func(context.Context, int64, string) error
+	visualStatus func(context.Context) (visual.Status, error)
+	visualRetire func(context.Context) error
 	vectorStatus VectorStatus
 	vectorErr    string
 	// vectorStaleLatch pins a stale status that refreshVectorStatusIfStale

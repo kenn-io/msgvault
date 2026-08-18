@@ -32,6 +32,41 @@ func parseEmail(t *testing.T, opts emailOptions) *Message {
 	return mustParse(t, makeRawEmail(opts))
 }
 
+func TestParsePreservesAuthoritativeAttachmentEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: attachment evidence\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer\r\nContent-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=report.pdf\r\n\r\npdf\r\n" +
+		"--outer\r\nContent-Type: image/png; name=inline.png\r\n" +
+		"Content-Disposition: inline; filename=inline.png\r\n" +
+		"Content-ID: <inline-1>\r\n\r\npng\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	require.Len(msg.Attachments, 2)
+	assert.Equal("attachment", msg.Attachments[0].Disposition)
+	assert.False(msg.Attachments[0].IsInline)
+	assert.NotEmpty(msg.Attachments[0].PartKey)
+	assert.Equal("inline", msg.Attachments[1].Disposition)
+	assert.True(msg.Attachments[1].IsInline)
+	assert.Equal("inline-1", msg.Attachments[1].ContentID)
+	assert.NotEmpty(msg.Attachments[1].PartKey)
+	assert.NotEqual(msg.Attachments[0].PartKey, msg.Attachments[1].PartKey)
+
+	ambiguous := makeAttachment(&enmime.Part{
+		PartID: "4", ContentType: "image/jpeg", FileName: "ambiguous.jpg", Content: []byte("jpeg"),
+	}, false)
+	assert.Empty(ambiguous.Disposition)
+	assert.False(ambiguous.IsInline)
+	assert.Equal("mime:4", ambiguous.PartKey)
+}
+
 // assertAddress checks that got has exactly wantLen elements and got[idx] has the expected email and (optionally) domain.
 func assertAddress(t *testing.T, got []Address, wantLen, idx int, wantEmail, wantDomain string) {
 	t.Helper()

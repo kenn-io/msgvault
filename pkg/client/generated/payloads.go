@@ -92,6 +92,12 @@ type ImportMeetingBody = MeetingImportRequest
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
+type StartVisualAttachmentBuildBody = VisualBuildRequest
+
+type RetireVisualAttachmentGenerationBody = VisualRetireRequest
+
+type RetryVisualAttachmentOwnerBody = VisualRetryRequest
+
 type CreateOrganizationBody = OrganizationCreateBody
 
 type PatchOrganizationBody = OrganizationBody
