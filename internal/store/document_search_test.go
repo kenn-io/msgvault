@@ -147,6 +147,33 @@ func TestDocumentOccurrenceCascadeInvalidatesSearchCursor(t *testing.T) {
 	require.ErrorIs(err, store.ErrDocumentSearchCursorStale)
 }
 
+func TestDocumentMessageTypeChangeInvalidatesSearchCursor(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "message type nebula evidence", "search-message-type")
+
+	secondMessageID := f.CreateMessage("document-message-type-page-two")
+	secondAttachmentID := addSearchAttachment(t, f, secondMessageID, hash, "second.pdf", "provider:message-type")
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), secondAttachmentID, 2)
+	require.NoError(err)
+	require.True(eligible)
+
+	first, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", PageSize: 1, MessageTypes: []string{"email"},
+	})
+	require.NoError(err)
+	require.NotEmpty(first.NextCursor)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET message_type = ? WHERE id = ?`), "chat", secondMessageID)
+	require.NoError(err)
+	_, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", PageSize: 1, MessageTypes: []string{"email"}, Cursor: first.NextCursor,
+	})
+	require.ErrorIs(err, store.ErrDocumentSearchCursorStale)
+}
+
 func TestRetireDocumentExtractionProfileHidesResultsAndInvalidatesCursor(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

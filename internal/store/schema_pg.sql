@@ -1829,6 +1829,33 @@ DROP TRIGGER IF EXISTS trg_document_occurrence_delete_revision ON document_occur
 CREATE TRIGGER trg_document_occurrence_delete_revision
 AFTER DELETE ON document_occurrences
 FOR EACH ROW EXECUTE FUNCTION bump_document_index_revision_after_occurrence_delete();
+
+-- Message type is a document-search filter. Invalidate cursors when an indexed
+-- occurrence moves between filter scopes, regardless of which importer made
+-- the authoritative message update.
+CREATE OR REPLACE FUNCTION bump_document_index_revision_after_message_type_update()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.message_type IS DISTINCT FROM NEW.message_type
+       AND EXISTS (
+           SELECT 1
+           FROM document_occurrences o
+           JOIN document_extraction_heads h
+             ON h.canonical_blob_hash = o.canonical_blob_hash
+           WHERE o.message_id = NEW.id
+       ) THEN
+        UPDATE document_index_state
+        SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE singleton = 1;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_document_message_type_revision ON messages;
+CREATE TRIGGER trg_document_message_type_revision
+AFTER UPDATE OF message_type ON messages
+FOR EACH ROW EXECUTE FUNCTION bump_document_index_revision_after_message_type_update();
 CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
     ON attachment_pack_index(pack_id);
 

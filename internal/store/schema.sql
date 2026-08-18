@@ -1811,6 +1811,25 @@ BEGIN
     SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
     WHERE singleton = 1;
 END;
+
+-- Message type is a document-search filter. Invalidate cursors when an indexed
+-- occurrence moves between filter scopes, regardless of which importer made
+-- the authoritative message update.
+CREATE TRIGGER IF NOT EXISTS trg_document_message_type_revision
+AFTER UPDATE OF message_type ON messages FOR EACH ROW
+WHEN OLD.message_type IS NOT NEW.message_type
+ AND EXISTS (
+     SELECT 1
+     FROM document_occurrences o
+     JOIN document_extraction_heads h
+       ON h.canonical_blob_hash = o.canonical_blob_hash
+     WHERE o.message_id = NEW.id
+ )
+BEGIN
+    UPDATE document_index_state
+    SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE singleton = 1;
+END;
 CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
     ON attachment_pack_index(pack_id);
 

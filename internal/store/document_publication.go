@@ -451,7 +451,7 @@ func (s *Store) PublishDocumentExtraction(
 					(extraction_id, chunk_key, ordinal, text, heading_path,
 					 first_unit_index, last_unit_index, synthetic_prefix_len,
 					 checksum, char_count, table_chunk, code_chunk, truncated)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				VALUES (?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				publication.ExtractionID, chunk.Key, chunk.Ordinal, chunk.Text,
 				string(headingPath), chunk.FirstUnitIndex, chunk.LastUnitIndex,
 				chunk.SyntheticPrefixLen, chunk.Checksum, chunk.CharCount,

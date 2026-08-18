@@ -163,7 +163,7 @@ func (s *Store) EnsureDocumentExtractionProfile(
 				(id, fingerprint, provider, endpoint, region, model,
 				 retention_posture, training_posture, allowed_media_types,
 				 policy_json, enabled)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, `+s.dialect.JSONBindExpr()+`, FALSE)
 			ON CONFLICT (id) DO NOTHING`,
 			profile.ID, profile.Fingerprint, profile.Provider, profile.Endpoint,
 			profile.Region, profile.Model, profile.RetentionPosture,
