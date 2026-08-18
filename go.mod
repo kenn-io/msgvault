@@ -37,7 +37,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/docbank v0.12.1-0.20260818005848-b9b9f83545e3
+	go.kenn.io/docbank v0.13.0
 	go.kenn.io/kit v0.18.1
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
