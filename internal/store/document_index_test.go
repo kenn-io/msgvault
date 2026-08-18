@@ -335,6 +335,41 @@ func TestDocumentIndexStatusCountsCompletedAttemptOutcomes(t *testing.T) {
 	assert.Equal(int64(1), status.StagingOwners)
 }
 
+func TestDocumentIndexStatusCountsBytesOnlyAfterProviderRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+
+	preparationClaim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "status-preparation-failure", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "preparation-failure",
+		LeaseOwner: "status-preparation-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: preparationClaim, ReasonCode: "invalid_local_source", Terminal: true,
+	}))
+
+	providerClaim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "status-provider-failure", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "provider-failure",
+		LeaseOwner: "status-provider-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 256, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: providerClaim, ReasonCode: "provider_rejected", Terminal: true,
+		RequestCount: 1,
+	}))
+
+	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.Equal(int64(1), status.ProviderRequests)
+	assert.Equal(int64(256), status.VerifiedUploadBytes)
+}
+
 func TestRetryDocumentExtractionReschedulesOnlyTerminalOwner(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
