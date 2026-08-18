@@ -278,6 +278,54 @@ func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
 	assert.Equal(int64(1), usage[0].LiveEntries)
 }
 
+func TestAdoptPackedBlobsWithAliasesPreservesKeyedDuplicateOccurrences(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("fa0b")
+	uppercase := strings.ToUpper(hash)
+	canonical := hash[:2] + "/" + hash
+	for index, key := range []string{"slack:file-1", "slack:file-2"} {
+		require.NoError(st.UpsertAttachmentRecord(t.Context(), fx.msgID, store.AttachmentWrite{
+			Filename: fmt.Sprintf("copy-%d.bin", index+1), MIMEType: "application/octet-stream",
+			Size: 100, StoragePath: "legacy/" + uppercase, ContentHash: uppercase,
+			Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
+			SourcePartKey: key,
+		}))
+	}
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), fx.msgID, store.AttachmentWrite{
+		Filename: "remote.bin", MIMEType: "application/octet-stream", Size: 100,
+		StoragePath: "https://cdn.example.com/remote.bin", ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
+		SourcePartKey: "slack:remote",
+	}))
+
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a7", hash)
+	require.NoError(st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{{
+		Entry: entries[0], OriginalHashes: []string{uppercase},
+	}}))
+
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT source_part_key, content_hash, storage_path
+		FROM attachments WHERE message_id = ? ORDER BY source_part_key`), fx.msgID)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var got [][3]string
+	for rows.Next() {
+		var row [3]string
+		require.NoError(rows.Scan(&row[0], &row[1], &row[2]))
+		got = append(got, row)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([][3]string{
+		{"slack:file-1", hash, canonical},
+		{"slack:file-2", hash, canonical},
+		{"slack:remote", hash, "https://cdn.example.com/remote.bin"},
+	}, got)
+}
+
 func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

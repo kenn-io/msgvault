@@ -332,21 +332,23 @@ func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashe
 
 func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
-	// The unique attachment key is case-sensitive, so legacy local rows for one
-	// message can contain case-equivalent hashes. Collapse those logical local
-	// duplicates before lowercasing; otherwise the update below collides with
-	// idx_attachments_msg_content_hash and wedges every later maintenance run.
-	// Retaining MIN(id) matches the one-shot legacy duplicate migration. URL and
-	// empty-path rows are outside this repair because this API preserves them.
+	// The legacy unique attachment key is case-sensitive, so unkeyed local rows
+	// for one message can contain case-equivalent hashes. Collapse only those
+	// legacy duplicates before lowercasing; source-part-keyed rows are distinct
+	// occurrences and may legitimately share a hash. Retaining MIN(id) matches
+	// the one-shot legacy duplicate migration. URL and empty-path rows are
+	// outside this repair because this API preserves them.
 	if _, err := tx.Exec(`
 		DELETE FROM attachments
-		WHERE LOWER(content_hash) = ?
+		WHERE source_part_key IS NULL
+		  AND LOWER(content_hash) = ?
 		  AND storage_path IS NOT NULL AND storage_path != ''
 		  AND LOWER(storage_path) NOT LIKE 'http://%'
 		  AND LOWER(storage_path) NOT LIKE 'https://%'
 		  AND id NOT IN (
 			SELECT MIN(id) FROM attachments
-			WHERE LOWER(content_hash) = ?
+			WHERE source_part_key IS NULL
+			  AND LOWER(content_hash) = ?
 			  AND storage_path IS NOT NULL AND storage_path != ''
 			  AND LOWER(storage_path) NOT LIKE 'http://%'
 			  AND LOWER(storage_path) NOT LIKE 'https://%'
@@ -400,6 +402,8 @@ func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash strin
 		 AND canonical_owner.content_hash = ?
 		WHERE (local.content_hash = ? OR local.content_hash = ?)
 		  AND local.content_hash != ?
+		  AND local.source_part_key IS NULL
+		  AND canonical_owner.source_part_key IS NULL
 		  AND local.storage_path IS NOT NULL AND local.storage_path != ''
 		  AND LOWER(local.storage_path) NOT LIKE 'http://%'
 		  AND LOWER(local.storage_path) NOT LIKE 'https://%'
