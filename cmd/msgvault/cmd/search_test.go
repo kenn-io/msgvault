@@ -840,6 +840,22 @@ func TestSearchCmd_MutualExclusion(t *testing.T) {
 	_ = b
 }
 
+func TestOutputSearchResultsJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	deletedAt := time.Date(2026, time.August, 17, 20, 19, 46, 0, time.FixedZone("UTC+2", 2*60*60))
+	done := captureStdout(t)
+	require.NoError(outputSearchResultsJSON([]query.MessageSummary{
+		{ID: 1, DeletedAt: &deletedAt},
+		{ID: 2},
+	}))
+	var got []map[string]any
+	require.NoError(json.Unmarshal([]byte(done()), &got))
+	require.Len(got, 2)
+	assert.Equal("2026-08-17T18:19:46Z", got[0]["deleted_from_source_at"])
+	assert.NotContains(got[1], "deleted_from_source_at")
+}
+
 // Zero-match searches in --json mode must emit a valid empty JSON
 // array, never the "No messages found." prose — agents pipe this
 // straight into jq.

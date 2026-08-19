@@ -416,10 +416,9 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 }
 
 // getMessageRawShared retrieves and decompresses raw MIME data for a message.
-// Returns nil, nil if no raw data is stored, or if the message is hidden from
-// normal reads — dedup losers (deleted_at) and source-deleted rows
-// (deleted_from_source_at) are both filtered, matching the visibility rule
-// the list/search endpoints apply via store.LiveMessagesWhere.
+// Returns nil, nil if no raw data is stored or if the message is an internal
+// deduplication loser (deleted_at). Source-deleted rows remain archive data and
+// are available to raw MIME consumers.
 func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
@@ -429,7 +428,7 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 		FROM %smessage_raw mr
 		JOIN %smessages m ON m.id = mr.message_id
 		WHERE mr.message_id = ? AND %s
-	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", true))), messageID).Scan(&compressed, &compression)
+	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -1693,11 +1693,7 @@ func TestGetMessageRaw_NotFound(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-// TestGetMessageRaw_FiltersDeletedFromSource verifies that GetMessageRaw
-// refuses to serve raw MIME for messages whose deleted_from_source_at is
-// set, keeping the raw-MIME endpoint aligned with how list/search hide
-// deleted-from-source messages.
-func TestGetMessageRaw_FiltersDeletedFromSource(t *testing.T) {
+func TestGetMessageRaw_ServesDeletedFromSource(t *testing.T) {
 	require := require.New(t)
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
@@ -1716,7 +1712,29 @@ func TestGetMessageRaw_FiltersDeletedFromSource(t *testing.T) {
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
 	require.NoError(err, "GetMessageRaw")
-	assert.Nil(t, got, "expected nil for deleted-from-source message")
+	assert.Equal(t, rawMIME, got, "source-deleted raw MIME")
+}
+
+func TestGetMessageRaw_FiltersInternallyDeleted(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
+
+	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Dedup loser", SentAt: "2024-06-01 12:00:00"})
+	_, err := env.DB.Exec(
+		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
+		msgID, rawMIME,
+	)
+	require.NoError(err, "insert message_raw")
+	_, err = env.DB.Exec(
+		`UPDATE messages SET deleted_at = '2024-06-02 12:00:00' WHERE id = ?`,
+		msgID,
+	)
+	require.NoError(err, "mark internally deleted")
+
+	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
+	require.NoError(err, "GetMessageRaw")
+	assert.Nil(t, got, "internally deleted raw MIME")
 }
 
 // TestGetMessage_PopulatesDeletedAt verifies that the engine's GetMessage

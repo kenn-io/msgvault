@@ -129,6 +129,9 @@ func outputMessageText(msg *query.MessageDetail) error {
 	if len(msg.Labels) > 0 {
 		fmt.Printf("Labels:  %s\n", strings.Join(msg.Labels, ", "))
 	}
+	if msg.DeletedAt != nil {
+		fmt.Printf("Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
+	}
 
 	// Attachments
 	if len(msg.Attachments) > 0 {
@@ -212,6 +215,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 
 	if msg.ReceivedAt != nil {
 		output["received_at"] = msg.ReceivedAt.Format(time.RFC3339)
+	}
+	if msg.DeletedAt != nil {
+		output["deleted_from_source_at"] = msg.DeletedAt.UTC().Format(time.RFC3339)
 	}
 
 	enc := json.NewEncoder(os.Stdout)

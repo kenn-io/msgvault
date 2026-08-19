@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -31,6 +32,39 @@ func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
 	assert.NotContains(out, "\x1b")
 	assert.NotContains(out, "\x07")
 	assert.NotContains(out, "\u009b")
+	assert.NotContains(out, "Deleted from source:")
+}
+
+func TestOutputMessageTextShowsDeletedFromSource(t *testing.T) {
+	deletedAt := time.Date(2026, time.August, 17, 20, 19, 46, 0, time.FixedZone("UTC+2", 2*60*60))
+	done := captureStdout(t)
+	err := outputMessageText(&query.MessageDetail{
+		ID:              42,
+		SourceMessageID: "remote-42",
+		SentAt:          time.Date(2026, time.August, 17, 18, 11, 25, 0, time.UTC),
+		DeletedAt:       &deletedAt,
+	})
+	out := done()
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Deleted from source: 2026-08-17T18:19:46Z\n")
+}
+
+func TestOutputMessageJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	deletedAt := time.Date(2026, time.August, 17, 20, 19, 46, 0, time.FixedZone("UTC+2", 2*60*60))
+	done := captureStdout(t)
+	require.NoError(outputMessageJSON(&query.MessageDetail{DeletedAt: &deletedAt}))
+	var got map[string]any
+	require.NoError(json.Unmarshal([]byte(done()), &got))
+	assert.Equal("2026-08-17T18:19:46Z", got["deleted_from_source_at"])
+
+	done = captureStdout(t)
+	require.NoError(outputMessageJSON(&query.MessageDetail{}))
+	got = nil
+	require.NoError(json.Unmarshal([]byte(done()), &got))
+	assert.NotContains(got, "deleted_from_source_at")
 }
 
 func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
