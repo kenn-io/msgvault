@@ -23,6 +23,12 @@ const (
 	scopeGraphChannelBasic   = "https://graph.microsoft.com/Channel.ReadBasic.All"
 	scopeGraphUserRead       = "https://graph.microsoft.com/User.Read"
 	scopeGraphUserReadBasic  = "https://graph.microsoft.com/User.ReadBasic.All"
+	// Channel imports read the team roster (GET /teams/{id}/members) to
+	// evaluate the participant threshold; Team.ReadBasic.All does not cover it.
+	scopeGraphTeamMemberRead = "https://graph.microsoft.com/TeamMember.Read.All"
+	// Private and shared channels carry their own membership, read via
+	// GET /teams/{id}/channels/{id}/members.
+	scopeGraphChannelMemberRead = "https://graph.microsoft.com/ChannelMember.Read.All"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -32,6 +38,7 @@ func GraphScopes() []string {
 	return []string{
 		scopeGraphChatRead, scopeGraphChannelMessage, scopeGraphTeamReadBasic,
 		scopeGraphChannelBasic, scopeGraphUserRead, scopeGraphUserReadBasic,
+		scopeGraphTeamMemberRead, scopeGraphChannelMemberRead,
 		scopeOfflineAccess, "openid", scopeEmail,
 	}
 }

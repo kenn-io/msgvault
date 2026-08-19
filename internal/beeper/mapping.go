@@ -164,11 +164,15 @@ func mapMessage(m *Message, conversationID, sourceID int64) (store.Message, stri
 // chatTypeSingle is the Beeper chat type for direct messages (vs "group").
 const chatTypeSingle = "single"
 
-// conversationType maps a Beeper chat type to the msgvault conversation type:
-// "single" becomes "direct_chat"; everything else becomes "group_chat".
+// conversationType maps Beeper's explicit room-like types to channels while
+// retaining backward-compatible group handling for unknown non-single types.
 func conversationType(chatType string) string {
-	if chatType == chatTypeSingle {
+	switch strings.ToLower(strings.TrimSpace(chatType)) {
+	case chatTypeSingle:
 		return "direct_chat"
+	case "room", "space", "channel":
+		return "channel"
+	default:
+		return "group_chat"
 	}
-	return "group_chat"
 }

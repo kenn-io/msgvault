@@ -1543,7 +1543,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return nil
 	}
 	if !attachmentProducingCommand(req.Args) {
-		if len(req.Args) == 0 || req.Args[0] != removeAccountCommandName {
+		if !attachmentRemovalCommand(req.Args) {
 			return runSubprocess(ctx)
 		}
 		emitWarning := func(message string) error {
@@ -1568,6 +1568,29 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		runSubprocess,
 		emitWarning,
 	)
+}
+
+func attachmentRemovalCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == removeAccountCommandName {
+		return true
+	}
+	if args[0] != purgeExcludedMediaCommandName {
+		return false
+	}
+	confirmed := false
+	for _, arg := range args[1:] {
+		switch arg {
+		case "--dry-run", "--dry-run=true":
+			return false
+		case purgeExcludedMediaYesFlag, "-y", purgeExcludedMediaYesFlag + "=true", "--" + purgeExcludedMediaConfirmedFlag,
+			"--" + purgeExcludedMediaConfirmedFlag + "=true":
+			confirmed = true
+		}
+	}
+	return confirmed
 }
 
 // repackAttachmentsParentArgsAllowed accepts only root logging flags that
@@ -2729,11 +2752,16 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		qps = 5
 	}
 	client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
-	opts := teams.ImportOptions{
-		Email:           email,
-		AttachmentsDir:  cfg.AttachmentsDir(),
-		IncludeChannels: true,
-	}
+	opts := scheduledTeamsImportOptions(email)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err
+}
+
+func scheduledTeamsImportOptions(email string) teams.ImportOptions {
+	return teams.ImportOptions{
+		Email:           email,
+		AttachmentsDir:  cfg.AttachmentsDir(),
+		MediaPolicy:     cfg.Teams.MediaPolicy(email),
+		IncludeChannels: true,
+	}
 }

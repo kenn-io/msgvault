@@ -34,6 +34,7 @@ type CatalogScope string
 
 const (
 	CatalogScopeGuildChannels  CatalogScope = "guild_channels"
+	CatalogScopeGuildMembers   CatalogScope = "guild_members"
 	CatalogScopeActiveThreads  CatalogScope = "active_threads"
 	CatalogScopePublicArchive  CatalogScope = "public_archive"
 	CatalogScopePrivateArchive CatalogScope = "private_archive"

@@ -317,6 +317,8 @@ delegated permissions to the app registration:
 - `Channel.ReadBasic.All`
 - `User.Read`
 - `User.ReadBasic.All`
+- `TeamMember.Read.All`
+- `ChannelMember.Read.All`
 
 Then authorize and sync Teams:
 

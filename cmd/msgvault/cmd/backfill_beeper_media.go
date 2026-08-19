@@ -3,9 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/beeper"
 )
 
 var backfillBeeperMediaAccounts []string
@@ -14,13 +16,13 @@ func newBackfillBeeperMediaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-beeper-media",
 		Short: "Retry pending Beeper attachment downloads",
-		Long: `Retry pending Beeper attachment downloads.
+		Long: `Retry eligible Beeper attachment downloads.
 
-Attachments that failed to download during sync-beeper (Beeper Desktop asset
-temporarily unavailable, over the size cap at the time, transient errors)
-leave a pending marker. This command re-fetches those messages from Beeper
-Desktop and downloads their media into the attachment store. Idempotent:
-already-downloaded attachments are content-addressed and skipped.
+This command retries unfinished downloads and policy exclusions that are now
+allowed, such as media whose configured size cap was raised. It re-fetches
+eligible messages from Beeper Desktop and downloads their media into the
+attachment store. Already-downloaded attachments are content-addressed and
+skipped.
 
 Examples:
   msgvault backfill-beeper-media
@@ -53,10 +55,7 @@ Examples:
 						rebuildCacheAfterWrite(dbPath),
 					)
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"%s: %d messages checked, %d attachments downloaded, %d still pending (%s)\n",
-					accountID, sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending,
-					sum.Duration.Round(time.Second))
+				writeBeeperMediaBackfillSummary(cmd.OutOrStdout(), accountID, sum)
 				if sum.Errors > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %d errors — see sync run items; re-run to retry\n", sum.Errors)
 				}
@@ -67,6 +66,13 @@ Examples:
 	}
 	cmd.Flags().StringArrayVar(&backfillBeeperMediaAccounts, "account", nil, "Beeper accountID to backfill (repeatable; default: all registered accounts)")
 	return cmd
+}
+
+func writeBeeperMediaBackfillSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {
+	_, _ = fmt.Fprintf(out,
+		"%s: %d messages checked, %d attachments downloaded, %d still pending, %d skipped by policy (%s)\n",
+		accountID, sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending,
+		sum.AttachmentsSkipped, sum.Duration.Round(time.Second))
 }
 
 func init() {

@@ -651,6 +651,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_index_state ADD COLUMN IF NOT EXISTS target_profile_id TEXT`, "document_index_state.target_profile_id"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_state TEXT`, "attachments.attachment_state"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
 	}
 }
 

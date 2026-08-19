@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -105,7 +106,8 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	opts := slackImportOptions("T01", "UME")
 	assert.Equal("T01", opts.TeamID)
 	assert.Equal("UME", opts.UserID)
-	assert.True(opts.NoMedia)
+	assert.False(opts.NoMedia, "persistent config is represented by typed policy, not the one-run flag")
+	assert.Equal(attachmentpolicy.SkipPolicyScope, opts.MediaPolicy.DisabledReason)
 	assert.Equal(int64(7)<<20, opts.MaxMediaBytes)
 	assert.Equal([]string{"eng"}, opts.IncludeChannels)
 	assert.Equal([]string{"noise"}, opts.ExcludeChannels)

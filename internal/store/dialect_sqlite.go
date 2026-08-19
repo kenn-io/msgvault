@@ -1298,6 +1298,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN provider_latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_index_state ADD COLUMN target_profile_id TEXT`, "document_index_state.target_profile_id"},
+		{`ALTER TABLE attachments ADD COLUMN attachment_state TEXT`, "attachments.attachment_state"},
+		{`ALTER TABLE attachments ADD COLUMN attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
 	}
 }
 

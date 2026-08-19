@@ -2,11 +2,13 @@ package discord
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -32,6 +35,7 @@ type ImportOptions struct {
 	GuildConfig      config.DiscordGuildConfig
 	AttachmentsDir   string
 	MaxMediaBytes    int64
+	MediaPolicy      attachmentpolicy.Policy
 	EditRescanWindow time.Duration
 	After            time.Time
 	Full             bool
@@ -49,6 +53,7 @@ type ImportSummary struct {
 	MessagesUpdated     int64
 	MediaDownloaded     int64
 	MediaPending        int64
+	MediaSkipped        int64
 	CatalogIssues       []CatalogIssue
 	ContainerIssues     []ContainerIssue
 	processedMessageIDs map[string]struct{}
@@ -192,7 +197,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err != nil {
 		return summary, err
 	}
-	if err := imp.stageCatalogContainers(source.ID, containers, state); err != nil {
+	// Resolve the floor before staging: the archived catalog has to record the
+	// membership this run's media policy is about to be evaluated against, so
+	// purge and retry selection later reach the same verdict sync did.
+	floor := guildFloor{}
+	if media != nil {
+		floor = imp.guildParticipantFloor(ctx, opts, summary)
+		// The floor is guild-wide, so its outcome lands on every conversation of
+		// the guild before staging rewrites this run's containers: purge and
+		// backfill then see the same resolved (or unresolved) membership.
+		if err := imp.archiveGuildFloor(source.ID, floor); err != nil {
+			return summary, err
+		}
+	}
+	if err := imp.stageCatalogContainers(source.ID, containers, state, floor); err != nil {
 		return summary, err
 	}
 	state.ThreadCatalog = catalog.ThreadCatalog
@@ -203,9 +221,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
+		if media != nil {
+			media.SetPolicy(opts.MediaPolicy, attachmentpolicy.Conversation{
+				Type:             discordConversationType,
+				ParticipantCount: max(container.Channel.MemberCount, floor.count),
+			})
+		}
 		if err := imp.importContainer(
 			ctx, source.ID, syncID, container, lowerBound, state, summary, media,
-			repairLower,
+			repairLower, floor,
 		); err != nil {
 			return summary, fmt.Errorf("import Discord container %s: %w", container.Channel.ID, err)
 		}
@@ -232,11 +256,83 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	return summary, nil
 }
 
+// guildFloor is the guild-wide membership one run evaluates every container's
+// media against. Known separates a count Discord answered with from the
+// fail-closed substitute an unreadable one produces: the substitute governs
+// this run's downloads but is not membership, so it is never archived as such;
+// unreadable records that the lookup was made and failed, which is archived
+// as an unresolved roster. A known zero means no participant limit is
+// configured and no floor was requested, which is also nothing to archive.
+type guildFloor struct {
+	count      int
+	known      bool
+	unreadable bool
+}
+
+// archivable reports whether the floor carries a lookup outcome worth
+// recording: a count Discord answered with, or the fact that it did not.
+func (f guildFloor) archivable() bool {
+	return f.unreadable || (f.known && f.count > 0)
+}
+
+// guildFloorFromLookup classifies one guild membership lookup outcome.
+func guildFloorFromLookup(count int, lookupErr error) guildFloor {
+	if lookupErr != nil {
+		return guildFloor{count: count, unreadable: true}
+	}
+	return guildFloor{count: count, known: true}
+}
+
+// guildParticipantFloor resolves the guild membership every container in this
+// run evaluates media policy against, once per run rather than once per
+// container. An unreadable count restricts media instead of failing the guild
+// import: the core message archive is durable work that a media lookup must not
+// cost, and the resulting exclusions are retryable by a later run or backfill.
+func (imp *Importer) guildParticipantFloor(
+	ctx context.Context, opts ImportOptions, summary *ImportSummary,
+) guildFloor {
+	count, err := GuildParticipantFloor(ctx, imp.api, opts.GuildID, opts.MediaPolicy)
+	if err != nil {
+		issue := newCatalogIssue(CatalogScopeGuildMembers, opts.GuildID, "", err)
+		issue.Fatal = false
+		summary.CatalogIssues = append(summary.CatalogIssues, issue)
+	}
+	return guildFloorFromLookup(count, err)
+}
+
+// ArchiveGuildMembership records the outcome of one guild membership lookup on
+// every conversation of the source, so purge and later runs evaluate the same
+// membership the caller did. The floor is guild-wide, which is why it lands on
+// every conversation rather than only those the caller touched. A readable
+// count reconciles each conversation's archived floor and clears the unknown
+// marker; an unreadable one (lookupErr != nil) marks every roster unresolved
+// and keeps the last counts for reference. A count of zero without an error
+// means no lookup was made, and nothing is rewritten.
+func (imp *Importer) ArchiveGuildMembership(sourceID int64, count int, lookupErr error) error {
+	return imp.archiveGuildFloor(sourceID, guildFloorFromLookup(count, lookupErr))
+}
+
+func (imp *Importer) archiveGuildFloor(sourceID int64, floor guildFloor) error {
+	if !floor.archivable() {
+		return nil
+	}
+	conversationIDs, err := imp.store.ListConversationIDs(sourceID)
+	if err != nil {
+		return err
+	}
+	for _, conversationID := range conversationIDs {
+		if err := imp.reconcileArchivedParticipantFloor(conversationID, floor); err != nil {
+			return fmt.Errorf("archive guild membership for conversation %d: %w", conversationID, err)
+		}
+	}
+	return nil
+}
+
 // stageCatalogContainers makes every discovered container recoverable before
 // publishing archive watermarks that can page past it. Conversation metadata
 // and an empty per-container state entry together form the durable catalog.
 func (imp *Importer) stageCatalogContainers(
-	sourceID int64, containers []importerContainer, state *SyncState,
+	sourceID int64, containers []importerContainer, state *SyncState, floor guildFloor,
 ) error {
 	for _, container := range containers {
 		if container.Channel.ID == "" {
@@ -248,12 +344,14 @@ func (imp *Importer) stageCatalogContainers(
 		if err != nil {
 			return fmt.Errorf("stage Discord container %s: ensure conversation: %w", container.Channel.ID, err)
 		}
+		// A preserved container keeps its archived metadata; its floor was
+		// already reconciled guild-wide before staging.
 		if !container.preserveMetadata {
 			mapped, err := mapConversation(&container.Channel)
 			if err != nil {
 				return fmt.Errorf("stage Discord container %s: %w", container.Channel.ID, err)
 			}
-			if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata); err != nil {
+			if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata, floor); err != nil {
 				return fmt.Errorf("stage Discord container %s: %w", container.Channel.ID, err)
 			}
 		}
@@ -366,7 +464,10 @@ func (imp *Importer) importerContainers(
 			continue
 		}
 		containers = append(containers, importerContainer{
-			CatalogContainer: CatalogContainer{Channel: Channel{ID: containerID, GuildID: guildID}},
+			CatalogContainer: CatalogContainer{Channel: Channel{
+				ID: containerID, GuildID: guildID,
+				MemberCount: storedContainerMemberCount(storedMetadata[containerID]),
+			}},
 			preserveMetadata: true,
 		})
 	}
@@ -462,6 +563,7 @@ func (imp *Importer) importContainer(
 	summary *ImportSummary,
 	media *MediaArchiver,
 	repairLower string,
+	floor guildFloor,
 ) error {
 	if container.Channel.ID == "" {
 		return errors.New("catalog container has an empty ID")
@@ -478,7 +580,7 @@ func (imp *Importer) importContainer(
 		if err != nil {
 			return err
 		}
-		if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata); err != nil {
+		if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata, floor); err != nil {
 			return err
 		}
 	}
@@ -1033,7 +1135,7 @@ func (imp *Importer) setContainerAccessMarker(
 }
 
 func (imp *Importer) setConversationCatalogMetadata(
-	conversationID int64, catalogMetadata json.RawMessage,
+	conversationID int64, catalogMetadata json.RawMessage, floor guildFloor,
 ) error {
 	metadata := make(map[string]json.RawMessage)
 	if len(catalogMetadata) != 0 {
@@ -1045,8 +1147,8 @@ func (imp *Importer) setConversationCatalogMetadata(
 	if err != nil {
 		return err
 	}
+	var existing map[string]json.RawMessage
 	if stored.Valid && json.Valid([]byte(stored.String)) {
-		var existing map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(stored.String), &existing); err != nil {
 			return fmt.Errorf("decode stored Discord conversation metadata: %w", err)
 		}
@@ -1058,7 +1160,129 @@ func (imp *Importer) setConversationCatalogMetadata(
 			}
 		}
 	}
+	applyParticipantFloor(metadata, existing, floor)
 	return imp.writeContainerMetadata(conversationID, metadata)
+}
+
+// applyParticipantFloor records the membership media policy weighed this
+// container against, because Discord reports member_count for threads only:
+// without the guild floor an ordinary channel archives no membership at all and
+// purge and retry selection then re-admit exactly what sync excluded.
+//
+// The container's own count, when the catalog reports one, is archived beside
+// the resolved member_count as container_member_count, so a later run that
+// preserves this metadata rather than re-cataloging it can still reconcile the
+// resolved count with the guild floor it reads then.
+//
+// A floor Discord did not answer with is not membership. Rather than archive
+// the fail-closed substitute, such a run keeps the larger of the catalog's own
+// count and what an earlier run established: a stale count is worth more than
+// the zero an ordinary channel would otherwise write back. A floor Discord did
+// answer with replaces the archived one outright, so a shrinking guild relaxes
+// its exclusions on the next run.
+func applyParticipantFloor(metadata, archived map[string]json.RawMessage, floor guildFloor) {
+	own := metadataCount(metadata, "member_count")
+	if own > 0 {
+		metadata["container_member_count"] = json.RawMessage(strconv.Itoa(own))
+	}
+	count := own
+	if floor.known && floor.count > 0 {
+		count = max(count, floor.count)
+	} else {
+		count = max(count, metadataCount(archived, "member_count"))
+	}
+	applyMembershipMarker(metadata, archived, floor)
+	if count <= 0 {
+		delete(metadata, "member_count")
+		return
+	}
+	metadata["member_count"] = json.RawMessage(strconv.Itoa(count))
+}
+
+// applyMembershipMarker keeps member_count_unknown in step with the lookup
+// this run made: an unreadable lookup archives the roster as unresolved, a
+// readable one resolves it, and a run that made no lookup leaves whatever an
+// earlier run archived. The marker is what keeps purge from trusting a stale
+// count and backfill from admitting on it.
+func applyMembershipMarker(metadata, archived map[string]json.RawMessage, floor guildFloor) {
+	switch {
+	case floor.unreadable:
+		metadata["member_count_unknown"] = json.RawMessage("true")
+	case floor.known && floor.count > 0:
+		delete(metadata, "member_count_unknown")
+	default:
+		if marker, ok := archived["member_count_unknown"]; ok {
+			metadata["member_count_unknown"] = marker
+		}
+	}
+}
+
+// reconcileArchivedParticipantFloor records a guild lookup outcome on a
+// conversation whose archived metadata is otherwise left alone: the larger of
+// the container's own archived membership and the floor Discord answered with,
+// or the unresolved marker when it did not answer. Lowering matters as much as
+// raising — a guild that shrank below the limit must relax the exclusions its
+// earlier size produced, or retry and purge keep weighing a count no run can
+// correct. Every other archived key is left alone.
+func (imp *Importer) reconcileArchivedParticipantFloor(conversationID int64, floor guildFloor) error {
+	if !floor.archivable() {
+		return nil
+	}
+	stored, err := imp.store.GetConversationMetadata(conversationID)
+	if err != nil {
+		return err
+	}
+	metadata := make(map[string]json.RawMessage)
+	if stored.Valid && strings.TrimSpace(stored.String) != "" {
+		// A legacy opaque payload has no mergeable object. Preserving it whole
+		// matters more than a floor the next catalog refresh will record anyway.
+		if !json.Valid([]byte(stored.String)) {
+			return nil
+		}
+		if err := json.Unmarshal([]byte(stored.String), &metadata); err != nil {
+			return fmt.Errorf("decode Discord conversation metadata: %w", err)
+		}
+	}
+	reconciled := make(map[string]json.RawMessage, len(metadata)+2)
+	maps.Copy(reconciled, metadata)
+	if floor.known {
+		count := max(metadataCount(metadata, "container_member_count"), floor.count)
+		reconciled["member_count"] = json.RawMessage(strconv.Itoa(count))
+	}
+	applyMembershipMarker(reconciled, metadata, floor)
+	unchanged := maps.EqualFunc(metadata, reconciled, func(left, right json.RawMessage) bool {
+		return bytes.Equal(left, right)
+	})
+	if unchanged {
+		return nil
+	}
+	return imp.writeContainerMetadata(conversationID, reconciled)
+}
+
+func metadataCount(metadata map[string]json.RawMessage, key string) int {
+	raw, ok := metadata[key]
+	if !ok {
+		return 0
+	}
+	var count int
+	if err := json.Unmarshal(raw, &count); err != nil {
+		return 0
+	}
+	return count
+}
+
+// storedContainerMemberCount reads the container-specific membership an
+// earlier catalog archived, so a preserved container's live media policy
+// weighs the same count its reconciled metadata records.
+func storedContainerMemberCount(metadata sql.NullString) int {
+	if !metadata.Valid || !json.Valid([]byte(metadata.String)) {
+		return 0
+	}
+	var archived map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata.String), &archived); err != nil {
+		return 0
+	}
+	return metadataCount(archived, "container_member_count")
 }
 
 func (imp *Importer) clearContainerAccessMarkers(conversationID int64) error {
@@ -1228,6 +1452,14 @@ func (imp *Importer) persistPage(
 			}
 		}
 		if media != nil {
+			conversation, err := imp.store.AttachmentConversation(messageID)
+			if err != nil {
+				return fmt.Errorf("load Discord message %s media conversation: %w", message.ID, err)
+			}
+			if conversation.ParticipantCount < media.conversation.ParticipantCount {
+				conversation.ParticipantCount = media.conversation.ParticipantCount
+			}
+			media.SetPolicy(media.policy, conversation)
 			result, err := media.persistAttachments(ctx, messageID, message.Attachments, !alreadyProcessed)
 			if err != nil {
 				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
@@ -1238,6 +1470,8 @@ func (imp *Importer) persistPage(
 					summary.MediaDownloaded++
 				case MediaPending, MediaUnrecoverable:
 					summary.MediaPending++
+				case MediaSkipped:
+					summary.MediaSkipped++
 				}
 			}
 		} else {

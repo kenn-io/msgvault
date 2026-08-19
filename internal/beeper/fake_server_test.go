@@ -55,6 +55,9 @@ type fakeChat struct {
 	// ParticipantListingLimit controls how many participants a truncated search
 	// result exposes. Zero keeps the historical one-participant fixture default.
 	ParticipantListingLimit int
+	// ParticipantsTotalUnknown omits the participants total from every payload,
+	// so a truncated listing carries no authoritative roster size.
+	ParticipantsTotalUnknown bool
 	// StuckHead emulates a misbehaving live API whose direction=after pages
 	// re-serve the head with a non-advancing cursor.
 	StuckHead bool
@@ -386,15 +389,17 @@ func (f *fakeBeeper) chatJSON(ch *fakeChat, listing bool) map[string]any {
 	if parts == nil {
 		parts = []map[string]any{}
 	}
+	participants := map[string]any{"items": parts, "hasMore": hasMore}
+	if !ch.ParticipantsTotalUnknown {
+		participants["total"] = len(ch.Participants)
+	}
 	return map[string]any{
-		"id":        ch.ID,
-		"accountID": ch.AccountID,
-		"network":   ch.Network,
-		"title":     ch.Title,
-		"type":      ch.Type,
-		"participants": map[string]any{
-			"items": parts, "hasMore": hasMore, "total": len(ch.Participants),
-		},
+		"id":           ch.ID,
+		"accountID":    ch.AccountID,
+		"network":      ch.Network,
+		"title":        ch.Title,
+		"type":         ch.Type,
+		"participants": participants,
 		"lastActivity": ch.LastActivity.UTC().Format(time.RFC3339Nano),
 		"unreadCount":  0,
 	}

@@ -406,6 +406,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     -- Platform-specific
     source_attachment_id TEXT,      -- original ID from platform
     attachment_metadata JSON,       -- EXIF, etc.
+	attachment_state TEXT,           -- pending, stored, skipped, failed
+	attachment_skip_reason TEXT,     -- typed policy/fetch outcome
 
     -- Source-authoritative occurrence role and provenance. Unknown fails
     -- closed for any hosted attachment processing.

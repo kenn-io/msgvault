@@ -25,7 +25,8 @@ Register a Microsoft Entra app as described in
 - Public client flows enabled
 - Delegated Microsoft Graph permissions:
   `Chat.Read`, `ChannelMessage.Read.All`, `Team.ReadBasic.All`,
-  `Channel.ReadBasic.All`, `User.Read`, and `User.ReadBasic.All`
+  `Channel.ReadBasic.All`, `User.Read`, `User.ReadBasic.All`,
+  `TeamMember.Read.All`, and `ChannelMember.Read.All`
 
 Some tenants require an administrator to grant consent for channel-message
 permissions before users can authorize the app.

@@ -138,6 +138,9 @@ func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.Import
 	if sum.AttachmentsPending > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (see backfill-beeper-media)", sum.AttachmentsPending)
 	}
+	if sum.AttachmentsSkipped > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media skipped by policy", sum.AttachmentsSkipped)
+	}
 	if sum.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d errors", sum.Errors)
 	}
@@ -186,11 +189,12 @@ func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string) ([]string,
 // beeperImportOptions builds the config-derived import options shared by the
 // CLI and scheduler paths (flag overlays are applied by the CLI caller).
 func beeperImportOptions(accountID string) beeper.ImportOptions {
+	policy := cfg.Beeper.MediaPolicy(accountID)
 	return beeper.ImportOptions{
 		AccountID:      accountID,
 		AttachmentsDir: cfg.AttachmentsDir(),
-		NoMedia:        !cfg.Beeper.MediaEnabled(),
-		MaxMediaBytes:  cfg.Beeper.MaxMediaBytes(),
+		MaxMediaBytes:  policy.MaxBytes,
+		MediaPolicy:    policy,
 	}
 }
 

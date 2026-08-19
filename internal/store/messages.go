@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
@@ -2872,11 +2873,21 @@ func (s *Store) ForEachTeamsHostedContentBody(sourceID int64, fn func(messageID 
 // but yields only messages whose number of distinct hostedContents references
 // in body_html exceeds the count of inline image files already stored for them
 // — i.e. messages whose inline media was not fully downloaded (transient fetch
-// failures). Used to retry just the gaps instead of re-fetching everything.
-func (s *Store) ForEachTeamsIncompleteHostedContentBody(sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
+// failures). Policy-skipped markers are yielded only when the current policy
+// now permits them, or when a participant limit is configured but no
+// authoritative roster is archived — the importer re-resolves membership
+// before it evaluates the threshold. Used to retry just actionable gaps
+// instead of re-fetching everything or repeatedly walking unchanged
+// exclusions.
+func (s *Store) ForEachTeamsIncompleteHostedContentBody(
+	sourceID int64,
+	policy attachmentpolicy.Policy,
+	fn func(messageID int64, bodyHTML string) error,
+) error {
 	type bodyRow struct {
-		id   int64
-		body string
+		id             int64
+		body           string
+		hostedRefCount int
 	}
 	var buf []bodyRow
 
@@ -2885,7 +2896,13 @@ func (s *Store) ForEachTeamsIncompleteHostedContentBody(sourceID int64, fn func(
 		       (SELECT COUNT(*) FROM attachments a
 		        WHERE a.message_id = mb.message_id
 		          AND a.storage_path NOT LIKE 'http%' AND a.storage_path != ''
-		          AND a.content_hash != '')
+		          AND a.content_hash != ''),
+		       EXISTS (
+		         SELECT 1 FROM attachments a
+		         WHERE a.message_id = mb.message_id
+		           AND a.source_attachment_id LIKE 'teams:inline:%'
+		           AND COALESCE(a.content_hash, '') = ''
+		       )
 		FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
 		WHERE m.source_id = ? AND mb.body_html LIKE '%hostedContents%'
@@ -2897,15 +2914,17 @@ func (s *Store) ForEachTeamsIncompleteHostedContentBody(sourceID int64, fn func(
 		var messageID int64
 		var bodyHTML sql.NullString
 		var localAttachmentRows int
-		if err := rows.Scan(&messageID, &bodyHTML, &localAttachmentRows); err != nil {
+		var hasUnstoredMarker bool
+		if err := rows.Scan(&messageID, &bodyHTML, &localAttachmentRows, &hasUnstoredMarker); err != nil {
 			_ = rows.Close()
 			return err
 		}
 		if !bodyHTML.Valid || bodyHTML.String == "" {
 			continue
 		}
-		if countDistinctHostedContentRefs(bodyHTML.String) > localAttachmentRows {
-			buf = append(buf, bodyRow{id: messageID, body: bodyHTML.String})
+		hostedRefCount := countDistinctHostedContentRefs(bodyHTML.String)
+		if hostedRefCount > localAttachmentRows || hasUnstoredMarker {
+			buf = append(buf, bodyRow{id: messageID, body: bodyHTML.String, hostedRefCount: hostedRefCount})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -2916,6 +2935,47 @@ func (s *Store) ForEachTeamsIncompleteHostedContentBody(sourceID int64, fn func(
 		return err
 	}
 	for _, r := range buf {
+		refs, err := s.MessageTeamsInlineAttachments(r.id)
+		if err != nil {
+			return err
+		}
+		eligible := r.hostedRefCount > len(refs)
+		var membership ConversationMembership
+		membershipPolicy := policy
+		membershipLoaded := false
+		for _, ref := range refs {
+			if ref.ContentHash != "" {
+				continue
+			}
+			if attachmentpolicy.RetryEligible(ref.State) {
+				eligible = true
+				break
+			}
+			if ref.State != attachmentpolicy.StateSkipped {
+				continue
+			}
+			if !membershipLoaded {
+				membership, err = s.AttachmentConversationMembership(r.id)
+				if err != nil {
+					return err
+				}
+				membershipLoaded = true
+				if !membership.RosterArchived && policy.MaxParticipants > 0 {
+					// No authoritative roster is archived, so the accumulated
+					// participant count cannot decide the threshold. Yield the
+					// message and let the importer re-resolve membership before
+					// it evaluates the policy; the other rules still apply here.
+					membershipPolicy.MaxParticipants = 0
+				}
+			}
+			if membershipPolicy.Allows(membership.Conversation, int64(ref.Size)) {
+				eligible = true
+				break
+			}
+		}
+		if !eligible {
+			continue
+		}
 		if err := fn(r.id, r.body); err != nil {
 			return err
 		}
@@ -4379,6 +4439,9 @@ type AttachmentRef struct {
 	RoleSource    AttachmentRoleSource
 	SourcePartKey string
 	ContentID     string
+	// State and SkipReason distinguish unfinished fetches from deliberate policy exclusions.
+	State      attachmentpolicy.DownloadState
+	SkipReason attachmentpolicy.SkipReason
 }
 
 // replaceMessageAttachmentsWhere atomically deletes a message's attachment
@@ -4412,6 +4475,8 @@ func (s *Store) replaceMessageAttachmentsWhere(
 				RoleSource:         ref.RoleSource,
 				SourcePartKey:      ref.SourcePartKey,
 				ContentID:          ref.ContentID,
+				State:              ref.State,
+				SkipReason:         ref.SkipReason,
 			}.normalized()
 			if write.SourcePartKey == "" && write.SourceAttachmentID != "" {
 				// Provider attachment IDs are already namespaced by every caller of
@@ -4440,13 +4505,15 @@ func nullIfZero(n int64) sql.NullInt64 {
 }
 
 // ReplaceMessageInlineAttachments replaces Teams-managed inline media rows for
-// a message. It removes both rows marked by the current source_attachment_id
-// scheme and legacy unmarked Teams inline rows produced before that marker was
-// added, while leaving URL-backed reference/recording attachments untouched.
-func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageAttachmentsWhere(messageID, `
-		source_attachment_id LIKE 'teams:inline:%'
-		OR (
+// a message. When preserveLegacy is false, it also removes legacy unmarked
+// Teams inline rows produced before stable source attachment IDs were added.
+// Callers preserve those rows while a current hosted-content replacement is
+// excluded or unfinished, so an ordinary resync cannot detach archived media.
+// URL-backed reference/recording attachments are always left untouched.
+func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []AttachmentRef, preserveLegacy bool) error {
+	deleteWhere := `source_attachment_id LIKE 'teams:inline:%'`
+	if !preserveLegacy {
+		deleteWhere += ` OR (
 		  (source_attachment_id IS NULL OR source_attachment_id = '')
 		  AND storage_path != ''
 		  AND storage_path NOT LIKE 'http://%'
@@ -4455,7 +4522,15 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 		  AND content_hash != ''
 		  AND COALESCE(filename, '') = ''
 		  AND COALESCE(mime_type, '') = ''
-		)`, true, refs)
+		)`
+	}
+	return s.replaceMessageAttachmentsWhere(messageID, deleteWhere, false, refs)
+}
+
+// MessageTeamsInlineAttachments returns Teams-managed inline media rows keyed
+// by their stable hosted-content source identifier.
+func (s *Store) MessageTeamsInlineAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "teams:inline:")
 }
 
 // ReplaceMessageBeeperAttachments replaces Beeper-managed attachment rows for
@@ -4708,7 +4783,8 @@ func (s *Store) ListSlackRecentReplyThreadRoots(sourceID, conversationID int64, 
 func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAttachmentMessage, error) {
 	rows, err := s.db.Query(`
 		SELECT m.id, m.source_message_id, c.source_conversation_id,
-		       a.storage_path, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
+		       a.storage_path, COALESCE(a.content_hash, ''), COALESCE(a.media_type, ''),
+		       COALESCE(a.attachment_state, '')
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.message_id = m.id
@@ -4734,7 +4810,7 @@ func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAtt
 		var ref AttachmentRef
 		if err := rows.Scan(
 			&item.MessageID, &item.SourceMessageID, &item.ChatID,
-			&ref.StoragePath, &ref.ContentHash, &ref.MediaType,
+			&ref.StoragePath, &ref.ContentHash, &ref.MediaType, &ref.State,
 		); err != nil {
 			return nil, err
 		}
@@ -4744,7 +4820,8 @@ func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAtt
 			haveCurrent = true
 			currentPending = false
 		}
-		if ref.MediaType != "link" && ref.ContentHash == "" && !casAttachmentDownloaded(ref) {
+		if attachmentpolicy.RetryEligible(ref.State) && ref.MediaType != "link" &&
+			ref.ContentHash == "" && !casAttachmentDownloaded(ref) {
 			currentPending = true
 		}
 	}
@@ -4784,8 +4861,11 @@ func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentR
 
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
 // It intentionally leaves content-addressed local attachment paths (for example
-// downloaded inline media) untouched.
+// downloaded inline media) untouched, and preserves Teams-managed inline marker
+// rows (source_attachment_id 'teams:inline:%'), whose URL-backed storage_path
+// records a durable pending/skipped/failed outcome, not a link attachment.
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhere(messageID,
-		`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`, false, refs)
+		`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
+		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs)
 }

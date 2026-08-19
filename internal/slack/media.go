@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -141,8 +142,8 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 // files the source has since tombstoned or dropped from the message
 // (archive semantics: source deletions never propagate). External or
 // off-host files become metadata-only link rows (media_type "link", the
-// permalink as storage path); failed or over-cap downloads leave a pending
-// marker row (no content hash) for BackfillMedia to retry.
+// permalink as storage path). Failed downloads remain retryable, while
+// deliberate exclusions retain typed markers until current policy allows them.
 //
 // DOWNLOAD failures are non-fatal because they leave that durable marker;
 // STORE failures are fatal and hold the cursor — a row write that fails
@@ -157,9 +158,14 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		return nil
 	}
 	maxBytes := opts.MaxMediaBytes
+	if opts.MediaPolicy.MaxBytes > 0 {
+		maxBytes = opts.MediaPolicy.MaxBytes
+	}
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxMediaBytes
 	}
+	policy := opts.MediaPolicy
+	policy.MaxBytes = maxBytes
 	refs := make([]store.AttachmentRef, 0, len(m.Files))
 	seen := map[string]bool{}
 	for i := range m.Files {
@@ -200,12 +206,27 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		pendingRow := linkRow
 		pendingRow.MediaType = ""
+		pendingRow.State = attachmentpolicy.StatePending
+		if previous, ok := existing[sourceAttID]; ok && previous.Size > pendingRow.Size {
+			pendingRow.Size = previous.Size
+		}
 
 		// pend leaves a retryable marker; link records metadata permanently.
 		pend := func(status, kind string, err error) {
 			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
+			if status == store.SyncRunItemStatusSkipped {
+				pendingRow.State = attachmentpolicy.StateSkipped
+				pendingRow.SkipReason = attachmentpolicy.SkipSizeCap
+			} else {
+				pendingRow.State = attachmentpolicy.StateFailed
+				pendingRow.SkipReason = attachmentpolicy.SkipFetchFailure
+			}
 			refs = append(refs, pendingRow)
-			sum.AttachmentsPending++
+			if pendingRow.State == attachmentpolicy.StateSkipped {
+				sum.AttachmentsSkipped++
+			} else {
+				sum.AttachmentsPending++
+			}
 			if status == store.SyncRunItemStatusError {
 				sum.Errors++
 			}
@@ -225,6 +246,21 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			sum.AttachmentsPending++
 			continue
 		}
+		if reason := policy.Evaluate(opts.MediaConversation, int64(pendingRow.Size)); reason != "" {
+			if reason == attachmentpolicy.SkipSizeCap {
+				pendingRow.SkipReason = reason
+				pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
+					fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes))
+				continue
+			}
+			pendingRow.State = attachmentpolicy.StateSkipped
+			pendingRow.SkipReason = reason
+			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+				store.SyncRunItemStatusSkipped, "slack_media_policy", nil)
+			refs = append(refs, pendingRow)
+			sum.AttachmentsSkipped++
+			continue
+		}
 		if f.Size > 0 && f.Size > maxBytes {
 			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large",
 				fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes))
@@ -232,6 +268,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		data, derr := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
 		if errors.Is(derr, ErrAssetTooLarge) {
+			pendingRow.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(pendingRow.Size))
 			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large", derr)
 			continue
 		}
@@ -272,6 +309,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			MediaType:          mediaTypeOf(f),
 			Role:               store.AttachmentRoleStandalone,
 			RoleSource:         store.AttachmentRoleSourceProviderExplicit,
+			State:              attachmentpolicy.StateStored,
 		}
 		refs = append(refs, stored)
 		sum.AttachmentsDownloaded++

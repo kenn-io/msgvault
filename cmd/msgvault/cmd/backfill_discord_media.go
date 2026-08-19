@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -31,8 +32,12 @@ type discordMediaBackfillSummary struct {
 	MessagesProcessed int64
 	Downloaded        int64
 	Pending           int64
+	Skipped           int64
 	Unrecoverable     int64
-	Warnings          map[discordMediaWarningKind]int64
+	// MembershipUnavailable records that the guild's member count could not be
+	// read, so every participant-limited attachment stayed excluded.
+	MembershipUnavailable bool
+	Warnings              map[discordMediaWarningKind]int64
 }
 
 type discordMediaWarningKind string
@@ -100,7 +105,11 @@ func runBackfillDiscordMedia(
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages processed: %d\n", summary.MessagesProcessed)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Downloaded: %d\n", summary.Downloaded)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Pending: %d\n", summary.Pending)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Skipped: %d\n", summary.Skipped)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Unrecoverable: %d\n", summary.Unrecoverable)
+		if summary.MembershipUnavailable {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Guild membership unavailable: participant-limited media stayed skipped")
+		}
 		writeDiscordMediaWarnings(cmd.OutOrStdout(), summary.Warnings)
 		return backfillErr
 	})
@@ -125,13 +134,32 @@ func backfillDiscordSourceMedia(
 		return summary, err
 	}
 	provider := deps.providerConfig()
-	archiver, err := discord.NewMediaArchiver(st, client, deps.attachmentsDir(), provider.MaxMediaBytes)
+	policy := provider.MediaPolicy(source.Identifier)
+	archiver, err := discord.NewMediaArchiver(st, client, deps.attachmentsDir(), policy.MaxBytes)
 	if err != nil {
 		return summary, fmt.Errorf("configure Discord media archiver: %w", err)
 	}
+	archiver.SetPolicy(policy, attachmentpolicy.Conversation{Type: "channel"})
+	// Archived channel membership undercounts an ordinary Discord channel: only
+	// the message authors seen so far are persisted. Evaluating the guild's own
+	// count alongside it keeps the participant threshold from admitting on
+	// backfill exactly the media sync excluded.
+	guildParticipants, membershipErr := discord.GuildParticipantFloor(ctx, client, source.Identifier, policy)
+	if membershipErr != nil {
+		summary.MembershipUnavailable = true
+	}
+	// Archive the lookup outcome before selecting messages: purge must see an
+	// unreadable roster as unresolved rather than trust a stale count, and a
+	// readable one has to reconcile the archived floor before retry selection
+	// decides which skips the current membership releases.
+	if err := discord.NewImporter(st, client).ArchiveGuildMembership(
+		source.ID, guildParticipants, membershipErr,
+	); err != nil {
+		return summary, fmt.Errorf("archive Discord guild membership: %w", err)
+	}
 	var messages []store.DiscordAttachmentMessage
 	if onlyIncomplete {
-		messages, err = st.ListDiscordPendingAttachmentMessages(source.ID)
+		messages, err = st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
 	} else {
 		messages, err = st.ListDiscordAttachmentMessages(source.ID)
 	}
@@ -146,6 +174,10 @@ func backfillDiscordSourceMedia(
 			contextErrorRecorded = true
 			break
 		}
+		archiver.SetPolicy(policy, attachmentpolicy.Conversation{
+			Type:             message.ConversationType,
+			ParticipantCount: max(message.ParticipantCount, guildParticipants),
+		})
 		result, backfillErr := archiver.BackfillMessage(
 			ctx, message.MessageID, message.ChatID, message.SourceMessageID,
 		)
@@ -160,6 +192,8 @@ func backfillDiscordSourceMedia(
 				summary.Downloaded++
 			case discord.MediaPending:
 				summary.Pending++
+			case discord.MediaSkipped:
+				summary.Skipped++
 			case discord.MediaUnrecoverable:
 				summary.Unrecoverable++
 			}

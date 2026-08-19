@@ -27,6 +27,8 @@ func TestGraphScopes(t *testing.T) {
 	assert.Contains(got, "https://graph.microsoft.com/Channel.ReadBasic.All")
 	assert.Contains(got, "https://graph.microsoft.com/User.Read")
 	assert.Contains(got, "https://graph.microsoft.com/User.ReadBasic.All")
+	assert.Contains(got, "https://graph.microsoft.com/TeamMember.Read.All")
+	assert.Contains(got, "https://graph.microsoft.com/ChannelMember.Read.All")
 	assert.Contains(got, scopeOfflineAccess)
 }
 
@@ -143,6 +145,38 @@ func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
 	require.Error(err, "expected stale Graph scope error")
 	require.ErrorContains(err, "missing Microsoft Graph scopes")
 	require.ErrorContains(err, "User.ReadBasic.All")
+	require.ErrorContains(err, "msgvault add-teams user@company.com")
+}
+
+// TestGraphManager_TokenSource_MissingRosterScopesReturnsError covers tokens
+// minted before channel imports read rosters. Without TeamMember.Read.All and
+// ChannelMember.Read.All every roster fetch fails, and channel media then fails
+// closed on every sync, so the account must be prompted to re-authorize rather
+// than sync silently.
+func TestGraphManager_TokenSource_MissingRosterScopesReturnsError(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
+
+	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
+	previouslyShippedScopes := []string{
+		"https://graph.microsoft.com/Chat.Read",
+		"https://graph.microsoft.com/ChannelMessage.Read.All",
+		"https://graph.microsoft.com/Team.ReadBasic.All",
+		"https://graph.microsoft.com/Channel.ReadBasic.All",
+		"https://graph.microsoft.com/User.Read",
+		"https://graph.microsoft.com/User.ReadBasic.All",
+		scopeOfflineAccess,
+		"openid",
+		scopeEmail,
+	}
+	require.NoError(m.saveToken("user@company.com", token, previouslyShippedScopes, "org-tid"))
+
+	_, err := m.TokenSource(t.Context(), "user@company.com")
+	require.Error(err, "expected missing Graph scope error")
+	require.ErrorContains(err, "missing Microsoft Graph scopes")
+	require.ErrorContains(err, "TeamMember.Read.All")
+	require.ErrorContains(err, "ChannelMember.Read.All")
 	require.ErrorContains(err, "msgvault add-teams user@company.com")
 }
 

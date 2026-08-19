@@ -2,14 +2,17 @@ package beeper
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -150,6 +153,35 @@ func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
 	}
 }
 
+func TestImportMediaPolicySkipsWithoutFetching(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	f.setAsset("mxc://beeper.local/photo1", []byte("must not be fetched"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeNone, MaxBytes: 100 << 20}
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsSkipped)
+	assert.EqualValues(0, sum.AttachmentsPending)
+	for _, request := range f.requests() {
+		assert.NotContains(request, "/v1/assets/serve")
+	}
+
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+		WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
+}
+
 func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -165,6 +197,7 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
 	assert.EqualValues(1, sum.AttachmentsPending)
+	assert.EqualValues(0, sum.AttachmentsSkipped)
 
 	var msgCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(
@@ -248,7 +281,8 @@ func TestImportMediaSizeCap(t *testing.T) {
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
-	assert.EqualValues(1, sum.AttachmentsPending)
+	assert.EqualValues(0, sum.AttachmentsPending)
+	assert.EqualValues(1, sum.AttachmentsSkipped)
 	assert.EqualValues(0, sum.Errors, "over-cap is a skip, not an error")
 
 	var itemCount int
@@ -276,13 +310,23 @@ func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
-	assert.EqualValues(1, sum.AttachmentsPending)
+	assert.EqualValues(0, sum.AttachmentsPending)
+	assert.EqualValues(1, sum.AttachmentsSkipped)
 	assert.EqualValues(0, sum.Errors, "over-cap is a skip, not an error")
 
 	var itemCount int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_too_large'`).Scan(&itemCount))
 	assert.Equal(1, itemCount)
+	var storedSize int64
+	require.NoError(st.DB().QueryRow(`
+		SELECT size FROM attachments
+		WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&storedSize))
+	assert.Greater(storedSize, int64(1<<20))
+	backfill, err := imp.BackfillMedia(context.Background(), opts)
+	require.NoError(err)
+	assert.Zero(backfill.MessagesProcessed, "unchanged cap must not retry streamed oversize media")
 }
 
 func TestImportNoMediaSkipsDownloadsEntirely(t *testing.T) {
@@ -300,11 +344,11 @@ func TestImportNoMediaSkipsDownloadsEntirely(t *testing.T) {
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
-	assert.EqualValues(0, sum.AttachmentsPending)
+	assert.EqualValues(1, sum.AttachmentsPending)
 
 	var attCount int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attCount))
-	assert.Zero(attCount, "no rows, not even markers, when media is disabled")
+	assert.Equal(1, attCount, "one-run no-media deferral leaves a retryable marker")
 
 	// Message metadata still reflects the attachment.
 	var hasAtt bool
@@ -436,6 +480,300 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(1, bsum.AttachmentsDownloaded)
 	assert.EqualValues(0, bsum.Errors)
+}
+
+func TestBackfillMediaAppliesTightenedPolicyBeforeFetchingPendingMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs = append(chat.Msgs, fakeMsg{
+		ID: "p1", SortKey: 1, Timestamp: chat.Msgs[0].Timestamp.Add(time.Minute),
+		Text: "newer anchor", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+	chat.LastActivity = chat.Msgs[1].Timestamp
+	f.addChat(chat)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	f.resetRequests()
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 1}
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, summary.AttachmentsSkipped)
+	assert.Empty(f.requests(), "a fully policy-excluded backfill must remain local")
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason
+		FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+
+	f.resetRequests()
+	summary, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsSkipped, "unchanged exclusions are not newly processed")
+	assert.Empty(f.requests(), "an unchanged fully policy-excluded backfill must remain local")
+}
+
+// mediaGroupChat is a group chat whose search listing truncates the roster:
+// only two of its members appear there, so the participant rows the archive
+// accumulates undercount the chat until a detail fetch succeeds.
+func mediaGroupChat(members int) *fakeChat {
+	chat := mediaChat()
+	chat.Type = "group"
+	chat.Participants = chat.Participants[:1]
+	for i := range members - 1 {
+		chat.Participants = append(chat.Participants, map[string]any{
+			"id": "@signal_member" + strconv.Itoa(i) + ":beeper.local", "fullName": "Member " + strconv.Itoa(i),
+		})
+	}
+	chat.ParticipantsTruncated = true
+	chat.ParticipantListingLimit = 2
+	return chat
+}
+
+func assetRequests(f *fakeBeeper) []string {
+	var served []string
+	for _, req := range f.requests() {
+		if strings.Contains(req, "/v1/assets/serve") {
+			served = append(served, req)
+		}
+	}
+	return served
+}
+
+// TestMediaPolicyArchivesAuthoritativeParticipantTotal covers a truncated
+// listing whose detail fetch fails: sync weighs the total Beeper reports, so
+// the archive has to carry that total too — otherwise the backfill sees only
+// the few participant rows that were persisted and downloads exactly what the
+// participant limit excluded.
+func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(8)
+	f.addChat(chat)
+	f.setChatGetFailure(chat.ID, true)
+	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+
+	_, err := imp.Import(t.Context(), opts)
+	require.Error(err, "the failed detail fetch leaves the run partial")
+	assert.Empty(assetRequests(f), "the reported total excludes the chat's media")
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason
+		FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(`SELECT message_id FROM attachments`).Scan(&messageID))
+	membership, err := st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.Equal(8, membership.Conversation.ParticipantCount,
+		"the archive carries the total sync weighed, not the truncated participant rows")
+	assert.True(membership.RosterArchived)
+
+	f.resetRequests()
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsDownloaded)
+	assert.Empty(assetRequests(f), "the backfill must not re-admit on the smaller stored roster")
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+}
+
+// TestMediaPolicyFailsClosedWithoutParticipantTotal covers the same truncated
+// listing when Beeper reports no total either: the roster is unresolved, so
+// sync and backfill fail closed until a detail fetch reads it, and then the
+// real size decides.
+func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(4)
+	chat.ParticipantsTotalUnknown = true
+	f.addChat(chat)
+	f.setChatGetFailure(chat.ID, true)
+	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	attachmentState := func() string {
+		var state string
+		require.NoError(st.DB().QueryRow(`
+			SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+		`).Scan(&state))
+		return state
+	}
+
+	_, err := imp.Import(t.Context(), opts)
+	require.Error(err, "the failed detail fetch leaves the run partial")
+	assert.Empty(assetRequests(f), "an unresolved roster must not read as a chat under the limit")
+	assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
+	var messageID int64
+	require.NoError(st.DB().QueryRow(`SELECT message_id FROM attachments`).Scan(&messageID))
+	membership, err := st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.False(membership.RosterArchived, "no total and no complete list leaves the roster unresolved")
+
+	f.resetRequests()
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsDownloaded)
+	assert.Empty(assetRequests(f), "the backfill stays closed while the roster is unresolved")
+
+	// A detail fetch that succeeds reads the whole roster; the chat is under
+	// the limit, so the run that resolves it releases the deferred download.
+	f.setChatGetFailure(chat.ID, false)
+	f.resetRequests()
+	_, err = imp.Import(t.Context(), ImportOptions{
+		AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
+	})
+	require.NoError(err)
+	membership, err = st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.True(membership.RosterArchived)
+	assert.Equal(4, membership.Conversation.ParticipantCount)
+	assert.Len(assetRequests(f), 1)
+	assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
+}
+
+// TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster covers a
+// chat archived before rosters were recorded: its participant rows are all
+// the archive holds, and they may undercount a membership over the limit, so
+// the backfill must not download on them. A sync that visits the chat archives
+// the roster and the next backfill decides on it.
+func TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	// Asset missing: the sync leaves a pending marker.
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM conversations WHERE source_conversation_id = ?`), "!media:beeper.local").Scan(&conversationID))
+	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{}),
+		"drop the archived roster to model a conversation synced before rosters were recorded")
+	f.setAsset("mxc://beeper.local/photo1", []byte("hello bytes"))
+	attachmentState := func() string {
+		var state string
+		require.NoError(st.DB().QueryRow(`
+			SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+		`).Scan(&state))
+		return state
+	}
+
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	f.resetRequests()
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsDownloaded)
+	assert.EqualValues(1, summary.AttachmentsSkipped)
+	assert.Empty(assetRequests(f), "two observed participants are not a roster the limit may admit on")
+	assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
+
+	// A sync that visits the chat archives its roster; the chat is under the
+	// limit, so the deferred download is released.
+	f.resetRequests()
+	_, err = imp.Import(t.Context(), ImportOptions{
+		AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
+	})
+	require.NoError(err)
+	_, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
+	assert.NotEmpty(assetRequests(f))
+}
+
+// TestBackfillMediaRefreshesLegacyConversationTypeForDirectScope covers an
+// archive typed before rooms mapped to channels: the stored group_chat would
+// pass a direct-scope policy, so the backfill re-reads each chat's type from
+// the source before evaluating, corrects the archive, and excludes the room's
+// media. A chat it cannot re-read stays pending, and a genuine direct chat
+// still downloads.
+func TestBackfillMediaRefreshesLegacyConversationTypeForDirectScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	room := mediaChat()
+	room.Type = "room"
+	f.addChat(room)
+	dm := mediaChat()
+	dm.ID = "!dm:beeper.local"
+	dm.Msgs[0].ID = "p1"
+	dm.Msgs[0].Attachments[0]["id"] = "mxc://beeper.local/photo2"
+	f.addChat(dm)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	// Assets missing: the sync leaves pending markers.
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	// Model an archive written before rooms mapped to channels.
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE conversations SET conversation_type = 'group_chat' WHERE source_conversation_id = ?`,
+	), room.ID)
+	require.NoError(err)
+	f.setAsset("mxc://beeper.local/photo1", []byte("room bytes"))
+	f.setAsset("mxc://beeper.local/photo2", []byte("dm bytes"))
+	opts.MediaPolicy = attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect}
+	attachmentOutcome := func(sourceAttachmentID string) (state, reason string) {
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+			FROM attachments WHERE source_attachment_id = ?
+		`), sourceAttachmentID).Scan(&state, &reason))
+		return state, reason
+	}
+	conversationTypeOf := func(chatID string) string {
+		var conversationType string
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT conversation_type FROM conversations WHERE source_conversation_id = ?`,
+		), chatID).Scan(&conversationType))
+		return conversationType
+	}
+
+	// An unreadable chat cannot resolve its type, so its media stays pending.
+	f.setChatGetFailure(room.ID, true)
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Positive(summary.Errors)
+	state, _ := attachmentOutcome("beeper:mxc://beeper.local/photo1")
+	assert.True(attachmentpolicy.RetryEligible(attachmentpolicy.DownloadState(state)),
+		"a chat whose type cannot be re-read leaves its media retryable, got %q", state)
+	assert.Equal("group_chat", conversationTypeOf(room.ID))
+	state, _ = attachmentOutcome("beeper:mxc://beeper.local/photo2")
+	assert.Equal(string(attachmentpolicy.StateStored), state, "the direct chat still downloads")
+
+	f.setChatGetFailure(room.ID, false)
+	f.resetRequests()
+	summary, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsDownloaded)
+	assert.Empty(assetRequests(f),
+		"the stored group_chat type must not admit a room a direct-scope policy excludes")
+	state, reason := attachmentOutcome("beeper:mxc://beeper.local/photo1")
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
+	assert.Equal("channel", conversationTypeOf(room.ID),
+		"the backfill archives the corrected type so purge and later runs read it")
 }
 
 func TestBackfillMediaVerifiesAnchorFirst(t *testing.T) {

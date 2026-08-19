@@ -335,6 +335,8 @@ CREATE TABLE IF NOT EXISTS attachments (
 
     source_attachment_id TEXT,
     attachment_metadata JSONB,
+	attachment_state TEXT,
+	attachment_skip_reason TEXT,
 
     attachment_role TEXT NOT NULL DEFAULT 'unknown'
         CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown')),

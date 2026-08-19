@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 // apiResponse is the envelope every Slack Web API method returns.
@@ -295,7 +297,9 @@ type ImportOptions struct {
 	// NoMedia skips file downloads entirely.
 	NoMedia bool
 	// MaxMediaBytes caps individual file downloads (0 = 100 MB).
-	MaxMediaBytes int64
+	MaxMediaBytes     int64
+	MediaPolicy       attachmentpolicy.Policy
+	MediaConversation attachmentpolicy.Conversation
 	// IncludeChannels/ExcludeChannels filter by channel name (no "#").
 	// Include empty = all memberships. DMs/group DMs are never filtered.
 	IncludeChannels []string
@@ -315,6 +319,7 @@ type ImportSummary struct {
 	RepliesFetched         int
 	AttachmentsDownloaded  int
 	AttachmentsPending     int
+	AttachmentsSkipped     int
 	FetchErrors            int
 	Errors                 int
 	Duration               time.Duration

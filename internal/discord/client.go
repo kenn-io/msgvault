@@ -159,6 +159,20 @@ func (c *Client) Guild(ctx context.Context, guildID string) (Guild, error) {
 	return out, err
 }
 
+// GuildWithCounts fetches a guild together with Discord's approximate member
+// count. The estimate is served from Discord's own cache and needs none of the
+// privileged gateway intents that enumerating the roster would.
+func (c *Client) GuildWithCounts(ctx context.Context, guildID string) (Guild, error) {
+	var out Guild
+	id, err := snowflakePathValue("guild ID", guildID)
+	if err != nil {
+		return out, err
+	}
+	query := url.Values{"with_counts": {"true"}}
+	err = c.getJSON(ctx, discordRoute{"guild member counts", "/guilds/" + id, "GET /guilds/:guild", guildID}, query, &out)
+	return out, err
+}
+
 func (c *Client) GuildChannels(ctx context.Context, guildID string) ([]Channel, error) {
 	var out []Channel
 	id, err := snowflakePathValue("guild ID", guildID)

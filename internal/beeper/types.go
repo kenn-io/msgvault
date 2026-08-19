@@ -3,6 +3,8 @@ package beeper
 import (
 	"encoding/json"
 	"time"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 // ---- Beeper Desktop API objects (see /v1/spec, "Beeper Client API") ----
@@ -198,12 +200,16 @@ type ImportOptions struct {
 	// AttachmentsDir is the content-addressed attachment store root. Empty
 	// disables media download (as does NoMedia).
 	AttachmentsDir string
-	// NoMedia skips attachment downloads entirely (no pending markers are
-	// written; a later --full run re-persists messages and downloads then).
+	// NoMedia skips attachment downloads and writes pending markers for a later
+	// backfill or full run.
 	NoMedia bool
 	// MaxMediaBytes caps individual attachment downloads (0 = 100 MB).
-	// Over-cap attachments leave a pending marker.
+	// Over-cap attachments leave a typed size-cap exclusion marker.
 	MaxMediaBytes int64
+	// MediaPolicy is the effective provider/account collection policy.
+	MediaPolicy attachmentpolicy.Policy
+	// MediaConversation is populated per chat or from archived metadata.
+	MediaConversation attachmentpolicy.Conversation
 	// Progress, if non-nil, is called after each chat with a human-readable
 	// status line. Safe to leave nil (silent mode).
 	Progress func(msg string) `json:"-"`
@@ -247,6 +253,7 @@ type ImportSummary struct {
 	// retry marker (see backfill-beeper-media).
 	AttachmentsDownloaded int64
 	AttachmentsPending    int64
+	AttachmentsSkipped    int64
 	// FetchErrors counts Beeper API fetch failures (a subset of Errors). Any
 	// fetch failure keeps the discovery watermark from advancing so the
 	// affected chats are re-visited next run.
