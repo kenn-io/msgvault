@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -560,11 +561,12 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:            host,
-			runtimePort:            strconv.Itoa(port),
-			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
-			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
-			runtimeCreateTime:      matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -621,11 +623,12 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:            host,
-			runtimePort:            strconv.Itoa(port),
-			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
-			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
-			runtimeCreateTime:      matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -675,11 +678,12 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:            host,
-			runtimePort:            strconv.Itoa(port),
-			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
-			runtimeAuthFingerprint: daemonAPIKeyFingerprint("old-local-daemon-secret"),
-			runtimeCreateTime:      matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint("old-local-daemon-secret"),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -730,10 +734,11 @@ func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testin
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       strconv.Itoa(port),
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -836,11 +841,12 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 			Service: daemonService,
 			Version: Version,
 			Metadata: map[string]string{
-				runtimeHost:            host,
-				runtimePort:            portText,
-				runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
-				runtimeAuthFingerprint: authFingerprint,
-				runtimeCreateTime:      matchingProcessCreateTime(t),
+				runtimeHost:             host,
+				runtimePort:             portText,
+				runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+				runtimeAPISchemaVersion: api.APISchemaVersion,
+				runtimeAuthFingerprint:  authFingerprint,
+				runtimeCreateTime:       matchingProcessCreateTime(t),
 			},
 		},
 		Host: host,
@@ -890,10 +896,11 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 		Service: daemonService,
 		Version: "v1.0.0",
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       strconv.Itoa(port),
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -993,9 +1000,10 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       "127.0.0.1",
-			runtimePort:       "1",
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeHost:             "127.0.0.1",
+			runtimePort:             "1",
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -1030,9 +1038,10 @@ func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       "127.0.0.1",
-			runtimePort:       "1",
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeHost:             "127.0.0.1",
+			runtimePort:             "1",
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -1059,10 +1068,11 @@ func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing
 		Service: daemonService,
 		Version: "v1.0.0",
 		Metadata: map[string]string{
-			runtimeHost:       ping.Host,
-			runtimePort:       strconv.Itoa(ping.Port),
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             ping.Host,
+			runtimePort:             strconv.Itoa(ping.Port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")

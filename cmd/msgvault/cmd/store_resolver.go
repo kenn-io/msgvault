@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
@@ -237,12 +236,6 @@ func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Clie
 	var version string
 	if response.JSON200.APISchemaVersion != nil {
 		version = *response.JSON200.APISchemaVersion
-	}
-	if version == "" {
-		return fmt.Errorf(
-			"remote daemon does not report an API schema version, so it predates "+
-				"schema 2.0.0 and is incompatible with this CLI (schema %s); "+
-				"upgrade the remote daemon", api.APISchemaVersion)
 	}
 	return apiSchemaCompatibilityError(version)
 }

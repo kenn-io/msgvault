@@ -82,7 +82,7 @@ func TestOpenRemoteStoreRejectsDaemonWithoutSchemaVersion(t *testing.T) {
 
 	_, _, err := OpenHTTPStore(t.Context())
 	require.ErrorContains(err, "does not report an API schema version")
-	require.ErrorContains(err, "upgrade the remote daemon")
+	require.ErrorContains(err, "upgrade the daemon")
 }
 
 func TestOpenRemoteStoreSurfacesHealthProbeFailure(t *testing.T) {
@@ -93,4 +93,20 @@ func TestOpenRemoteStoreSurfacesHealthProbeFailure(t *testing.T) {
 
 	_, _, err := OpenHTTPStore(t.Context())
 	require.ErrorContains(err, "verify remote daemon API schema version")
+}
+
+func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *testing.T) {
+	require := require.New(t)
+
+	current := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: api.APISchemaVersion}
+	require.NoError(daemonRuntimeCompatibilityError(current))
+
+	legacy := &DaemonRuntime{API: daemonAPIVersion}
+	err := daemonRuntimeCompatibilityError(legacy)
+	require.ErrorContains(err, "does not report an API schema version")
+	require.ErrorContains(err, "upgrade the daemon")
+
+	previousMajor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "1.44.0"}
+	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
+		`daemon API schema version "1.44.0" is incompatible`)
 }

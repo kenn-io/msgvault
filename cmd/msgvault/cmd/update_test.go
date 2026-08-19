@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/update"
 )
@@ -189,10 +190,11 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       server.Host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")

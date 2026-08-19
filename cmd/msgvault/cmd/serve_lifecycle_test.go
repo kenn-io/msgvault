@@ -741,10 +741,11 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       server.Host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -801,10 +802,11 @@ func TestRunServeStartRecognizesLegacyDaemonWithIndeterminateCreateTime(t *testi
 			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
 			require.NoError(err, "split listener address")
 			metadata := map[string]string{
-				runtimeHost:          host,
-				runtimePort:          portText,
-				runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
-				runtimeShutdownToken: "private-runtime-secret",
+				runtimeHost:             host,
+				runtimePort:             portText,
+				runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+				runtimeAPISchemaVersion: api.APISchemaVersion,
+				runtimeShutdownToken:    "private-runtime-secret",
 			}
 			if tt.recordedCreateTime != "" {
 				metadata[runtimeCreateTime] = tt.recordedCreateTime
@@ -847,10 +849,11 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 		Service: daemonService,
 		Version: "v1.1.0",
 		Metadata: map[string]string{
-			runtimeHost:       server.Host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -889,10 +892,11 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 		Service: daemonService,
 		Version: "v1.0.0",
 		Metadata: map[string]string{
-			runtimeHost:       server.Host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -949,10 +953,11 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		Service: daemonService,
 		Version: "v1.0.0",
 		Metadata: map[string]string{
-			runtimeHost:       server.Host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -1314,10 +1319,11 @@ func TestRequestDaemonShutdownUsesRuntimeToken(t *testing.T) {
 		Address: net.JoinHostPort(host, portText),
 		Service: daemonService,
 		Metadata: map[string]string{
-			runtimeHost:          host,
-			runtimePort:          portText,
-			runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
-			runtimeShutdownToken: "test-runtime-token",
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeShutdownToken:    "test-runtime-token",
 		},
 	})
 	require.NoError(
