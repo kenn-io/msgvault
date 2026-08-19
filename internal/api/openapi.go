@@ -201,7 +201,10 @@ import (
 // 1.44.0 adds dedicated extracted-document search and status routes. Additive
 // (minor bump): existing message, file, profile, media, and activity routes are
 // unchanged.
-const APISchemaVersion = "1.44.0"
+// 2.0.0 separates observed participant analytics under /participants from
+// durable curated people under /people and removes the ambiguous old routes.
+// 2.1.0 adds portable attribute sensitivity metadata and per-person tracking.
+const APISchemaVersion = "2.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -575,6 +578,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			displayName.Extensions["x-omitempty"] = false
 			displayName.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
+	if tracking := schemas["PersonTracking"]; tracking != nil {
+		if trackedAt := tracking.Properties["tracked_at"]; trackedAt != nil {
+			if trackedAt.Extensions == nil {
+				trackedAt.Extensions = map[string]any{}
+			}
+			trackedAt.Extensions["x-omitempty"] = false
+			trackedAt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
 			}
 		}

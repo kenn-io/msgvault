@@ -718,7 +718,7 @@ func TestCreatePersonAcceptsIdempotentOK(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
-		assert.Equal("/api/v1/persons", r.URL.Path, "path")
+		assert.Equal("/api/v1/people", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id": 7,

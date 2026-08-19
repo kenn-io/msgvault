@@ -30,6 +30,7 @@ const testAttributeDefinitionJSON = `{
 	"ui_editable":true,
 	"api_mutable":true,
 	"is_searchable":true,
+	"is_sensitive":true,
 	"is_audited":true,
 	"is_deletable":false,
 	"history_exempt":false,
@@ -82,6 +83,7 @@ func TestAttributeDefinitionListPrintsRegistryAndForwardsFilter(t *testing.T) {
 	assert.Contains(query, "object_type=person")
 	assert.Contains(output, "ask_me_about")
 	assert.Contains(output, "93c658a1-2346-4a6e-98c2-abfa29209334")
+	assert.Contains(output, "SENSITIVE")
 }
 
 func TestAttributeDefinitionCreateDryRunValidatesLocally(t *testing.T) {
@@ -99,12 +101,14 @@ func TestAttributeDefinitionCreateDryRunValidatesLocally(t *testing.T) {
 
 	output, err := runAttributeCommand(t, attributeDefinitionCreateCmd,
 		"--definition", `{"object_type":"person","slug":"scratch_note",
-			"label":"Scratch note","value_type":"text","field_type":"text"}`,
+			"label":"Scratch note","value_type":"text","field_type":"text",
+			"is_sensitive":true}`,
 		"--dry-run")
 	require.NoError(err)
 	assert.Zero(requests)
 	assert.Contains(output, "Would create")
 	assert.Contains(output, "scratch_note")
+	assert.Contains(output, `"is_sensitive": true`)
 }
 
 func TestAttributeDefinitionCreateDryRunAppliesServerValidationLocally(t *testing.T) {

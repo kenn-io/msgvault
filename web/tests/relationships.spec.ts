@@ -66,7 +66,7 @@ async function prepare(page: Page) {
     }],
     total_count: 1, cache_revision: 'cache-relationships', identity_revision: 1
   } }));
-  await page.route('**/api/v1/people/1', (route) => route.fulfill({ json: alice }));
+  await page.route('**/api/v1/participants/1', (route) => route.fulfill({ json: alice }));
   await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
     canonical_id: 1, identity_revision: 1, cache_revision: 'cache-relationships',
     rows: [messageRow, chatBurstRow], total_count: 2

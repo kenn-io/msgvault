@@ -105,24 +105,6 @@ func (p PutOrganizationProfileHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
-type DeletePersonRelationshipHeaders struct {
-	// IfMatch Strong ETag returned by the latest person relationship read
-	IfMatch string `json:"If-Match" validate:"required"`
-}
-
-func (d DeletePersonRelationshipHeaders) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(d))
-}
-
-type PatchPersonRelationshipHeaders struct {
-	// IfMatch Strong ETag returned by the latest person relationship read
-	IfMatch string `json:"If-Match" validate:"required"`
-}
-
-func (p PatchPersonRelationshipHeaders) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
-}
-
 type DeletePersonHeaders struct {
 	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
 	IfMatch string `json:"If-Match" validate:"required"`
@@ -147,6 +129,24 @@ type PatchPersonStructuredProfileHeaders struct {
 }
 
 func (p PatchPersonStructuredProfileHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type DeletePersonRelationshipHeaders struct {
+	// IfMatch Strong ETag returned by the latest person relationship read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeletePersonRelationshipHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PatchPersonRelationshipHeaders struct {
+	// IfMatch Strong ETag returned by the latest person relationship read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchPersonRelationshipHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 

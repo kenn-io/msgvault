@@ -308,38 +308,23 @@ type GetOrganizationProfileMediaContentPath struct {
 	MediaID int64 `json:"media_id"`
 }
 
-type GetPersonPath struct {
-	// ID Durable participant ID
+type GetParticipantPath struct {
+	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
 }
 
-type SearchPersonFilesPath struct {
-	// ID Durable participant ID
+type SearchParticipantFilesPath struct {
+	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
 }
 
-type GetPersonContextSummaryPath struct {
-	// ID Durable participant ID
+type GetParticipantContextSummaryPath struct {
+	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
 }
 
-type GetPersonTimelinePath struct {
-	// ID Durable participant ID
-	ID int64 `json:"id"`
-}
-
-type DeletePersonRelationshipPath struct {
-	// ID Person relationship ID
-	ID int64 `json:"id"`
-}
-
-type GetPersonRelationshipPath struct {
-	// ID Person relationship ID
-	ID int64 `json:"id"`
-}
-
-type PatchPersonRelationshipPath struct {
-	// ID Person relationship ID
+type GetParticipantTimelinePath struct {
+	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
 }
 
@@ -447,6 +432,31 @@ type GetPersonProfileMediaContentPath struct {
 
 type ListPersonRelationshipsPath struct {
 	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonTrackingPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type SetPersonTrackingPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type DeletePersonRelationshipPath struct {
+	// ID Person relationship ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonRelationshipPath struct {
+	// ID Person relationship ID
+	ID int64 `json:"id"`
+}
+
+type PatchPersonRelationshipPath struct {
+	// ID Person relationship ID
 	ID int64 `json:"id"`
 }
 

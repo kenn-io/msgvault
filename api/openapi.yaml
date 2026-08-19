@@ -296,6 +296,8 @@ components:
           type: boolean
         is_searchable:
           type: boolean
+        is_sensitive:
+          type: boolean
         label:
           type: string
         object_type:
@@ -340,6 +342,7 @@ components:
         - ui_editable
         - api_mutable
         - is_searchable
+        - is_sensitive
         - is_audited
         - is_deletable
         - history_exempt
@@ -1620,6 +1623,8 @@ components:
         is_required:
           type: boolean
         is_searchable:
+          type: boolean
+        is_sensitive:
           type: boolean
         label:
           type: string
@@ -5573,6 +5578,48 @@ components:
         - normalization
         - normalization_version
       type: object
+    ParticipantContextSummaryHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        summary:
+          $ref: "#/components/schemas/PersonSummary"
+      required:
+        - summary
+        - cache_revision
+        - search_provenance
+      type: object
+    ParticipantSearchHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonSummary"
+          type:
+            - array
+            - "null"
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
     PatchAttributeDefinitionRequest:
       additionalProperties: false
       properties:
@@ -5584,6 +5631,8 @@ components:
           format: int64
           type: integer
         is_active:
+          type: boolean
+        is_sensitive:
           type: boolean
         label:
           type: string
@@ -5638,6 +5687,18 @@ components:
         schema_version:
           format: int64
           type: integer
+      type: object
+    PeopleResponse:
+      additionalProperties: true
+      properties:
+        people:
+          items:
+            $ref: "#/components/schemas/Person"
+          type:
+            - array
+            - "null"
+      required:
+        - people
       type: object
     Person:
       additionalProperties: true
@@ -6034,22 +6095,6 @@ components:
           type:
             - array
             - "null"
-      type: object
-    PersonContextSummaryHTTPResponse:
-      additionalProperties: true
-      properties:
-        cache_revision:
-          type: string
-        candidate_snapshot_id:
-          type: string
-        search_provenance:
-          $ref: "#/components/schemas/SearchProvenance"
-        summary:
-          $ref: "#/components/schemas/PersonSummary"
-      required:
-        - summary
-        - cache_revision
-        - search_provenance
       type: object
     PersonDate:
       additionalProperties: true
@@ -6573,32 +6618,6 @@ components:
       required:
         - relationships
       type: object
-    PersonSearchHTTPResponse:
-      additionalProperties: true
-      properties:
-        cache_revision:
-          type: string
-        candidate_snapshot_id:
-          type: string
-        next_cursor:
-          type: string
-        rows:
-          items:
-            $ref: "#/components/schemas/PersonSummary"
-          type:
-            - array
-            - "null"
-        search_provenance:
-          $ref: "#/components/schemas/SearchProvenance"
-        total_count:
-          format: int64
-          type: integer
-      required:
-        - rows
-        - total_count
-        - cache_revision
-        - search_provenance
-      type: object
     PersonSummary:
       additionalProperties: true
       properties:
@@ -6653,17 +6672,23 @@ components:
         - last_at
         - cache_revision
       type: object
-    PersonsResponse:
+    PersonTracking:
       additionalProperties: true
       properties:
-        persons:
-          items:
-            $ref: "#/components/schemas/Person"
+        person_id:
+          format: int64
+          type: integer
+        tracked:
+          type: boolean
+        tracked_at:
+          format: date-time
           type:
-            - array
+            - string
             - "null"
       required:
-        - persons
+        - person_id
+        - tracked
+        - tracked_at
       type: object
     PingInfo:
       additionalProperties: true
@@ -6692,6 +6717,14 @@ components:
       required:
         - done
         - total
+      type: object
+    PutPersonTrackingRequest:
+      additionalProperties: false
+      properties:
+        tracked:
+          type: boolean
+      required:
+        - tracked
       type: object
     QueryRequest:
       additionalProperties: false
@@ -8601,7 +8634,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.44.0
+  version: 2.1.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -14309,9 +14342,9 @@ paths:
       summary: Download stored inline content for one organization profile media value
       tags:
         - API
-  /api/v1/people/search:
+  /api/v1/participants/search:
     post:
-      operationId: searchPeople
+      operationId: searchParticipants
       requestBody:
         content:
           application/json:
@@ -14323,7 +14356,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PersonSearchHTTPResponse"
+                $ref: "#/components/schemas/ParticipantSearchHTTPResponse"
           description: OK
         "400":
           content:
@@ -14353,14 +14386,14 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search analytical people
+      summary: Search observed participant clusters
       tags:
         - Exploration
-  /api/v1/people/{id}:
+  /api/v1/participants/{id}:
     get:
-      operationId: getPerson
+      operationId: getParticipant
       parameters:
-        - description: Durable participant ID
+        - description: Observed participant cluster member ID
           in: path
           name: id
           required: true
@@ -14390,14 +14423,14 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Get one analytical person
+      summary: Get one observed participant cluster
       tags:
         - API
-  /api/v1/people/{id}/files/search:
+  /api/v1/participants/{id}/files/search:
     post:
-      operationId: searchPersonFiles
+      operationId: searchParticipantFiles
       parameters:
-        - description: Durable participant ID
+        - description: Observed participant cluster member ID
           in: path
           name: id
           required: true
@@ -14445,14 +14478,14 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Search one person's analytical files
+      summary: Search one participant cluster's analytical files
       tags:
         - Exploration
-  /api/v1/people/{id}/summary:
+  /api/v1/participants/{id}/summary:
     post:
-      operationId: getPersonContextSummary
+      operationId: getParticipantContextSummary
       parameters:
-        - description: Durable participant ID
+        - description: Observed participant cluster member ID
           in: path
           name: id
           required: true
@@ -14470,7 +14503,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PersonContextSummaryHTTPResponse"
+                $ref: "#/components/schemas/ParticipantContextSummaryHTTPResponse"
           description: OK
         "400":
           content:
@@ -14500,14 +14533,14 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Get one person's contextual analytical summary
+      summary: Get one participant cluster's contextual analytical summary
       tags:
         - Exploration
-  /api/v1/people/{id}/timeline:
+  /api/v1/participants/{id}/timeline:
     post:
-      operationId: getPersonTimeline
+      operationId: getParticipantTimeline
       parameters:
-        - description: Durable participant ID
+        - description: Observed participant cluster member ID
           in: path
           name: id
           required: true
@@ -14555,9 +14588,1198 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Get one person's canonical activity timeline
+      summary: Get one participant cluster's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/people:
+    get:
+      description: "Durable people are curated profiles; /api/v1/participants exposes observed analytical groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
+      operationId: listPeople
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List durable person profiles
+      tags:
+        - API
+    post:
+      description: Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
+      operationId: createPerson
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: Created
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/{id}:
+    delete:
+      description: "Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID."
+      operationId: deletePerson
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete a durable person profile
+      tags:
+        - API
+    get:
+      operationId: getPersonProfile
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a durable person profile
+      tags:
+        - API
+    patch:
+      operationId: patchPerson
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchPersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update a durable person's display name
+      tags:
+        - API
+  /api/v1/people/{id}/attributes:
+    get:
+      operationId: listPersonAttributes
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Include superseded values
+          in: query
+          name: history
+          schema:
+            type: boolean
+        - description: Restrict the response to one definition slug
+          in: query
+          name: slug
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributesResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's typed attributes
+      tags:
+        - API
+  /api/v1/people/{id}/attributes/{slug}:
+    delete:
+      operationId: clearPersonAttribute
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Immutable attribute definition slug
+          in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - description: Ordinal for a multi-valued definition
+          in: query
+          name: ordinal
+          schema:
+            format: int64
+            type: integer
+        - description: "Compare-and-swap: the current value ID expected to be superseded"
+          in: query
+          name: expected_value_id
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Supersede a person's attribute value
+      tags:
+        - API
+    put:
+      operationId: setPersonAttribute
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Immutable attribute definition slug
+          in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPersonAttributeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set a person's attribute value
+      tags:
+        - API
+  /api/v1/people/{id}/contact-state:
+    get:
+      operationId: getPersonContactState
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactState"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get computed contact state for a person
+      tags:
+        - API
+  /api/v1/people/{id}/days:
+    get:
+      operationId: listPersonActivityDays
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Inclusive first local calendar date
+          in: query
+          name: from
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Inclusive last local calendar date
+          in: query
+          name: to
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDaysPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List calendar days intersecting a person
+      tags:
+        - API
+  /api/v1/people/{id}/days/{date}:
+    get:
+      operationId: getPersonActivityDay
+      parameters:
+        - description: Positive durable identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Exact local calendar date
+          in: path
+          name: date
+          required: true
+          schema:
+            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            type: string
+        - description: Maximum primary rows to return
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based primary row offset
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Maximum authored entries to return independently
+          in: query
+          name: entry_limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Zero-based authored-entry offset
+          in: query
+          name: entry_offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDayPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person's activity and notes for a day
+      tags:
+        - API
+  /api/v1/people/{id}/employments:
+    get:
+      operationId: listPersonEmployments
+      parameters:
+        - description: Person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Only current employments
+          in: query
+          name: current_only
+          schema:
+            type: boolean
+        - description: Maximum results
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Results to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmploymentsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's employment history
+      tags:
+        - API
+  /api/v1/people/{id}/profile:
+    get:
+      description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
+      operationId: getPersonStructuredProfile
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredPersonProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's current structured profile
+      tags:
+        - API
+    patch:
+      description: Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
+      operationId: patchPersonStructuredProfile
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonProfilePatchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredPersonProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Atomically patch a person's structured profile
+      tags:
+        - API
+  /api/v1/people/{id}/profile/history:
+    get:
+      description: Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
+      operationId: getPersonProfileHistory
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonProfileHistory"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's structured profile history
+      tags:
+        - API
+  /api/v1/people/{id}/profile/media/{media_id}/content:
+    get:
+      description: Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
+      operationId: getPersonProfileMediaContent
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Structured person profile media value ID
+          in: path
+          name: media_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            "*/*":
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Download stored inline content for one person profile media value
+      tags:
+        - API
+  /api/v1/people/{id}/relationships:
+    get:
+      operationId: listPersonRelationships
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: include_ended
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonRelationshipsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one person's relationships
+      tags:
+        - API
+  /api/v1/people/{id}/tracking:
+    get:
+      operationId: getPersonTracking
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTracking"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's tracking state
+      tags:
+        - API
+    put:
+      operationId: setPersonTracking
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutPersonTrackingRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTracking"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace a person's tracking state
+      tags:
+        - API
   /api/v1/person-relationship-reviews:
     get:
       operationId: listPersonRelationshipReviews
@@ -14844,1102 +16066,6 @@ paths:
       security:
         - apiKey: []
       summary: End a relationship or replace its notes
-      tags:
-        - API
-  /api/v1/persons:
-    get:
-      description: "Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
-      operationId: listPersons
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonsResponse"
-          description: OK
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List durable person profiles
-      tags:
-        - API
-    post:
-      description: Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
-      operationId: createPerson
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePersonRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Person"
-          description: OK
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Person"
-          description: Created
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Promote a participant cluster to a durable person
-      tags:
-        - API
-  /api/v1/persons/{id}:
-    delete:
-      description: "Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID."
-      operationId: deletePerson
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
-          in: header
-          name: If-Match
-          required: true
-          schema:
-            type: string
-      responses:
-        "204":
-          description: No Content
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "428":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Delete a durable person profile
-      tags:
-        - API
-    get:
-      operationId: getPersonProfile
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Person"
-          description: OK
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Get a durable person profile
-      tags:
-        - API
-    patch:
-      operationId: patchPerson
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
-          in: header
-          name: If-Match
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PatchPersonRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Person"
-          description: OK
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "428":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Update a durable person's display name
-      tags:
-        - API
-  /api/v1/persons/{id}/attributes:
-    get:
-      operationId: listPersonAttributes
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Include superseded values
-          in: query
-          name: history
-          schema:
-            type: boolean
-        - description: Restrict the response to one definition slug
-          in: query
-          name: slug
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonAttributesResponse"
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List a person's typed attributes
-      tags:
-        - API
-  /api/v1/persons/{id}/attributes/{slug}:
-    delete:
-      operationId: clearPersonAttribute
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Immutable attribute definition slug
-          in: path
-          name: slug
-          required: true
-          schema:
-            type: string
-        - description: Ordinal for a multi-valued definition
-          in: query
-          name: ordinal
-          schema:
-            format: int64
-            type: integer
-        - description: "Compare-and-swap: the current value ID expected to be superseded"
-          in: query
-          name: expected_value_id
-          schema:
-            format: int64
-            type: integer
-        - description: Validate and preview without writing
-          in: query
-          name: dry_run
-          schema:
-            type: boolean
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonAttributeWrite"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Supersede a person's attribute value
-      tags:
-        - API
-    put:
-      operationId: setPersonAttribute
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Immutable attribute definition slug
-          in: path
-          name: slug
-          required: true
-          schema:
-            type: string
-        - description: Validate and preview without writing
-          in: query
-          name: dry_run
-          schema:
-            type: boolean
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetPersonAttributeRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonAttributeWrite"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Set a person's attribute value
-      tags:
-        - API
-  /api/v1/persons/{id}/contact-state:
-    get:
-      operationId: getPersonContactState
-      parameters:
-        - description: Positive durable identifier
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            minimum: 1
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ContactState"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Get computed contact state for a person
-      tags:
-        - API
-  /api/v1/persons/{id}/days:
-    get:
-      operationId: listPersonActivityDays
-      parameters:
-        - description: Positive durable identifier
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            minimum: 1
-            type: integer
-        - description: Inclusive first local calendar date
-          in: query
-          name: from
-          schema:
-            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
-            type: string
-        - description: Inclusive last local calendar date
-          in: query
-          name: to
-          schema:
-            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
-            type: string
-        - description: Maximum primary rows to return
-          in: query
-          name: limit
-          schema:
-            default: 100
-            format: int64
-            maximum: 500
-            minimum: 1
-            type: integer
-        - description: Zero-based primary row offset
-          in: query
-          name: offset
-          schema:
-            default: 0
-            format: int64
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonDaysPage"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List calendar days intersecting a person
-      tags:
-        - API
-  /api/v1/persons/{id}/days/{date}:
-    get:
-      operationId: getPersonActivityDay
-      parameters:
-        - description: Positive durable identifier
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            minimum: 1
-            type: integer
-        - description: Exact local calendar date
-          in: path
-          name: date
-          required: true
-          schema:
-            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
-            type: string
-        - description: Maximum primary rows to return
-          in: query
-          name: limit
-          schema:
-            default: 100
-            format: int64
-            maximum: 500
-            minimum: 1
-            type: integer
-        - description: Zero-based primary row offset
-          in: query
-          name: offset
-          schema:
-            default: 0
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Maximum authored entries to return independently
-          in: query
-          name: entry_limit
-          schema:
-            default: 100
-            format: int64
-            maximum: 500
-            minimum: 1
-            type: integer
-        - description: Zero-based authored-entry offset
-          in: query
-          name: entry_offset
-          schema:
-            default: 0
-            format: int64
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonDayPage"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Get one person's activity and notes for a day
-      tags:
-        - API
-  /api/v1/persons/{id}/employments:
-    get:
-      operationId: listPersonEmployments
-      parameters:
-        - description: Person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Only current employments
-          in: query
-          name: current_only
-          schema:
-            type: boolean
-        - description: Maximum results
-          in: query
-          name: limit
-          schema:
-            format: int64
-            type: integer
-        - description: Results to skip
-          in: query
-          name: offset
-          schema:
-            format: int64
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EmploymentsResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List a person's employment history
-      tags:
-        - API
-  /api/v1/persons/{id}/profile:
-    get:
-      description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
-      operationId: getPersonStructuredProfile
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StructuredPersonProfile"
-          description: OK
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Get a person's current structured profile
-      tags:
-        - API
-    patch:
-      description: Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
-      operationId: patchPersonStructuredProfile
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
-          in: header
-          name: If-Match
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PersonProfilePatchRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StructuredPersonProfile"
-          description: OK
-          headers:
-            ETag:
-              description: Strong person profile revision tag for optimistic concurrency
-              schema:
-                type: string
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "428":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Atomically patch a person's structured profile
-      tags:
-        - API
-  /api/v1/persons/{id}/profile/history:
-    get:
-      description: Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
-      operationId: getPersonProfileHistory
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonProfileHistory"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Get a person's structured profile history
-      tags:
-        - API
-  /api/v1/persons/{id}/profile/media/{media_id}/content:
-    get:
-      description: Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
-      operationId: getPersonProfileMediaContent
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - description: Structured person profile media value ID
-          in: path
-          name: media_id
-          required: true
-          schema:
-            format: int64
-            type: integer
-      responses:
-        "200":
-          content:
-            "*/*":
-              schema:
-                contentMediaType: application/octet-stream
-                format: binary
-                type: string
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Download stored inline content for one person profile media value
-      tags:
-        - API
-  /api/v1/persons/{id}/relationships:
-    get:
-      operationId: listPersonRelationships
-      parameters:
-        - description: Durable person ID
-          in: path
-          name: id
-          required: true
-          schema:
-            format: int64
-            type: integer
-        - in: query
-          name: include_ended
-          schema:
-            type: boolean
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PersonRelationshipsResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List one person's relationships
       tags:
         - API
   /api/v1/query:

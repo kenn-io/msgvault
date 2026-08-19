@@ -249,7 +249,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	})
 	search := func(participantID int64) {
 		request := httptest.NewRequest(http.MethodPost,
-			fmt.Sprintf("/api/v1/people/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
+			fmt.Sprintf("/api/v1/participants/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)

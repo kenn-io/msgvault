@@ -83,7 +83,7 @@ func TestPersonRelationshipListRendersBothDirections(t *testing.T) {
 	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("/api/v1/persons/3/relationships", r.URL.Path)
+		assert.Equal("/api/v1/people/3/relationships", r.URL.Path)
 		assert.Equal("true", r.URL.Query().Get("include_ended"))
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"relationships":[

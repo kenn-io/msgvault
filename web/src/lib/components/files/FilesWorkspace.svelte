@@ -269,7 +269,7 @@
     let searchResponse;
     try {
       searchResponse = identityScope?.kind === 'person'
-        ? await client.POST('/api/v1/people/{id}/files/search', {
+        ? await client.POST('/api/v1/participants/{id}/files/search', {
             params: { path: { id: identityScope.id } }, body, signal
           })
         : identityScope?.kind === 'domain'

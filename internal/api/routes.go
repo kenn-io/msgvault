@@ -223,6 +223,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerPersonTrackingRoutes(apiV1)
 	s.registerOrganizationRoutes(apiV1)
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
@@ -230,7 +231,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)
 	s.registerPersonAttributeRoutes(apiV1)
-	s.registerPeopleRoutes(apiV1)
+	s.registerParticipantRoutes(apiV1)
 	s.registerRelationshipRoutes(apiV1)
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
@@ -674,8 +675,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathIntegerParam("Attachment ID")}
 	case "getFile", "getFileContent":
 		return []*huma.Param{pathIntegerParam("File attachment ID")}
-	case "getPerson", "getPersonTimeline", "getPersonContextSummary", "searchPersonFiles":
-		return []*huma.Param{pathIntegerParam("Durable participant ID")}
+	case "getParticipant", "getParticipantTimeline", "getParticipantContextSummary", "searchParticipantFiles":
+		return []*huma.Param{pathIntegerParam("Observed participant cluster member ID")}
 	case "getRelationshipTimeline":
 		return []*huma.Param{pathIntegerParam("Any member participant ID of the counterpart's identity cluster")}
 	case "getDomain", "getDomainTimeline", "getDomainContextSummary", "searchDomainFiles":

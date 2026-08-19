@@ -20,7 +20,7 @@ func TestPersonPromoteAcceptsCreatedResponse(t *testing.T) {
 	var participantID int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method)
-		assert.Equal("/api/v1/persons", r.URL.Path)
+		assert.Equal("/api/v1/people", r.URL.Path)
 		var body struct {
 			ParticipantID int64 `json:"participant_id"`
 		}
@@ -71,7 +71,7 @@ func TestPersonSetDisplayNameClearSendsNull(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		assert.Equal("/api/v1/persons/7", r.URL.Path)
+		assert.Equal("/api/v1/people/7", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodGet:
@@ -132,7 +132,7 @@ func TestPersonDeleteSendsIfMatchFromLatestRead(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		assert.Equal("/api/v1/persons/7", r.URL.Path)
+		assert.Equal("/api/v1/people/7", r.URL.Path)
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")

@@ -78,12 +78,12 @@ var attributeDefinitionListCmd = &cobra.Command{
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w,
-			"ID\tSLUG\tLABEL\tOBJECT\tVALUE TYPE\tWIDGET\tCARDINALITY\tOWNER\tMODE\tUNIVERSAL ID")
+			"ID\tSLUG\tLABEL\tOBJECT\tVALUE TYPE\tWIDGET\tCARDINALITY\tOWNER\tSENSITIVE\tMODE\tUNIVERSAL ID")
 		for _, definition := range resp.JSON200.Definitions {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
 				definition.ID, definition.Slug, definition.Label,
 				definition.ObjectType, definition.ValueType, definition.FieldType,
-				definition.Cardinality, definition.Ownership,
+				definition.Cardinality, definition.Ownership, definition.IsSensitive,
 				attributeDefinitionMode(definition), definition.UniversalID)
 		}
 		return w.Flush()
@@ -371,11 +371,11 @@ func writeCLIAttributeDefinition(
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Definition: %d\nSlug: %s\nLabel: %s\nObject: %s\nValue type: %s\n"+
-			"Widget: %s\nCardinality: %s\nOwner: %s\nMode: %s\nUniversal ID: %s\n"+
+			"Widget: %s\nCardinality: %s\nOwner: %s\nSensitive: %t\nMode: %s\nUniversal ID: %s\n"+
 			"Revision: %d\n",
 		definition.ID, definition.Slug, definition.Label, definition.ObjectType,
 		definition.ValueType, definition.FieldType, definition.Cardinality,
-		definition.Ownership, attributeDefinitionMode(*definition),
+		definition.Ownership, definition.IsSensitive, attributeDefinitionMode(*definition),
 		definition.UniversalID, definition.Revision)
 	return nil
 }

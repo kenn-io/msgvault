@@ -29,7 +29,7 @@ func TestPersonRelationshipHTTPRendersBothEndpointsFromOneRow(t *testing.T) {
 	assert.Equal(fmt.Sprintf(`"person-relationship-%d-r%d"`, edge.ID, edge.Revision), created.Header().Get("ETag"))
 	assert.Equal(fmt.Sprintf("%s/%d", personRelationshipsPath, edge.ID), created.Header().Get("Location"))
 
-	fromAlice := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", personsPath, alice), nil, "")
+	fromAlice := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", peoplePath, alice), nil, "")
 	require.Equal(http.StatusOK, fromAlice.Code)
 	var aliceView PersonRelationshipsResponse
 	require.NoError(json.Unmarshal(fromAlice.Body.Bytes(), &aliceView))
@@ -38,7 +38,7 @@ func TestPersonRelationshipHTTPRendersBothEndpointsFromOneRow(t *testing.T) {
 	assert.Equal("child", aliceView.Relationships[0].CounterpartLabel)
 	assert.Equal(bob, aliceView.Relationships[0].CounterpartPersonID)
 
-	fromBob := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", personsPath, bob), nil, "")
+	fromBob := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", peoplePath, bob), nil, "")
 	require.Equal(http.StatusOK, fromBob.Code)
 	var bobView PersonRelationshipsResponse
 	require.NoError(json.Unmarshal(fromBob.Body.Bytes(), &bobView))
@@ -104,11 +104,11 @@ func TestPersonRelationshipHTTPEndPreconditionsAndConflicts(t *testing.T) {
 	ended := personRequest(t, srv, http.MethodPatch, path, []byte(`{"end_date":"2023-05"}`), created.Header().Get("ETag"))
 	require.Equal(http.StatusOK, ended.Code)
 	assert.Equal(http.StatusConflict, personRequest(t, srv, http.MethodPatch, path, []byte(`{"end_date":"2024"}`), created.Header().Get("ETag")).Code)
-	active := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", personsPath, alice), nil, "")
+	active := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships", peoplePath, alice), nil, "")
 	var activeView PersonRelationshipsResponse
 	require.NoError(json.Unmarshal(active.Body.Bytes(), &activeView))
 	assert.Empty(activeView.Relationships)
-	all := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships?include_ended=true", personsPath, alice), nil, "")
+	all := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d/relationships?include_ended=true", peoplePath, alice), nil, "")
 	var allView PersonRelationshipsResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &allView))
 	require.Len(allView.Relationships, 1)
@@ -132,7 +132,7 @@ func TestPersonRelationshipHTTPRejectsInvalidRequests(t *testing.T) {
 			assert.Equal(t, test.want, personRequest(t, srv, http.MethodPost, personRelationshipsPath, []byte(test.body), "").Code)
 		})
 	}
-	assert.Equal(t, http.StatusBadRequest, personRequest(t, srv, http.MethodGet, personsPath+"/0/relationships", nil, "").Code)
+	assert.Equal(t, http.StatusBadRequest, personRequest(t, srv, http.MethodGet, peoplePath+"/0/relationships", nil, "").Code)
 }
 
 func TestRelationshipTypeHTTPCRUDAndSystemProtection(t *testing.T) {

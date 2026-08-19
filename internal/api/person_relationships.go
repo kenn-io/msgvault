@@ -117,7 +117,7 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 	addErrorResponses(api, deleteType.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, deleteType, s.handleDeleteRelationshipType)
 
-	listForPerson := rawAPIV1Operation("listPersonRelationships", http.MethodGet, "/persons/{id}/relationships", "List one person's relationships")
+	listForPerson := rawAPIV1Operation("listPersonRelationships", http.MethodGet, "/people/{id}/relationships", "List one person's relationships")
 	addRelationshipIDParameter(&listForPerson, "Durable person ID")
 	listForPerson.Parameters = append(listForPerson.Parameters, &huma.Param{Name: "include_ended", In: "query", Schema: &huma.Schema{Type: huma.TypeBoolean}})
 	listForPerson.Responses = jsonResponsesFor[PersonRelationshipsResponse](api)

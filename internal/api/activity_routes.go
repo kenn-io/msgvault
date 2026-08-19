@@ -61,7 +61,7 @@ func (s *Server) registerActivityRoutes(api huma.API) {
 		errors                    []int
 	}{
 		{
-			"getPersonContactState", http.MethodGet, "/persons/{id}/contact-state",
+			"getPersonContactState", http.MethodGet, "/people/{id}/contact-state",
 			"Get computed contact state for a person", s.handlePersonContactState,
 			func(api huma.API) map[string]*huma.Response {
 				return jsonResponsesFor[store.ContactState](api)
@@ -69,7 +69,7 @@ func (s *Server) registerActivityRoutes(api huma.API) {
 			[]int{400, 401, 403, 404, 500, 503},
 		},
 		{
-			"listPersonActivityDays", http.MethodGet, "/persons/{id}/days",
+			"listPersonActivityDays", http.MethodGet, "/people/{id}/days",
 			"List calendar days intersecting a person", s.handlePersonDays,
 			func(api huma.API) map[string]*huma.Response {
 				return jsonResponsesFor[store.PersonDaysPage](api)
@@ -77,7 +77,7 @@ func (s *Server) registerActivityRoutes(api huma.API) {
 			[]int{400, 401, 403, 404, 500, 503},
 		},
 		{
-			"getPersonActivityDay", http.MethodGet, "/persons/{id}/days/{date}",
+			"getPersonActivityDay", http.MethodGet, "/people/{id}/days/{date}",
 			"Get one person's activity and notes for a day", s.handlePersonDay,
 			func(api huma.API) map[string]*huma.Response {
 				return jsonResponsesFor[store.PersonDayPage](api)

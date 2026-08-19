@@ -230,6 +230,7 @@ type AttributeDefinition struct {
 	IsDeletable   bool              `json:"is_deletable"`
 	IsRequired    bool              `json:"is_required"`
 	IsSearchable  bool              `json:"is_searchable"`
+	IsSensitive   bool              `json:"is_sensitive"`
 	Label         string            `json:"label" validate:"required"`
 	ObjectType    string            `json:"object_type" validate:"required"`
 	Options       *AttributeOptions `json:"options,omitempty"`
@@ -1283,6 +1284,7 @@ type CreateAttributeDefinitionRequest struct {
 	IsAudited     *bool                                        `json:"is_audited,omitempty"`
 	IsRequired    *bool                                        `json:"is_required,omitempty"`
 	IsSearchable  *bool                                        `json:"is_searchable,omitempty"`
+	IsSensitive   *bool                                        `json:"is_sensitive,omitempty"`
 	Label         string                                       `json:"label" validate:"required"`
 	ObjectType    CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
 	Options       *AttributeOptions                            `json:"options,omitempty"`
@@ -4677,10 +4679,71 @@ func (p ParticipantContactObservation) Validate() error {
 	return errors
 }
 
+type ParticipantContextSummaryHTTPResponse struct {
+	CacheRevision       string           `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
+	SearchProvenance    SearchProvenance `json:"search_provenance"`
+	Summary             PersonSummary    `json:"summary"`
+}
+
+func (p ParticipantContextSummaryHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	if v, ok := any(p.SearchProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SearchProvenance", err)
+		}
+	}
+	if v, ok := any(p.Summary).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Summary", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ParticipantSearchHTTPResponse struct {
+	CacheRevision       string           `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
+	NextCursor          *string          `json:"next_cursor,omitempty"`
+	Rows                []PersonSummary  `json:"rows,omitempty" validate:"required"`
+	SearchProvenance    SearchProvenance `json:"search_provenance"`
+	TotalCount          int64            `json:"total_count"`
+}
+
+func (p ParticipantSearchHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range p.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.SearchProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SearchProvenance", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PatchAttributeDefinitionRequest struct {
 	Description  *string `json:"description,omitempty"`
 	DisplayOrder *int64  `json:"display_order,omitempty"`
 	IsActive     *bool   `json:"is_active,omitempty"`
+	IsSensitive  *bool   `json:"is_sensitive,omitempty"`
 	Label        *string `json:"label,omitempty"`
 }
 
@@ -4719,6 +4782,25 @@ func (p PatchSavedViewRequest) Validate() error {
 		if v, ok := any(p.CanonicalState).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("CanonicalState", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PeopleResponse struct {
+	People []Person `json:"people,omitempty" validate:"required"`
+}
+
+func (p PeopleResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
 			}
 		}
 	}
@@ -5137,34 +5219,6 @@ func (p PersonContactPointPatchRequest) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
 			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type PersonContextSummaryHTTPResponse struct {
-	CacheRevision       string           `json:"cache_revision" validate:"required"`
-	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
-	SearchProvenance    SearchProvenance `json:"search_provenance"`
-	Summary             PersonSummary    `json:"summary"`
-}
-
-func (p PersonContextSummaryHTTPResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
-		errors = errors.Append("CacheRevision", err)
-	}
-	if v, ok := any(p.SearchProvenance).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("SearchProvenance", err)
-		}
-	}
-	if v, ok := any(p.Summary).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Summary", err)
 		}
 	}
 	if len(errors) == 0 {
@@ -5778,38 +5832,6 @@ func (p PersonRelationshipsResponse) Validate() error {
 	return errors
 }
 
-type PersonSearchHTTPResponse struct {
-	CacheRevision       string           `json:"cache_revision" validate:"required"`
-	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
-	NextCursor          *string          `json:"next_cursor,omitempty"`
-	Rows                []PersonSummary  `json:"rows,omitempty" validate:"required"`
-	SearchProvenance    SearchProvenance `json:"search_provenance"`
-	TotalCount          int64            `json:"total_count"`
-}
-
-func (p PersonSearchHTTPResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
-		errors = errors.Append("CacheRevision", err)
-	}
-	for i, item := range p.Rows {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
-			}
-		}
-	}
-	if v, ok := any(p.SearchProvenance).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("SearchProvenance", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
 type PersonSummary struct {
 	ActivityCount int64              `json:"activity_count"`
 	CacheRevision string             `json:"cache_revision" validate:"required"`
@@ -5874,23 +5896,14 @@ func (p PersonSummary) Validate() error {
 	return errors
 }
 
-type PersonsResponse struct {
-	Persons []Person `json:"persons,omitempty" validate:"required"`
+type PersonTracking struct {
+	PersonID  int64      `json:"person_id"`
+	Tracked   bool       `json:"tracked"`
+	TrackedAt *time.Time `json:"tracked_at" validate:"omitempty"`
 }
 
-func (p PersonsResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	for i, item := range p.Persons {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Persons[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+func (p PersonTracking) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type PingInfo struct {
@@ -5903,6 +5916,10 @@ type PingInfo struct {
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
+}
+
+type PutPersonTrackingRequest struct {
+	Tracked bool `json:"tracked"`
 }
 
 type QueryRequest struct {

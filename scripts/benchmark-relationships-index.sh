@@ -231,7 +231,7 @@ relationships_ms="$(
     '{"show_all":true,"limit":100}'
 )"
 people_ms="$(
-  request_milliseconds people /api/v1/people/search \
+  request_milliseconds people /api/v1/participants/search \
     '{"predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
 domains_ms="$(
@@ -239,7 +239,7 @@ domains_ms="$(
     '{"predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
 person_search_ms="$(
-  request_milliseconds person-search /api/v1/people/search \
+  request_milliseconds person-search /api/v1/participants/search \
     '{"identity_query":"person101","predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
 if ! jq -e '.rows | length > 0' "$scratch/person-search.json" >/dev/null; then
@@ -248,7 +248,7 @@ if ! jq -e '.rows | length > 0' "$scratch/person-search.json" >/dev/null; then
 fi
 readonly filtered='[{"dimension":"source","values":["1"]},{"dimension":"participant","values":["101"]},{"dimension":"message_type","values":["email"]},{"dimension":"deletion","values":["active"]}]'
 filtered_people_ms="$(
-  request_milliseconds filtered-people /api/v1/people/search \
+  request_milliseconds filtered-people /api/v1/participants/search \
     "{\"predicate\":{\"filters\":$filtered},\"sort\":{\"field\":\"activity_count\",\"direction\":\"desc\"},\"limit\":100}"
 )"
 filtered_relationships_ms="$(

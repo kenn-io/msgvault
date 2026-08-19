@@ -91,18 +91,18 @@ var personListCmd = &cobra.Command{
 		}
 		defer func() { _ = client.Close() }()
 		resp, err := daemonclient.APIResponse(client,
-			func(api *apiclient.Client) (*generated.ListPersonsResp, error) {
-				return api.ListPersonsWithResponse(cmd.Context())
+			func(api *apiclient.Client) (*generated.ListPeopleResp, error) {
+				return api.ListPeopleWithResponse(cmd.Context())
 			})
 		if err != nil {
 			return err
 		}
 		if personJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.Persons)
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.People)
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tDISPLAY NAME\tVCARD UID\tPARTICIPANTS\tREVISION")
-		for _, person := range resp.JSON200.Persons {
+		for _, person := range resp.JSON200.People {
 			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\n", person.ID,
 				personDisplayName(person.DisplayName), person.VcardUID,
 				len(person.ParticipantIds), person.Revision)
@@ -249,8 +249,11 @@ func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 func init() {
 	rootCmd.AddCommand(personCmd)
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
-		personSetDisplayNameCmd, personDeleteCmd)
-	for _, command := range []*cobra.Command{personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd} {
+		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd)
+	for _, command := range []*cobra.Command{
+		personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd,
+		personTrackCmd, personUntrackCmd,
+	} {
 		command.Flags().BoolVar(&personJSON, flagJSON, false, "Output as JSON")
 	}
 	personSetDisplayNameCmd.Flags().BoolVar(

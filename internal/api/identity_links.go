@@ -19,7 +19,7 @@ type IdentityLinkStore interface {
 }
 
 // ClusterLookupStore resolves a participant's cluster membership and edges,
-// read-only. The person-detail handler (see handleGetPerson in people.go)
+// read-only. The participant-detail handler (see handleGetParticipant in people.go)
 // uses it to enrich a cluster-aware query.PersonSummary with a PersonCluster
 // block; the query layer itself stays free of a store dependency, so this
 // capability is composed in at the HTTP handler instead. Implemented by the

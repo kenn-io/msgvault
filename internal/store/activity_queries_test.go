@@ -385,6 +385,8 @@ func TestContactStateDerivesCadenceAndDirectChannelAtReadTime(t *testing.T) {
 
 	state, err := f.Store.ContactStateContext(t.Context(), personID, last.AddDate(0, 0, 2))
 	require.NoError(err)
+	require.NotNil(state.LastContactAt)
+	assert.Equal(last, *state.LastContactAt)
 	require.NotNil(state.CadenceDueAt)
 	assert.Equal(last.AddDate(0, 0, 2), *state.CadenceDueAt)
 	assert.Equal(store.CadenceOK, state.CadenceStatus)
@@ -397,6 +399,10 @@ func TestContactStateDerivesCadenceAndDirectChannelAtReadTime(t *testing.T) {
 	encoded, err := json.Marshal(state)
 	require.NoError(err)
 	assert.NotContains(string(encoded), "primary_channel")
+	values, err := f.Store.ListPersonAttributeValuesContext(t.Context(), personID,
+		store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugLastContacted})
+	require.NoError(err)
+	assert.Empty(values)
 }
 
 func TestContactStateMarksExistingProjectionStaleWhileQueueIsPending(t *testing.T) {
@@ -1118,6 +1124,65 @@ func TestContactCadenceAcceptanceMatrixAndNoteSeparation(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.CadenceUnknown, noLast.CadenceStatus)
 	assert.Nil(noLast.CadenceDueAt)
+}
+
+func TestContactCadenceUsesSeedIdentityWhenPreferredSlugIsOccupied(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, personID := newActivityQueryFixture(t)
+	last := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	seedProjectedActivity(t, f, personID, []time.Time{last})
+
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+		DELETE FROM attribute_definitions WHERE universal_id = ?
+	`), store.AttributeUniversalIDContactFrequency)
+	require.NoError(err)
+	legacy := store.SeededAttributeDefinitions()[1]
+	legacy.UniversalID = "47d605f8-f015-4dd0-b640-617aa2fb22de"
+	legacy.Ownership = store.AttributeOwnershipUser
+	legacy.IsDeletable = true
+	_, err = f.Store.CreateAttributeDefinitionContext(t.Context(), legacy)
+	require.NoError(err)
+	oneDay := int64(1)
+	_, err = f.Store.SetPersonAttributeValueContext(
+		t.Context(), store.PersonAttributeValueInput{
+			PersonID: personID, DefinitionSlug: store.AttributeSlugContactFrequency,
+			Value: store.AttributeValue{
+				Type: store.AttributeValueInteger, Integer: &oneDay,
+			},
+			Source: store.ProvenanceUser,
+		})
+	require.NoError(err)
+
+	require.NoError(f.Store.InitSchema())
+	definitions, err := f.Store.ListAttributeDefinitionsContext(t.Context(),
+		store.AttributeDefinitionFilter{ObjectType: store.AttributeObjectPerson})
+	require.NoError(err)
+	var systemSlug string
+	for _, definition := range definitions {
+		if definition.UniversalID == store.AttributeUniversalIDContactFrequency {
+			systemSlug = definition.Slug
+			break
+		}
+	}
+	require.NotEmpty(systemSlug)
+	assert.NotEqual(store.AttributeSlugContactFrequency, systemSlug)
+	fourDays := int64(4)
+	_, err = f.Store.SetPersonAttributeValueContext(
+		t.Context(), store.PersonAttributeValueInput{
+			PersonID: personID, DefinitionSlug: systemSlug,
+			Value: store.AttributeValue{
+				Type: store.AttributeValueInteger, Integer: &fourDays,
+			},
+			Source: store.ProvenanceUser,
+		})
+	require.NoError(err)
+
+	state, err := f.Store.ContactStateContext(t.Context(), personID, last.AddDate(0, 0, 3))
+	require.NoError(err)
+	assert.Equal(store.CadenceOK, state.CadenceStatus)
+	require.NotNil(state.CadenceDueAt)
+	assert.Equal(last.AddDate(0, 0, 4), *state.CadenceDueAt)
 }
 
 func TestContactCadenceRejectsDueDateOutsideJSONRange(t *testing.T) {

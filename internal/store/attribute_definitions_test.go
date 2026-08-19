@@ -376,6 +376,59 @@ func TestCreateAttributeDefinitionStoresANovelUserDefinition(t *testing.T) {
 	assert.Equal(*created, *fetched)
 }
 
+func TestAttributeDefinitionSensitivityRoundTripsAndUpdates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	input := personTextDefinition("private_note")
+	input.IsSensitive = true
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(err)
+	assert.True(created.IsSensitive)
+
+	want := false
+	updated, err := st.UpdateAttributeDefinitionContext(
+		t.Context(), created.ID, created.Revision,
+		store.AttributeDefinitionUpdate{IsSensitive: &want},
+	)
+	require.NoError(err)
+	assert.False(updated.IsSensitive)
+
+	_, err = st.UpdateAttributeDefinitionContext(
+		t.Context(), created.ID, created.Revision,
+		store.AttributeDefinitionUpdate{IsSensitive: &want},
+	)
+	require.ErrorIs(err, store.ErrAttributeDefinitionRevisionConflict)
+
+	plain, err := st.CreateAttributeDefinitionContext(
+		t.Context(), personTextDefinition("public_note"))
+	require.NoError(err)
+	assert.False(plain.IsSensitive)
+}
+
+func TestAttributeDefinitionSensitivityRejectsSystemDefinitionUpdates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	seeded, err := st.GetAttributeDefinitionBySlugContext(
+		t.Context(), store.AttributeObjectPerson, store.AttributeSlugReligion)
+	require.NoError(err)
+	require.True(seeded.IsSensitive)
+
+	notSensitive := false
+	_, err = st.UpdateAttributeDefinitionContext(
+		t.Context(), seeded.ID, seeded.Revision,
+		store.AttributeDefinitionUpdate{IsSensitive: &notSensitive},
+	)
+	require.ErrorIs(err, store.ErrAttributeDefinitionInvalid)
+
+	unchanged, err := st.GetAttributeDefinitionContext(t.Context(), seeded.ID)
+	require.NoError(err)
+	assert.True(unchanged.IsSensitive)
+	assert.Equal(seeded.Revision, unchanged.Revision)
+}
+
 func TestCreateAttributeDefinitionAllowsOrganizationObjectTypeWithoutAValuePath(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

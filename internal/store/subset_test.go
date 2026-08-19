@@ -1039,6 +1039,7 @@ func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
 	input := subsetPersonDefinition("synthetic_preference")
 	input.UniversalID = "test-synthetic-preference"
 	input.FieldType = AttributeFieldSelect
+	input.IsSensitive = true
 	input.Options = &AttributeOptions{Choices: []AttributeChoice{
 		{Value: "alpha", Label: "Alpha"},
 		{Value: "beta", Label: "Beta"},
@@ -1107,6 +1108,7 @@ func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
 	assert.NotEqual(int64(42), copiedDefinition.ID,
 		"destination definition ID must be local rather than copied from the source")
 	assert.Equal(input.Slug, copiedDefinition.Slug)
+	assert.True(copiedDefinition.IsSensitive)
 	require.NotNil(copiedDefinition.Options)
 	assert.Equal(input.Options.Choices, copiedDefinition.Options.Choices)
 
@@ -1127,6 +1129,138 @@ func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
 	assert.Equal(actor, *history[1].Actor)
 	require.NotNil(history[1].ActiveUntil)
 	require.NotNil(history[1].SupersededAt)
+}
+
+func TestCopySubsetPreservesRawLegacySeedCollision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+
+	_, err = source.DB().Exec(source.Rebind(`
+		DELETE FROM attribute_definitions WHERE universal_id = ?
+	`), AttributeUniversalIDLocation)
+	require.NoError(err)
+	legacy := subsetPersonDefinition(AttributeSlugLocation)
+	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
+	legacy.Label = "Legacy location notes"
+	legacy.FieldType = AttributeFieldTextarea
+	legacy.Cardinality = AttributeCardinalityMulti
+	legacy.Options = &AttributeOptions{MaxLength: 240}
+	_, err = source.CreateAttributeDefinitionContext(ctx, legacy)
+	require.NoError(err)
+	legacyValue := "Old town"
+	_, err = source.SetPersonAttributeValueContext(ctx, PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: legacy.Slug,
+		Value:  AttributeValue{Type: AttributeValueText, Text: &legacyValue},
+		Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "legacy-seed-collision")
+	_, err = CopySubsetWithOptions(srcDB, destinationDir, 5, CopySubsetOptions{
+		IncludeAttributes: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	preserved, err := destination.GetAttributeDefinitionBySlugContext(
+		ctx, AttributeObjectPerson, AttributeSlugLocation)
+	require.NoError(err)
+	assert.Equal(legacy.UniversalID, preserved.UniversalID)
+	assert.Equal(legacy.Label, preserved.Label)
+	assert.Equal(legacy.FieldType, preserved.FieldType)
+	assert.Equal(legacy.Cardinality, preserved.Cardinality)
+
+	values, err := destination.ListPersonAttributeValuesContext(ctx, person.ID,
+		PersonAttributeQuery{DefinitionSlug: AttributeSlugLocation})
+	require.NoError(err)
+	require.Len(values, 1)
+	require.NotNil(values[0].Value.Text)
+	assert.Equal(legacyValue, *values[0].Value.Text)
+
+	definitions, err := destination.ListAttributeDefinitionsContext(ctx,
+		AttributeDefinitionFilter{ObjectType: AttributeObjectPerson})
+	require.NoError(err)
+	var canonical *AttributeDefinition
+	for i := range definitions {
+		if definitions[i].UniversalID == AttributeUniversalIDLocation {
+			canonical = &definitions[i]
+			break
+		}
+	}
+	require.NotNil(canonical)
+	assert.NotEqual(AttributeSlugLocation, canonical.Slug)
+}
+
+func TestCopySubsetResolvesCombinedRawSeedIdentityCollision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	_, err = source.DB().Exec(source.Rebind(`
+		UPDATE attribute_definitions
+		SET slug = 'location_custom'
+		WHERE universal_id = ?
+	`), AttributeUniversalIDLocation)
+	require.NoError(err)
+	legacy := subsetPersonDefinition(AttributeSlugLocation)
+	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
+	legacyDefinition, err := source.CreateAttributeDefinitionContext(ctx, legacy)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "combined-seed-collision")
+	_, err = CopySubsetWithOptions(srcDB, destinationDir, 5, CopySubsetOptions{
+		IncludeAttributes: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	canonical, err := destination.GetAttributeDefinitionBySlugContext(
+		ctx, AttributeObjectPerson, "location_custom")
+	require.NoError(err)
+	assert.Equal(AttributeUniversalIDLocation, canonical.UniversalID)
+	assert.Equal(AttributeOwnershipSystem, canonical.Ownership)
+	preserved, err := destination.GetAttributeDefinitionBySlugContext(
+		ctx, AttributeObjectPerson, AttributeSlugLocation)
+	require.NoError(err)
+	assert.Equal(legacyDefinition.UniversalID, preserved.UniversalID)
+}
+
+func TestCopySubset_AttributesDefaultLegacySensitivityToFalse(t *testing.T) {
+	require := require.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 3)
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = db.Exec(`ALTER TABLE attribute_definitions DROP COLUMN is_sensitive`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "legacy-attributes")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 3, CopySubsetOptions{
+		IncludeAttributes: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	definition, err := destination.GetAttributeDefinitionBySlugContext(
+		t.Context(), AttributeObjectPerson, AttributeSlugAskMeAbout)
+	require.NoError(err)
+	assert.False(t, definition.IsSensitive)
 }
 
 func TestCopySubset_RecordReferencesFollowIdentityPolicy(t *testing.T) {

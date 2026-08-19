@@ -47,7 +47,7 @@ export type PersonIdentifier = components['schemas']['PersonIdentifier'];
 export type PersonCluster = components['schemas']['PersonCluster'];
 export type PersonClusterEdge = components['schemas']['PersonClusterEdge'];
 export type DomainSummary = components['schemas']['DomainSummary'];
-export type PersonContextSummaryResponse = components['schemas']['PersonContextSummaryHTTPResponse'];
+export type PersonContextSummaryResponse = components['schemas']['ParticipantContextSummaryHTTPResponse'];
 export type DomainContextSummaryResponse = components['schemas']['DomainContextSummaryHTTPResponse'];
 export type IdentitySearchSort = components['schemas']['IdentitySearchSort'];
 

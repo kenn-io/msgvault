@@ -161,6 +161,13 @@ CREATE TABLE IF NOT EXISTS person_participants (
     UNIQUE(participant_id)
 );
 
+-- Explicit opt-in for future profile maintenance. Row presence is the state;
+-- no row means the person is not tracked.
+CREATE TABLE IF NOT EXISTS person_tracking (
+    person_id  BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    tracked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================================
 -- CONVERSATIONS & MESSAGES
 -- ============================================================================
@@ -1033,6 +1040,7 @@ CREATE TABLE IF NOT EXISTS attribute_definitions (
     ui_editable    BOOLEAN NOT NULL DEFAULT TRUE,
     api_mutable    BOOLEAN NOT NULL DEFAULT TRUE,
     is_searchable  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_sensitive   BOOLEAN NOT NULL DEFAULT FALSE,
     is_audited     BOOLEAN NOT NULL DEFAULT TRUE,
     is_deletable   BOOLEAN NOT NULL DEFAULT TRUE,
     history_exempt BOOLEAN NOT NULL DEFAULT FALSE,

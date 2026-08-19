@@ -39,7 +39,7 @@ func TestAttributeDefinitionsHTTPListsSeedsAndRejectsUniqueness(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var listed AttributeDefinitionsResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &listed))
-	require.Len(listed.Definitions, 4)
+	require.Len(listed.Definitions, 15)
 	assert.NotContains(response.Body.String(), "is_unique")
 
 	rejected := attributeRequest(t, srv, http.MethodPost,
@@ -61,6 +61,7 @@ func TestAttributeDefinitionsHTTPCreateRenameAndDelete(t *testing.T) {
 		"/api/v1/attribute-definitions", []byte(`{
 			"object_type":"person","slug":"favorite_tea","label":"Favorite tea",
 			"value_type":"text","field_type":"select","cardinality":"multi",
+			"is_sensitive":true,
 			"options":{"choices":[{"value":"green","label":"Green"}]}
 		}`), "")
 	require.Equal(http.StatusCreated, createdResponse.Code, createdResponse.Body.String())
@@ -68,18 +69,20 @@ func TestAttributeDefinitionsHTTPCreateRenameAndDelete(t *testing.T) {
 	require.NoError(json.Unmarshal(createdResponse.Body.Bytes(), &created))
 	assert.NotEmpty(created.UniversalID)
 	assert.Equal(store.AttributeOwnershipUser, created.Ownership)
+	assert.True(created.IsSensitive)
 	assert.Equal(fmt.Sprintf(`"attribute-definition-%d-r1"`, created.ID),
 		createdResponse.Header().Get("ETag"))
 
 	renamedResponse := attributeRequest(t, srv, http.MethodPatch,
 		fmt.Sprintf("/api/v1/attribute-definitions/%d", created.ID),
-		[]byte(`{"label":"Tea preferences"}`), createdResponse.Header().Get("ETag"))
+		[]byte(`{"label":"Tea preferences","is_sensitive":false}`), createdResponse.Header().Get("ETag"))
 	require.Equal(http.StatusOK, renamedResponse.Code, renamedResponse.Body.String())
 	var renamed store.AttributeDefinition
 	require.NoError(json.Unmarshal(renamedResponse.Body.Bytes(), &renamed))
 	assert.Equal("Tea preferences", renamed.Label)
 	assert.Equal(created.UniversalID, renamed.UniversalID)
 	assert.Equal(created.Slug, renamed.Slug)
+	assert.False(renamed.IsSensitive)
 
 	stale := attributeRequest(t, srv, http.MethodPatch,
 		fmt.Sprintf("/api/v1/attribute-definitions/%d", created.ID),
@@ -104,6 +107,15 @@ func TestAttributeDefinitionsHTTPProtectsSeedAndRejectsUnknownFields(t *testing.
 		fmt.Sprintf("/api/v1/attribute-definitions/%d", seeded.ID), nil,
 		attributeDefinitionETag(*seeded))
 	assert.Equal(http.StatusConflict, protected.Code)
+
+	religion, err := st.GetAttributeDefinitionBySlugContext(t.Context(),
+		store.AttributeObjectPerson, store.AttributeSlugReligion)
+	require.NoError(err)
+	sensitivityPatch := attributeRequest(t, srv, http.MethodPatch,
+		fmt.Sprintf("/api/v1/attribute-definitions/%d", religion.ID),
+		[]byte(`{"is_sensitive":false}`), attributeDefinitionETag(*religion))
+	assert.Equal(http.StatusBadRequest, sensitivityPatch.Code, sensitivityPatch.Body.String())
+	assert.Contains(sensitivityPatch.Body.String(), "attribute_invalid")
 
 	unknown := attributeRequest(t, srv, http.MethodPost,
 		"/api/v1/attribute-definitions", []byte(`{

@@ -1107,6 +1107,7 @@ var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
@@ -2006,6 +2007,18 @@ func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
 
 func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	return a.store.GetPersonContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetPersonTrackingContext(
+	ctx context.Context, id int64,
+) (*store.PersonTracking, error) {
+	return a.store.GetPersonTrackingContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) SetPersonTrackingContext(
+	ctx context.Context, id int64, tracked bool,
+) (*store.PersonTracking, error) {
+	return a.store.SetPersonTrackingContext(ctx, id, tracked)
 }
 
 func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Person, error) {

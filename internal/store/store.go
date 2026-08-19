@@ -59,6 +59,7 @@ type Store struct {
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
 	initSchemaWindowHook             func()
+	attributeSeedReadHook            func(slug string)
 	contentChangedBackfillBatchHook  func(fromID, toID int64) error
 	backfillFTSBatchErrHook          func(fromID, toID int64) error
 	attachmentRoleRepairPreparedHook func()

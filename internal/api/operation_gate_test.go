@@ -671,10 +671,10 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/explore/files",
 		"/api/v1/files/search",
 		"/api/v1/files/groups",
-		"/api/v1/people/search",
-		"/api/v1/people/7/summary",
-		"/api/v1/people/7/timeline",
-		"/api/v1/people/7/files/search",
+		"/api/v1/participants/search",
+		"/api/v1/participants/7/summary",
+		"/api/v1/participants/7/timeline",
+		"/api/v1/participants/7/files/search",
 		"/api/v1/domains/search",
 		"/api/v1/domains/example.com/summary",
 		"/api/v1/domains/example.com/timeline",
@@ -848,9 +848,9 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 	readOnly := []string{
 		"/api/v1/explore",
 		"/api/v1/relationships",
-		"/api/v1/people/search",
+		"/api/v1/participants/search",
 		"/api/v1/files/search",
-		"/api/v1/people/7/summary",
+		"/api/v1/participants/7/summary",
 	}
 	for _, path := range readOnly {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))

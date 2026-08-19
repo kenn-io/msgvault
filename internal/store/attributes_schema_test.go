@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,52 @@ func insertRawDefinition(t *testing.T, st *store.Store, slug string) int64 {
 	`), "uid-"+slug, slug, slug).Scan(&id)
 	require.NoError(t, err)
 	return id
+}
+
+func TestInitSchemaAddsSensitivityToLegacyAttributeDefinitions(t *testing.T) {
+	require := require.New(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "legacy-attributes.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	_, err = st.DB().Exec(`
+		CREATE TABLE attribute_definitions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			universal_id TEXT NOT NULL UNIQUE,
+			object_type TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			label TEXT NOT NULL,
+			description TEXT,
+			value_type TEXT NOT NULL,
+			field_type TEXT NOT NULL,
+			record_target TEXT,
+			cardinality TEXT NOT NULL DEFAULT 'single',
+			display_order INTEGER NOT NULL DEFAULT 0,
+			is_required BOOLEAN NOT NULL DEFAULT FALSE,
+			ownership TEXT NOT NULL DEFAULT 'user',
+			ui_creatable BOOLEAN NOT NULL DEFAULT TRUE,
+			ui_editable BOOLEAN NOT NULL DEFAULT TRUE,
+			api_mutable BOOLEAN NOT NULL DEFAULT TRUE,
+			is_searchable BOOLEAN NOT NULL DEFAULT FALSE,
+			is_audited BOOLEAN NOT NULL DEFAULT TRUE,
+			is_deletable BOOLEAN NOT NULL DEFAULT TRUE,
+			history_exempt BOOLEAN NOT NULL DEFAULT FALSE,
+			derived_source TEXT,
+			options JSON,
+			vcard_property TEXT,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(object_type, slug)
+		)
+	`)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+
+	definition, err := st.GetAttributeDefinitionBySlugContext(
+		t.Context(), store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+	require.NoError(err)
+	assert.False(t, definition.IsSensitive)
 }
 
 func insertRawValue(

@@ -116,7 +116,7 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 		api, "searchFiles", "/files/search", "Search analytical files", s.handleSearchFiles,
 	)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
-		api, "searchPersonFiles", "/people/{id}/files/search", "Search one person's analytical files", s.handleSearchPersonFiles,
+		api, "searchParticipantFiles", "/participants/{id}/files/search", "Search one participant cluster's analytical files", s.handleSearchParticipantFiles,
 	)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchDomainFiles", "/domains/{domain}/files/search", "Search one domain's analytical files", s.handleSearchDomainFiles,
@@ -243,8 +243,8 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 	s.handleSearchFilesWithScope(w, r, nil)
 }
 
-func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleSearchParticipantFiles(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
 		return
 	}

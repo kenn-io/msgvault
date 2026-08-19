@@ -72,7 +72,7 @@ function clusteredPersonWithBareMember(): PersonSummary {
 function searchClient(): ReturnType<typeof createAPIClient> {
   const fetchFn = vi.fn<typeof fetch>(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname === '/api/v1/people/search') {
+    if (new URL(request.url).pathname === '/api/v1/participants/search') {
       return Response.json({ rows: [searchResult()], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
     }
     throw new Error(`unexpected fetch to ${request.url}`);

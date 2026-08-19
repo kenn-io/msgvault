@@ -12,7 +12,7 @@ import (
 )
 
 func personAttributesPath(personID int64) string {
-	return fmt.Sprintf("%s/%d/attributes", personsPath, personID)
+	return fmt.Sprintf("%s/%d/attributes", peoplePath, personID)
 }
 
 func newPersonAttributeFixture(t *testing.T) (*Server, int64) {
@@ -46,7 +46,7 @@ func TestPersonAttributesHTTPListsDefinitionsSetsHistoryAndClears(t *testing.T) 
 		personAttributesPath(person), nil, "")
 	require.Equal(http.StatusOK, listed.Code, listed.Body.String())
 	groups := decodePersonAttributes(t, listed.Body.Bytes())
-	require.Len(groups, 4)
+	require.Len(groups, len(store.SeededAttributeDefinitions()))
 	assert.Empty(groups[store.AttributeSlugLastContacted].Current)
 
 	path := personAttributesPath(person) + "/" + store.AttributeSlugPrimaryChannel
@@ -102,6 +102,44 @@ func TestPersonAttributesHTTPClearRejectsStaleExpectedValueID(t *testing.T) {
 	current := decodePersonAttributes(t, listed.Body.Bytes())[store.AttributeSlugPrimaryChannel].Current
 	require.Len(current, 1)
 	assert.Equal(secondWrite.Value.ID, current[0].ID)
+}
+
+func TestPersonAttributesHTTPPreservesLegacySlugAcrossSeedCollision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	participant := st.mustParticipant(t, "slug-collision@example.test", "slug-collision", "example.test")
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM attribute_definitions WHERE universal_id = ?
+	`), store.AttributeUniversalIDLocation)
+	require.NoError(err)
+	legacy := store.SeededAttributeDefinitions()[4]
+	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
+	legacy.Ownership = store.AttributeOwnershipUser
+	legacy.IsDeletable = true
+	legacyDefinition, err := st.CreateAttributeDefinitionContext(t.Context(), legacy)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+
+	path := personAttributesPath(person.ID) + "/" + store.AttributeSlugLocation
+	written := attributeRequest(t, srv, http.MethodPut, path,
+		[]byte(`{"value":{"type":"text","text":"Old town"},"source":"user"}`), "")
+	require.Equal(http.StatusOK, written.Code, written.Body.String())
+	var write store.PersonAttributeWrite
+	require.NoError(json.Unmarshal(written.Body.Bytes(), &write))
+	assert.Equal(legacyDefinition.ID, write.Value.DefinitionID)
+
+	listed := attributeRequest(t, srv, http.MethodGet,
+		personAttributesPath(person.ID), nil, "")
+	require.Equal(http.StatusOK, listed.Code, listed.Body.String())
+	group := decodePersonAttributes(t, listed.Body.Bytes())[store.AttributeSlugLocation]
+	assert.Equal(legacy.UniversalID, group.Definition.UniversalID)
+	require.Len(group.Current, 1)
+	require.NotNil(group.Current[0].Value.Text)
+	assert.Equal("Old town", *group.Current[0].Value.Text)
 }
 
 func TestPersonAttributesHTTPRejectsDerivedInvalidUnknownAndSupportsDryRun(t *testing.T) {

@@ -225,7 +225,26 @@ func CopySubsetWithOptions(
 		}
 	}
 
-	_ = db.Close()
+	if err := db.Close(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("close copied subset database: %w", err)
+	}
+	if options.IncludeAttributes {
+		normalized, err := Open(dstDBPath)
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("open copied subset for attribute reconciliation: %w", err)
+		}
+		if err := normalized.InitSchema(); err != nil {
+			_ = normalized.Close()
+			cleanup()
+			return nil, fmt.Errorf("reconcile copied subset attributes: %w", err)
+		}
+		if err := normalized.Close(); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("close reconciled subset database: %w", err)
+		}
+	}
 
 	if info, err := os.Stat(dstDBPath); err == nil {
 		result.DBSize = info.Size()
@@ -490,15 +509,30 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	if options.IncludeAttributes {
+		hasSensitive, err := sourceColumnExists(
+			tx, "attribute_definitions", "is_sensitive")
+		if err != nil {
+			return nil, fmt.Errorf("inspect source attribute definitions: %w", err)
+		}
+		sensitiveExpression := "FALSE"
+		if hasSensitive {
+			sensitiveExpression = "is_sensitive"
+		}
+		// The destination is a brand-new archive and has no attribute values.
+		// Remove its provisional seeds so source slugs cross the archive boundary
+		// unchanged; post-copy InitSchema installs any missing seeds afterward.
+		if _, err := tx.Exec(`DELETE FROM attribute_definitions`); err != nil {
+			return nil, fmt.Errorf("clear provisional subset attribute definitions: %w", err)
+		}
 		// Definitions are portable by universal_id, not their database-local
 		// numeric key. Reconcile every person definition into the destination,
 		// then map copied values through universal_id below.
-		if _, err := tx.Exec(`
+		if _, err := tx.Exec(fmt.Sprintf(`
 		INSERT INTO attribute_definitions (
 		    universal_id, object_type, slug, label, description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
-		    is_searchable, is_audited, is_deletable, history_exempt,
+		    is_searchable, is_sensitive, is_audited, is_deletable, history_exempt,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
 		)
@@ -506,7 +540,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    universal_id, object_type, slug, label, description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
-		    is_searchable, is_audited, is_deletable, history_exempt,
+		    is_searchable, %s AS is_sensitive, is_audited, is_deletable, history_exempt,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
 		FROM src.attribute_definitions
@@ -527,6 +561,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    ui_editable = excluded.ui_editable,
 		    api_mutable = excluded.api_mutable,
 		    is_searchable = excluded.is_searchable,
+		    is_sensitive = excluded.is_sensitive,
 		    is_audited = excluded.is_audited,
 		    is_deletable = excluded.is_deletable,
 		    history_exempt = excluded.history_exempt,
@@ -536,7 +571,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    is_active = excluded.is_active,
 		    revision = excluded.revision,
 		    created_at = excluded.created_at,
-		    updated_at = excluded.updated_at`); err != nil {
+		    updated_at = excluded.updated_at`, sensitiveExpression)); err != nil {
 			return nil, fmt.Errorf("copy person attribute definitions: %w", err)
 		}
 

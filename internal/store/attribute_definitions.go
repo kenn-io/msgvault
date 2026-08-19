@@ -159,6 +159,7 @@ type AttributeDefinition struct {
 	UIEditable    bool                 `json:"ui_editable"`
 	APIMutable    bool                 `json:"api_mutable"`
 	IsSearchable  bool                 `json:"is_searchable"`
+	IsSensitive   bool                 `json:"is_sensitive"`
 	IsAudited     bool                 `json:"is_audited"`
 	IsDeletable   bool                 `json:"is_deletable"`
 	HistoryExempt bool                 `json:"history_exempt"`
@@ -189,6 +190,7 @@ type AttributeDefinitionInput struct {
 	UIEditable    bool
 	APIMutable    bool
 	IsSearchable  bool
+	IsSensitive   bool
 	IsAudited     bool
 	IsDeletable   bool
 	HistoryExempt bool
@@ -202,6 +204,7 @@ type AttributeDefinitionUpdate struct {
 	Label        *string
 	Description  **string
 	DisplayOrder *int64
+	IsSensitive  *bool
 	IsActive     *bool
 }
 
@@ -512,7 +515,7 @@ const attributeDefinitionColumns = `
 	id, universal_id, object_type, slug, label, description,
 	value_type, field_type, record_target, cardinality, display_order,
 	is_required, ownership, ui_creatable, ui_editable, api_mutable,
-	is_searchable, is_audited, is_deletable, history_exempt, derived_source,
+	is_searchable, is_sensitive, is_audited, is_deletable, history_exempt, derived_source,
 	options, vcard_property, is_active, revision, created_at, updated_at
 `
 
@@ -524,43 +527,50 @@ func (s *Store) CreateAttributeDefinitionContext(
 	if err != nil {
 		return nil, err
 	}
-	options, err := marshalAttributeOptions(validated.Options)
-	if err != nil {
-		return nil, err
-	}
 	var definition *AttributeDefinition
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		query := fmt.Sprintf(`
-			INSERT INTO attribute_definitions (
-			    universal_id, object_type, slug, label, description,
-			    value_type, field_type, record_target, cardinality, display_order,
-			    is_required, ownership, ui_creatable, ui_editable, api_mutable,
-			    is_searchable, is_audited, is_deletable, history_exempt,
-			    derived_source, options, vcard_property
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?)
-			ON CONFLICT DO NOTHING
-			RETURNING %s
-		`, s.dialect.JSONBindExpr(), attributeDefinitionColumns)
-		row := tx.QueryRowContext(ctx, query,
-			validated.UniversalID, string(validated.ObjectType), validated.Slug,
-			validated.Label, validated.Description, string(validated.ValueType),
-			string(validated.FieldType), validated.RecordTarget,
-			string(validated.Cardinality), validated.DisplayOrder,
-			validated.IsRequired, string(validated.Ownership), validated.UICreatable,
-			validated.UIEditable, validated.APIMutable, validated.IsSearchable,
-			validated.IsAudited, validated.IsDeletable, validated.HistoryExempt,
-			validated.DerivedSource, options, validated.VCardProperty)
-		created, scanErr := scanAttributeDefinition(row)
-		if scanErr != nil {
-			return s.attributeDefinitionWriteError(ctx, tx, validated, scanErr)
-		}
-		definition = created
-		return nil
+		var createErr error
+		definition, createErr = s.createAttributeDefinitionTx(ctx, tx, validated)
+		return createErr
 	})
 	if err != nil {
 		return nil, err
 	}
 	return definition, nil
+}
+
+func (s *Store) createAttributeDefinitionTx(
+	ctx context.Context, tx *loggedTx, input AttributeDefinitionInput,
+) (*AttributeDefinition, error) {
+	options, err := marshalAttributeOptions(input.Options)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`
+			INSERT INTO attribute_definitions (
+			    universal_id, object_type, slug, label, description,
+			    value_type, field_type, record_target, cardinality, display_order,
+			    is_required, ownership, ui_creatable, ui_editable, api_mutable,
+			    is_searchable, is_sensitive, is_audited, is_deletable, history_exempt,
+			    derived_source, options, vcard_property
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?)
+			ON CONFLICT DO NOTHING
+			RETURNING %s
+		`, s.dialect.JSONBindExpr(), attributeDefinitionColumns)
+	row := tx.QueryRowContext(ctx, query,
+		input.UniversalID, string(input.ObjectType), input.Slug,
+		input.Label, input.Description, string(input.ValueType),
+		string(input.FieldType), input.RecordTarget,
+		string(input.Cardinality), input.DisplayOrder,
+		input.IsRequired, string(input.Ownership), input.UICreatable,
+		input.UIEditable, input.APIMutable, input.IsSearchable,
+		input.IsSensitive, input.IsAudited, input.IsDeletable, input.HistoryExempt,
+		input.DerivedSource, options, input.VCardProperty)
+	created, scanErr := scanAttributeDefinition(row)
+	if scanErr != nil {
+		return nil, s.attributeDefinitionWriteError(ctx, tx, input, scanErr)
+	}
+	return created, nil
 }
 
 func (s *Store) attributeDefinitionWriteError(
@@ -678,7 +688,7 @@ func (s *Store) ListAttributeDefinitionsContext(
 func (s *Store) UpdateAttributeDefinitionContext(
 	ctx context.Context, id, expectedRevision int64, update AttributeDefinitionUpdate,
 ) (*AttributeDefinition, error) {
-	assignments := make([]string, 0, 4)
+	assignments := make([]string, 0, 5)
 	args := make([]any, 0, 6)
 	if update.Label != nil {
 		label := strings.TrimSpace(*update.Label)
@@ -713,6 +723,10 @@ func (s *Store) UpdateAttributeDefinitionContext(
 		assignments = append(assignments, "is_active = ?")
 		args = append(args, *update.IsActive)
 	}
+	if update.IsSensitive != nil {
+		assignments = append(assignments, "is_sensitive = ?")
+		args = append(args, *update.IsSensitive)
+	}
 	if len(assignments) == 0 {
 		return nil, fmt.Errorf("%w: no mutable field supplied", ErrAttributeDefinitionInvalid)
 	}
@@ -720,6 +734,28 @@ func (s *Store) UpdateAttributeDefinitionContext(
 
 	var definition *AttributeDefinition
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if update.IsSensitive != nil {
+			var (
+				ownership string
+				revision  int64
+			)
+			err := tx.QueryRowContext(ctx, `
+				SELECT ownership, revision FROM attribute_definitions WHERE id = ?`+
+				s.dialect.SelectForUpdate(), id).Scan(&ownership, &revision)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrAttributeDefinitionNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("load attribute definition %d for sensitivity update: %w", id, err)
+			}
+			if revision != expectedRevision {
+				return ErrAttributeDefinitionRevisionConflict
+			}
+			if AttributeOwnership(ownership) == AttributeOwnershipSystem {
+				return fmt.Errorf("%w: is_sensitive is structural for system-owned definitions",
+					ErrAttributeDefinitionInvalid)
+			}
+		}
 		query := fmt.Sprintf(`
 			UPDATE attribute_definitions
 			SET %s, revision = revision + 1, updated_at = %s
@@ -818,7 +854,7 @@ func scanAttributeDefinition(row scanner) (*AttributeDefinition, error) {
 		&definition.Label, &description, &valueType, &fieldType, &recordTarget,
 		&cardinality, &definition.DisplayOrder, &definition.IsRequired, &ownership,
 		&definition.UICreatable, &definition.UIEditable, &definition.APIMutable,
-		&definition.IsSearchable, &definition.IsAudited, &definition.IsDeletable,
+		&definition.IsSearchable, &definition.IsSensitive, &definition.IsAudited, &definition.IsDeletable,
 		&definition.HistoryExempt, &derivedSource, &options, &vcardProperty,
 		&definition.IsActive, &definition.Revision, &definition.CreatedAt,
 		&definition.UpdatedAt,
