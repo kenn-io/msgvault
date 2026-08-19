@@ -87,7 +87,8 @@ import (
 // a 400 (conversation_anchor_outside_range) rather than the default full-
 // conversation window. Additive (minor bump): omitting the params preserves
 // the existing full-conversation behavior.
-// 1.23.0 makes GET /api/v1/people/{id} cluster-aware: PersonIdentifier adds
+// 1.23.0 makes GET /api/v1/people/{id} (the analytical participant detail,
+// /api/v1/participants/{id} since 2.0.0) cluster-aware: PersonIdentifier adds
 // participant_id, and PersonSummary adds an additive cluster field
 // (canonical_id, member_ids, edges) populated only when the requested
 // participant is linked to at least one other participant. Identifiers on a
@@ -151,7 +152,7 @@ import (
 // cluster (201 on creation, 200 on idempotent re-promotion), list/get stable
 // profiles, update the display-name override and delete a profile with
 // revision-tag optimistic concurrency, and surface the covering profile on
-// the /people/{id} analytical detail.
+// the /people/{id} analytical detail (/participants/{id} since 2.0.0).
 // 1.33.0 adds provider-neutral single-meeting ingestion with strict request
 // schemas and idempotent create/update responses.
 // 1.34.0 adds GET /api/v1/messages/changes: a keyset feed over the

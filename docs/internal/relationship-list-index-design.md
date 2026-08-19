@@ -17,7 +17,7 @@ small result set.
 The fix is a narrow Parquet index for the three sidebar list endpoints:
 
 - `POST /api/v1/relationships`
-- `POST /api/v1/people/search`
+- `POST /api/v1/participants/search`
 - `POST /api/v1/domains/search`
 
 Person and domain details, summaries, timelines, and file views keep their
@@ -196,7 +196,7 @@ has a total order.
 `POST /relationships` uses `relationship_daily` only when no filter is active.
 Any filter routes to `relationship_activity`.
 
-`POST /people/search` uses `relationship_people` for unfiltered and exact
+`POST /participants/search` uses `relationship_people` for unfiltered and exact
 source-rollup requests. Text search selects candidate canonical IDs from
 `relationship_people` before a filtered activity scan.
 

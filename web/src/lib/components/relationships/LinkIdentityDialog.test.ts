@@ -54,7 +54,7 @@ function renderDialog(overrides: Partial<{
 }
 
 describe('LinkIdentityDialog', () => {
-  it('debounces search input into one people/search call carrying identity_query', async () => {
+  it('debounces search input into one participants/search call carrying identity_query', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests } = renderDialog();
