@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -138,13 +139,26 @@ func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.Import
 	if sum.AttachmentsPending > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (see backfill-beeper-media)", sum.AttachmentsPending)
 	}
-	if sum.AttachmentsSkipped > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media skipped by policy", sum.AttachmentsSkipped)
-	}
+	writeBeeperMediaSkipSummary(cmd.OutOrStdout(), sum)
 	if sum.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d errors", sum.Errors)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+}
+
+func writeBeeperMediaSkipSummary(out io.Writer, sum *beeper.ImportSummary) {
+	if sum.AttachmentsOverCap > 0 {
+		qualifier := ""
+		if sum.AttachmentsOverCapUnknownSize > 0 {
+			qualifier = "at least "
+		}
+		_, _ = fmt.Fprintf(out, ", %d media over size cap (%s%s total)",
+			sum.AttachmentsOverCap, qualifier, formatSize(sum.AttachmentsOverCapBytes))
+	}
+	otherSkipped := max(int64(0), sum.AttachmentsSkipped-sum.AttachmentsOverCap)
+	if otherSkipped > 0 {
+		_, _ = fmt.Fprintf(out, ", %d media skipped by policy", otherSkipped)
+	}
 }
 
 // resolveBeeperSyncAccounts returns the Beeper accountIDs to sync: the

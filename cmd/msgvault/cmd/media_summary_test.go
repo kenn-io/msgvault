@@ -87,3 +87,47 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 		})
 	}
 }
+
+func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
+	tests := []struct {
+		name  string
+		sum   beeper.ImportSummary
+		print func(*bytes.Buffer, *beeper.ImportSummary)
+		want  string
+	}{
+		{
+			name: "sync exact size",
+			sum: beeper.ImportSummary{
+				AttachmentsSkipped:      3,
+				AttachmentsOverCap:      2,
+				AttachmentsOverCapBytes: 15 << 20,
+			},
+			print: func(out *bytes.Buffer, sum *beeper.ImportSummary) {
+				cmd := &cobra.Command{}
+				cmd.SetOut(out)
+				printBeeperSummary(cmd, "account", sum)
+			},
+			want: "2 media over size cap (15.0M total), 1 media skipped by policy",
+		},
+		{
+			name: "backfill lower bound",
+			sum: beeper.ImportSummary{
+				AttachmentsSkipped:            1,
+				AttachmentsOverCap:            1,
+				AttachmentsOverCapBytes:       (5 << 20) + 1,
+				AttachmentsOverCapUnknownSize: 1,
+			},
+			print: func(out *bytes.Buffer, sum *beeper.ImportSummary) {
+				writeBeeperMediaBackfillSummary(out, "account", sum)
+			},
+			want: "1 media over size cap (at least 5.0M total)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			tt.print(&output, &tt.sum)
+			assert.Contains(t, output.String(), tt.want)
+		})
+	}
+}

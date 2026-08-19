@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -283,12 +284,78 @@ func TestImportMediaSizeCap(t *testing.T) {
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
 	assert.EqualValues(0, sum.AttachmentsPending)
 	assert.EqualValues(1, sum.AttachmentsSkipped)
+	assert.EqualValues(1, sum.AttachmentsOverCap)
+	assert.EqualValues(10<<20, sum.AttachmentsOverCapBytes)
+	assert.Zero(sum.AttachmentsOverCapUnknownSize)
 	assert.EqualValues(0, sum.Errors, "over-cap is a skip, not an error")
 
 	var itemCount int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_too_large'`).Scan(&itemCount))
 	assert.Equal(1, itemCount)
+
+	repeat, err := imp.Import(context.Background(), ImportOptions{
+		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
+		MaxMediaBytes: opts.MaxMediaBytes, Full: true,
+	})
+	require.NoError(err)
+	assert.Zero(repeat.AttachmentsOverCap, "an unchanged durable size skip is not a new drop")
+	assert.Zero(repeat.AttachmentsOverCapBytes)
+	assert.Zero(repeat.AttachmentsPending, "a durable size skip is not retryable work")
+}
+
+func TestImportMediaSizeCapSaturatesReportedBytes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs[0].Attachments = append(chat.Msgs[0].Attachments,
+		map[string]any{
+			"id": "mxc://beeper.local/huge2", "type": "video", "mimeType": "video/mp4",
+			"fileName": "huge2.mp4", "fileSize": float64(int64(1) << 62),
+		})
+	chat.Msgs[0].Attachments[0]["fileSize"] = float64(int64(1) << 62)
+	f.addChat(chat)
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	opts.MaxMediaBytes = 1
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(2, sum.AttachmentsOverCap)
+	assert.Equal(int64(math.MaxInt64), sum.AttachmentsOverCapBytes)
+	assert.Positive(sum.AttachmentsOverCapUnknownSize,
+		"a saturated total must be presented as a lower bound")
+}
+
+func TestImportMediaSizeCapClampsExtremeDeclaredSize(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs[0].Attachments[0]["fileSize"] = float64((int64(1) << 62) + (int64(1) << 50))
+	f.addChat(chat)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	opts.MaxMediaBytes = 1 << 20
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsOverCap)
+	assert.Greater(sum.AttachmentsOverCapBytes, opts.MaxMediaBytes)
+	assert.EqualValues(1, sum.AttachmentsOverCapUnknownSize)
+
+	var storedSize int64
+	require.NoError(st.DB().QueryRow(`
+		SELECT size FROM attachments
+		WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&storedSize))
+	assert.Greater(storedSize, opts.MaxMediaBytes)
+	backfill, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(backfill.MessagesProcessed, "the clamped size marker remains excluded at an unchanged cap")
 }
 
 func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
@@ -312,6 +379,9 @@ func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
 	assert.EqualValues(0, sum.AttachmentsDownloaded)
 	assert.EqualValues(0, sum.AttachmentsPending)
 	assert.EqualValues(1, sum.AttachmentsSkipped)
+	assert.EqualValues(1, sum.AttachmentsOverCap)
+	assert.Greater(sum.AttachmentsOverCapBytes, int64(1<<20))
+	assert.EqualValues(1, sum.AttachmentsOverCapUnknownSize)
 	assert.EqualValues(0, sum.Errors, "over-cap is a skip, not an error")
 
 	var itemCount int
@@ -327,6 +397,46 @@ func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
 	backfill, err := imp.BackfillMedia(context.Background(), opts)
 	require.NoError(err)
 	assert.Zero(backfill.MessagesProcessed, "unchanged cap must not retry streamed oversize media")
+
+	opts.MaxMediaBytes = (3 << 20) / 2
+	backfill, err = imp.BackfillMedia(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, backfill.MessagesProcessed, "a raised cap makes the old lower-bound marker retryable")
+	assert.EqualValues(1, backfill.AttachmentsOverCap, "a still-insufficient raised cap is a new drop")
+	assert.Greater(backfill.AttachmentsOverCapBytes, opts.MaxMediaBytes)
+	assert.EqualValues(1, backfill.AttachmentsOverCapUnknownSize)
+	assert.Zero(backfill.AttachmentsPending)
+}
+
+func TestBackfillMediaCountsExistingSizeSkipOnceInMixedMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs[0].Attachments = append(chat.Msgs[0].Attachments,
+		map[string]any{
+			"id": "mxc://beeper.local/small", "type": "img", "mimeType": "image/png",
+			"fileName": "small.png", "fileSize": 5,
+		})
+	chat.Msgs[0].Attachments[0]["fileSize"] = 10 << 20
+	f.addChat(chat)
+	f.setAsset("mxc://beeper.local/small", []byte("small"))
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	initial := opts
+	initial.NoMedia = true
+	_, err := imp.Import(t.Context(), initial)
+	require.NoError(err)
+
+	opts.MaxMediaBytes = 1 << 20
+	sum, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsOverCap)
+	assert.EqualValues(10<<20, sum.AttachmentsOverCapBytes)
+	assert.EqualValues(1, sum.AttachmentsDownloaded)
+	assert.Zero(sum.AttachmentsPending, "the durable size skip must not become pending again")
 }
 
 func TestImportNoMediaSkipsDownloadsEntirely(t *testing.T) {

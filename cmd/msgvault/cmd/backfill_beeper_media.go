@@ -70,9 +70,10 @@ Examples:
 
 func writeBeeperMediaBackfillSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {
 	_, _ = fmt.Fprintf(out,
-		"%s: %d messages checked, %d attachments downloaded, %d still pending, %d skipped by policy (%s)\n",
-		accountID, sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending,
-		sum.AttachmentsSkipped, sum.Duration.Round(time.Second))
+		"%s: %d messages checked, %d attachments downloaded, %d still pending",
+		accountID, sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending)
+	writeBeeperMediaSkipSummary(out, sum)
+	_, _ = fmt.Fprintf(out, " (%s)\n", sum.Duration.Round(time.Second))
 }
 
 func init() {

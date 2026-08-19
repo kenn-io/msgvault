@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,6 +122,41 @@ func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testi
 		{MessageID: failedID, SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
 		{MessageID: skippedID, SourceMessageID: "skipped", ChatID: "conversation-skipped", ConversationType: "group_chat", ParticipantCount: 4},
 	}, items)
+}
+
+func TestBeeperRetryPolicyReportsNewSizeSkips(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sourceID, overCapID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "over-cap", 2)
+	_, hugeID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "huge", 2)
+	_, scopeID := newPolicyMessage(t, st, "beeper", "signal", "channel", "scope", 8)
+	for _, item := range []struct {
+		messageID int64
+		name      string
+		size      int
+	}{
+		{messageID: overCapID, name: "over-cap", size: 9 << 20},
+		{messageID: hugeID, name: "huge", size: math.MaxInt64 - 1},
+		{messageID: scopeID, name: "scope", size: 1 << 20},
+	} {
+		require.NoError(st.ReplaceMessageBeeperAttachments(item.messageID, []store.AttachmentRef{{
+			SourceAttachmentID: "beeper:" + item.name,
+			StoragePath:        "https://example.invalid/" + item.name,
+			Size:               item.size,
+			State:              attachmentpolicy.StatePending,
+		}}))
+	}
+
+	result, err := st.ApplyBeeperRetryableAttachmentPolicy(t.Context(), sourceID, attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeDirect, MaxBytes: 5 << 20,
+	})
+	require.NoError(err)
+	assert.EqualValues(3, result.NewlySkipped)
+	assert.EqualValues(2, result.AttachmentsOverCap)
+	assert.Equal(int64(math.MaxInt64), result.AttachmentsOverCapBytes)
+	assert.EqualValues(2, result.AttachmentsOverCapUnknownSize,
+		"archived markers and saturated totals must be presented as lower bounds")
 }
 
 func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing.T) {

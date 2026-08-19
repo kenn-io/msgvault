@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -66,6 +67,25 @@ func declaredSize(att *Attachment) int {
 	return int(int64(att.FileSize))
 }
 
+func recordOverCap(sum *ImportSummary, size int64, lowerBound bool) {
+	if sum.AttachmentsOverCap < math.MaxInt64 {
+		sum.AttachmentsOverCap++
+	}
+	if size < 0 {
+		size = 0
+		lowerBound = true
+	}
+	if size > math.MaxInt64-sum.AttachmentsOverCapBytes {
+		sum.AttachmentsOverCapBytes = math.MaxInt64
+		lowerBound = true
+	} else {
+		sum.AttachmentsOverCapBytes += size
+	}
+	if lowerBound && sum.AttachmentsOverCapUnknownSize < math.MaxInt64 {
+		sum.AttachmentsOverCapUnknownSize++
+	}
+}
+
 // shareMetadata renders the attachment_metadata JSON marking media that came
 // in as a link preview rather than as something the sender composed, recording
 // the URL it previews. Returns "" for ordinary media, which stores NULL.
@@ -123,13 +143,14 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			continue
 		}
 		sourceAttID := beeperAttachmentID(ref)
-		if prev, ok := existing[sourceAttID]; ok && prev.ContentHash != "" {
+		previous, hadPrevious := existing[sourceAttID]
+		if hadPrevious && previous.ContentHash != "" {
 			// Re-persisting already-downloaded media: keep the blob as-is but
 			// refresh the share marker, so re-running over an existing archive
 			// classifies rows stored before this was recorded.
-			prev.Metadata = shareMeta
-			setBeeperAttachmentRole(&prev, att, isPreview)
-			refs = append(refs, prev)
+			previous.Metadata = shareMeta
+			setBeeperAttachmentRole(&previous, att, isPreview)
+			refs = append(refs, previous)
 			continue
 		}
 		marker := store.AttachmentRef{
@@ -141,13 +162,19 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			Metadata:           shareMeta,
 			State:              attachmentpolicy.StatePending,
 		}
-		if previous, ok := existing[sourceAttID]; ok && previous.Size > marker.Size {
+		if hadPrevious && previous.Size > marker.Size {
 			marker.Size = previous.Size
 		}
 		// Every unsuccessful fetch leaves a typed marker. Transient failures
 		// remain retryable; size exclusions wait until the cap is raised.
-		pend := func(status, kind string, err error) {
-			imp.recordItem(syncID, m.ID, "attachment", status, kind, err)
+		pend := func(status, kind string, sizeUnknown bool, err error) {
+			newSizeSkip := status != store.SyncRunItemStatusSkipped || !hadPrevious ||
+				previous.State != attachmentpolicy.StateSkipped ||
+				previous.SkipReason != attachmentpolicy.SkipSizeCap ||
+				int64(previous.Size) <= maxBytes
+			if newSizeSkip {
+				imp.recordItem(syncID, m.ID, "attachment", status, kind, err)
+			}
 			if status == store.SyncRunItemStatusSkipped {
 				marker.State = attachmentpolicy.StateSkipped
 				marker.SkipReason = attachmentpolicy.SkipSizeCap
@@ -157,7 +184,10 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			}
 			refs = append(refs, marker)
 			if marker.State == attachmentpolicy.StateSkipped {
-				sum.AttachmentsSkipped++
+				if newSizeSkip {
+					sum.AttachmentsSkipped++
+					recordOverCap(sum, int64(marker.Size), sizeUnknown)
+				}
 			} else {
 				sum.AttachmentsPending++
 			}
@@ -173,7 +203,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		if reason := policy.Evaluate(opts.MediaConversation, int64(marker.Size)); reason != "" {
 			if reason == attachmentpolicy.SkipSizeCap {
 				marker.SkipReason = reason
-				pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large",
+				pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", false,
 					fmt.Errorf("attachment %s is %d bytes (cap %d)", ref, marker.Size, maxBytes))
 				continue
 			}
@@ -184,9 +214,14 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			sum.AttachmentsSkipped++
 			continue
 		}
-		if att.FileSize > 0 && int64(att.FileSize) > maxBytes {
-			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large",
-				fmt.Errorf("attachment %s is %d bytes (cap %d)", ref, int64(att.FileSize), maxBytes))
+		if att.FileSize > float64(maxBytes) {
+			observed := int64(math.MaxInt64)
+			if att.FileSize < float64(math.MaxInt64) {
+				observed = int64(att.FileSize)
+			}
+			marker.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, observed)
+			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", true,
+				fmt.Errorf("attachment %s is at least %d bytes (cap %d)", ref, marker.Size, maxBytes))
 			continue
 		}
 		data, err := imp.client.GetAssetBytes(ctx, ref, maxBytes)
@@ -197,17 +232,17 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			// The declared fileSize was absent or wrong; the capped reader
 			// caught it. Same outcome as the declared-size check above.
 			marker.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(marker.Size))
-			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", err)
+			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", true, err)
 			continue
 		}
 		if err != nil {
-			pend(store.SyncRunItemStatusError, "beeper_media_error", err)
+			pend(store.SyncRunItemStatusError, "beeper_media_error", false, err)
 			continue
 		}
 		ma := &mime.Attachment{Filename: att.FileName, ContentType: att.MimeType, Content: data}
 		storagePath, serr := export.StoreAttachmentFile(opts.AttachmentsDir, ma)
 		if serr != nil || storagePath == "" {
-			pend(store.SyncRunItemStatusError, "beeper_media_error", serr)
+			pend(store.SyncRunItemStatusError, "beeper_media_error", false, serr)
 			continue
 		}
 		stored := store.AttachmentRef{
@@ -368,6 +403,9 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		return sum, err
 	}
 	sum.AttachmentsSkipped += policyResult.NewlySkipped
+	sum.AttachmentsOverCap += policyResult.AttachmentsOverCap
+	sum.AttachmentsOverCapBytes += policyResult.AttachmentsOverCapBytes
+	sum.AttachmentsOverCapUnknownSize += policyResult.AttachmentsOverCapUnknownSize
 	pending, err := imp.store.ListBeeperRetryableAttachmentMessages(src.ID, policy)
 	if err != nil {
 		return sum, err

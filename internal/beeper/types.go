@@ -203,7 +203,7 @@ type ImportOptions struct {
 	// NoMedia skips attachment downloads and writes pending markers for a later
 	// backfill or full run.
 	NoMedia bool
-	// MaxMediaBytes caps individual attachment downloads (0 = 100 MB).
+	// MaxMediaBytes caps individual attachment downloads (0 = 100 MiB).
 	// Over-cap attachments leave a typed size-cap exclusion marker.
 	MaxMediaBytes int64
 	// MediaPolicy is the effective provider/account collection policy.
@@ -254,6 +254,13 @@ type ImportSummary struct {
 	AttachmentsDownloaded int64
 	AttachmentsPending    int64
 	AttachmentsSkipped    int64
+	// AttachmentsOverCap is the size-specific subset of AttachmentsSkipped.
+	// AttachmentsOverCapBytes saturates while summing declared sizes or the
+	// minimum observed streamed size. AttachmentsOverCapUnknownSize is nonzero
+	// whenever that total is a lower bound rather than an exact value.
+	AttachmentsOverCap            int64
+	AttachmentsOverCapBytes       int64
+	AttachmentsOverCapUnknownSize int64
 	// FetchErrors counts Beeper API fetch failures (a subset of Errors). Any
 	// fetch failure keeps the discovery watermark from advancing so the
 	// affected chats are re-visited next run.

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -130,8 +131,11 @@ func (s *Store) ListBeeperRetryableAttachmentMessages(sourceID int64, policy att
 // BeeperRetryPolicyResult describes the local policy state found before a
 // Beeper media backfill makes provider requests.
 type BeeperRetryPolicyResult struct {
-	NewlySkipped int64
-	HasExcluded  bool
+	NewlySkipped                  int64
+	HasExcluded                   bool
+	AttachmentsOverCap            int64
+	AttachmentsOverCapBytes       int64
+	AttachmentsOverCapUnknownSize int64
 }
 
 // ApplyBeeperRetryableAttachmentPolicy converts unfinished Beeper rows that
@@ -144,6 +148,7 @@ func (s *Store) ApplyBeeperRetryableAttachmentPolicy(
 	type exclusion struct {
 		attachmentID int64
 		reason       attachmentpolicy.SkipReason
+		size         int64
 	}
 	var result BeeperRetryPolicyResult
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -182,7 +187,9 @@ func (s *Store) ApplyBeeperRetryableAttachmentPolicy(
 			if reason := policy.Evaluate(conversation, size); reason != "" {
 				result.HasExcluded = true
 				if attachmentpolicy.RetryEligible(state) {
-					exclusions = append(exclusions, exclusion{attachmentID: attachmentID, reason: reason})
+					exclusions = append(exclusions, exclusion{
+						attachmentID: attachmentID, reason: reason, size: size,
+					})
 				}
 			}
 		}
@@ -209,6 +216,18 @@ func (s *Store) ApplyBeeperRetryableAttachmentPolicy(
 				return fmt.Errorf("count skipped Beeper attachment %d: %w", exclusion.attachmentID, err)
 			}
 			result.NewlySkipped += changed
+			if changed > 0 && exclusion.reason == attachmentpolicy.SkipSizeCap {
+				result.AttachmentsOverCap += changed
+				size := max(int64(0), exclusion.size)
+				if size > math.MaxInt64-result.AttachmentsOverCapBytes {
+					result.AttachmentsOverCapBytes = math.MaxInt64
+				} else {
+					result.AttachmentsOverCapBytes += size
+				}
+				// Legacy and pending markers do not record whether size metadata
+				// was exact or only the minimum observed by a capped stream.
+				result.AttachmentsOverCapUnknownSize += changed
+			}
 		}
 		return nil
 	})
