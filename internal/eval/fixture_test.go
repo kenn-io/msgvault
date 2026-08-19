@@ -104,7 +104,7 @@ func TestFixture_IsThreadShaped(t *testing.T) {
 	assert.GreaterOrEqual(t, replies, 4, "need real reply chains")
 	assert.GreaterOrEqual(t, quoted, 4, "need quoted-reply bodies")
 	assert.GreaterOrEqual(t, len(senders), 4, "need multiple participants")
-	assert.Equal(t, len(mb.Messages), len(dates), "dates should be varied, not cloned")
+	assert.Len(t, dates, len(mb.Messages), "dates should be varied, not cloned")
 }
 
 // TestFixture_QrelsMatchMailbox keeps the judgments and the mailbox in step:
@@ -119,7 +119,7 @@ func TestFixture_QrelsMatchMailbox(t *testing.T) {
 		convIDs[m.ConversationID] = struct{}{}
 	}
 
-	topics, err := LoadTopics(filepath.Join(fixtureDir, "topics.tsv"))
+	topics, _, err := LoadTopics(filepath.Join(fixtureDir, "topics.tsv"))
 	require.NoError(t, err)
 	require.Len(t, topics, 3)
 
@@ -138,7 +138,7 @@ func TestFixture_QrelsMatchMailbox(t *testing.T) {
 		{"qrels_message.txt", msgIDs},
 		{"qrels_conversation.txt", convIDs},
 	} {
-		q, err := LoadQrels(filepath.Join(fixtureDir, tc.file))
+		q, _, err := LoadQrels(filepath.Join(fixtureDir, tc.file))
 		require.NoError(t, err)
 		for _, top := range topics {
 			require.NotEmpty(t, q[top.ID], "%s: topic %s has no judgments", tc.file, top.ID)
@@ -156,10 +156,10 @@ func TestFixture_QrelsMatchMailbox(t *testing.T) {
 // ranking is ONE retrieved thread, not four. Scoring the un-collapsed list
 // counts it four times, which inflates precision and drives recall above 1.0.
 func TestThreadCollapsing_ConversationKey(t *testing.T) {
-	qrels, err := LoadQrels(filepath.Join(fixtureDir, "qrels_conversation.txt"))
+	qrels, _, err := LoadQrels(filepath.Join(fixtureDir, "qrels_conversation.txt"))
 	require.NoError(t, err)
 	rel := qrels.RelevantSet("q1")
-	require.Equal(t, 1, len(rel), "q1 has exactly one relevant thread")
+	require.Len(t, rel, 1, "q1 has exactly one relevant thread")
 
 	// A message-level engine answering q1: the whole renewal thread ranks
 	// first, then unrelated threads.
@@ -203,7 +203,7 @@ func TestDedupeKeys_PreservesBestRank(t *testing.T) {
 // match is the quotation. Judged non-relevant, so a quote-stripping regression
 // shows up as a precision drop rather than passing silently.
 func TestQuotedReplyDistractor_HurtsPrecision(t *testing.T) {
-	qrels, err := LoadQrels(filepath.Join(fixtureDir, "qrels_message.txt"))
+	qrels, _, err := LoadQrels(filepath.Join(fixtureDir, "qrels_message.txt"))
 	require.NoError(t, err)
 	rel := qrels.RelevantSet("q1")
 

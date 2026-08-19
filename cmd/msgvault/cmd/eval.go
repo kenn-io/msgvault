@@ -205,16 +205,38 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		return usageErr(cmd, err)
 	}
 
-	qrels, err := eval.LoadQrels(evalQrels)
+	qrels, qrelsStats, err := eval.LoadQrels(evalQrels)
 	if err != nil {
 		return err
 	}
-	topics, err := eval.LoadTopics(evalTopics)
+	topics, topicsStats, err := eval.LoadTopics(evalTopics)
 	if err != nil {
 		return err
+	}
+
+	// A file in a near-miss format parses to an empty-but-valid result. Say so
+	// in terms of the format, because the downstream symptom ("no topics had
+	// judgments") reads like an id mismatch and sends people looking in the
+	// wrong place.
+	if qrelsStats.Parsed == 0 {
+		return fmt.Errorf("no judgments parsed from %s (%s); expected whitespace-separated "+
+			"\"<qid> <iter> <docid> <rel>\" — a three-column file without the iteration column is the usual cause",
+			evalQrels, qrelsStats)
 	}
 	if len(topics) == 0 {
-		return fmt.Errorf("no topics loaded from %s", evalTopics)
+		return fmt.Errorf("no topics loaded from %s (%s); expected tab-separated "+
+			"\"<qid>\\t<query text>\" — spaces where tabs are expected is the usual cause",
+			evalTopics, topicsStats)
+	}
+	// Warn on stderr so --json output stays machine-readable.
+	for _, l := range []struct {
+		kind  string
+		stats eval.LoadStats
+	}{{"qrels", qrelsStats}, {"topics", topicsStats}} {
+		if l.stats.Suspect() {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s %s parsed oddly (%s); check the file format\n",
+				l.kind, l.stats.Path, l.stats)
+		}
 	}
 
 	ctx := cmd.Context()
@@ -300,7 +322,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		scored++
 	}
 	if scored == 0 {
-		return fmt.Errorf("none of the %d topics had relevance judgments in %s", len(topics), evalQrels)
+		return fmt.Errorf("none of the %d topics had relevance judgments in %s "+
+			"(qrels: %s; topics: %s); check that the qids in both files refer to the same queries",
+			len(topics), evalQrels, qrelsStats, topicsStats)
 	}
 
 	if evalJSON {

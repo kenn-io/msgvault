@@ -79,7 +79,7 @@ func TestLoadQrels(t *testing.T) {
 	content := "301 0 docA 1\n301 0 docB 0\n302 0 docC 1\nmalformed line\n301 0 docD 1\n"
 	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 
-	q, err := LoadQrels(p)
+	q, stats, err := LoadQrels(p)
 	require.NoError(t, err)
 	assert.Equal(t, 1, q["301"]["docA"])
 	assert.Equal(t, 0, q["301"]["docB"])
@@ -88,6 +88,40 @@ func TestLoadQrels(t *testing.T) {
 	assert.Equal(t, set("docA", "docD"), rel) // docB (grade 0) excluded
 	assert.Equal(t, set("docC"), q.RelevantSet("302"))
 	assert.Empty(t, q.RelevantSet("999")) // unknown qid -> empty set
+
+	// The skipped line is counted, not silently swallowed.
+	assert.Equal(t, LoadStats{Path: p, Lines: 5, Parsed: 4, Skipped: 1}, stats)
+	assert.False(t, stats.Suspect(), "one stray line in a good file is not suspicious")
+}
+
+// TestLoadQrels_WrongColumnCount is the diagnosability regression. A qrels file
+// in the common three-column variant (no iteration column) used to load as an
+// empty-but-valid Qrels with no signal at all, and the only downstream symptom
+// — "no topics had relevance judgments" — reads like an id mismatch. The counts
+// have to make the format problem visible.
+func TestLoadQrels_WrongColumnCount(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "qrels.txt")
+	require.NoError(t, os.WriteFile(p, []byte("301 docA 1\n301 docB 1\n302 docC 1\n"), 0o644))
+
+	q, stats, err := LoadQrels(p)
+	require.NoError(t, err, "a format mismatch is reported through the stats, not as a read error")
+	assert.Empty(t, q)
+	assert.Equal(t, 3, stats.Lines)
+	assert.Equal(t, 0, stats.Parsed)
+	assert.Equal(t, 3, stats.Skipped)
+	assert.True(t, stats.Suspect(), "nothing parsed: the caller must be able to say so")
+	assert.Equal(t, "3 lines, 0 parsed, 3 skipped", stats.String())
+}
+
+// TestLoadStats_Suspect pins when a caller should warn: nothing usable came
+// out, or the skipped lines outnumber the parsed ones. A clean file, or one
+// with a stray line, must not trip it.
+func TestLoadStats_Suspect(t *testing.T) {
+	assert.False(t, LoadStats{}.Suspect(), "an empty file is a different complaint")
+	assert.False(t, LoadStats{Lines: 10, Parsed: 10}.Suspect())
+	assert.False(t, LoadStats{Lines: 10, Parsed: 9, Skipped: 1}.Suspect())
+	assert.True(t, LoadStats{Lines: 10, Parsed: 4, Skipped: 6}.Suspect())
+	assert.True(t, LoadStats{Lines: 3, Skipped: 3}.Suspect())
 }
 
 func TestLoadTopics(t *testing.T) {
@@ -96,13 +130,29 @@ func TestLoadTopics(t *testing.T) {
 	content := "301\toil and gas drilling\n\n302\tspill response\nno_tab_line\n"
 	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 
-	topics, err := LoadTopics(p)
+	topics, stats, err := LoadTopics(p)
 	require.NoError(t, err)
 	require.Len(t, topics, 2)
 	assert.Equal(t, "301", topics[0].ID)
 	assert.Equal(t, "oil and gas drilling", topics[0].Query)
 	assert.Empty(t, topics[0].Category, "two-column format has no category")
 	assert.Equal(t, "302", topics[1].ID)
+	// The blank line is not counted at all; the tabless line is a skip.
+	assert.Equal(t, LoadStats{Path: p, Lines: 3, Parsed: 2, Skipped: 1}, stats)
+}
+
+// TestLoadTopics_SpaceSeparated covers the topics-side format mismatch: a file
+// written with spaces instead of tabs parses to zero topics, and the counts are
+// the only way to tell that apart from an empty file.
+func TestLoadTopics_SpaceSeparated(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "topics.tsv")
+	require.NoError(t, os.WriteFile(p, []byte("301 oil and gas\n302 spill response\n"), 0o644))
+
+	topics, stats, err := LoadTopics(p)
+	require.NoError(t, err)
+	assert.Empty(t, topics)
+	assert.Equal(t, LoadStats{Path: p, Lines: 2, Parsed: 0, Skipped: 2}, stats)
+	assert.True(t, stats.Suspect())
 }
 
 // TestLoadTopics_CategoryColumn covers the optional third column. A file may
@@ -117,7 +167,7 @@ func TestLoadTopics_CategoryColumn(t *testing.T) {
 		"q5\t  padded query  \t  padded  \n" // whitespace trimmed
 	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 
-	topics, err := LoadTopics(p)
+	topics, stats, err := LoadTopics(p)
 	require.NoError(t, err)
 	require.Len(t, topics, 5)
 	assert.Equal(t, Topic{ID: "q1", Query: "lease renewal terms", Category: "pointed"}, topics[0])
@@ -125,9 +175,10 @@ func TestLoadTopics_CategoryColumn(t *testing.T) {
 	assert.Empty(t, topics[2].Category, "unlabeled line stays unlabeled")
 	assert.Empty(t, topics[3].Category, "a trailing tab is not a category")
 	assert.Equal(t, Topic{ID: "q5", Query: "padded query", Category: "padded"}, topics[4])
+	assert.Equal(t, LoadStats{Path: p, Lines: 5, Parsed: 5, Skipped: 0}, stats)
 }
 
 func TestLoadQrels_MissingFile(t *testing.T) {
-	_, err := LoadQrels(filepath.Join(t.TempDir(), "nope.txt"))
+	_, _, err := LoadQrels(filepath.Join(t.TempDir(), "nope.txt"))
 	require.Error(t, err)
 }
