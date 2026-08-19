@@ -2,7 +2,7 @@ package eval
 
 import (
 	"math"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -73,7 +73,7 @@ func (l *LatencyTracker) Summary() Latency {
 	}
 	sorted := make([]time.Duration, n)
 	copy(sorted, l.samples)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	slices.Sort(sorted)
 
 	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
@@ -85,13 +85,7 @@ func (l *LatencyTracker) Summary() Latency {
 	}
 
 	// Nearest-rank p95: ceil(0.95*n), clamped into range.
-	rank := int(math.Ceil(0.95*float64(n))) - 1
-	if rank < 0 {
-		rank = 0
-	}
-	if rank >= n {
-		rank = n - 1
-	}
+	rank := min(max(int(math.Ceil(0.95*float64(n)))-1, 0), n-1)
 
 	var total time.Duration
 	for _, d := range l.samples {

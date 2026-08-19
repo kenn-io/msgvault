@@ -61,6 +61,11 @@ mbox import, for example, keys each imported document by conversation, so
 message-keyed qrels would score a flat zero against it. When the judged unit
 is the conversation, a thread is counted once, at its best-ranked message.
 
+Metric depths follow -n: the standard P@10 / nDCG@10 / R@100 are reported when
+the run retrieves at least that deep, and are clamped to -n below it (a run
+that only ever looks 20 deep has no recall@100, and labelling one would invite
+a false comparison). The column headers always name the depth actually used.
+
 Every run reports the embedding model, index settings and index size that
 produced it, plus per-query latency, because a quality number is not
 comparable — or even interpretable — without them.
@@ -200,10 +205,17 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	if !ok {
 		return usageErr(cmd, fmt.Errorf("invalid --doc-key %q (want %s)", evalDocKey, docKeyNames()))
 	}
+	// A non-positive depth is not a "use the default" signal: fts would fall
+	// back to an internal 100 while the vector backend would return nothing
+	// for k=0, so the same flag would mean two different things. Reject it.
+	if evalLimit <= 0 {
+		return usageErr(cmd, fmt.Errorf("--limit must be a positive integer, got %d", evalLimit))
+	}
 	modes, needVec, err := parseEvalModes(evalModes)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
+	cutoffs := eval.CutoffsForDepth(evalLimit)
 
 	qrels, qrelsStats, err := eval.LoadQrels(evalQrels)
 	if err != nil {
@@ -304,7 +316,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				return fmt.Errorf("topic %s, mode %s: %w", t.ID, m, err)
 			}
 			lats[m].Add(elapsed)
-			s := eval.Evaluate(ranked, rel)
+			s := eval.Evaluate(ranked, rel, cutoffs)
 			aggs[m].Add(s)
 			if t.Category != "" {
 				if catAggs[m] == nil {
@@ -327,10 +339,15 @@ func runEval(cmd *cobra.Command, _ []string) error {
 			len(topics), evalQrels, qrelsStats, topicsStats)
 	}
 
-	if evalJSON {
-		return outputEvalJSON(modes, aggs, lats, catAggs, catCounts, ev.prov, scored)
+	report := evalReport{
+		modes: modes, aggs: aggs, lats: lats, catAggs: catAggs, catCounts: catCounts,
+		prov: ev.prov, topics: scored, cutoffs: cutoffs,
 	}
-	return outputEvalTable(modes, aggs, lats, catAggs, catCounts, ev.prov, scored)
+	if evalJSON {
+		return report.json()
+	}
+	report.table()
+	return nil
 }
 
 // parseEvalModes splits and validates the --modes flag.
@@ -485,80 +502,110 @@ func sortedCategories(catCounts map[string]int) []string {
 	return cats
 }
 
-func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker,
-	catAggs map[string]map[string]*eval.Aggregate, catCounts map[string]int, p eval.RunConfig, n int) error {
-	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", n, evalDocKey, evalLimit)
+// evalReport is everything one run produced, ready to render.
+type evalReport struct {
+	modes     []string
+	aggs      map[string]*eval.Aggregate
+	lats      map[string]*eval.LatencyTracker
+	catAggs   map[string]map[string]*eval.Aggregate
+	catCounts map[string]int
+	prov      eval.RunConfig
+	topics    int
+	cutoffs   eval.Cutoffs
+}
+
+// metricHeaders names the metric columns at the depths this run actually used,
+// so a clamped cutoff can never be read as the standard one.
+func (r evalReport) metricHeaders() (p, ndcg, recall string) {
+	return fmt.Sprintf("P@%d", r.cutoffs.P),
+		fmt.Sprintf("nDCG@%d", r.cutoffs.NDCG),
+		fmt.Sprintf("R@%d", r.cutoffs.Recall)
+}
+
+func (r evalReport) table() {
+	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", r.topics, evalDocKey, evalLimit)
+	if r.cutoffs != eval.StandardCutoffs {
+		fmt.Printf("Metric depths are clamped to -n: the standard P@%d/nDCG@%d/R@%d need -n %d or more.\n",
+			eval.StandardCutoffs.P, eval.StandardCutoffs.NDCG, eval.StandardCutoffs.Recall,
+			eval.StandardCutoffs.Recall)
+	}
 
 	// Provenance first: a score is not interpretable without it.
 	fmt.Printf("\nRun configuration\n")
 	pw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(pw, "  topics\t%s\n", p.TopicsPath)
-	_, _ = fmt.Fprintf(pw, "  qrels\t%s\n", p.QrelsPath)
-	_, _ = fmt.Fprintf(pw, "  corpus\t%d messages, %d conversations\n", p.Messages, p.Conversations)
-	if p.VectorEnabled {
-		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", p.EmbeddingModel, p.Dimension)
-		_, _ = fmt.Fprintf(pw, "  embedding endpoint\t%s\n", p.Endpoint)
-		_, _ = fmt.Fprintf(pw, "  vector backend\t%s\n", p.Backend)
-		_, _ = fmt.Fprintf(pw, "  generation fingerprint\t%s\n", p.Fingerprint)
+	_, _ = fmt.Fprintf(pw, "  topics\t%s\n", r.prov.TopicsPath)
+	_, _ = fmt.Fprintf(pw, "  qrels\t%s\n", r.prov.QrelsPath)
+	_, _ = fmt.Fprintf(pw, "  corpus\t%d messages, %d conversations\n", r.prov.Messages, r.prov.Conversations)
+	if r.prov.VectorEnabled {
+		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", r.prov.EmbeddingModel, r.prov.Dimension)
+		_, _ = fmt.Fprintf(pw, "  embedding endpoint\t%s\n", r.prov.Endpoint)
+		_, _ = fmt.Fprintf(pw, "  vector backend\t%s\n", r.prov.Backend)
+		_, _ = fmt.Fprintf(pw, "  generation fingerprint\t%s\n", r.prov.Fingerprint)
 		_, _ = fmt.Fprintf(pw, "  fusion\trrf_k=%d k_per_signal=%d subject_boost=%.2f\n",
-			p.RRFK, p.KPerSignal, p.SubjectBoost)
+			r.prov.RRFK, r.prov.KPerSignal, r.prov.SubjectBoost)
 		_, _ = fmt.Fprintf(pw, "  vector index\t%d vectors, %s (%s)\n",
-			p.IndexedVectors, formatSize(p.IndexSizeBytes), p.IndexPath)
+			r.prov.IndexedVectors, formatSize(r.prov.IndexSizeBytes), r.prov.IndexPath)
 	} else {
 		_, _ = fmt.Fprintf(pw, "  vector index\t(not used; --modes fts only)\n")
 	}
 	_ = pw.Flush()
 
+	pCol, ndcgCol, rCol := r.metricHeaders()
 	fmt.Printf("\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "MODE\tP@10\tnDCG@10\tR@100\tMAP\tMRR\tmed ms\tp95 ms")
-	_, _ = fmt.Fprintln(w, "────\t────\t───────\t─────\t───\t───\t──────\t──────")
-	for _, m := range modes {
-		s := aggs[m].Mean()
-		l := lats[m].Summary()
-		_, _ = fmt.Fprintf(w, "%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.1f\t%.1f\n",
-			m, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR, l.MedianMS, l.P95MS)
+	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, "MAP", "MRR", "med ms", "p95 ms"}
+	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
+	rule := make([]string, len(header))
+	for i, h := range header {
+		rule[i] = strings.Repeat("─", len([]rune(h)))
+	}
+	_, _ = fmt.Fprintln(w, strings.Join(rule, "\t"))
+	for _, m := range r.modes {
+		s := r.aggs[m].Mean()
+		l := r.lats[m].Summary()
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.1f\t%.1f\n",
+			m, r.aggs[m].N, s.P, s.NDCG, s.Recall, s.MAP, s.MRR, l.MedianMS, l.P95MS)
 	}
 	_ = w.Flush()
 
 	// Per-category breakdown, only when the topics file carries labels.
 	// Latency is tracked per mode, not per category, so those columns are
 	// omitted here.
-	if len(catCounts) > 0 {
+	if len(r.catCounts) > 0 {
 		fmt.Printf("\nBy query category\n")
 		cw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(cw, "MODE\tCATEGORY\ttopics\tP@10\tnDCG@10\tR@100\tMAP\tMRR")
-		for _, m := range modes {
-			for _, c := range sortedCategories(catCounts) {
-				agg := catAggs[m][c]
+		_, _ = fmt.Fprintf(cw, "MODE\tCATEGORY\ttopics\t%s\t%s\t%s\tMAP\tMRR\n", pCol, ndcgCol, rCol)
+		for _, m := range r.modes {
+			for _, c := range sortedCategories(r.catCounts) {
+				agg := r.catAggs[m][c]
 				if agg == nil {
 					continue
 				}
 				s := agg.Mean()
 				_, _ = fmt.Fprintf(cw, "%s\t%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
-					m, c, agg.N, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR)
+					m, c, agg.N, s.P, s.NDCG, s.Recall, s.MAP, s.MRR)
 			}
 		}
 		_ = cw.Flush()
 	}
-	return nil
 }
 
-func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker,
-	catAggs map[string]map[string]*eval.Aggregate, catCounts map[string]int, p eval.RunConfig, n int) error {
+func (r evalReport) json() error {
+	pCol, ndcgCol, rCol := r.metricHeaders()
 	metricsOf := func(a *eval.Aggregate) map[string]any {
 		s := a.Mean()
 		return map[string]any{
-			"P@10": s.P10, "nDCG@10": s.NDCG10, "R@100": s.R100, "MAP": s.MAP, "MRR": s.MRR,
+			pCol: s.P, ndcgCol: s.NDCG, rCol: s.Recall, "MAP": s.MAP, "MRR": s.MRR,
 		}
 	}
-	results := make(map[string]any, len(modes))
-	for _, m := range modes {
-		entry := metricsOf(aggs[m])
-		entry["latency"] = lats[m].Summary()
-		if len(catAggs[m]) > 0 {
-			byCat := make(map[string]any, len(catAggs[m]))
-			for c, a := range catAggs[m] {
+	results := make(map[string]any, len(r.modes))
+	for _, m := range r.modes {
+		entry := metricsOf(r.aggs[m])
+		entry["topics"] = r.aggs[m].N
+		entry["latency"] = r.lats[m].Summary()
+		if len(r.catAggs[m]) > 0 {
+			byCat := make(map[string]any, len(r.catAggs[m]))
+			for c, a := range r.catAggs[m] {
 				cm := metricsOf(a)
 				cm["topics"] = a.N
 				byCat[c] = cm
@@ -568,15 +615,18 @@ func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, lats map[st
 		results[m] = entry
 	}
 	out := map[string]any{
-		"topics_evaluated": n,
+		"topics_evaluated": r.topics,
 		"doc_key":          evalDocKey,
 		"limit":            evalLimit,
-		"modes":            modes,
-		"run_config":       p,
-		"results":          results,
+		"cutoffs": map[string]int{
+			"precision": r.cutoffs.P, "ndcg": r.cutoffs.NDCG, "recall": r.cutoffs.Recall,
+		},
+		"modes":      r.modes,
+		"run_config": r.prov,
+		"results":    results,
 	}
-	if len(catCounts) > 0 {
-		out["topic_categories"] = catCounts
+	if len(r.catCounts) > 0 {
+		out["topic_categories"] = r.catCounts
 	}
 	return printJSON(out)
 }

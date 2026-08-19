@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,12 +63,12 @@ func TestMetrics_EdgeCases(t *testing.T) {
 
 func TestEvaluateAndAggregate(t *testing.T) {
 	a := &Aggregate{}
-	a.Add(Evaluate([]string{"a", "b"}, set("a"))) // P@10=0.1, MRR=1
-	a.Add(Evaluate([]string{"b", "a"}, set("a"))) // MRR=0.5
+	a.Add(Evaluate([]string{"a", "b"}, set("a"), StandardCutoffs)) // P@10=0.1, MRR=1
+	a.Add(Evaluate([]string{"b", "a"}, set("a"), StandardCutoffs)) // MRR=0.5
 	assert.Equal(t, 2, a.N)
 	mean := a.Mean()
 	assert.InDelta(t, (1.0+0.5)/2.0, mean.MRR, 1e-9)
-	assert.InDelta(t, 0.1, mean.P10, 1e-9) // each had exactly 1 hit in top 10
+	assert.InDelta(t, 0.1, mean.P, 1e-9) // each had exactly 1 hit in top 10
 	// Zero-N aggregate is safe.
 	assert.Equal(t, Scores{}, (&Aggregate{}).Mean())
 }
@@ -176,6 +177,51 @@ func TestLoadTopics_CategoryColumn(t *testing.T) {
 	assert.Empty(t, topics[3].Category, "a trailing tab is not a category")
 	assert.Equal(t, Topic{ID: "q5", Query: "padded query", Category: "padded"}, topics[4])
 	assert.Equal(t, LoadStats{Path: p, Lines: 5, Parsed: 5, Skipped: 0}, stats)
+}
+
+// TestCutoffsForDepth pins the anti-mislabelling rule: a run that only ever
+// looks 20 deep has no recall@100, so the depth it reports must be the depth it
+// used. Above the standard depths nothing is clamped.
+func TestCutoffsForDepth(t *testing.T) {
+	assert.Equal(t, StandardCutoffs, CutoffsForDepth(100))
+	assert.Equal(t, StandardCutoffs, CutoffsForDepth(1000))
+	assert.Equal(t, Cutoffs{P: 10, NDCG: 10, Recall: 20}, CutoffsForDepth(20))
+	assert.Equal(t, Cutoffs{P: 5, NDCG: 5, Recall: 5}, CutoffsForDepth(5))
+	assert.Equal(t, Cutoffs{P: 1, NDCG: 1, Recall: 1}, CutoffsForDepth(1))
+	// A non-positive depth is not a depth; the CLI rejects it before we get
+	// here, so fall back to the standard set rather than inventing a zero one.
+	assert.Equal(t, StandardCutoffs, CutoffsForDepth(0))
+	assert.Equal(t, StandardCutoffs, CutoffsForDepth(-1))
+}
+
+// TestEvaluate_HonoursCutoffs shows why the clamp matters: with 20 results and
+// 40 relevant documents, "recall@100" and recall@20 are different numbers, and
+// only one of them is a thing this run measured.
+func TestEvaluate_HonoursCutoffs(t *testing.T) {
+	rel := map[string]struct{}{}
+	var ranked []string
+	for i := range 40 {
+		id := fmt.Sprintf("d%02d", i)
+		rel[id] = struct{}{}
+		if i < 20 {
+			ranked = append(ranked, id)
+		}
+	}
+	atStandard := Evaluate(ranked, rel, StandardCutoffs)
+	atDepth := Evaluate(ranked, rel, CutoffsForDepth(20))
+
+	assert.InDelta(t, 0.5, atStandard.Recall, 1e-9, "R@100 over a 20-deep list is bounded by the depth")
+	assert.InDelta(t, 0.5, atDepth.Recall, 1e-9)
+	// P and nDCG are unaffected here because 10 <= 20; the point is that the
+	// reported label, not the value, is what changes.
+	assert.InDelta(t, atStandard.P, atDepth.P, 1e-9)
+	assert.InDelta(t, atStandard.NDCG, atDepth.NDCG, 1e-9)
+
+	// Below the precision depth the clamp does change the value: 3 retrieved,
+	// all relevant, is precision 1.0 at depth 3 and 0.3 at depth 10.
+	short := []string{"d00", "d01", "d02"}
+	assert.InDelta(t, 0.3, Evaluate(short, rel, StandardCutoffs).P, 1e-9)
+	assert.InDelta(t, 1.0, Evaluate(short, rel, CutoffsForDepth(3)).P, 1e-9)
 }
 
 func TestLoadQrels_MissingFile(t *testing.T) {

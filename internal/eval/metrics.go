@@ -14,23 +14,57 @@ package eval
 
 import "math"
 
-// Scores holds the standard metric set for a single query's ranking.
+// Cutoffs are the rank depths one run scores at. They travel with the run
+// rather than being baked into the metric names because a cutoff deeper than
+// the retrieval depth is a mislabeled number, not a hard number: a run that
+// only ever retrieves 20 results per query cannot have a recall@100, and
+// reporting one as "R@100" invites a reader to compare it against a run that
+// really did look 100 deep.
+type Cutoffs struct {
+	P      int // precision depth
+	NDCG   int // nDCG depth
+	Recall int // recall depth
+}
+
+// StandardCutoffs is the conventional depth set: P@10, nDCG@10, R@100.
+var StandardCutoffs = Cutoffs{P: 10, NDCG: 10, Recall: 100}
+
+// CutoffsForDepth clamps StandardCutoffs to the number of results a run
+// actually retrieves per query, so the reported metric is always one the run
+// could in principle have maximised. A non-positive limit is meaningless as a
+// depth and falls back to the standard set.
+func CutoffsForDepth(limit int) Cutoffs {
+	if limit <= 0 {
+		return StandardCutoffs
+	}
+	return Cutoffs{
+		P:      min(StandardCutoffs.P, limit),
+		NDCG:   min(StandardCutoffs.NDCG, limit),
+		Recall: min(StandardCutoffs.Recall, limit),
+	}
+}
+
+// Scores holds the standard metric set for a single query's ranking. The
+// depths P, NDCG and Recall were measured at are not stored here — they are a
+// property of the run, carried in Cutoffs, and every Scores folded into one
+// Aggregate must share them.
 type Scores struct {
-	P10    float64 // precision@10
-	NDCG10 float64 // normalized DCG@10 (binary gains)
-	R100   float64 // recall@100
+	P      float64 // precision@Cutoffs.P
+	NDCG   float64 // normalized DCG@Cutoffs.NDCG (binary gains)
+	Recall float64 // recall@Cutoffs.Recall
 	MAP    float64 // average precision (the "AP" that MAP averages)
 	MRR    float64 // reciprocal rank of the first relevant hit
 }
 
 // Evaluate computes the standard metric set for one query. ranked is the
 // ordered list of retrieved document ids (best first); rel is the set of
-// document ids judged relevant for the query.
-func Evaluate(ranked []string, rel map[string]struct{}) Scores {
+// document ids judged relevant for the query; c gives the rank depths to
+// score at (see CutoffsForDepth).
+func Evaluate(ranked []string, rel map[string]struct{}, c Cutoffs) Scores {
 	return Scores{
-		P10:    PrecisionAt(ranked, rel, 10),
-		NDCG10: NDCGAt(ranked, rel, 10),
-		R100:   RecallAt(ranked, rel, 100),
+		P:      PrecisionAt(ranked, rel, c.P),
+		NDCG:   NDCGAt(ranked, rel, c.NDCG),
+		Recall: RecallAt(ranked, rel, c.Recall),
 		MAP:    AveragePrecision(ranked, rel),
 		MRR:    ReciprocalRank(ranked, rel),
 	}
@@ -118,9 +152,9 @@ func ReciprocalRank(ranked []string, rel map[string]struct{}) float64 {
 // over queries, the standard way MAP/mean-nDCG are reported).
 type Aggregate struct {
 	N         int
-	sumP10    float64
-	sumNDCG10 float64
-	sumR100   float64
+	sumP      float64
+	sumNDCG   float64
+	sumRecall float64
 	sumMAP    float64
 	sumMRR    float64
 }
@@ -128,9 +162,9 @@ type Aggregate struct {
 // Add folds one query's scores into the running totals.
 func (a *Aggregate) Add(s Scores) {
 	a.N++
-	a.sumP10 += s.P10
-	a.sumNDCG10 += s.NDCG10
-	a.sumR100 += s.R100
+	a.sumP += s.P
+	a.sumNDCG += s.NDCG
+	a.sumRecall += s.Recall
 	a.sumMAP += s.MAP
 	a.sumMRR += s.MRR
 }
@@ -142,9 +176,9 @@ func (a *Aggregate) Mean() Scores {
 	}
 	n := float64(a.N)
 	return Scores{
-		P10:    a.sumP10 / n,
-		NDCG10: a.sumNDCG10 / n,
-		R100:   a.sumR100 / n,
+		P:      a.sumP / n,
+		NDCG:   a.sumNDCG / n,
+		Recall: a.sumRecall / n,
 		MAP:    a.sumMAP / n,
 		MRR:    a.sumMRR / n,
 	}

@@ -215,12 +215,12 @@ func TestQuotedReplyDistractor_HurtsPrecision(t *testing.T) {
 	clean := []string{"<t1-a@example.com>", "<t1-b@example.com>", "<t1-c@example.com>", "<t1-d@example.com>"}
 	leaky := []string{"<t5-a@example.com>", "<t2-b@example.com>", "<t1-a@example.com>", "<t1-b@example.com>"}
 
-	cleanScore := Evaluate(clean, rel)
-	leakyScore := Evaluate(leaky, rel)
+	cleanScore := Evaluate(clean, rel, StandardCutoffs)
+	leakyScore := Evaluate(leaky, rel, StandardCutoffs)
 
-	assert.InDelta(t, 0.4, cleanScore.P10, 1e-9)
-	assert.InDelta(t, 0.2, leakyScore.P10, 1e-9)
-	assert.Less(t, leakyScore.NDCG10, cleanScore.NDCG10, "quote leakage must cost nDCG")
+	assert.InDelta(t, 0.4, cleanScore.P, 1e-9)
+	assert.InDelta(t, 0.2, leakyScore.P, 1e-9)
+	assert.Less(t, leakyScore.NDCG, cleanScore.NDCG, "quote leakage must cost nDCG")
 	assert.InDelta(t, 1.0, cleanScore.MRR, 1e-9)
 	assert.InDelta(t, 1.0/3.0, leakyScore.MRR, 1e-9)
 }
