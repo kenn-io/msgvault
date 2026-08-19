@@ -59,7 +59,9 @@ default (--doc-key=message), or its conversation's source_conversation_id
 (--doc-key=conversation). Pick the one your judgments actually reference: an
 mbox import, for example, keys each imported document by conversation, so
 message-keyed qrels would score a flat zero against it. When the judged unit
-is the conversation, a thread is counted once, at its best-ranked message.
+is the conversation, a thread is counted once, at its best-ranked message —
+and retrieval over-fetches messages so that -n really does yield up to n
+distinct threads. Reported latency therefore includes that over-fetch.
 
 Metric depths follow -n: the standard P@10 / nDCG@10 / R@100 are reported when
 the run retrieves at least that deep, and are clamped to -n below it (a run
@@ -68,7 +70,10 @@ a false comparison). The column headers always name the depth actually used.
 
 Every run reports the embedding model, index settings and index size that
 produced it, plus per-query latency, because a quality number is not
-comparable — or even interpretable — without them.
+comparable — or even interpretable — without them. Anything that went wrong
+without being fatal — unparseable judgment lines, hits that could not be
+hydrated from the archive, topics no mode could score — is reported under
+"Diagnostics" rather than silently folded into the scores.
 
 Note on topic phrasing: it is an experimental variable, not a constant. FTS5
 matches on AND semantics, so a verbose natural-language topic requires every
@@ -87,37 +92,118 @@ func init() {
 	evalCmd.Flags().StringVar(&evalQrels, "qrels", "", "Path to TREC-format relevance judgments (required)")
 	evalCmd.Flags().StringVar(&evalTopics, "topics", "", "Path to topics TSV: <qid>\\t<query> (required)")
 	evalCmd.Flags().StringVar(&evalModes, "modes", "fts,vector,hybrid", "Comma-separated search modes to evaluate")
-	evalCmd.Flags().StringVar(&evalDocKey, "doc-key", "message", "Which id qrels reference: "+docKeyNames())
-	evalCmd.Flags().IntVarP(&evalLimit, "limit", "n", 100, "Results retrieved per query")
+	// The registry's key set is fixed even though its entries are built per
+	// run, so rendering the usage string from a throwaway registry is safe.
+	evalCmd.Flags().StringVar(&evalDocKey, "doc-key", "message", "Which id qrels reference: "+docKeyNames(newDocKeyRegistry()))
+	evalCmd.Flags().IntVarP(&evalLimit, "limit", "n", 100, "Distinct documents retrieved per query")
 	evalCmd.Flags().BoolVar(&evalJSON, flagJSON, false, "Output as JSON")
 	_ = evalCmd.MarkFlagRequired("qrels")
 	_ = evalCmd.MarkFlagRequired("topics")
 }
 
-// docKeyFunc extracts, from a retrieved hit, the stable document id that
-// qrels judge against. It is the only place a doc-key's meaning lives: the
-// scoring core (eval.Evaluate, eval.Aggregate, eval.DedupeKeys) operates on
-// the opaque string keys these return and never learns what they identify.
-type docKeyFunc func(query.MessageSummary) string
+// errNoFreeText marks a topic that vector and hybrid modes structurally cannot
+// answer: it parsed to filters only, so there is nothing to embed. It is a
+// property of one topic, not of the run, so it is reported per cell instead of
+// aborting and discarding every score computed so far.
+var errNoFreeText = errors.New("topic has no free-text terms to embed")
 
-// docKeyFuncs maps each --doc-key value to its id extractor. Adding a new
-// judged unit — say a reconstructed-thread id resolved through an external
-// message-id -> thread-id mapping file — means registering one more entry
-// here (a closure over the loaded mapping); the CLI validation, the scoring
-// core and the output paths all pick it up unchanged.
-var docKeyFuncs = map[string]docKeyFunc{
-	"message":      func(m query.MessageSummary) string { return m.SourceMessageID },
-	"conversation": func(m query.MessageSummary) string { return m.SourceConversationID },
+// docKeySpec describes one --doc-key value.
+type docKeySpec struct {
+	// extract pulls, from a retrieved hit, the stable document id that qrels
+	// judge against. It is the only place a doc-key's meaning lives: the
+	// scoring core (eval.Evaluate, eval.Aggregate, eval.DedupeKeys) operates
+	// on the opaque string keys these return and never learns what they
+	// identify.
+	extract func(query.MessageSummary) string
+	// collapses is true when the judged unit is coarser than the retrieved
+	// one, so several hits routinely fold into a single key. Retrieval then
+	// has to over-fetch messages to fill the requested depth with *distinct*
+	// keys — see eval.OverFetchPlan and evaluator.rankedKeys.
+	collapses bool
+}
+
+// newDocKeyRegistry builds the --doc-key registry for one run.
+//
+// It is a constructor rather than a package-level map so the registry is built
+// after flags are parsed. That is what makes the extension story real: a
+// future --doc-key=thread, resolving a reconstructed-thread id through an
+// externally supplied message-id -> thread-id mapping file, is one more entry
+// here, closing over the mapping this function loaded. A map initialised at
+// program start could not hold that entry — the mapping file is named by a
+// flag, and its contents are unknown until runEval runs. The CLI validation,
+// the scoring core and the output paths all pick a new entry up unchanged.
+func newDocKeyRegistry() map[string]docKeySpec {
+	return map[string]docKeySpec{
+		// One message, one source_message_id. Duplicates are still collapsed
+		// (the same message synced from two accounts), but they are rare
+		// enough that the depth does not need padding for them.
+		"message": {
+			extract: func(m query.MessageSummary) string { return m.SourceMessageID },
+		},
+		// Many messages share one conversation, so filling n distinct threads
+		// takes more than n messages.
+		"conversation": {
+			extract:   func(m query.MessageSummary) string { return m.SourceConversationID },
+			collapses: true,
+		},
+	}
 }
 
 // docKeyNames renders the valid --doc-key values for usage and error text.
-func docKeyNames() string {
-	names := make([]string, 0, len(docKeyFuncs))
-	for n := range docKeyFuncs {
+func docKeyNames(registry map[string]docKeySpec) string {
+	names := make([]string, 0, len(registry))
+	for n := range registry {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	return strings.Join(names, "|")
+}
+
+// runDiagnostics collects the non-fatal anomalies of a run. Each of these was
+// previously either silent or fatal, and both are wrong for an instrument: a
+// stale index that quietly drops hits is precisely the failure this command
+// exists to expose, and a single unanswerable topic should not throw away
+// every other topic's score.
+type runDiagnostics struct {
+	QrelsLoad       eval.LoadStats `json:"qrels_load"`
+	TopicsLoad      eval.LoadStats `json:"topics_load"`
+	UnhydratedHits  int            `json:"unhydrated_hits,omitempty"`
+	DepthShortfalls int            `json:"depth_shortfalls,omitempty"`
+	SkippedCells    []string       `json:"skipped_cells,omitempty"`
+}
+
+// skip records that one topic/mode combination could not be scored.
+func (d *runDiagnostics) skip(topicID, mode, reason string) {
+	d.SkippedCells = append(d.SkippedCells, fmt.Sprintf("topic %s / %s: %s", topicID, mode, reason))
+}
+
+// notes renders the diagnostics as human-readable lines, empty when the run
+// was clean.
+func (d *runDiagnostics) notes() []string {
+	var out []string
+	for _, l := range []struct {
+		kind  string
+		stats eval.LoadStats
+	}{{"qrels", d.QrelsLoad}, {"topics", d.TopicsLoad}} {
+		if l.stats.Skipped > 0 {
+			out = append(out, fmt.Sprintf("%s %s: %s — skipped lines did not match the expected format",
+				l.kind, l.stats.Path, l.stats))
+		}
+	}
+	if d.UnhydratedHits > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d retrieved hits could not be hydrated back to a message row and were dropped from the ranking; "+
+				"this usually means the vector index references deleted or unmigrated messages (re-run `msgvault embed`)",
+			d.UnhydratedHits))
+	}
+	if d.DepthShortfalls > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d topic/mode runs could not fill %d distinct %s keys within the over-fetch budget (%dx -n); "+
+				"their metrics are computed over a shallower list than requested",
+			d.DepthShortfalls, evalLimit, evalDocKey, eval.MaxOverFetchFactor))
+	}
+	out = append(out, d.SkippedCells...)
+	return out
 }
 
 // evaluator bundles the engines and config needed to turn a query string into
@@ -126,24 +212,83 @@ type evaluator struct {
 	ctx   context.Context
 	qeng  query.Engine
 	heng  *hybrid.Engine
-	keyOf docKeyFunc
+	key   docKeySpec
+	limit int
 	prov  eval.RunConfig
+	diag  *runDiagnostics
 }
 
-func (e *evaluator) rankedFTS(qstr string, limit int) ([]string, error) {
-	res, err := e.qeng.Search(e.ctx, search.Parse(qstr), limit, 0)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(res))
-	for _, m := range res {
-		out = append(out, e.keyOf(m))
-	}
-	return eval.DedupeKeys(out), nil
+// fetchResult is one attempt at pulling raw hits out of a search engine.
+type fetchResult struct {
+	// keys are the doc keys in the engine's rank order, before collapsing;
+	// duplicates and empty strings are expected and handled by the caller.
+	keys []string
+	// raw is how many hits the engine returned. It is the count *before* key
+	// extraction, so "the engine gave back fewer than we asked for" — the
+	// signal that a deeper fetch cannot help — stays accurate even when some
+	// hits fail to hydrate.
+	raw int
+	// dropped is how many hits could not be hydrated back to a message row.
+	dropped int
 }
 
-func (e *evaluator) rankedVector(mode, qstr string, limit int) ([]string, error) {
+// rankedKeys turns a search engine into up to limit *distinct* doc keys, in
+// ranked order.
+//
+// The collapse must happen before the truncation, not after: retrieving n
+// messages and then collapsing them yields however many distinct threads
+// happen to sit inside those n, which is not what "-n 100" claims. So for a
+// collapsing doc-key this over-fetches raw hits (eval.OverFetchPlan), collapses,
+// and only then cuts to the requested depth, growing the pool while the engine
+// still has more to give and the depth is still unfilled.
+func (e *evaluator) rankedKeys(fetch func(n int) (fetchResult, error)) ([]string, error) {
+	plan := eval.OverFetchPlan(e.limit, e.key.collapses)
+	for i, n := range plan {
+		res, err := fetch(n)
+		if err != nil {
+			return nil, err
+		}
+		deduped := eval.DedupeKeys(res.keys)
+		filled := len(deduped) >= e.limit
+		// The engine returned less than we asked for, so it has nothing left
+		// to give and a deeper fetch would return the same list.
+		exhausted := res.raw < n
+		if filled || exhausted || i == len(plan)-1 {
+			e.diag.UnhydratedHits += res.dropped
+			if !filled && !exhausted {
+				e.diag.DepthShortfalls++
+			}
+			return eval.TruncateKeys(deduped, e.limit), nil
+		}
+	}
+	// Unreachable: OverFetchPlan is never empty and the loop always returns on
+	// its final step.
+	return nil, nil
+}
+
+func (e *evaluator) rankedFTS(qstr string) ([]string, error) {
+	return e.rankedKeys(func(n int) (fetchResult, error) {
+		res, err := e.qeng.Search(e.ctx, search.Parse(qstr), n, 0)
+		if err != nil {
+			return fetchResult{}, err
+		}
+		keys := make([]string, 0, len(res))
+		for _, m := range res {
+			keys = append(keys, e.key.extract(m))
+		}
+		return fetchResult{keys: keys, raw: len(res)}, nil
+	})
+}
+
+func (e *evaluator) rankedVector(mode, qstr string) ([]string, error) {
 	q := search.Parse(qstr)
+	// Both modes embed the free text, so a filter-only topic (`from:alice`)
+	// has nothing to embed and hybrid.Engine.Search would return a bare
+	// "empty query". Detect it here and hand runEval a recognisable error so
+	// it can skip this one cell instead of aborting the run.
+	if len(q.TextTerms) == 0 {
+		return nil, fmt.Errorf("%w: %q parsed to filters only", errNoFreeText, qstr)
+	}
 	// Use the engine method rather than the package function: it supplies the
 	// dialect's placeholder rebind, which the package function now requires.
 	filter, err := e.heng.BuildFilter(e.ctx, q)
@@ -154,56 +299,67 @@ func (e *evaluator) rankedVector(mode, qstr string, limit int) ([]string, error)
 	for _, t := range q.TextTerms {
 		subjectTerms = append(subjectTerms, strings.ToLower(t))
 	}
-	hits, _, err := e.heng.Search(e.ctx, hybrid.SearchRequest{
-		Mode:         hybrid.Mode(mode),
-		FreeText:     strings.Join(q.TextTerms, " "),
-		Filter:       filter,
-		Limit:        limit,
-		SubjectTerms: subjectTerms,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(hits) == 0 {
-		return nil, nil
-	}
-	ids := make([]int64, len(hits))
-	for i, h := range hits {
-		ids[i] = h.MessageID
-	}
-	summaries, err := e.qeng.GetMessageSummariesByIDs(e.ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("map message ids: %w", err)
-	}
-	byID := make(map[int64]query.MessageSummary, len(summaries))
-	for _, m := range summaries {
-		byID[m.ID] = m
-	}
-	// Preserve the engine's ranking order; drop any hit that couldn't hydrate.
-	out := make([]string, 0, len(hits))
-	for _, h := range hits {
-		if m, ok := byID[h.MessageID]; ok {
-			out = append(out, e.keyOf(m))
+	freeText := strings.Join(q.TextTerms, " ")
+
+	return e.rankedKeys(func(n int) (fetchResult, error) {
+		hits, _, err := e.heng.Search(e.ctx, hybrid.SearchRequest{
+			Mode:         hybrid.Mode(mode),
+			FreeText:     freeText,
+			Filter:       filter,
+			Limit:        n,
+			SubjectTerms: subjectTerms,
+		})
+		if err != nil {
+			return fetchResult{}, err
 		}
-	}
-	return eval.DedupeKeys(out), nil
+		if len(hits) == 0 {
+			return fetchResult{}, nil
+		}
+		ids := make([]int64, len(hits))
+		for i, h := range hits {
+			ids[i] = h.MessageID
+		}
+		summaries, err := e.qeng.GetMessageSummariesByIDs(e.ctx, ids)
+		if err != nil {
+			return fetchResult{}, fmt.Errorf("map message ids: %w", err)
+		}
+		byID := make(map[int64]query.MessageSummary, len(summaries))
+		for _, m := range summaries {
+			byID[m.ID] = m
+		}
+		// Preserve the engine's ranking order. A hit that cannot be hydrated
+		// is dropped — but counted, because a vector index pointing at rows
+		// the archive no longer has is exactly the staleness this command
+		// exists to surface.
+		out := fetchResult{keys: make([]string, 0, len(hits)), raw: len(hits)}
+		for _, h := range hits {
+			m, ok := byID[h.MessageID]
+			if !ok {
+				out.dropped++
+				continue
+			}
+			out.keys = append(out.keys, e.key.extract(m))
+		}
+		return out, nil
+	})
 }
 
-func (e *evaluator) ranked(mode, qstr string, limit int) ([]string, error) {
+func (e *evaluator) ranked(mode, qstr string) ([]string, error) {
 	switch mode {
 	case "fts":
-		return e.rankedFTS(qstr, limit)
+		return e.rankedFTS(qstr)
 	case "vector", "hybrid":
-		return e.rankedVector(mode, qstr, limit)
+		return e.rankedVector(mode, qstr)
 	default:
 		return nil, fmt.Errorf("unknown mode %q (want fts|vector|hybrid)", mode)
 	}
 }
 
 func runEval(cmd *cobra.Command, _ []string) error {
-	keyOf, ok := docKeyFuncs[evalDocKey]
+	registry := newDocKeyRegistry()
+	keySpec, ok := registry[evalDocKey]
 	if !ok {
-		return usageErr(cmd, fmt.Errorf("invalid --doc-key %q (want %s)", evalDocKey, docKeyNames()))
+		return usageErr(cmd, fmt.Errorf("invalid --doc-key %q (want %s)", evalDocKey, docKeyNames(registry)))
 	}
 	// A non-positive depth is not a "use the default" signal: fts would fall
 	// back to an internal 100 while the vector backend would return nothing
@@ -217,14 +373,17 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 	cutoffs := eval.CutoffsForDepth(evalLimit)
 
+	diag := &runDiagnostics{}
 	qrels, qrelsStats, err := eval.LoadQrels(evalQrels)
 	if err != nil {
 		return err
 	}
+	diag.QrelsLoad = qrelsStats
 	topics, topicsStats, err := eval.LoadTopics(evalTopics)
 	if err != nil {
 		return err
 	}
+	diag.TopicsLoad = topicsStats
 
 	// A file in a near-miss format parses to an empty-but-valid result. Say so
 	// in terms of the format, because the downstream symptom ("no topics had
@@ -272,7 +431,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	ev := &evaluator{
 		ctx:   ctx,
 		qeng:  query.NewEngine(s.DB(), s.IsPostgreSQL()),
-		keyOf: keyOf,
+		key:   keySpec,
+		limit: evalLimit,
+		diag:  diag,
 	}
 
 	if needVec {
@@ -308,11 +469,19 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		if len(rel) == 0 {
 			continue // topic has no judgments in this qrels file
 		}
+		anyMode := false
 		for _, m := range modes {
 			start := time.Now()
-			ranked, err := ev.ranked(m, t.Query, evalLimit)
+			ranked, err := ev.ranked(m, t.Query)
 			elapsed := time.Since(start)
 			if err != nil {
+				if errors.Is(err, errNoFreeText) {
+					// One mode cannot answer this topic. Record it and carry
+					// on: aborting here would throw away every score already
+					// computed, for every mode and every earlier topic.
+					diag.skip(t.ID, m, "no free-text terms to embed (filter-only topic)")
+					continue
+				}
 				return fmt.Errorf("topic %s, mode %s: %w", t.ID, m, err)
 			}
 			lats[m].Add(elapsed)
@@ -327,6 +496,10 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				}
 				catAggs[m][t.Category].Add(s)
 			}
+			anyMode = true
+		}
+		if !anyMode {
+			continue // no mode could score this topic
 		}
 		if t.Category != "" {
 			catCounts[t.Category]++
@@ -334,6 +507,12 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		scored++
 	}
 	if scored == 0 {
+		// Distinguish the two ways a run can end up with nothing: no topic
+		// matched a judgment, or every topic was skipped by every mode.
+		if len(diag.SkippedCells) > 0 {
+			return fmt.Errorf("no topic could be scored by any of the requested modes: %s",
+				strings.Join(diag.SkippedCells, "; "))
+		}
 		return fmt.Errorf("none of the %d topics had relevance judgments in %s "+
 			"(qrels: %s; topics: %s); check that the qids in both files refer to the same queries",
 			len(topics), evalQrels, qrelsStats, topicsStats)
@@ -341,7 +520,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 
 	report := evalReport{
 		modes: modes, aggs: aggs, lats: lats, catAggs: catAggs, catCounts: catCounts,
-		prov: ev.prov, topics: scored, cutoffs: cutoffs,
+		prov: ev.prov, topics: scored, cutoffs: cutoffs, diag: diag,
 	}
 	if evalJSON {
 		return report.json()
@@ -352,7 +531,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 
 // parseEvalModes splits and validates the --modes flag.
 func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
-	for _, m := range strings.Split(spec, ",") {
+	for m := range strings.SplitSeq(spec, ",") {
 		m = strings.TrimSpace(m)
 		if m == "" {
 			continue
@@ -512,6 +691,7 @@ type evalReport struct {
 	prov      eval.RunConfig
 	topics    int
 	cutoffs   eval.Cutoffs
+	diag      *runDiagnostics
 }
 
 // metricHeaders names the metric columns at the depths this run actually used,
@@ -553,6 +733,9 @@ func (r evalReport) table() {
 	pCol, ndcgCol, rCol := r.metricHeaders()
 	fmt.Printf("\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	// "topics" is per mode, not per run: a mode that cannot answer some topic
+	// (a filter-only query has nothing to embed) scores fewer of them, and the
+	// means are only comparable if the denominators are visible.
 	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, "MAP", "MRR", "med ms", "p95 ms"}
 	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
 	rule := make([]string, len(header))
@@ -588,6 +771,13 @@ func (r evalReport) table() {
 		}
 		_ = cw.Flush()
 	}
+
+	if notes := r.diag.notes(); len(notes) > 0 {
+		fmt.Printf("\nDiagnostics\n")
+		for _, n := range notes {
+			fmt.Printf("  - %s\n", n)
+		}
+	}
 }
 
 func (r evalReport) json() error {
@@ -621,9 +811,10 @@ func (r evalReport) json() error {
 		"cutoffs": map[string]int{
 			"precision": r.cutoffs.P, "ndcg": r.cutoffs.NDCG, "recall": r.cutoffs.Recall,
 		},
-		"modes":      r.modes,
-		"run_config": r.prov,
-		"results":    results,
+		"modes":       r.modes,
+		"run_config":  r.prov,
+		"results":     results,
+		"diagnostics": r.diag,
 	}
 	if len(r.catCounts) > 0 {
 		out["topic_categories"] = r.catCounts

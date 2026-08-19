@@ -21,21 +21,45 @@ func TestDocKeyFuncs(t *testing.T) {
 		SourceMessageID:      "<msg-1@example.com>",
 		SourceConversationID: "thread-42",
 	}
+	registry := newDocKeyRegistry()
 
-	msgKey, ok := docKeyFuncs["message"]
+	msgKey, ok := registry["message"]
 	require.True(t, ok)
-	assert.Equal(t, "<msg-1@example.com>", msgKey(m))
+	assert.Equal(t, "<msg-1@example.com>", msgKey.extract(m))
 
-	convKey, ok := docKeyFuncs["conversation"]
+	convKey, ok := registry["conversation"]
 	require.True(t, ok)
-	assert.Equal(t, "thread-42", convKey(m))
+	assert.Equal(t, "thread-42", convKey.extract(m))
 
-	_, ok = docKeyFuncs["thread"]
+	_, ok = registry["thread"]
 	assert.False(t, ok, "thread scoring is a future extension, not yet registered")
+}
+
+// TestDocKeySpec_Collapses pins which keys need the over-fetch: a conversation
+// id is shared by every message in a thread, a source message id is not.
+func TestDocKeySpec_Collapses(t *testing.T) {
+	registry := newDocKeyRegistry()
+	assert.False(t, registry["message"].collapses)
+	assert.True(t, registry["conversation"].collapses)
+}
+
+// TestNewDocKeyRegistry_IsPerRun backs the extensibility claim in the
+// registry's doc comment: it is built by a call, not fixed at program init, so
+// an entry closing over state that only exists after flags are parsed (a
+// loaded message-id -> thread-id mapping, say) is possible. Two calls must
+// therefore produce independent maps.
+func TestNewDocKeyRegistry_IsPerRun(t *testing.T) {
+	first := newDocKeyRegistry()
+	second := newDocKeyRegistry()
+	require.Len(t, second, len(first))
+
+	first["thread"] = docKeySpec{extract: func(query.MessageSummary) string { return "x" }}
+	_, leaked := newDocKeyRegistry()["thread"]
+	assert.False(t, leaked, "a run's registry must not mutate the next run's")
 }
 
 // TestDocKeyNames keeps usage/error text in step with the registry, sorted so
 // the rendering is stable.
 func TestDocKeyNames(t *testing.T) {
-	assert.Equal(t, "conversation|message", docKeyNames())
+	assert.Equal(t, "conversation|message", docKeyNames(newDocKeyRegistry()))
 }
