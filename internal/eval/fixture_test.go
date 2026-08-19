@@ -123,6 +123,14 @@ func TestFixture_QrelsMatchMailbox(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, topics, 3)
 
+	// The fixture deliberately mixes labeled and unlabeled topics: the
+	// optional category column (pointed vs spanning question shape) must
+	// coexist with plain two-column lines in one file.
+	assert.Equal(t, "spanning", topics[0].Category,
+		"q1's relevant set is a whole thread, not one message")
+	assert.Equal(t, "pointed", topics[1].Category)
+	assert.Empty(t, topics[2].Category, "q3 pins the unlabeled two-column form")
+
 	for _, tc := range []struct {
 		file  string
 		valid map[string]struct{}

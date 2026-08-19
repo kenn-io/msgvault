@@ -57,13 +57,24 @@ func LoadQrels(path string) (Qrels, error) {
 }
 
 // Topic is a query whose ID matches a qrels query id.
+//
+// Category is an optional free-form label for the question's shape — e.g.
+// "pointed" (answerable from one message) versus "spanning" (requires
+// synthesizing across several). The distinction matters because it decides
+// which retrieval levers a benchmark can even see: a topic set made entirely
+// of pointed questions is structurally blind to thread-level improvements.
+// Empty for topics files that don't carry the column.
 type Topic struct {
-	ID    string
-	Query string
+	ID       string
+	Query    string
+	Category string
 }
 
-// LoadTopics reads a tab-separated topics file: "<qid>\t<query text>" per
-// line. Blank lines and lines without a tab are skipped.
+// LoadTopics reads a tab-separated topics file:
+// "<qid>\t<query text>[\t<category>]" per line. The third column is an
+// optional query-category label (see Topic.Category); two-column files —
+// the original format — load exactly as before, with Category empty.
+// Blank lines and lines without a tab are skipped.
 func LoadTopics(path string) ([]Topic, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -79,7 +90,7 @@ func LoadTopics(path string) ([]Topic, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
+		parts := strings.SplitN(line, "\t", 3)
 		if len(parts) < 2 {
 			continue
 		}
@@ -88,7 +99,11 @@ func LoadTopics(path string) ([]Topic, error) {
 		if id == "" || query == "" {
 			continue
 		}
-		topics = append(topics, Topic{ID: id, Query: query})
+		category := ""
+		if len(parts) == 3 {
+			category = strings.TrimSpace(parts[2])
+		}
+		topics = append(topics, Topic{ID: id, Query: query, Category: category})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("read topics: %w", err)

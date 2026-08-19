@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -47,7 +48,11 @@ guessed.
 Inputs (TREC-style):
   --qrels   judgments file, one per line: "<qid> <iter> <docid> <rel>"
             (rel >= 1 means relevant; the iter column is ignored)
-  --topics  queries file, tab-separated: "<qid>\t<query text>"
+  --topics  queries file, tab-separated: "<qid>\t<query text>[\t<category>]"
+            The optional third column labels the question's shape (e.g.
+            "pointed" for answerable-from-one-message, "spanning" for
+            requires-synthesizing-across-messages); when present, results
+            are also broken down per category. Two-column files work as-is.
 
 Doc ids in --qrels are matched against each message's source_message_id by
 default (--doc-key=message), or its conversation's source_conversation_id
@@ -77,11 +82,37 @@ func init() {
 	evalCmd.Flags().StringVar(&evalQrels, "qrels", "", "Path to TREC-format relevance judgments (required)")
 	evalCmd.Flags().StringVar(&evalTopics, "topics", "", "Path to topics TSV: <qid>\\t<query> (required)")
 	evalCmd.Flags().StringVar(&evalModes, "modes", "fts,vector,hybrid", "Comma-separated search modes to evaluate")
-	evalCmd.Flags().StringVar(&evalDocKey, "doc-key", "message", "Which id qrels reference: message|conversation")
+	evalCmd.Flags().StringVar(&evalDocKey, "doc-key", "message", "Which id qrels reference: "+docKeyNames())
 	evalCmd.Flags().IntVarP(&evalLimit, "limit", "n", 100, "Results retrieved per query")
 	evalCmd.Flags().BoolVar(&evalJSON, flagJSON, false, "Output as JSON")
 	_ = evalCmd.MarkFlagRequired("qrels")
 	_ = evalCmd.MarkFlagRequired("topics")
+}
+
+// docKeyFunc extracts, from a retrieved hit, the stable document id that
+// qrels judge against. It is the only place a doc-key's meaning lives: the
+// scoring core (eval.Evaluate, eval.Aggregate, eval.DedupeKeys) operates on
+// the opaque string keys these return and never learns what they identify.
+type docKeyFunc func(query.MessageSummary) string
+
+// docKeyFuncs maps each --doc-key value to its id extractor. Adding a new
+// judged unit — say a reconstructed-thread id resolved through an external
+// message-id -> thread-id mapping file — means registering one more entry
+// here (a closure over the loaded mapping); the CLI validation, the scoring
+// core and the output paths all pick it up unchanged.
+var docKeyFuncs = map[string]docKeyFunc{
+	"message":      func(m query.MessageSummary) string { return m.SourceMessageID },
+	"conversation": func(m query.MessageSummary) string { return m.SourceConversationID },
+}
+
+// docKeyNames renders the valid --doc-key values for usage and error text.
+func docKeyNames() string {
+	names := make([]string, 0, len(docKeyFuncs))
+	for n := range docKeyFuncs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, "|")
 }
 
 // evaluator bundles the engines and config needed to turn a query string into
@@ -91,16 +122,8 @@ type evaluator struct {
 	qeng   query.Engine
 	heng   *hybrid.Engine
 	mainDB *sql.DB
-	docKey string
+	keyOf  docKeyFunc
 	prov   eval.RunConfig
-}
-
-// keyOf selects the stable document id (the field qrels reference) for a hit.
-func (e *evaluator) keyOf(m query.MessageSummary) string {
-	if e.docKey == "conversation" {
-		return m.SourceConversationID
-	}
-	return m.SourceMessageID
 }
 
 func (e *evaluator) rankedFTS(qstr string, limit int) ([]string, error) {
@@ -174,8 +197,9 @@ func (e *evaluator) ranked(mode, qstr string, limit int) ([]string, error) {
 }
 
 func runEval(cmd *cobra.Command, _ []string) error {
-	if evalDocKey != "message" && evalDocKey != "conversation" {
-		return usageErr(cmd, fmt.Errorf("invalid --doc-key %q (want message|conversation)", evalDocKey))
+	keyOf, ok := docKeyFuncs[evalDocKey]
+	if !ok {
+		return usageErr(cmd, fmt.Errorf("invalid --doc-key %q (want %s)", evalDocKey, docKeyNames()))
 	}
 	modes, needVec, err := parseEvalModes(evalModes)
 	if err != nil {
@@ -212,9 +236,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 
 	ev := &evaluator{
-		ctx:    ctx,
-		qeng:   query.NewEngine(s.DB(), s.IsPostgreSQL()),
-		docKey: evalDocKey,
+		ctx:   ctx,
+		qeng:  query.NewEngine(s.DB(), s.IsPostgreSQL()),
+		keyOf: keyOf,
 	}
 
 	if needVec {
@@ -237,6 +261,13 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		aggs[m] = &eval.Aggregate{}
 		lats[m] = &eval.LatencyTracker{}
 	}
+	// Per-category aggregates (mode -> category), populated only for topics
+	// that carry a category label. Whether a question is answerable from one
+	// message or needs a whole thread decides which retrieval levers a run
+	// can even see, so when the topics file says which is which, report the
+	// split rather than averaging it away.
+	catAggs := make(map[string]map[string]*eval.Aggregate, len(modes))
+	catCounts := map[string]int{}
 	scored := 0
 	for _, t := range topics {
 		rel := qrels.RelevantSet(t.ID)
@@ -251,7 +282,20 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				return fmt.Errorf("topic %s, mode %s: %w", t.ID, m, err)
 			}
 			lats[m].Add(elapsed)
-			aggs[m].Add(eval.Evaluate(ranked, rel))
+			s := eval.Evaluate(ranked, rel)
+			aggs[m].Add(s)
+			if t.Category != "" {
+				if catAggs[m] == nil {
+					catAggs[m] = map[string]*eval.Aggregate{}
+				}
+				if catAggs[m][t.Category] == nil {
+					catAggs[m][t.Category] = &eval.Aggregate{}
+				}
+				catAggs[m][t.Category].Add(s)
+			}
+		}
+		if t.Category != "" {
+			catCounts[t.Category]++
 		}
 		scored++
 	}
@@ -260,9 +304,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 
 	if evalJSON {
-		return outputEvalJSON(modes, aggs, lats, ev.prov, scored)
+		return outputEvalJSON(modes, aggs, lats, catAggs, catCounts, ev.prov, scored)
 	}
-	return outputEvalTable(modes, aggs, lats, ev.prov, scored)
+	return outputEvalTable(modes, aggs, lats, catAggs, catCounts, ev.prov, scored)
 }
 
 // parseEvalModes splits and validates the --modes flag.
@@ -402,7 +446,19 @@ func humanBytes(b int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker, p eval.RunConfig, n int) error {
+// sortedCategories returns the category labels seen in a run, sorted for
+// stable output.
+func sortedCategories(catCounts map[string]int) []string {
+	cats := make([]string, 0, len(catCounts))
+	for c := range catCounts {
+		cats = append(cats, c)
+	}
+	sort.Strings(cats)
+	return cats
+}
+
+func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker,
+	catAggs map[string]map[string]*eval.Aggregate, catCounts map[string]int, p eval.RunConfig, n int) error {
 	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", n, evalDocKey, evalLimit)
 
 	// Provenance first: a score is not interpretable without it.
@@ -436,24 +492,63 @@ func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[s
 			m, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR, l.MedianMS, l.P95MS)
 	}
 	_ = w.Flush()
+
+	// Per-category breakdown, only when the topics file carries labels.
+	// Latency is tracked per mode, not per category, so those columns are
+	// omitted here.
+	if len(catCounts) > 0 {
+		fmt.Printf("\nBy query category\n")
+		cw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(cw, "MODE\tCATEGORY\ttopics\tP@10\tnDCG@10\tR@100\tMAP\tMRR")
+		for _, m := range modes {
+			for _, c := range sortedCategories(catCounts) {
+				agg := catAggs[m][c]
+				if agg == nil {
+					continue
+				}
+				s := agg.Mean()
+				_, _ = fmt.Fprintf(cw, "%s\t%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
+					m, c, agg.N, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR)
+			}
+		}
+		_ = cw.Flush()
+	}
 	return nil
 }
 
-func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker, p eval.RunConfig, n int) error {
-	results := make(map[string]any, len(modes))
-	for _, m := range modes {
-		s := aggs[m].Mean()
-		results[m] = map[string]any{
+func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker,
+	catAggs map[string]map[string]*eval.Aggregate, catCounts map[string]int, p eval.RunConfig, n int) error {
+	metricsOf := func(a *eval.Aggregate) map[string]any {
+		s := a.Mean()
+		return map[string]any{
 			"P@10": s.P10, "nDCG@10": s.NDCG10, "R@100": s.R100, "MAP": s.MAP, "MRR": s.MRR,
-			"latency": lats[m].Summary(),
 		}
 	}
-	return printJSON(map[string]any{
+	results := make(map[string]any, len(modes))
+	for _, m := range modes {
+		entry := metricsOf(aggs[m])
+		entry["latency"] = lats[m].Summary()
+		if len(catAggs[m]) > 0 {
+			byCat := make(map[string]any, len(catAggs[m]))
+			for c, a := range catAggs[m] {
+				cm := metricsOf(a)
+				cm["topics"] = a.N
+				byCat[c] = cm
+			}
+			entry["by_category"] = byCat
+		}
+		results[m] = entry
+	}
+	out := map[string]any{
 		"topics_evaluated": n,
 		"doc_key":          evalDocKey,
 		"limit":            evalLimit,
 		"modes":            modes,
 		"run_config":       p,
 		"results":          results,
-	})
+	}
+	if len(catCounts) > 0 {
+		out["topic_categories"] = catCounts
+	}
+	return printJSON(out)
 }

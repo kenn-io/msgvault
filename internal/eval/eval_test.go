@@ -101,7 +101,30 @@ func TestLoadTopics(t *testing.T) {
 	require.Len(t, topics, 2)
 	assert.Equal(t, "301", topics[0].ID)
 	assert.Equal(t, "oil and gas drilling", topics[0].Query)
+	assert.Empty(t, topics[0].Category, "two-column format has no category")
 	assert.Equal(t, "302", topics[1].ID)
+}
+
+// TestLoadTopics_CategoryColumn covers the optional third column. A file may
+// mix labeled and unlabeled lines; old two-column files must load unchanged.
+func TestLoadTopics_CategoryColumn(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "topics.tsv")
+	content := "q1\tlease renewal terms\tpointed\n" + // labeled
+		"q2\thow did the negotiation conclude\tspanning\n" + // labeled
+		"q3\tforklift servicing\n" + // plain two-column line in the same file
+		"q4\tinsurance quote\t\n" + // trailing tab, empty category
+		"q5\t  padded query  \t  padded  \n" // whitespace trimmed
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+
+	topics, err := LoadTopics(p)
+	require.NoError(t, err)
+	require.Len(t, topics, 5)
+	assert.Equal(t, Topic{ID: "q1", Query: "lease renewal terms", Category: "pointed"}, topics[0])
+	assert.Equal(t, "spanning", topics[1].Category)
+	assert.Empty(t, topics[2].Category, "unlabeled line stays unlabeled")
+	assert.Empty(t, topics[3].Category, "a trailing tab is not a category")
+	assert.Equal(t, Topic{ID: "q5", Query: "padded query", Category: "padded"}, topics[4])
 }
 
 func TestLoadQrels_MissingFile(t *testing.T) {
