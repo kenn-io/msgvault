@@ -52,7 +52,25 @@ const chatBurstRow = {
   conversation_id: 70
 };
 
-async function prepare(page: Page) {
+const documentFile = {
+  id: 7, key: 'file:7', entry_key: 'message:1', message_id: 1, conversation_id: 21,
+  occurred_at: '2026-07-18T09:00:00Z', source_id: 1, source_type: 'gmail',
+  source_identifier: 'archive@example.com', containing_title: 'Subject line',
+  filename: 'notes.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
+  content_state: 'metadata_only', content_available: false,
+  person_provenance: { participant_ids: [1], roles: ['from'], directions: ['from_person'] }
+};
+
+const imageFile = {
+  ...documentFile, id: 8, key: 'file:8', filename: 'photo.png', mime_type: 'image/png',
+  mime_family: 'image',
+  person_provenance: {
+    participant_ids: [1], roles: ['from', 'conversation_member'],
+    directions: ['from_person', 'group']
+  }
+};
+
+async function prepare(page: Page, personFileBodies: Record<string, unknown>[] = []) {
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
@@ -70,6 +88,32 @@ async function prepare(page: Page) {
   await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
     canonical_id: 1, identity_revision: 1, cache_revision: 'cache-relationships',
     rows: [messageRow, chatBurstRow], total_count: 2
+  } }));
+  await page.route('**/api/v1/participants/1/files/search', async (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    personFileBodies.push(body);
+    const families = body.mime_families as string[] | undefined;
+    return route.fulfill({ json: {
+      files: families?.includes('image') ? [imageFile] : [documentFile],
+      total_count: 1, cache_revision: 'cache-relationships', search_provenance: {}
+    } });
+  });
+  await page.route('**/api/v1/files/7', (route) => route.fulfill({ json: {
+    id: 7, message_id: 1, conversation_id: 21, entry_key: 'message:1', filename: 'notes.pdf',
+    mime_type: 'application/pdf', size_bytes: 2048, content_state: 'metadata_only', content_available: false
+  } }));
+  await page.route('**/api/v1/files/8', (route) => route.fulfill({ json: {
+    id: 8, message_id: 1, conversation_id: 21, entry_key: 'message:1', filename: 'photo.png',
+    mime_type: 'image/png', size_bytes: 2048, content_state: 'metadata_only', content_available: false
+  } }));
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows: [{
+      ...messageRow, message_type: 'email', conversation_type: 'email_thread',
+      source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'],
+      participant_ids: [1], attachment_count: 1, attachment_size: 2048, deleted_from_source: false,
+      conversation_id: 21, anchor_message_id: 1, match: {}
+    }],
+    total_count: 1, cache_revision: 'cache-relationships', search_provenance: {}
   } }));
   await page.route('**/api/v1/domains/search', (route) => route.fulfill({ json: {
     rows: [domainSummary], total_count: 1, cache_revision: 'cache-relationships-domains',
@@ -137,4 +181,47 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeHidden();
   await expect(reading).toBeHidden();
   await expect(page.getByText('Select a person or domain', { exact: true })).toBeVisible();
+});
+
+test('person attachment gallery preserves directions and Media state across source-message history', async ({ page }) => {
+  const personFileBodies: Record<string, unknown>[] = [];
+  await prepare(page, personFileBodies);
+  await page.goto('/');
+
+  const list = page.getByRole('grid', { name: 'Relationship results' });
+  await list.getByText('Alice Example').click();
+  await page.getByRole('button', { name: 'Files 1' }).click();
+  await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeVisible();
+  expect(personFileBodies[0]).toMatchObject({
+    directions: ['from_person'],
+    mime_families: ['pdf', 'audio', 'text', 'document', 'archive', 'other'],
+    limit: 500
+  });
+
+  await page.getByRole('checkbox', { name: 'Group conversations' }).check();
+  await expect.poll(() => personFileBodies.length).toBe(2);
+  expect(personFileBodies[1]).toMatchObject({ directions: ['from_person', 'group'] });
+
+  await page.getByRole('button', { name: 'Media view' }).click();
+  const card = page.getByRole('button', { name: 'Open photo.png' });
+  await expect(card).toBeVisible();
+  expect(personFileBodies[2]).toMatchObject({
+    directions: ['from_person', 'group'], mime_families: ['image', 'video'], limit: 500
+  });
+  await card.click();
+  const viewer = page.getByRole('dialog', { name: 'View photo.png' });
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole('button', { name: 'Open containing item' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
+
+  await page.goBack();
+  await expect(page.getByRole('button', { name: 'Media view' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('checkbox', { name: 'Group conversations' })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Open photo.png' })).toBeVisible();
+  const restored = JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}') as Record<string, unknown>;
+  expect(restored).toMatchObject({
+    workspace: 'relationships', relationshipTarget: 'cluster:1', relationshipFiles: true,
+    personFilePresentation: 'media', personFileDirections: ['from_person', 'group']
+  });
 });

@@ -1395,7 +1395,7 @@ func (g *GetParticipantErrorResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type SearchParticipantFilesResponse = FileSearchHTTPResponse
+type SearchParticipantFilesResponse = PersonFileSearchHTTPResponse
 
 type SearchParticipantFilesErrorResponse = ErrorResponse
 

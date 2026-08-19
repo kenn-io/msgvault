@@ -5382,6 +5382,177 @@ func (p PersonDaysPage) Validate() error {
 	return errors
 }
 
+type PersonFileProvenance struct {
+	Directions     []PersonFileProvenanceDirections `json:"directions,omitempty" validate:"required"`
+	ParticipantIds []int64                          `json:"participant_ids,omitempty" validate:"required"`
+	Roles          []PersonFileProvenanceRoles      `json:"roles,omitempty" validate:"required"`
+}
+
+func (p PersonFileProvenance) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Directions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Directions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
+	}
+	for i, item := range p.Roles {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Roles[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSearchHTTPRequest struct {
+	Cursor        *string                                 `json:"cursor,omitempty"`
+	Directions    []PersonFileSearchHTTPRequestDirections `json:"directions,omitempty"`
+	FilenameQuery *string                                 `json:"filename_query,omitempty"`
+	Limit         *int64                                  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
+	MimeFamilies  []string                                `json:"mime_families,omitempty"`
+	Predicate     ExploreHTTPRequest                      `json:"predicate"`
+	Sort          FileSearchSort                          `json:"sort"`
+}
+
+func (p PersonFileSearchHTTPRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Directions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Directions[%d]", i), err)
+			}
+		}
+	}
+	if p.Limit != nil {
+		if err := typesValidator.Var(p.Limit, "omitempty,gte=0,lte=500"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if v, ok := any(p.Predicate).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Predicate", err)
+		}
+	}
+	if v, ok := any(p.Sort).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Sort", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSearchHTTPResponse struct {
+	CacheRevision       string                `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string               `json:"candidate_snapshot_id,omitempty"`
+	Files               []PersonFileSearchRow `json:"files,omitempty" validate:"required"`
+	NextCursor          *string               `json:"next_cursor,omitempty"`
+	SearchProvenance    SearchProvenance      `json:"search_provenance"`
+	TotalCount          int64                 `json:"total_count"`
+}
+
+func (p PersonFileSearchHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range p.Files {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Files[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.SearchProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SearchProvenance", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSearchRow struct {
+	ContainingTitle    string                          `json:"containing_title" validate:"required"`
+	ContentAvailable   bool                            `json:"content_available"`
+	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
+	ConversationID     int64                           `json:"conversation_id"`
+	EntryKey           string                          `json:"entry_key" validate:"required"`
+	Filename           *string                         `json:"filename,omitempty" validate:"required"`
+	ID                 int64                           `json:"id"`
+	Key                string                          `json:"key" validate:"required"`
+	MessageID          int64                           `json:"message_id"`
+	MimeFamily         string                          `json:"mime_family" validate:"required"`
+	MimeType           *string                         `json:"mime_type,omitempty" validate:"required"`
+	OccurredAt         time.Time                       `json:"occurred_at" validate:"required"`
+	ParticipantDomains []string                        `json:"participant_domains,omitempty"`
+	ParticipantIds     []int64                         `json:"participant_ids,omitempty"`
+	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
+	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
+	SizeBytes          int64                           `json:"size_bytes"`
+	SourceID           int64                           `json:"source_id"`
+	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`
+	SourceType         string                          `json:"source_type" validate:"required"`
+}
+
+func (p PersonFileSearchRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ContainingTitle, "required"); err != nil {
+		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(p.ContentState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentState", err)
+		}
+	}
+	if err := typesValidator.Var(p.EntryKey, "required"); err != nil {
+		errors = errors.Append("EntryKey", err)
+	}
+	if err := typesValidator.Var(p.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(p.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if err := typesValidator.Var(p.MimeFamily, "required"); err != nil {
+		errors = errors.Append("MimeFamily", err)
+	}
+	if err := typesValidator.Var(p.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if err := typesValidator.Var(p.OccurredAt, "required"); err != nil {
+		errors = errors.Append("OccurredAt", err)
+	}
+	if v, ok := any(p.PersonProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PersonProvenance", err)
+		}
+	}
+	if err := typesValidator.Var(p.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(p.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonIdentifier struct {
 	DisplayValue  *string `json:"display_value,omitempty"`
 	IsPrimary     bool    `json:"is_primary"`

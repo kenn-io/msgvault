@@ -38,6 +38,45 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPersonFileGalleryContract(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	request := generated.PersonFileSearchHTTPRequest{
+		Directions: []generated.PersonFileSearchHTTPRequestDirections{
+			generated.PersonFileSearchHTTPRequestDirectionsFromPerson,
+			generated.PersonFileSearchHTTPRequestDirectionsGroup,
+		},
+		Predicate: generated.ExploreHTTPRequest{},
+		Sort:      generated.FileSearchSort{Field: "occurred_at", Direction: "desc"},
+	}
+	requirements.NoError(request.Validate())
+
+	provenance := generated.PersonFileProvenance{
+		Directions:     []generated.PersonFileProvenanceDirections{generated.FromPerson, generated.Group},
+		ParticipantIds: []int64{17, 42},
+		Roles:          []generated.PersonFileProvenanceRoles{generated.From, generated.ConversationMember},
+	}
+	requirements.NoError(provenance.Validate())
+
+	encoded, err := json.Marshal(struct {
+		Request    generated.PersonFileSearchHTTPRequest `json:"request"`
+		Provenance generated.PersonFileProvenance        `json:"provenance"`
+	}{Request: request, Provenance: provenance})
+	requirements.NoError(err)
+	assertions.JSONEq(`{
+		"request": {
+			"directions": ["from_person", "group"],
+			"predicate": {},
+			"sort": {"field": "occurred_at", "direction": "desc"}
+		},
+		"provenance": {
+			"directions": ["from_person", "group"],
+			"participant_ids": [17, 42],
+			"roles": ["from", "conversation_member"]
+		}
+	}`, string(encoded))
+}
+
 func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {
 	body := generated.PatchPersonBody{DisplayName: nil}
 	require.NoError(t, body.Validate())
@@ -189,6 +228,27 @@ func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *te
 		var present generated.FileSearchRow
 		requirements.NoError(json.Unmarshal([]byte(
 			`{"containing_title":"item","content_state":"metadata_only","entry_key":"message:1","filename":"","key":"file:1","mime_family":"other","mime_type":"","occurred_at":"2026-07-19T12:00:00Z","source_identifier":"archive@example.com","source_type":"synthetic"}`,
+		), &present))
+		requirements.NotNil(present.Filename)
+		requirements.NotNil(present.MimeType)
+		assertions.Empty(*present.Filename)
+		assertions.Empty(*present.MimeType)
+		requirements.NoError(present.Validate(), "present empty strings are legitimate legacy metadata")
+
+		missingFilename := present
+		missingFilename.Filename = nil
+		requirements.Error(missingFilename.Validate(), "missing required filename")
+		missingMIME := present
+		missingMIME.MimeType = nil
+		requirements.Error(missingMIME.Validate(), "missing required MIME type")
+	})
+
+	t.Run("person search row", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var present generated.PersonFileSearchRow
+		requirements.NoError(json.Unmarshal([]byte(
+			`{"containing_title":"item","content_state":"metadata_only","entry_key":"message:1","filename":"","key":"file:1","mime_family":"other","mime_type":"","occurred_at":"2026-07-19T12:00:00Z","person_provenance":{"directions":["to_person"],"participant_ids":[1],"roles":["to"]},"source_identifier":"archive@example.com","source_type":"synthetic"}`,
 		), &present))
 		requirements.NotNil(present.Filename)
 		requirements.NotNil(present.MimeType)

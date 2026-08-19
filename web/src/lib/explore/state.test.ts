@@ -43,6 +43,8 @@ describe('Explore URL state', () => {
       fileSort: { field: 'filename', direction: 'asc' },
       fileFilenameQuery: 'invoice',
       fileMIMEFamilies: ['pdf', 'image'],
+	  personFilePresentation: 'media',
+	  personFileDirections: ['from_person', 'group'],
 	  identityQuery: 'Shared Name',
 	  identitySort: { field: 'display_label', direction: 'asc' },
 	  analysisTarget: 'person:42',
@@ -221,6 +223,24 @@ describe('Explore URL state', () => {
     expect(restored.query).toBe('canonical terms');
     expect(restored.fileFilenameQuery).toBe('');
     expect(restored.fileMIMEFamilies).toEqual([]);
+  });
+
+  it('normalizes restorable person gallery controls into stable finite values', () => {
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      personFilePresentation: 'media',
+      personFileDirections: ['group', 'from_person', 'group']
+    }));
+    expect(restored.personFilePresentation).toBe('media');
+    expect(restored.personFileDirections).toEqual(['from_person', 'group']);
+
+    const malformed = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      personFilePresentation: 'cards',
+      personFileDirections: ['bogus']
+    } as unknown as ExploreURLState));
+    expect(malformed.personFilePresentation).toBe('files');
+    expect(malformed.personFileDirections).toEqual(['from_person']);
   });
 
   it('drops malformed namespaced attachment authority instead of treating it as an entry key', () => {

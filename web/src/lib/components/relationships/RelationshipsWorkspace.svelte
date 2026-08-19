@@ -16,7 +16,7 @@
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
-  import type { ExplorePredicate, FileMIMEFamily, FileSearchSort } from '../../explore/models';
+  import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
   import type { RelationshipFacet, RelationshipTimelineRow } from '../../relationships/models';
   import { debounce } from '../../util/debounce';
@@ -39,10 +39,14 @@
     showAll: boolean;
     filesOpen: boolean;
     predicate: ExplorePredicate;
+    personFilePresentation?: 'media' | 'files';
+    personFileDirections?: PersonFileDirection[];
     onFacetChange: (facet: RelationshipFacet) => void;
     onTargetChange: (target: string | null) => void;
     onShowAllChange: (value: boolean) => void;
     onFilesToggle: (value: boolean) => void;
+    onPersonFilePresentationChange?: (value: 'media' | 'files') => void;
+    onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void;
     /** Degraded-state escape hatch: switches the parent workspace to
      * Everything. Not part of the frozen Task 4 Props contract — AppShell
      * (Task 6) wires it to its own workspace-change callback. */
@@ -66,10 +70,14 @@
     showAll,
     filesOpen,
     predicate,
+    personFilePresentation = 'files',
+    personFileDirections = ['from_person'],
     onFacetChange,
     onTargetChange,
     onShowAllChange,
     onFilesToggle,
+    onPersonFilePresentationChange = undefined,
+    onPersonFileDirectionsChange = undefined,
     onOpenEverything = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
@@ -407,14 +415,19 @@
               {#if filesOpen && filesReady}
                 <FilesWorkspace
                   {client}
+                  embedded
                   predicate={contextPredicate(predicate)}
                   identityScope={identityScopeFor(target)}
                   sort={fileSort}
                   filenameQuery={fileFilenameQuery}
                   mimeFamilies={fileMIMEFamilies}
+                  personPresentation={personFilePresentation}
+                  personDirections={personFileDirections}
                   onSortChange={(value) => (fileSort = value)}
                   onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
                   onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
+                  onPersonPresentationChange={onPersonFilePresentationChange}
+                  onPersonDirectionsChange={onPersonFileDirectionsChange}
                   onOpenItem={onOpenFileItem}
                   onOpenConversation={onOpenFileConversation}
                 />

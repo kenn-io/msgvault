@@ -100,7 +100,7 @@ type PutOrganizationProfileBody = OrganizationProfileBody
 
 type SearchParticipantsBody = IdentitySearchHTTPRequest
 
-type SearchParticipantFilesBody = FileSearchHTTPRequest
+type SearchParticipantFilesBody = PersonFileSearchHTTPRequest
 
 type GetParticipantContextSummaryBody = ExploreHTTPRequest
 

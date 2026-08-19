@@ -896,10 +896,18 @@
       showAll={exploreState.current.relationshipShowAll}
       filesOpen={exploreState.current.relationshipFiles}
       predicate={exploreState.predicate()}
+      personFilePresentation={exploreState.current.personFilePresentation}
+      personFileDirections={exploreState.current.personFileDirections}
       onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
       onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget })}
       onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
       onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
+      onPersonFilePresentationChange={(personFilePresentation) => commitNavigation({
+        personFilePresentation, activeRow: null, selectedRow: null, scrollAnchor: null
+      })}
+      onPersonFileDirectionsChange={(personFileDirections) => commitNavigation({
+        personFileDirections, activeRow: null, selectedRow: null, scrollAnchor: null
+      })}
       onOpenEverything={() => commitWorkspace('everything')}
       onOpenFileItem={openFileItem}
       onOpenFileConversation={openFileConversation}

@@ -5161,6 +5161,65 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonFileProvenance: {
+            directions: ("from_person" | "to_person" | "group")[] | null;
+            participant_ids: number[] | null;
+            roles: ("from" | "to" | "cc" | "bcc" | "conversation_member")[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFileSearchHTTPRequest: {
+            cursor?: string;
+            directions?: ("from_person" | "to_person" | "group")[] | null;
+            filename_query?: string;
+            /** Format: int64 */
+            limit?: number;
+            mime_families?: string[] | null;
+            predicate: components["schemas"]["ExploreHTTPRequest"];
+            sort: components["schemas"]["FileSearchSort"];
+        };
+        PersonFileSearchHTTPResponse: {
+            cache_revision: string;
+            candidate_snapshot_id?: string;
+            files: components["schemas"]["PersonFileSearchRow"][] | null;
+            next_cursor?: string;
+            search_provenance: components["schemas"]["SearchProvenance"];
+            /** Format: int64 */
+            total_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFileSearchRow: {
+            containing_title: string;
+            content_available: boolean;
+            /** @enum {string} */
+            content_state: "metadata_only" | "url_only" | "missing_blob" | "local_content";
+            /** Format: int64 */
+            conversation_id: number;
+            entry_key: string;
+            filename: string;
+            /** Format: int64 */
+            id: number;
+            key: string;
+            /** Format: int64 */
+            message_id: number;
+            mime_family: string;
+            mime_type: string;
+            /** Format: date-time */
+            occurred_at: string;
+            participant_domains?: string[] | null;
+            participant_ids?: number[] | null;
+            participant_labels?: string[] | null;
+            person_provenance: components["schemas"]["PersonFileProvenance"];
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
         PersonIdentifier: {
             display_value?: string;
             is_primary: boolean;
@@ -12755,7 +12814,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FileSearchHTTPRequest"];
+                "application/json": components["schemas"]["PersonFileSearchHTTPRequest"];
             };
         };
         responses: {
@@ -12765,7 +12824,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileSearchHTTPResponse"];
+                    "application/json": components["schemas"]["PersonFileSearchHTTPResponse"];
                 };
             };
             /** @description Error */

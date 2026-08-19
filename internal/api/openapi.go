@@ -207,7 +207,9 @@ import (
 // 2.1.0 adds portable attribute sensitivity metadata and per-person tracking,
 // and reports this version as api_schema_version on authenticated
 // /api/v1/health so remote CLI clients can verify compatibility on connect.
-const APISchemaVersion = "2.1.0"
+// 2.2.0 adds participant-scoped file search responses and direction controls.
+// Additive (minor bump): the archive-wide file routes are unchanged.
+const APISchemaVersion = "2.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -565,7 +567,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {
 				if schema.Properties[property] != nil {

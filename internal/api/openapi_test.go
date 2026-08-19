@@ -38,7 +38,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.1.0", APISchemaVersion)
+	assert.Equal("2.2.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -59,13 +59,17 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.1.0", APISchemaVersion)
+	assert.Equal(t, "2.2.0", APISchemaVersion)
+}
+
+func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
+	assert.Equal(t, "2.2.0", APISchemaVersion)
 }
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.1.0", APISchemaVersion,
-		"document search preserves the organization and employment contract")
+	assert.Equal(t, "2.2.0", APISchemaVersion,
+		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
 		openAPIClientDocument(),
@@ -143,7 +147,7 @@ func TestExploreServiceUnavailableResponseUsesNonExclusiveAlternatives(t *testin
 
 func TestOpenAPIFileNamesAndMIMETypesAreRequiredButMayBeEmpty(t *testing.T) {
 	doc := OpenAPIDocument()
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
 		t.Run(schemaName, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -163,7 +167,7 @@ func TestOpenAPIFileNamesAndMIMETypesAreRequiredButMayBeEmpty(t *testing.T) {
 func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
 	publicSchemas := OpenAPIDocument().Components.Schemas.Map()
 	clientSchemas := openAPIClientDocument().Components.Schemas.Map()
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
 		t.Run(schemaName, func(t *testing.T) {
 			assertions := assert.New(t)
 			for _, property := range []string{"filename", "mime_type"} {
@@ -343,8 +347,8 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.1.0", APISchemaVersion,
-		"activity, identity match review, and document search preserve the structured profile contract")
+	assert.Equal("2.2.0", APISchemaVersion,
+		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
@@ -417,8 +421,8 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.1.0", APISchemaVersion,
-		"activity, identity match review, and document search preserve the raw profile media contract")
+	assert.Equal("2.2.0", APISchemaVersion,
+		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
 	require.NotNil(path)
@@ -445,8 +449,8 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.1.0", APISchemaVersion,
-		"document search preserves the identity match review contract")
+	assertions.Equal("2.2.0", APISchemaVersion,
+		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
 	list := doc.Paths["/api/v1/identity/match-candidates"]
@@ -486,9 +490,11 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
 	// person relationships added in 1.39.0, organizations and employments
 	// added in 1.40.0, identity match review added in 1.41.0, and dated activity
-	// routes added in 1.42.0, cache-readiness responses added in 1.43.0, and
-	// document search added in 1.44.0 did not touch it.
-	assert.Equal("2.1.0", APISchemaVersion, "meeting import is an additive schema release")
+	// routes added in 1.42.0, cache-readiness responses added in 1.43.0,
+	// document search added in 1.44.0, participant/people separation added in
+	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
+	// 2.2.0 did not touch it.
+	assert.Equal("2.2.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

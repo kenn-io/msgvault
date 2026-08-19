@@ -317,6 +317,62 @@ func TestExploreSemanticIssuesBoundedSnapshotWithoutInventingTotal(t *testing.T)
 	assertions.Equal(exploreMaxLimit, backend.searchLimit)
 }
 
+type exploreClusterStore struct {
+	*fileCatalogStore
+
+	members []int64
+}
+
+func (s *exploreClusterStore) ClusterMembers(id int64) ([]int64, error) {
+	if len(s.members) == 0 {
+		return []int64{id}, nil
+	}
+	return append([]int64(nil), s.members...), nil
+}
+
+func (s *exploreClusterStore) ClusterEdges(int64) ([]store.LinkEdge, error) {
+	return nil, nil
+}
+
+func TestPersonFilesSemanticSearchIntersectsDirectionScopeEndToEnd(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine := newExploreDuckDBFixture(t)
+	backend := &fakeVectorBackend{
+		active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		searchHits: []vector.Hit{{MessageID: 2, Score: .9, Rank: 1}, {MessageID: 3, Score: .8, Rank: 2}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	messageStore := &mockStore{
+		messages: []APIMessage{{ID: 2, Subject: "Newest"}, {ID: 3, Subject: "Other source"}},
+		total:    2, stats: &StoreStats{},
+	}
+	catalog := &fileCatalogStore{mockStore: messageStore, files: map[int64]store.FileMetadata{
+		12: {ID: 12, MessageID: 2, ConversationID: 102, Filename: "newest.pdf", MimeType: "application/pdf"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &exploreClusterStore{fileCatalogStore: catalog, members: []int64{1}}, Engine: engine,
+		HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/participants/1/files/search", `{
+		"predicate":{"query":"alpha","search_mode":"semantic"},
+		"directions":["from_person"],
+		"sort":{"field":"occurred_at","direction":"desc"},
+		"limit":10
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body PersonFileSearchHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Files, 1)
+	assertions.Equal("newest.pdf", body.Files[0].Filename)
+	assertions.Equal([]int64{1}, body.Files[0].PersonProvenance.ParticipantIDs)
+	assertions.Equal([]query.PersonFileRole{query.PersonFileRoleFrom}, body.Files[0].PersonProvenance.Roles)
+	assertions.Equal([]query.PersonFileDirection{query.PersonFileFromPerson}, body.Files[0].PersonProvenance.Directions)
+	assertions.NotEmpty(body.CandidateSnapshotID)
+}
+
 func TestExploreSemanticPaginationFollowsSnapshotRankNotArchiveDate(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -14,6 +14,8 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	require.NoError(t, err)
 	assertions.NotContains(string(got), "if f.Filename != nil")
 	assertions.NotContains(string(got), "if f.MimeType != nil")
+	assertions.NotContains(string(got), "if p.Filename != nil")
+	assertions.NotContains(string(got), "if p.MimeType != nil")
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
@@ -97,7 +99,8 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
-` + pointerValidatorFixture("FileMetadataResponse") + pointerValidatorFixture("FileSearchRow") + `
+` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+		pointerValidatorFixture("PersonFileSearchRow", "p") + `
 func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
@@ -130,16 +133,16 @@ func dailyNotePersonIDsValidatorBlock(tag string) string {
 `
 }
 
-func pointerValidatorFixture(typeName string) string {
-	return `func (f ` + typeName + `) Validate() error {
+func pointerValidatorFixture(typeName, receiver string) string {
+	return `func (` + receiver + ` ` + typeName + `) Validate() error {
 	var errors runtime.ValidationErrors
-	if f.Filename != nil {
-		if err := typesValidator.Var(f.Filename, "required"); err != nil {
+	if ` + receiver + `.Filename != nil {
+		if err := typesValidator.Var(` + receiver + `.Filename, "required"); err != nil {
 			errors = errors.Append("Filename", err)
 		}
 	}
-	if f.MimeType != nil {
-		if err := typesValidator.Var(f.MimeType, "required"); err != nil {
+	if ` + receiver + `.MimeType != nil {
+		if err := typesValidator.Var(` + receiver + `.MimeType, "required"); err != nil {
 			errors = errors.Append("MimeType", err)
 		}
 	}
