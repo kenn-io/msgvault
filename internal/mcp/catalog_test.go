@@ -323,6 +323,7 @@ func TestCatalogSchemas(t *testing.T) {
 					outputSchema, ok := tool["outputSchema"].(map[string]any)
 					must.True(ok, "%s outputSchema", tool["name"])
 					checks.Equal("https://json-schema.org/draft/2020-12/schema", outputSchema["$schema"], "%s output dialect", tool["name"])
+					checks.Equal("object", outputSchema["type"], "%s output type", tool["name"])
 
 					readOnly := tool["name"] != ToolExportAttachment && tool["name"] != ToolStageDeletion
 					checks.Equal(map[string]any{
@@ -835,6 +836,51 @@ func TestStructuredToolResult(t *testing.T) {
 	account, ok := accounts[0].(map[string]any)
 	must.True(ok)
 	checks.Equal("alice@example.com", account["Identifier"])
+}
+
+func TestArrayToolResultsUseObjectEnvelope(t *testing.T) {
+	opts := ServeOptions{Engine: &querytest.MockEngine{
+		AggregateRows: []query.AggregateRow{{Key: "example.com", Count: 1}},
+		SearchResults: []query.MessageSummary{{ID: 1, Subject: "Example"}},
+	}}
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{name: "aggregate", tool: ToolAggregate, args: map[string]any{"group_by": "domain"}},
+		{name: "search by domains", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := rawCallTool(t, opts, test.tool, test.args)
+			structured, ok := result["structuredContent"].(map[string]any)
+			require.True(t, ok, "result: %#v", result)
+			data, ok := structured["data"].([]any)
+			require.True(t, ok, "structured result: %#v", structured)
+			assert.Len(t, data, 1)
+		})
+	}
+}
+
+func TestArrayToolEmptyResultsUseEmptyDataArray(t *testing.T) {
+	opts := ServeOptions{Engine: &querytest.MockEngine{}}
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{name: "aggregate", tool: ToolAggregate, args: map[string]any{"group_by": "domain"}},
+		{name: "search by domains", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := rawCallTool(t, opts, test.tool, test.args)
+			assert.Equal(t, map[string]any{"data": []any{}}, result["structuredContent"])
+		})
+	}
 }
 
 func TestOfficialSDKInMemoryRoundTrip(t *testing.T) {

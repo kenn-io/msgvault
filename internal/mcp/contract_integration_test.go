@@ -482,21 +482,23 @@ func task5AssertRepresentativeResult(
 		checks.Equal(int64(1), value.Accounts[0].ID)
 		checks.Equal("alice@example.com", value.Accounts[0].Identifier)
 	case ToolAggregate:
-		value := task5StructuredAs[[]struct {
-			Key             string
-			Count           int64
-			TotalSize       int64
-			AttachmentSize  int64
-			AttachmentCount int64
-			TotalUnique     int64
+		value := task5StructuredAs[struct {
+			Data []struct {
+				Key             string
+				Count           int64
+				TotalSize       int64
+				AttachmentSize  int64
+				AttachmentCount int64
+				TotalUnique     int64
+			} `json:"data"`
 		}](t, result)
-		must.Len(value, 1)
-		checks.Equal("example.com", value[0].Key)
-		checks.Equal(int64(2), value[0].Count)
-		checks.Equal(int64(3072), value[0].TotalSize)
-		checks.Equal(int64(len(fixture.attachmentBytes)), value[0].AttachmentSize)
-		checks.Equal(int64(1), value[0].AttachmentCount)
-		checks.Equal(int64(1), value[0].TotalUnique)
+		must.Len(value.Data, 1)
+		checks.Equal("example.com", value.Data[0].Key)
+		checks.Equal(int64(2), value.Data[0].Count)
+		checks.Equal(int64(3072), value.Data[0].TotalSize)
+		checks.Equal(int64(len(fixture.attachmentBytes)), value.Data[0].AttachmentSize)
+		checks.Equal(int64(1), value.Data[0].AttachmentCount)
+		checks.Equal(int64(1), value.Data[0].TotalUnique)
 	case ToolFindSimilarMessages:
 		value := task5StructuredAs[struct {
 			SeedMessageID int64 `json:"seed_message_id"`
