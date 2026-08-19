@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
@@ -49,7 +50,21 @@ Inputs (TREC-style):
   --topics  queries file, tab-separated: "<qid>\t<query text>"
 
 Doc ids in --qrels are matched against each message's source_message_id by
-default (--doc-key=message), or its source_conversation_id (--doc-key=conversation).
+default (--doc-key=message), or its conversation's source_conversation_id
+(--doc-key=conversation). Pick the one your judgments actually reference: an
+mbox import, for example, keys each imported document by conversation, so
+message-keyed qrels would score a flat zero against it. When the judged unit
+is the conversation, a thread is counted once, at its best-ranked message.
+
+Every run reports the embedding model, index settings and index size that
+produced it, plus per-query latency, because a quality number is not
+comparable — or even interpretable — without them.
+
+Note on topic phrasing: it is an experimental variable, not a constant. FTS5
+matches on AND semantics, so a verbose natural-language topic requires every
+one of its words to appear in a message and will usually score near zero,
+while its keyword reduction scores well. Dense retrieval can move the other
+way. Compare runs only across the same topics file.
 
 Example:
   msgvault eval --qrels qrels.txt --topics topics.tsv --modes fts,vector,hybrid -n 100`,
@@ -77,6 +92,7 @@ type evaluator struct {
 	heng   *hybrid.Engine
 	mainDB *sql.DB
 	docKey string
+	prov   eval.RunConfig
 }
 
 // keyOf selects the stable document id (the field qrels reference) for a hit.
@@ -96,7 +112,7 @@ func (e *evaluator) rankedFTS(qstr string, limit int) ([]string, error) {
 	for _, m := range res {
 		out = append(out, e.keyOf(m))
 	}
-	return out, nil
+	return eval.DedupeKeys(out), nil
 }
 
 func (e *evaluator) rankedVector(mode, qstr string, limit int) ([]string, error) {
@@ -143,7 +159,7 @@ func (e *evaluator) rankedVector(mode, qstr string, limit int) ([]string, error)
 			out = append(out, e.keyOf(m))
 		}
 	}
-	return out, nil
+	return eval.DedupeKeys(out), nil
 }
 
 func (e *evaluator) ranked(mode, qstr string, limit int) ([]string, error) {
@@ -209,9 +225,17 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		defer cleanup()
 	}
 
+	// Record corpus size regardless of mode: recall numbers are unreadable
+	// without knowing how big the haystack was.
+	ev.prov.QrelsPath = evalQrels
+	ev.prov.TopicsPath = evalTopics
+	ev.collectCorpusStats(s.DB())
+
 	aggs := make(map[string]*eval.Aggregate, len(modes))
+	lats := make(map[string]*eval.LatencyTracker, len(modes))
 	for _, m := range modes {
 		aggs[m] = &eval.Aggregate{}
+		lats[m] = &eval.LatencyTracker{}
 	}
 	scored := 0
 	for _, t := range topics {
@@ -220,10 +244,13 @@ func runEval(cmd *cobra.Command, _ []string) error {
 			continue // topic has no judgments in this qrels file
 		}
 		for _, m := range modes {
+			start := time.Now()
 			ranked, err := ev.ranked(m, t.Query, evalLimit)
+			elapsed := time.Since(start)
 			if err != nil {
 				return fmt.Errorf("topic %s, mode %s: %w", t.ID, m, err)
 			}
+			lats[m].Add(elapsed)
 			aggs[m].Add(eval.Evaluate(ranked, rel))
 		}
 		scored++
@@ -233,9 +260,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 
 	if evalJSON {
-		return outputEvalJSON(modes, aggs, scored)
+		return outputEvalJSON(modes, aggs, lats, ev.prov, scored)
 	}
-	return outputEvalTable(modes, aggs, scored)
+	return outputEvalTable(modes, aggs, lats, ev.prov, scored)
 }
 
 // parseEvalModes splits and validates the --modes flag.
@@ -315,6 +342,7 @@ func (e *evaluator) attachVector(ctx context.Context) (func(), error) {
 		SubjectBoost:        cfg.Vector.Search.SubjectBoost,
 	})
 	e.mainDB = mainDB
+	e.collectVectorStats(vecDBPath)
 
 	return func() {
 		_ = backend.Close()
@@ -322,32 +350,110 @@ func (e *evaluator) attachVector(ctx context.Context) (func(), error) {
 	}, nil
 }
 
-func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, n int) error {
-	fmt.Printf("Evaluated %d topics (doc-key=%s)\n\n", n, evalDocKey)
+// collectCorpusStats records how big the searched archive is. It reads the
+// store's own handle so it also works for --modes fts, which never opens the
+// vector path. Failures are non-fatal: missing provenance should degrade the
+// report, never abort a run.
+func (e *evaluator) collectCorpusStats(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	_ = db.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM messages").Scan(&e.prov.Messages)
+	_ = db.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM conversations").Scan(&e.prov.Conversations)
+}
+
+// collectVectorStats records the embedding model, fusion parameters and index
+// size in force for this run, so a score can never be read without knowing
+// what produced it.
+func (e *evaluator) collectVectorStats(vecDBPath string) {
+	e.prov.VectorEnabled = true
+	e.prov.EmbeddingModel = cfg.Vector.Embeddings.Model
+	e.prov.Dimension = cfg.Vector.Embeddings.Dimension
+	e.prov.Endpoint = cfg.Vector.Embeddings.Endpoint
+	e.prov.Backend = cfg.Vector.Backend
+	e.prov.Fingerprint = cfg.Vector.GenerationFingerprint()
+	e.prov.RRFK = cfg.Vector.Search.RRFK
+	e.prov.KPerSignal = cfg.Vector.Search.KPerSignal
+	e.prov.SubjectBoost = cfg.Vector.Search.SubjectBoost
+	e.prov.IndexPath = vecDBPath
+
+	if fi, err := os.Stat(vecDBPath); err == nil {
+		e.prov.IndexSizeBytes = fi.Size()
+	}
+	// Read the row count from a short-lived read-only handle: the vector
+	// backend owns its own connection and we must not disturb it.
+	if vdb, err := sql.Open("sqlite3", vecDBPath+"?mode=ro"); err == nil {
+		defer func() { _ = vdb.Close() }()
+		_ = vdb.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM embeddings").Scan(&e.prov.IndexedVectors)
+	}
+}
+
+// humanBytes renders a byte count compactly for the table output.
+func humanBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker, p eval.RunConfig, n int) error {
+	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", n, evalDocKey, evalLimit)
+
+	// Provenance first: a score is not interpretable without it.
+	fmt.Printf("\nRun configuration\n")
+	pw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintf(pw, "  topics\t%s\n", p.TopicsPath)
+	_, _ = fmt.Fprintf(pw, "  qrels\t%s\n", p.QrelsPath)
+	_, _ = fmt.Fprintf(pw, "  corpus\t%d messages, %d conversations\n", p.Messages, p.Conversations)
+	if p.VectorEnabled {
+		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", p.EmbeddingModel, p.Dimension)
+		_, _ = fmt.Fprintf(pw, "  embedding endpoint\t%s\n", p.Endpoint)
+		_, _ = fmt.Fprintf(pw, "  vector backend\t%s\n", p.Backend)
+		_, _ = fmt.Fprintf(pw, "  generation fingerprint\t%s\n", p.Fingerprint)
+		_, _ = fmt.Fprintf(pw, "  fusion\trrf_k=%d k_per_signal=%d subject_boost=%.2f\n",
+			p.RRFK, p.KPerSignal, p.SubjectBoost)
+		_, _ = fmt.Fprintf(pw, "  vector index\t%d vectors, %s (%s)\n",
+			p.IndexedVectors, humanBytes(p.IndexSizeBytes), p.IndexPath)
+	} else {
+		_, _ = fmt.Fprintf(pw, "  vector index\t(not used; --modes fts only)\n")
+	}
+	_ = pw.Flush()
+
+	fmt.Printf("\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "MODE\tP@10\tnDCG@10\tR@100\tMAP\tMRR")
-	_, _ = fmt.Fprintln(w, "────\t────\t───────\t─────\t───\t───")
+	_, _ = fmt.Fprintln(w, "MODE\tP@10\tnDCG@10\tR@100\tMAP\tMRR\tmed ms\tp95 ms")
+	_, _ = fmt.Fprintln(w, "────\t────\t───────\t─────\t───\t───\t──────\t──────")
 	for _, m := range modes {
 		s := aggs[m].Mean()
-		_, _ = fmt.Fprintf(w, "%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
-			m, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR)
+		l := lats[m].Summary()
+		_, _ = fmt.Fprintf(w, "%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.1f\t%.1f\n",
+			m, s.P10, s.NDCG10, s.R100, s.MAP, s.MRR, l.MedianMS, l.P95MS)
 	}
 	_ = w.Flush()
 	return nil
 }
 
-func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, n int) error {
+func outputEvalJSON(modes []string, aggs map[string]*eval.Aggregate, lats map[string]*eval.LatencyTracker, p eval.RunConfig, n int) error {
 	results := make(map[string]any, len(modes))
 	for _, m := range modes {
 		s := aggs[m].Mean()
 		results[m] = map[string]any{
 			"P@10": s.P10, "nDCG@10": s.NDCG10, "R@100": s.R100, "MAP": s.MAP, "MRR": s.MRR,
+			"latency": lats[m].Summary(),
 		}
 	}
 	return printJSON(map[string]any{
 		"topics_evaluated": n,
 		"doc_key":          evalDocKey,
+		"limit":            evalLimit,
 		"modes":            modes,
+		"run_config":       p,
 		"results":          results,
 	})
 }

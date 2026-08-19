@@ -62,8 +62,8 @@ func TestMetrics_EdgeCases(t *testing.T) {
 
 func TestEvaluateAndAggregate(t *testing.T) {
 	a := &Aggregate{}
-	a.Add(Evaluate([]string{"a", "b"}, set("a")))       // P@10=0.1, MRR=1
-	a.Add(Evaluate([]string{"b", "a"}, set("a")))       // MRR=0.5
+	a.Add(Evaluate([]string{"a", "b"}, set("a"))) // P@10=0.1, MRR=1
+	a.Add(Evaluate([]string{"b", "a"}, set("a"))) // MRR=0.5
 	assert.Equal(t, 2, a.N)
 	mean := a.Mean()
 	assert.InDelta(t, (1.0+0.5)/2.0, mean.MRR, 1e-9)
