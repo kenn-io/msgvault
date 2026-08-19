@@ -14,9 +14,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -196,7 +199,52 @@ func openRemoteStore(ctx context.Context) (*daemonclient.Client, error) {
 		return nil, err
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
+	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	return st, nil
+}
+
+// remoteAPISchemaCheckEnabled gates the remote schema probe. Production code
+// never clears it; the CLI test package disables it in TestMain because its
+// stub remote daemons serve single routes without /api/v1/health, and the
+// probe's own tests re-enable it.
+var remoteAPISchemaCheckEnabled = true
+
+// verifyRemoteAPISchemaVersion refuses a configured remote daemon whose API
+// schema major version differs from this CLI's. Local daemons are checked
+// against their on-disk runtime record instead (daemonRuntimeCompatibilityError);
+// a configured remote has no record, so the daemon reports its version on
+// authenticated /api/v1/health. Routes changed meaning at 2.0.0 (the old
+// analytical /people/{id} became the durable person detail), so decoding a
+// mismatched peer's response would silently produce wrong data rather than
+// an error.
+func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Client) error {
+	if !remoteAPISchemaCheckEnabled {
+		return nil
+	}
+	response, err := daemonclient.APIResponse(client,
+		func(api *apiclient.Client) (*generated.GetHealthResp, error) {
+			return api.GetHealthWithResponse(ctx)
+		})
+	if err != nil {
+		return fmt.Errorf("verify remote daemon API schema version: %w", err)
+	}
+	if response.JSON200 == nil {
+		return errors.New("verify remote daemon API schema version: empty health response")
+	}
+	var version string
+	if response.JSON200.APISchemaVersion != nil {
+		version = *response.JSON200.APISchemaVersion
+	}
+	if version == "" {
+		return fmt.Errorf(
+			"remote daemon does not report an API schema version, so it predates "+
+				"schema 2.0.0 and is incompatible with this CLI (schema %s); "+
+				"upgrade the remote daemon", api.APISchemaVersion)
+	}
+	return apiSchemaCompatibilityError(version)
 }
 
 type localDaemonStartupInfo struct {

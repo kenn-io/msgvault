@@ -3628,6 +3628,8 @@ components:
       properties:
         analytics_engine:
           type: string
+        api_schema_version:
+          type: string
         operation:
           $ref: "#/components/schemas/OperationHealth"
         status:

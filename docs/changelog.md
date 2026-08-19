@@ -17,7 +17,10 @@ All notable changes to msgvault, grouped by release.
   `/api/v1/people/*`. The old paths are removed, not aliased: `/api/v1/people`
   changed meaning, so an alias would silently serve differently shaped data.
   The CLI and daemon refuse to interoperate across the 1.x/2.x schema
-  boundary with a clear error — upgrade both together.
+  boundary with a clear error — upgrade both together. This covers configured
+  remotes too: the daemon reports `api_schema_version` on authenticated
+  `/api/v1/health`, and a CLI in remote mode verifies it on connect,
+  rejecting daemons that predate schema 2.0.
 
 **Features**
 

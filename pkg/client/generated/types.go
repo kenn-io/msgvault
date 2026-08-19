@@ -3083,10 +3083,11 @@ func (g GmailIDsResponse) Validate() error {
 }
 
 type HealthResponse struct {
-	AnalyticsEngine *string          `json:"analytics_engine,omitempty"`
-	Operation       *OperationHealth `json:"operation,omitempty"`
-	Status          string           `json:"status" validate:"required"`
-	Vector          *VectorHealth    `json:"vector,omitempty"`
+	AnalyticsEngine  *string          `json:"analytics_engine,omitempty"`
+	APISchemaVersion *string          `json:"api_schema_version,omitempty"`
+	Operation        *OperationHealth `json:"operation,omitempty"`
+	Status           string           `json:"status" validate:"required"`
+	Vector           *VectorHealth    `json:"vector,omitempty"`
 }
 
 func (h HealthResponse) Validate() error {

@@ -204,7 +204,9 @@ import (
 // unchanged.
 // 2.0.0 separates observed participant analytics under /participants from
 // durable curated people under /people and removes the ambiguous old routes.
-// 2.1.0 adds portable attribute sensitivity metadata and per-person tracking.
+// 2.1.0 adds portable attribute sensitivity metadata and per-person tracking,
+// and reports this version as api_schema_version on authenticated
+// /api/v1/health so remote CLI clients can verify compatibility on connect.
 const APISchemaVersion = "2.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

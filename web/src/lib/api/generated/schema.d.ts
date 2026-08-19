@@ -4133,6 +4133,7 @@ export interface components {
         };
         HealthResponse: {
             analytics_engine?: string;
+            api_schema_version?: string;
             operation?: components["schemas"]["OperationHealth"];
             status: string;
             vector?: components["schemas"]["VectorHealth"];
