@@ -26,11 +26,12 @@ and can be used directly:
 }
 
 var (
-	subsetOutput            string
-	subsetRows              int
-	subsetIncludeIdentity   bool
-	subsetIncludeAttributes bool
-	subsetIncludeProfiles   bool
+	subsetOutput                string
+	subsetRows                  int
+	subsetIncludeIdentity       bool
+	subsetIncludeAttributes     bool
+	subsetIncludeProfiles       bool
+	subsetIncludeVCardResources bool
 )
 
 func init() {
@@ -56,6 +57,10 @@ func init() {
 		&subsetIncludeProfiles, "include-profiles", false,
 		"copy structured profile values, history, media, contact observations, relationships, employment history with referenced organizations (their profiles, contacts, and media), and provenance; may expose sensitive personal data",
 	)
+	createSubsetCmd.Flags().BoolVar(
+		&subsetIncludeVCardResources, "include-vcard-resources", false,
+		"copy included people's complete native vCard bodies and retired-UID aliases; requires --include-profiles; a body is opaque and may carry custom properties and RELATED entries naming people outside the subset",
+	)
 	_ = createSubsetCmd.MarkFlagRequired("output")
 	_ = createSubsetCmd.MarkFlagRequired("rows")
 	rootCmd.AddCommand(createSubsetCmd)
@@ -68,6 +73,10 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 
 	if subsetRows <= 0 {
 		return usageErr(cmd, errors.New("--rows must be a positive integer"))
+	}
+	if subsetIncludeVCardResources && !subsetIncludeProfiles {
+		return usageErr(cmd, errors.New(
+			"--include-vcard-resources requires --include-profiles"))
 	}
 
 	srcDBPath := cfg.DatabaseDSN()
@@ -107,12 +116,17 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr,
 			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata, plus their employment history and the referenced organizations' profiles, contacts, and media.")
 	}
+	if subsetIncludeVCardResources {
+		fmt.Fprintln(os.Stderr,
+			"WARNING: --include-vcard-resources copies every included person's complete native vCard bodies and their retired-UID aliases. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset.")
+	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,
 		store.CopySubsetOptions{
-			IncludeIdentity:   subsetIncludeIdentity,
-			IncludeAttributes: subsetIncludeAttributes,
-			IncludeProfiles:   subsetIncludeProfiles,
+			IncludeIdentity:       subsetIncludeIdentity,
+			IncludeAttributes:     subsetIncludeAttributes,
+			IncludeProfiles:       subsetIncludeProfiles,
+			IncludeVCardResources: subsetIncludeVCardResources,
 		})
 	if err != nil {
 		return fmt.Errorf("create subset: %w", err)

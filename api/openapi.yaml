@@ -6551,6 +6551,8 @@ components:
           type: integer
         source_ref:
           type: string
+        source_resource_uid:
+          type: string
         start_date:
           $ref: "#/components/schemas/PartialDate"
         status:
@@ -6805,6 +6807,8 @@ components:
         source:
           type: string
         source_ref:
+          type: string
+        source_resource_uid:
           type: string
         status:
           type: string
@@ -8559,6 +8563,8 @@ components:
           type: string
         source_ref:
           type: string
+        source_resource_uid:
+          type: string
         superseded_at:
           format: date-time
           type: string
@@ -8605,6 +8611,8 @@ components:
         source:
           type: string
         source_ref:
+          type: string
+        source_resource_uid:
           type: string
         type_label:
           type: string

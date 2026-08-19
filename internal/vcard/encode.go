@@ -110,7 +110,7 @@ func renderProperty(property Property, rfc6868 bool) (string, error) {
 
 func renderParameter(parameter Parameter, rfc6868 bool) (string, error) {
 	if parameter.Bare {
-		if parameter.OriginalName != "" || !strings.EqualFold(parameter.Name, "TYPE") {
+		if parameter.OriginalName != "" || !strings.EqualFold(parameter.Name, parameterTypeName) {
 			return "", errors.New("bare parameter must use TYPE without an original name")
 		}
 		if len(parameter.Values) == 0 {

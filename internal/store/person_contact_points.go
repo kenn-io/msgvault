@@ -203,7 +203,7 @@ func (s *Store) addPersonContactPointTx(
 		created_at, updated_at
 	) VALUES (
 		?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		`+s.dialect.Now()+`, `+s.dialect.Now()+`
 	) RETURNING id`, args...).Scan(&id); err != nil {
 		return nil, fmt.Errorf(
@@ -292,7 +292,7 @@ const personContactPointSelect = `SELECT
 	p.normalization_version, p.uri,
 	p.pref, p.ordinal, p.type_label, p.type_tokens, p.vcard_property,
 	p.vcard_group, p.vcard_prop_id, p.vcard_pid, p.vcard_altid, p.source,
-	p.source_ref, p.confidence, p.active_from, p.active_until,
+	p.source_ref, p.source_resource_uid, p.confidence, p.active_from, p.active_until,
 	p.created_at, p.updated_at, p.superseded_at
 	FROM person_contact_points p
 	LEFT JOIN communication_services cs ON cs.id = p.service_id`

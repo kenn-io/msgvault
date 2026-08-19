@@ -154,6 +154,30 @@ func TestCreateAttributeDefinitionRejectsInvalidVocabularies(t *testing.T) {
 			wantMsg: "vcard_property",
 		},
 		{
+			name: "framing vCard property",
+			mutate: func(in *store.AttributeDefinitionInput) {
+				property := "END"
+				in.VCardProperty = &property
+			},
+			wantMsg: "reserved",
+		},
+		{
+			name: "VERSION vCard property",
+			mutate: func(in *store.AttributeDefinitionInput) {
+				property := "VERSION"
+				in.VCardProperty = &property
+			},
+			wantMsg: "reserved",
+		},
+		{
+			name: "UID vCard property",
+			mutate: func(in *store.AttributeDefinitionInput) {
+				property := "UID"
+				in.VCardProperty = &property
+			},
+			wantMsg: "reserved",
+		},
+		{
 			name:    "negative display order",
 			mutate:  func(in *store.AttributeDefinitionInput) { in.DisplayOrder = -1 },
 			wantMsg: "display_order",

@@ -1,8 +1,11 @@
-// Package vcardmap projects native Msgvault records onto vCard property
-// values. It deliberately depends on nothing but the standard library and the
-// store's projection types: it produces unescaped component values, and the
-// vCard codec owns delimiter escaping, folding, and rendering. Roadmap PR 8
-// consumes these functions when it builds vCard resources.
+// Package vcardmap projects native Msgvault records onto vCard properties.
+//
+// The employment helpers in this file produce unescaped component values that
+// the vCard codec escapes, folds, and renders. The person projection
+// (ProjectPersonEnvelope) goes further: it renders a semantic snapshot into
+// managed property occurrences and merges them into a vcard.ResourceEnvelope,
+// so it depends on the vcard package for property construction, escaping, and
+// envelope merging, and on google/uuid to recognise counterpart UIDs.
 package vcardmap
 
 import (

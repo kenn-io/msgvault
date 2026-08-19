@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/jsonexact"
+	// The store's only dependency on the vCard package (here and in the
+	// resource envelope files). The edge must stay one-directional: vcard
+	// never imports store.
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 var (
@@ -304,6 +308,9 @@ func validateAttributeDefinitionInput(
 		if !attributeVCardPropertyPattern.MatchString(property) {
 			return invalid("vcard_property %q must be an uppercase vCard token", property)
 		}
+		if vcard.IsReservedProperty(property) {
+			return invalid("vcard_property %q is reserved for card framing or runtime metadata", property)
+		}
 		input.VCardProperty = &property
 	}
 	if input.DerivedSource != nil {
@@ -531,7 +538,10 @@ func (s *Store) CreateAttributeDefinitionContext(
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		var createErr error
 		definition, createErr = s.createAttributeDefinitionTx(ctx, tx, validated)
-		return createErr
+		if createErr != nil {
+			return createErr
+		}
+		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 	})
 	if err != nil {
 		return nil, err
@@ -647,6 +657,13 @@ func (s *Store) getAttributeDefinitionBySlugTx(
 func (s *Store) ListAttributeDefinitionsContext(
 	ctx context.Context, filter AttributeDefinitionFilter,
 ) ([]AttributeDefinition, error) {
+	return s.listAttributeDefinitionsContext(ctx, s.db, filter)
+}
+
+func (s *Store) listAttributeDefinitionsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	filter AttributeDefinitionFilter,
+) ([]AttributeDefinition, error) {
 	conditions := make([]string, 0, 2)
 	args := make([]any, 0, 2)
 	if filter.ObjectType != "" {
@@ -660,7 +677,7 @@ func (s *Store) ListAttributeDefinitionsContext(
 	if len(conditions) > 0 {
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := queryer.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s FROM attribute_definitions
 		%s
 		ORDER BY object_type, display_order, slug, id
@@ -770,7 +787,13 @@ func (s *Store) UpdateAttributeDefinitionContext(
 			return fmt.Errorf("update attribute definition %d: %w", id, scanErr)
 		}
 		definition = updated
-		return nil
+		// Label, description, and display order are presentation only and
+		// never projected; toggling is_active adds or removes the definition
+		// from every snapshot that lists it.
+		if update.IsActive == nil {
+			return nil
+		}
+		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, updated)
 	})
 	if err != nil {
 		return nil, err
@@ -816,7 +839,7 @@ func (s *Store) DeleteAttributeDefinitionContext(
 		); err != nil {
 			return fmt.Errorf("delete attribute definition %d: %w", id, err)
 		}
-		return nil
+		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 	})
 }
 

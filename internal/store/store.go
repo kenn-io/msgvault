@@ -1141,6 +1141,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
+		return fmt.Errorf("scope vCard identities to source resources: %w", err)
+	}
 	// Recovery reads only acceptances whose link transaction may not have
 	// committed. Create this after the legacy-column loop: schema.sql is
 	// executed before that loop, so an upgraded table does not have the column

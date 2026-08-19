@@ -5295,6 +5295,7 @@ export interface components {
             /** Format: int64 */
             source_person_id: number;
             source_ref?: string;
+            source_resource_uid?: string;
             start_date?: components["schemas"]["PartialDate"];
             status: string;
             /** Format: int64 */
@@ -5410,6 +5411,7 @@ export interface components {
             reviewed_by?: string;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             status: string;
             /** Format: date-time */
             updated_at: string;
@@ -6156,6 +6158,7 @@ export interface components {
             pref?: number;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             /** Format: date-time */
             superseded_at?: string;
             type_label?: string;
@@ -6179,6 +6182,7 @@ export interface components {
             pref?: number;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             type_label?: string;
             type_tokens?: string[] | null;
             vcard?: components["schemas"]["VCardIdentity"];

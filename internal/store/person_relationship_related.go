@@ -56,6 +56,7 @@ type RelationshipReview struct {
 	AcceptedRelationshipID *int64                   `json:"accepted_relationship_id,omitempty"`
 	Source                 Provenance               `json:"source"`
 	SourceRef              *string                  `json:"source_ref,omitempty"`
+	SourceResourceUID      *string                  `json:"source_resource_uid,omitempty"`
 	VCardIdentity          VCardIdentity            `json:"vcard_identity"`
 	CreatedBy              string                   `json:"created_by"`
 	ReviewedBy             *string                  `json:"reviewed_by,omitempty"`
@@ -67,14 +68,15 @@ type RelationshipReview struct {
 // RelatedImport is one already-parsed RELATED property occurrence. RawType is
 // exactly one TYPE parameter value; callers must split parameter lists first.
 type RelatedImport struct {
-	PersonID      int64
-	RawValue      string
-	RawType       string
-	ValueKind     RelatedValueKind
-	Source        Provenance
-	SourceRef     *string
-	VCardIdentity VCardIdentity
-	Actor         string
+	PersonID          int64
+	RawValue          string
+	RawType           string
+	ValueKind         RelatedValueKind
+	Source            Provenance
+	SourceRef         *string
+	SourceResourceUID *string
+	VCardIdentity     VCardIdentity
+	Actor             string
 }
 
 // RelatedResolution contains either an automatic edge or a durable review.
@@ -228,7 +230,7 @@ func (s *Store) resolveMatchedRelatedValue(
 	relationshipType RelationshipType, actor string,
 ) (*RelatedResolution, error) {
 	var resolution *RelatedResolution
-	err := s.retryRelatedOnBusy(ctx, func() error {
+	err := retryContendedWriteErr(ctx, s, "resolve RELATED occurrence", func() error {
 		return s.withTxContext(ctx, func(tx *loggedTx) error {
 			review, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
 			if err != nil && !errors.Is(err, ErrRelationshipReviewNotFound) {
@@ -242,34 +244,6 @@ func (s *Store) resolveMatchedRelatedValue(
 		return nil, err
 	}
 	return resolution, nil
-}
-
-// retryRelatedOnBusy re-runs a whole resolution transaction when the database
-// reports a busy or serialization failure. SQLite begins deferred
-// transactions, so a transaction that read the occurrence ledger before its
-// first write can fail its lock upgrade with SQLITE_BUSY_SNAPSHOT when a
-// concurrent resolver commits first; a fresh attempt takes a new snapshot
-// that observes the winner's decision. The wrapped operations are idempotent
-// by construction (ON CONFLICT occurrence claims, duplicate edge reuse), so
-// re-execution is safe.
-func (s *Store) retryRelatedOnBusy(ctx context.Context, fn func() error) error {
-	const maxAttempts = 5
-	var err error
-	for attempt := range maxAttempts {
-		err = fn()
-		if err == nil || !s.dialect.IsBusyError(err) {
-			return err
-		}
-		// Immediate re-runs can all land inside the winning transaction's
-		// still-open window on a loaded machine; a short growing pause lets
-		// it commit so the next snapshot observes its decision.
-		select {
-		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return fmt.Errorf("resolve RELATED occurrence: gave up after %d attempts on busy: %w", maxAttempts, err)
 }
 
 // resolveMatchedOccurrenceTx dispatches on the occurrence's ledger state;
@@ -347,7 +321,8 @@ func (s *Store) createMatchedRelatedEdgeTx(
 	input := PersonRelationshipInput{
 		SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
 		TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
-		VCardIdentity: in.VCardIdentity, Actor: actor,
+		SourceResourceUID: in.SourceResourceUID,
+		VCardIdentity:     in.VCardIdentity, Actor: actor,
 	}
 	validatedActor, notes, err := validatePersonRelationshipInput(input)
 	if err != nil {
@@ -373,6 +348,10 @@ func (s *Store) addOrReuseActivePersonRelationshipTx(
 		if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matched_related_edge`); rollbackErr != nil {
 			return nil, fmt.Errorf("roll back relationship savepoint: %w", rollbackErr)
 		}
+		// The reused edge keeps its own identity and provenance. The review
+		// row still names the occurrence it stood for, with its source; the
+		// vCard projection reads that binding from the snapshot and applies it
+		// per resource, which a single identity on the edge could not do.
 		return s.activePersonRelationshipTx(ctx, tx, input.SourcePersonID, input.TargetPersonID, input.TypeSlug)
 	}
 	if err != nil {
@@ -395,13 +374,14 @@ func (s *Store) insertAcceptedOccurrenceTx(
 	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO person_relationship_reviews (
 			person_id, raw_related_value, raw_related_type, value_kind, matched_person_id,
-			status, source, source_ref, vcard_property, vcard_group,
+			status, source, source_ref, source_resource_uid, vcard_property, vcard_group,
 			vcard_prop_id, vcard_pid, vcard_altid, created_by, reviewed_by, reviewed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
 		ON CONFLICT DO NOTHING
 		RETURNING id`, s.dialect.Now()),
 		in.PersonID, in.RawValue, in.RawType, string(in.ValueKind), matchedPersonID,
 		string(RelationshipReviewAccepted), string(in.Source), normalizeNullableText(in.SourceRef),
+		normalizeNullableText(in.SourceResourceUID),
 		nullableVCardText(in.VCardIdentity.Property), nullableVCardPointer(in.VCardIdentity.Group),
 		nullableVCardPointer(in.VCardIdentity.PropID), nullableVCardText(strings.Join(in.VCardIdentity.PID, ",")),
 		nullableVCardPointer(in.VCardIdentity.AltID), actor, actor,
@@ -411,6 +391,9 @@ func (s *Store) insertAcceptedOccurrenceTx(
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("record resolved relationship occurrence: %w", err)
+	}
+	if err := s.bumpPersonVCardProjectionsTx(ctx, tx, in.PersonID); err != nil {
+		return nil, false, err
 	}
 	review, err = s.relationshipReviewTx(ctx, tx, insertedID)
 	if err != nil {
@@ -461,7 +444,7 @@ func (s *Store) activePersonRelationshipTx(ctx context.Context, tx *loggedTx, so
 
 func (s *Store) stageRelationshipReview(ctx context.Context, in RelatedImport, matchedPersonID int64, personMatched bool, actor string) (*RelationshipReview, error) {
 	var review *RelationshipReview
-	err := s.retryRelatedOnBusy(ctx, func() error {
+	err := retryContendedWriteErr(ctx, s, "stage relationship review", func() error {
 		return s.stageRelationshipReviewOnce(ctx, in, matchedPersonID, personMatched, actor, &review)
 	})
 	if err != nil {
@@ -479,18 +462,24 @@ func (s *Store) stageRelationshipReviewOnce(ctx context.Context, in RelatedImpor
 		err := tx.QueryRowContext(ctx, `
 			INSERT INTO person_relationship_reviews (
 				person_id, raw_related_value, raw_related_type, value_kind, matched_person_id,
-				status, source, source_ref, vcard_property, vcard_group, vcard_prop_id,
+				status, source, source_ref, source_resource_uid, vcard_property, vcard_group, vcard_prop_id,
 				vcard_pid, vcard_altid, created_by
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT DO NOTHING
 			RETURNING id`,
 			in.PersonID, in.RawValue, in.RawType, string(in.ValueKind), matchedPersonArg(matchedPersonID, personMatched),
 			string(RelationshipReviewPending), string(in.Source), normalizeNullableText(in.SourceRef),
+			normalizeNullableText(in.SourceResourceUID),
 			nullableVCardText(in.VCardIdentity.Property), nullableVCardPointer(in.VCardIdentity.Group),
 			nullableVCardPointer(in.VCardIdentity.PropID), nullableVCardText(strings.Join(in.VCardIdentity.PID, ",")),
 			nullableVCardPointer(in.VCardIdentity.AltID), actor,
 		).Scan(&insertedID)
 		if err == nil {
+			if err := s.bumpPersonVCardProjectionsTx(
+				ctx, tx, in.PersonID,
+			); err != nil {
+				return err
+			}
 			*review, err = s.relationshipReviewTx(ctx, tx, insertedID)
 			return err
 		}
@@ -503,6 +492,13 @@ func (s *Store) stageRelationshipReviewOnce(ctx context.Context, in RelatedImpor
 }
 
 func (s *Store) ListRelationshipReviewsContext(ctx context.Context, opts RelationshipReviewListOptions) ([]RelationshipReview, error) {
+	return s.listRelationshipReviewsContext(ctx, s.db, opts)
+}
+
+func (s *Store) listRelationshipReviewsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	opts RelationshipReviewListOptions,
+) ([]RelationshipReview, error) {
 	query := `SELECT ` + relationshipReviewColumns + ` FROM person_relationship_reviews WHERE 1 = 1`
 	args := make([]any, 0, 2)
 	if opts.Status != "" {
@@ -514,7 +510,7 @@ func (s *Store) ListRelationshipReviewsContext(ctx context.Context, opts Relatio
 		args = append(args, opts.PersonID)
 	}
 	query += ` ORDER BY person_id, id`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list relationship reviews: %w", err)
 	}
@@ -550,13 +546,22 @@ func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, t
 	if relatedPersonID <= 0 {
 		return nil, fmt.Errorf("%w: related person ID must be positive", ErrRelationshipReviewInvalid)
 	}
+	return retryContendedWrite(ctx, s, "accept relationship review",
+		func() (*PersonRelationship, error) {
+			return s.acceptRelationshipReviewOnce(ctx, id, typeSlug, relatedPersonID, trimmedActor)
+		})
+}
+
+func (s *Store) acceptRelationshipReviewOnce(
+	ctx context.Context, id int64, typeSlug string, relatedPersonID int64, trimmedActor string,
+) (*PersonRelationship, error) {
 	var edge *PersonRelationship
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		review, txErr := s.claimRelationshipReviewTx(ctx, tx, id, RelationshipReviewAccepted, trimmedActor)
 		if txErr != nil {
 			return txErr
 		}
-		input := PersonRelationshipInput{SourcePersonID: relatedPersonID, TargetPersonID: review.PersonID, TypeSlug: typeSlug, Source: review.Source, SourceRef: review.SourceRef, VCardIdentity: review.VCardIdentity, Actor: trimmedActor}
+		input := PersonRelationshipInput{SourcePersonID: relatedPersonID, TargetPersonID: review.PersonID, TypeSlug: typeSlug, Source: review.Source, SourceRef: review.SourceRef, SourceResourceUID: review.SourceResourceUID, VCardIdentity: review.VCardIdentity, Actor: trimmedActor}
 		validatedActor, notes, txErr := validatePersonRelationshipInput(input)
 		if txErr != nil {
 			return txErr
@@ -583,16 +588,16 @@ func (s *Store) RejectRelationshipReviewContext(ctx context.Context, id int64, a
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRelationshipReviewInvalid, err)
 	}
-	var rejected *RelationshipReview
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		var err error
-		rejected, err = s.claimRelationshipReviewTx(ctx, tx, id, RelationshipReviewRejected, trimmedActor)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return rejected, nil
+	return retryContendedWrite(ctx, s, "reject relationship review",
+		func() (*RelationshipReview, error) {
+			var rejected *RelationshipReview
+			err := s.withTxContext(ctx, func(tx *loggedTx) error {
+				var err error
+				rejected, err = s.claimRelationshipReviewTx(ctx, tx, id, RelationshipReviewRejected, trimmedActor)
+				return err
+			})
+			return rejected, err
+		})
 }
 
 // recordAcceptedRelationshipTx points an accepted review at the edge that
@@ -604,7 +609,7 @@ func (s *Store) recordAcceptedRelationshipTx(ctx context.Context, tx *loggedTx, 
 		WHERE id = ?`, s.dialect.Now()), edgeID, reviewID); err != nil {
 		return fmt.Errorf("record accepted relationship for review %d: %w", reviewID, err)
 	}
-	return nil
+	return s.bumpRelationshipReviewVCardProjectionsTx(ctx, tx, reviewID)
 }
 
 func (s *Store) claimRelationshipReviewTx(ctx context.Context, tx *loggedTx, id int64, status RelationshipReviewStatus, actor string) (*RelationshipReview, error) {
@@ -620,6 +625,9 @@ func (s *Store) claimRelationshipReviewTx(ctx context.Context, tx *loggedTx, id 
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim relationship review %d: %w", id, err)
+	}
+	if err := s.bumpRelationshipReviewVCardProjectionsTx(ctx, tx, id); err != nil {
+		return nil, err
 	}
 	return s.relationshipReviewTx(ctx, tx, updatedID)
 }
@@ -638,7 +646,7 @@ func (s *Store) relationshipReviewPendingMissTx(ctx context.Context, tx *loggedT
 
 const relationshipReviewColumns = `
 	id, person_id, raw_related_value, raw_related_type, value_kind,
-	matched_person_id, status, accepted_relationship_id, source, source_ref,
+	matched_person_id, status, accepted_relationship_id, source, source_ref, source_resource_uid,
 	vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid,
 	created_by, reviewed_by, reviewed_at, created_at, updated_at
 `
@@ -659,6 +667,7 @@ func (s *Store) relationshipReviewByOccurrenceTx(ctx context.Context, tx *logged
 		FROM person_relationship_reviews
 		WHERE person_id = ? AND raw_related_type = ? AND raw_related_value = ? AND source = ?
 		  AND COALESCE(source_ref, '') = ?
+		  AND COALESCE(source_resource_uid, '') = ?
 		  AND COALESCE(vcard_property, '') = ?
 		  AND COALESCE(vcard_group, '') = ?
 		  AND COALESCE(vcard_prop_id, '') = ?
@@ -666,6 +675,7 @@ func (s *Store) relationshipReviewByOccurrenceTx(ctx context.Context, tx *logged
 		  AND COALESCE(vcard_altid, '') = ?`,
 		in.PersonID, in.RawType, in.RawValue, string(in.Source),
 		normalizedRelationshipReviewSourceRef(in.SourceRef),
+		normalizedRelationshipReviewSourceRef(in.SourceResourceUID),
 		in.VCardIdentity.Property,
 		relationshipReviewIdentityPointer(in.VCardIdentity.Group),
 		relationshipReviewIdentityPointer(in.VCardIdentity.PropID),
@@ -701,23 +711,25 @@ func matchedPersonArg(id int64, matched bool) sql.NullInt64 {
 
 func scanRelationshipReview(row scanner) (*RelationshipReview, error) {
 	var (
-		review     RelationshipReview
-		valueKind  string
-		matchedID  sql.NullInt64
-		status     string
-		acceptedID sql.NullInt64
-		source     string
-		sourceRef  sql.NullString
-		property   sql.NullString
-		group      sql.NullString
-		propID     sql.NullString
-		pid        sql.NullString
-		altID      sql.NullString
-		reviewedBy sql.NullString
-		reviewedAt sql.NullTime
+		review            RelationshipReview
+		valueKind         string
+		matchedID         sql.NullInt64
+		status            string
+		acceptedID        sql.NullInt64
+		source            string
+		sourceRef         sql.NullString
+		sourceResourceUID sql.NullString
+		property          sql.NullString
+		group             sql.NullString
+		propID            sql.NullString
+		pid               sql.NullString
+		altID             sql.NullString
+		reviewedBy        sql.NullString
+		reviewedAt        sql.NullTime
 	)
 	if err := row.Scan(&review.ID, &review.PersonID, &review.RawRelatedValue, &review.RawRelatedType, &valueKind,
-		&matchedID, &status, &acceptedID, &source, &sourceRef, &property, &group, &propID, &pid, &altID,
+		&matchedID, &status, &acceptedID, &source, &sourceRef, &sourceResourceUID,
+		&property, &group, &propID, &pid, &altID,
 		&review.CreatedBy, &reviewedBy, &reviewedAt, &review.CreatedAt, &review.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -732,6 +744,9 @@ func scanRelationshipReview(row scanner) (*RelationshipReview, error) {
 	}
 	if sourceRef.Valid {
 		review.SourceRef = &sourceRef.String
+	}
+	if sourceResourceUID.Valid {
+		review.SourceResourceUID = &sourceResourceUID.String
 	}
 	review.VCardIdentity = scanVCardIdentity(property, group, propID, pid, altID)
 	if reviewedBy.Valid {

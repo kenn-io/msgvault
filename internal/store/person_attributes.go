@@ -80,6 +80,13 @@ const personAttributeValueColumns = `
 func (s *Store) ListPersonAttributeValuesContext(
 	ctx context.Context, personID int64, query PersonAttributeQuery,
 ) ([]PersonAttributeValue, error) {
+	return s.listPersonAttributeValuesContext(ctx, s.db, personID, query)
+}
+
+func (s *Store) listPersonAttributeValuesContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	personID int64, query PersonAttributeQuery,
+) ([]PersonAttributeValue, error) {
 	conditions := []string{"v.person_id = ?"}
 	args := []any{personID}
 	if query.DefinitionSlug != "" {
@@ -96,7 +103,7 @@ func (s *Store) ListPersonAttributeValuesContext(
 			"CASE WHEN v.active_until IS NULL AND v.superseded_at IS NULL " +
 			"THEN 0 ELSE 1 END, v.active_from DESC, v.id DESC"
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := queryer.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s
 		FROM person_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
@@ -135,7 +142,7 @@ func (s *Store) SetPersonAttributeValueContext(
 	if input.Ordinal != nil && *input.Ordinal < 0 {
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
-	return retryContendedWrite(s, "set person attribute value",
+	return retryContendedWrite(ctx, s, "set person attribute value",
 		func() (*PersonAttributeWrite, error) {
 			return s.setPersonAttributeValueOnce(ctx, input)
 		})
@@ -223,6 +230,11 @@ func (s *Store) setPersonAttributeValueOnce(
 			return err
 		}
 		write.Value = inserted
+		if err := s.bumpPersonVCardProjectionsTx(
+			ctx, tx, input.PersonID,
+		); err != nil {
+			return err
+		}
 		if input.DryRun {
 			write.Value.ID = 0
 			if write.Superseded != nil {
@@ -395,7 +407,7 @@ func (s *Store) SupersedePersonAttributeValueContext(
 	if input.At != nil {
 		at = input.At.UTC()
 	}
-	return retryContendedWrite(s, "supersede person attribute value",
+	return retryContendedWrite(ctx, s, "supersede person attribute value",
 		func() (*PersonAttributeWrite, error) {
 			return s.supersedePersonAttributeValueOnce(ctx, at, input)
 		})
@@ -444,6 +456,11 @@ func (s *Store) supersedePersonAttributeValueOnce(
 			return err
 		}
 		write.Superseded = closed
+		if err := s.bumpPersonVCardProjectionsTx(
+			ctx, tx, input.PersonID,
+		); err != nil {
+			return err
+		}
 		if input.DryRun {
 			return errAttributeDryRun
 		}

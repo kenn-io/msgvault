@@ -13,6 +13,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 func subsetPersonDefinition(slug string) AttributeDefinitionInput {
@@ -3046,9 +3048,12 @@ func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testin
 		Slug: "mentor", ForwardLabel: "mentor", ReverseLabel: "mentee",
 	})
 	require.NoError(err)
+	// The mentor edge carries the resource it was read from, which scopes
+	// its vCard identity to one card and must survive the copy verbatim.
 	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
 		SourcePersonID: alice.ID, TargetPersonID: bob.ID, TypeSlug: "mentor",
-		Source: ProvenanceUser, Actor: "user",
+		Source: ProvenanceVCardImport, Actor: "system",
+		SourceRef: new("book"), SourceResourceUID: new("card-alice"),
 	})
 	require.NoError(err)
 	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
@@ -3060,7 +3065,8 @@ func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testin
 	// An automatically imported relationship that the user then deleted:
 	// its accepted-with-cleared-edge tombstone must survive the copy.
 	in := RelatedImport{PersonID: alice.ID, RawValue: bob.VCardUID, RawType: "friend",
-		ValueKind: RelatedValueKindText, Source: ProvenanceVCardImport, Actor: "system"}
+		ValueKind: RelatedValueKindText, Source: ProvenanceVCardImport, Actor: "system",
+		SourceRef: new("book"), SourceResourceUID: new("card-alice")}
 	resolved, err := source.ResolveRelatedValueContext(ctx, in)
 	require.NoError(err)
 	require.NotNil(resolved.Relationship)
@@ -3085,6 +3091,11 @@ func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testin
 	slugs := make([]string, 0, len(views))
 	for _, view := range views {
 		slugs = append(slugs, view.Relationship.TypeSlug)
+		if view.Relationship.TypeSlug == "mentor" {
+			require.NotNil(view.Relationship.SourceResourceUID,
+				"the copied edge must keep its source resource")
+			assert.Equal("card-alice", *view.Relationship.SourceResourceUID)
+		}
 	}
 	assert.ElementsMatch([]string{"mentor", "parent"}, slugs)
 
@@ -3096,6 +3107,9 @@ func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testin
 	require.NotNil(again.Review)
 	assert.Equal(RelationshipReviewAccepted, again.Review.Status)
 	assert.Nil(again.Review.AcceptedRelationshipID)
+	require.NotNil(again.Review.SourceResourceUID,
+		"the copied review must keep its source resource")
+	assert.Equal("card-alice", *again.Review.SourceResourceUID)
 }
 
 func TestCopySubsetExcludesRelationshipsByDefault(t *testing.T) {
@@ -3322,4 +3336,377 @@ func TestCopySubset_OrganizationRecordReferencesFollowIdentityPolicy(t *testing.
 	require.Len(identityValues, 1)
 	assert.Equal(write.Value.ID, identityValues[0].ID)
 	assert.Equal(target.ID, *identityValues[0].Value.RecordID)
+}
+
+func TestCopySubsetVCardResourcesRequireExplicitOptIn(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Bob Example\r\n" +
+		"item1.EMAIL;TYPE=home;X-KEEP=one:bob@example.com\r\n" +
+		"item1.X-ABLABEL:Home\r\nEND:VCARD\r\n")
+	envelope, err := vcard.ParseResourceEnvelope(raw)
+	require.NoError(err)
+	envelope.SourceRef = "address-book"
+	envelope.SourceResourceUID = "source-bob"
+	envelope.CanonicalPersonUID = person.VCardUID
+	created, err := source.PutVCardResourceEnvelopeContext(
+		ctx, VCardResourceEnvelopeInput{PersonID: person.ID, Envelope: envelope},
+	)
+	require.NoError(err)
+	_, err = source.RetirePersonUIDAliasContext(
+		ctx, "retired-bob", &person.ID, "merge",
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	// An opaque body carries data classes the structured options gate
+	// separately, so nothing short of its own opt-in may copy it.
+	requireResourcesWithheld := func(name string, options CopySubsetOptions) {
+		dir := filepath.Join(t.TempDir(), name)
+		_, err := CopySubsetWithOptions(srcDB, dir, 1, options)
+		require.NoError(err, name)
+		subset, err := Open(filepath.Join(dir, "msgvault.db"))
+		require.NoError(err, name)
+		t.Cleanup(func() { _ = subset.Close() })
+		_, err = subset.GetVCardResourceEnvelopeContext(
+			ctx, "address-book", "source-bob",
+		)
+		require.ErrorIs(err, ErrVCardResourceNotFound, name)
+		_, err = subset.ResolveRetiredPersonUIDContext(ctx, "retired-bob")
+		require.ErrorIs(err, ErrPersonUIDAliasNotFound, name)
+	}
+	requireResourcesWithheld("default", CopySubsetOptions{})
+	requireResourcesWithheld("profiles", CopySubsetOptions{IncludeProfiles: true})
+
+	// Bodies without the profiles they project into is not a subset that
+	// can be built, and the caller must hear that rather than get an
+	// archive with the resources quietly missing.
+	orphanDir := filepath.Join(t.TempDir(), "resources-without-profiles")
+	_, err = CopySubsetWithOptions(srcDB, orphanDir, 1,
+		CopySubsetOptions{IncludeVCardResources: true})
+	require.ErrorIs(err, ErrSubsetVCardResourcesRequireProfiles)
+	_, statErr := os.Stat(filepath.Join(orphanDir, "msgvault.db"))
+	require.ErrorIs(statErr, os.ErrNotExist,
+		"a refused subset must leave no database behind")
+
+	resourcesDir := filepath.Join(t.TempDir(), "resources")
+	_, err = CopySubsetWithOptions(srcDB, resourcesDir, 1, CopySubsetOptions{
+		IncludeProfiles: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	resourcesSubset, err := Open(filepath.Join(resourcesDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = resourcesSubset.Close() })
+	copied, err := resourcesSubset.GetVCardResourceEnvelopeContext(
+		ctx, "address-book", "source-bob",
+	)
+	require.NoError(err)
+	assert.Equal(created.ID, copied.ID)
+	assert.Equal(created.Revision, copied.Revision)
+	assert.Equal(raw, copied.OriginalRawBytes)
+	assert.Equal(raw, copied.StoredBody)
+	assert.Equal(created.PropertyTree, copied.PropertyTree)
+	assert.Equal(created.Residue, copied.Residue)
+	alias, err := resourcesSubset.ResolveRetiredPersonUIDContext(ctx, "retired-bob")
+	require.NoError(err)
+	require.NotNil(alias.SurvivingPersonID)
+	assert.Equal(person.ID, *alias.SurvivingPersonID)
+}
+
+func TestCopySubsetVCardResourcesFollowProfileBoundary(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	included, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	offSubsetParticipant, err := source.EnsureParticipant(
+		"vcard-outsider@example.com", "vCard Outsider", "example.com")
+	require.NoError(err)
+	excluded, _, err := source.CreatePersonFromParticipant(offSubsetParticipant)
+	require.NoError(err)
+
+	putEnvelope := func(person *Person, sourceUID, formattedName string) {
+		raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:" + formattedName +
+			"\r\nEND:VCARD\r\n")
+		envelope, err := vcard.ParseResourceEnvelope(raw)
+		require.NoError(err, sourceUID)
+		envelope.SourceRef = "address-book"
+		envelope.SourceResourceUID = sourceUID
+		envelope.CanonicalPersonUID = person.VCardUID
+		_, err = source.PutVCardResourceEnvelopeContext(
+			ctx, VCardResourceEnvelopeInput{PersonID: person.ID, Envelope: envelope},
+		)
+		require.NoError(err, sourceUID)
+		_, err = source.RetirePersonUIDAliasContext(
+			ctx, "retired-"+sourceUID, &person.ID, "merge",
+		)
+		require.NoError(err, sourceUID)
+	}
+	putEnvelope(included, "source-included", "Bob Example")
+	putEnvelope(excluded, "source-excluded", "Outsider Example")
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "resources")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 1, CopySubsetOptions{
+		IncludeProfiles: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	subset, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = subset.Close() })
+
+	copied, err := subset.GetVCardResourceEnvelopeContext(
+		ctx, "address-book", "source-included",
+	)
+	require.NoError(err)
+	assert.Equal(included.ID, copied.PersonID)
+	alias, err := subset.ResolveRetiredPersonUIDContext(ctx, "retired-source-included")
+	require.NoError(err)
+	require.NotNil(alias.SurvivingPersonID)
+	assert.Equal(included.ID, *alias.SurvivingPersonID)
+
+	_, err = subset.GetPerson(excluded.ID)
+	require.ErrorIs(err, ErrPersonNotFound,
+		"a person without messages stays outside the default identity boundary")
+	_, err = subset.GetVCardResourceEnvelopeContext(
+		ctx, "address-book", "source-excluded",
+	)
+	require.ErrorIs(err, ErrVCardResourceNotFound,
+		"the opt-in must not reach vCard bodies of people outside the subset")
+	_, err = subset.ResolveRetiredPersonUIDContext(ctx, "retired-source-excluded")
+	require.ErrorIs(err, ErrPersonUIDAliasNotFound)
+}
+
+func TestCopySubsetReleasesVCardMappingsToOwnersLeftBehind(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	included, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	offSubsetParticipant, err := source.EnsureParticipant(
+		"vcard-outsider@example.com", "vCard Outsider", "example.com")
+	require.NoError(err)
+	excluded, _, err := source.CreatePersonFromParticipant(offSubsetParticipant)
+	require.NoError(err)
+	insider, _, err := source.CreatePersonFromParticipant(3)
+	require.NoError(err)
+	outsideEdge, err := source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: included.ID, TargetPersonID: excluded.ID, TypeSlug: "kin",
+		Source: ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+	insideEdge, err := source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: included.ID, TargetPersonID: insider.ID, TypeSlug: "sibling",
+		Source: ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+
+	// One RELATED line is owned by the edge to the outsider, the other by the
+	// edge to a person inside the subset; FN is owned by nothing. All are
+	// opaque bytes to the copy, and only the mapping to the edge the subset
+	// leaves behind may go.
+	raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Bob Example\r\n" +
+		"RELATED;TYPE=kin;X-KEEP=yes:urn:uuid:" + excluded.VCardUID + "\r\n" +
+		"RELATED;TYPE=sibling:urn:uuid:" + insider.VCardUID + "\r\n" +
+		"END:VCARD\r\n")
+	envelope, err := vcard.ParseResourceEnvelope(raw)
+	require.NoError(err)
+	envelope.SourceRef = "address-book"
+	envelope.SourceResourceUID = "source-included"
+	envelope.CanonicalPersonUID = included.VCardUID
+	related := make([]vcard.PropertyOccurrence, 0, 2)
+	for _, occurrence := range envelope.PropertyTree {
+		if occurrence.Property.Name == "RELATED" {
+			related = append(related, occurrence)
+		}
+	}
+	require.Len(related, 2)
+	envelope.NativeMappings = []vcard.NativeMapping{{
+		Identity: related[0].Identity, SourceRef: "address-book",
+		Table: "person_relationships", RowID: outsideEdge.ID, Field: "related",
+		Kind: vcard.HandlingRelationship,
+	}, {
+		Identity: related[1].Identity, SourceRef: "address-book",
+		Table: "person_relationships", RowID: insideEdge.ID, Field: "related",
+		Kind: vcard.HandlingRelationship,
+	}}
+	envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
+	_, err = source.PutVCardResourceEnvelopeContext(
+		ctx, VCardResourceEnvelopeInput{PersonID: included.ID, Envelope: envelope},
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "resources")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 1, CopySubsetOptions{
+		IncludeProfiles: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	subset, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = subset.Close() })
+
+	_, err = subset.GetPersonRelationshipContext(ctx, outsideEdge.ID)
+	require.ErrorIs(err, ErrPersonRelationshipNotFound,
+		"the edge to the outsider stays outside the subset")
+	_, err = subset.GetPersonRelationshipContext(ctx, insideEdge.ID)
+	require.NoError(err, "the edge between included people is copied")
+	copied, err := subset.GetVCardResourceEnvelopeContext(
+		ctx, "address-book", "source-included",
+	)
+	require.NoError(err)
+	assert.Equal(raw, copied.StoredBody, "the body is copied verbatim")
+	require.Len(copied.NativeMappings, 1,
+		"only the mapping to an owner the subset did not copy may go: a later "+
+			"projection would retire that occurrence as stale instead of keeping it")
+	assert.Equal(insideEdge.ID, copied.NativeMappings[0].RowID,
+		"a mapping to a copied owner is kept, though its owner lands after the envelope")
+	require.Len(copied.Residue, 2, "the released occurrence joins the residue")
+	assert.Equal("RELATED", copied.Residue[1].Property.Name)
+	assert.Contains(copied.Residue[1].Property.RawValue, excluded.VCardUID)
+}
+
+func TestCopySubsetCopiesRelationshipsFromSourcesWithoutResourceColumn(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	alice, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	bob, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	_, err = source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: alice.ID, TargetPersonID: bob.ID, TypeSlug: "kin",
+		Source: ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+	resolved, err := source.ResolveRelatedValueContext(ctx, RelatedImport{
+		PersonID: alice.ID, RawValue: bob.VCardUID, RawType: "friend",
+		ValueKind: RelatedValueKindText, Source: ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(resolved.Review)
+	// An archive whose relationship tables predate the resource column: the
+	// column and the index that names it are gone, exactly as before the
+	// upgrade that added them.
+	_, err = source.DB().Exec(`
+		DROP INDEX idx_person_relationship_reviews_occurrence_unique;
+		ALTER TABLE person_relationship_reviews DROP COLUMN source_resource_uid;
+		ALTER TABLE person_relationships DROP COLUMN source_resource_uid;
+	`)
+	require.NoError(err, "simulate a source that predates source_resource_uid")
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{IncludeProfiles: true})
+	require.NoError(err, "profiles copy from a pre-upgrade source")
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+	views, err := destination.ListPersonRelationshipsContext(
+		ctx, alice.ID, PersonRelationshipListOptions{})
+	require.NoError(err)
+	require.Len(views, 2)
+	for _, view := range views {
+		assert.Nil(view.Relationship.SourceResourceUID,
+			"rows the source never scoped to a resource stay unscoped")
+	}
+	reviews, err := destination.ListRelationshipReviewsContext(
+		ctx, RelationshipReviewListOptions{PersonID: alice.ID})
+	require.NoError(err)
+	require.NotEmpty(reviews)
+	assert.Nil(reviews[0].SourceResourceUID)
+}
+
+func TestCopySubsetReleasesReviewMappingsWhoseAcceptedEdgeWasFiltered(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	included, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	offSubsetParticipant, err := source.EnsureParticipant(
+		"vcard-outsider@example.com", "vCard Outsider", "example.com")
+	require.NoError(err)
+	excluded, _, err := source.CreatePersonFromParticipant(offSubsetParticipant)
+	require.NoError(err)
+	// An accepted review whose edge reaches outside the subset boundary. The
+	// copy keeps the ledger row but clears the edge, so the review will never
+	// reappear in a projection snapshot.
+	resolved, err := source.ResolveRelatedValueContext(ctx, RelatedImport{
+		PersonID: included.ID, RawValue: excluded.VCardUID, RawType: "kin",
+		ValueKind: RelatedValueKindText, Source: ProvenanceVCardImport, Actor: "importer",
+		SourceRef: new("address-book"), SourceResourceUID: new("source-included"),
+	})
+	require.NoError(err)
+	require.NotNil(resolved.Review)
+	require.NotNil(resolved.Relationship)
+
+	raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Bob Example\r\n" +
+		"RELATED;TYPE=kin;X-KEEP=yes:urn:uuid:" + excluded.VCardUID + "\r\n" +
+		"END:VCARD\r\n")
+	envelope, err := vcard.ParseResourceEnvelope(raw)
+	require.NoError(err)
+	envelope.SourceRef = "address-book"
+	envelope.SourceResourceUID = "source-included"
+	envelope.CanonicalPersonUID = included.VCardUID
+	var related vcard.PropertyOccurrence
+	for _, occurrence := range envelope.PropertyTree {
+		if occurrence.Property.Name == "RELATED" {
+			related = occurrence
+		}
+	}
+	require.NotEmpty(related.Property.Name)
+	envelope.NativeMappings = []vcard.NativeMapping{{
+		Identity: related.Identity, SourceRef: "address-book",
+		Table: "person_relationship_reviews", RowID: resolved.Review.ID, Field: "related",
+		Kind: vcard.HandlingRelationship,
+	}}
+	envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
+	_, err = source.PutVCardResourceEnvelopeContext(
+		ctx, VCardResourceEnvelopeInput{PersonID: included.ID, Envelope: envelope},
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "resources")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 1, CopySubsetOptions{
+		IncludeProfiles: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	subset, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = subset.Close() })
+
+	reviews, err := subset.ListRelationshipReviewsContext(
+		ctx, RelationshipReviewListOptions{PersonID: included.ID})
+	require.NoError(err)
+	require.Len(reviews, 1, "the ledger row survives the copy")
+	assert.Nil(reviews[0].AcceptedRelationshipID, "with its filtered edge cleared")
+	copied, err := subset.GetVCardResourceEnvelopeContext(
+		ctx, "address-book", "source-included",
+	)
+	require.NoError(err)
+	assert.Empty(copied.NativeMappings,
+		"a review whose accepted edge the copy filtered out never reappears in a "+
+			"snapshot, so keeping its mapping would delete the occurrence on the "+
+			"next projection")
+	require.Len(copied.Residue, 2)
+	assert.Equal("RELATED", copied.Residue[1].Property.Name)
 }

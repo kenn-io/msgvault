@@ -5720,6 +5720,7 @@ type PersonRelationship struct {
 	Source             string        `json:"source" validate:"required"`
 	SourcePersonID     int64         `json:"source_person_id"`
 	SourceRef          *string       `json:"source_ref,omitempty"`
+	SourceResourceUID  *string       `json:"source_resource_uid,omitempty"`
 	StartDate          *PartialDate  `json:"start_date,omitempty"`
 	Status             string        `json:"status" validate:"required"`
 	TargetPersonID     int64         `json:"target_person_id"`
@@ -5963,6 +5964,7 @@ type RelationshipReview struct {
 	ReviewedBy             *string       `json:"reviewed_by,omitempty"`
 	Source                 string        `json:"source" validate:"required"`
 	SourceRef              *string       `json:"source_ref,omitempty"`
+	SourceResourceUID      *string       `json:"source_resource_uid,omitempty"`
 	Status                 string        `json:"status" validate:"required"`
 	UpdatedAt              time.Time     `json:"updated_at" validate:"required"`
 	ValueKind              string        `json:"value_kind" validate:"required"`
@@ -7590,20 +7592,21 @@ type VCardIdentity struct {
 }
 
 type ValueEnvelope struct {
-	ActiveFrom   *time.Time    `json:"active_from,omitempty"`
-	ActiveUntil  *time.Time    `json:"active_until,omitempty"`
-	Confidence   *float64      `json:"confidence,omitempty"`
-	CreatedAt    time.Time     `json:"created_at" validate:"required"`
-	ID           int64         `json:"id"`
-	Ordinal      int64         `json:"ordinal"`
-	Pref         *int64        `json:"pref,omitempty"`
-	Source       string        `json:"source" validate:"required"`
-	SourceRef    *string       `json:"source_ref,omitempty"`
-	SupersededAt *time.Time    `json:"superseded_at,omitempty"`
-	TypeLabel    *string       `json:"type_label,omitempty"`
-	TypeTokens   []string      `json:"type_tokens,omitempty"`
-	UpdatedAt    time.Time     `json:"updated_at" validate:"required"`
-	Vcard        VCardIdentity `json:"vcard"`
+	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
+	Confidence        *float64      `json:"confidence,omitempty"`
+	CreatedAt         time.Time     `json:"created_at" validate:"required"`
+	ID                int64         `json:"id"`
+	Ordinal           int64         `json:"ordinal"`
+	Pref              *int64        `json:"pref,omitempty"`
+	Source            string        `json:"source" validate:"required"`
+	SourceRef         *string       `json:"source_ref,omitempty"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
+	SupersededAt      *time.Time    `json:"superseded_at,omitempty"`
+	TypeLabel         *string       `json:"type_label,omitempty"`
+	TypeTokens        []string      `json:"type_tokens,omitempty"`
+	UpdatedAt         time.Time     `json:"updated_at" validate:"required"`
+	Vcard             VCardIdentity `json:"vcard"`
 }
 
 func (v ValueEnvelope) Validate() error {
@@ -7629,16 +7632,17 @@ func (v ValueEnvelope) Validate() error {
 }
 
 type ValueEnvelopeInput struct {
-	ActiveFrom  *time.Time     `json:"active_from,omitempty"`
-	ActiveUntil *time.Time     `json:"active_until,omitempty"`
-	Confidence  *float64       `json:"confidence,omitempty"`
-	Ordinal     *int64         `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
-	Pref        *int64         `json:"pref,omitempty"`
-	Source      string         `json:"source" validate:"required"`
-	SourceRef   *string        `json:"source_ref,omitempty"`
-	TypeLabel   *string        `json:"type_label,omitempty"`
-	TypeTokens  []string       `json:"type_tokens,omitempty"`
-	Vcard       *VCardIdentity `json:"vcard,omitempty"`
+	ActiveFrom        *time.Time     `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time     `json:"active_until,omitempty"`
+	Confidence        *float64       `json:"confidence,omitempty"`
+	Ordinal           *int64         `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
+	Pref              *int64         `json:"pref,omitempty"`
+	Source            string         `json:"source" validate:"required"`
+	SourceRef         *string        `json:"source_ref,omitempty"`
+	SourceResourceUID *string        `json:"source_resource_uid,omitempty"`
+	TypeLabel         *string        `json:"type_label,omitempty"`
+	TypeTokens        []string       `json:"type_tokens,omitempty"`
+	Vcard             *VCardIdentity `json:"vcard,omitempty"`
 }
 
 func (v ValueEnvelopeInput) Validate() error {

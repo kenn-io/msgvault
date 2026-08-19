@@ -355,7 +355,24 @@ func requireOneSeededDefinitionRow(result sql.Result, slug, action string) error
 func (s *Store) reconcileSeededDefinition(
 	ctx context.Context, existing *AttributeDefinition, seed AttributeDefinitionInput,
 ) error {
-	return s.reconcileSeededDefinitionWith(ctx, s.db, existing, seed)
+	validated, err := validateAttributeDefinitionInput(seed)
+	if err != nil {
+		return fmt.Errorf("validate seeded attribute definition %s: %w", seed.Slug, err)
+	}
+	if !seededDefinitionDiffers(existing, validated) {
+		return nil
+	}
+	// A drifted seed can change vcard_property, which every person's native
+	// projection reads, so the repair and the projection bump have to be one
+	// transaction: a bump that lands separately leaves a window in which an
+	// envelope commit sees the new definition and no reason to reject a
+	// render made from the old one.
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.reconcileSeededDefinitionWith(ctx, tx, existing, seed); err != nil {
+			return err
+		}
+		return s.bumpAllVCardProjectionsTx(ctx, tx)
+	})
 }
 
 func (s *Store) reconcileSeededDefinitionWith(

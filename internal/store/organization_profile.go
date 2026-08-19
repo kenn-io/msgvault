@@ -199,9 +199,22 @@ func (s *Store) ReplaceOrganizationProfileContext(
 	if err != nil {
 		return nil, err
 	}
+	// Same lock order as ReplaceOrganizationContext (organization, then its
+	// employed persons), so the same employment-write deadlock applies and the
+	// same retry resolves it.
+	return retryContendedWrite(ctx, s, "replace organization profile",
+		func() (*OrganizationProfile, error) {
+			return s.replaceOrganizationProfileOnce(ctx, id, expectedRevision, prepared)
+		})
+}
+
+func (s *Store) replaceOrganizationProfileOnce(
+	ctx context.Context, id, expectedRevision int64,
+	prepared *preparedOrganizationProfile,
+) (*OrganizationProfile, error) {
 	now := time.Now().UTC()
 	var profile *OrganizationProfile
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE organizations
 			SET revision = revision + 1, updated_at = %s
@@ -216,6 +229,9 @@ func (s *Store) ReplaceOrganizationProfileContext(
 		}
 		if changed == 0 {
 			return organizationMutableCASMissTx(ctx, tx, id, expectedRevision)
+		}
+		if err := s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
 		}
 		organization, err := getOrganizationTx(ctx, tx, id)
 		if err != nil {
@@ -425,7 +441,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationNameInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationName, desired OrganizationNameInput) bool {
@@ -450,7 +467,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationIdentifierInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationIdentifier, desired OrganizationIdentifierInput) bool {
@@ -474,7 +492,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationAddressInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationAddress, desired OrganizationAddressInput) bool {
@@ -520,7 +539,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row preparedOrganizationContact, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.input.Envelope.VCard, Source: row.input.Envelope.Source,
-				SourceRef: row.input.Envelope.SourceRef,
+				SourceRef:         row.input.Envelope.SourceRef,
+				SourceResourceUID: row.input.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationContactPoint, desired preparedOrganizationContact) bool {
@@ -559,7 +579,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationMediaInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationMedia, desired OrganizationMediaInput) bool {
@@ -588,7 +609,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationCategoryInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationCategory, desired OrganizationCategoryInput) bool {
@@ -696,6 +718,7 @@ func reconcileOrganizationCollection[C any, D any](
 func organizationValueDiscriminator(env ValueEnvelopeInput) string {
 	identity := organizationVCardIdentityKey(ValueEnvelope{
 		VCard: env.VCard, Source: env.Source, SourceRef: env.SourceRef,
+		SourceResourceUID: env.SourceResourceUID,
 	})
 	ordinal := ""
 	if env.Ordinal != nil {
@@ -708,7 +731,7 @@ func organizationValueDiscriminator(env ValueEnvelopeInput) string {
 }
 
 // organizationVCardIdentityKey returns the identity that a source can keep
-// stable while the value itself changes. The database uses the same four
+// stable while the value itself changes. The database uses the same five
 // fields for its active property-identity uniqueness indexes.
 func organizationVCardIdentityKey(env ValueEnvelope) string {
 	if env.SourceRef == nil || *env.SourceRef == "" ||
@@ -716,7 +739,8 @@ func organizationVCardIdentityKey(env ValueEnvelope) string {
 		return ""
 	}
 	return strings.Join([]string{
-		string(env.Source), *env.SourceRef, env.VCard.Property, *env.VCard.PropID,
+		string(env.Source), *env.SourceRef, derefString(env.SourceResourceUID),
+		env.VCard.Property, *env.VCard.PropID,
 	}, "\x1f")
 }
 
@@ -732,6 +756,7 @@ func organizationEnvelopeMatches(current ValueEnvelope, desired ValueEnvelopeInp
 		!equalVCardIdentity(current.VCard, desired.VCard) ||
 		current.Source != desired.Source ||
 		!equalOptionalString(current.SourceRef, desired.SourceRef) ||
+		!equalOptionalString(current.SourceResourceUID, desired.SourceResourceUID) ||
 		!equalOptionalFloat(current.Confidence, desired.Confidence) {
 		return false
 	}
@@ -1159,12 +1184,15 @@ func organizationMediaRowFingerprint(row OrganizationMedia) string {
 	}, "\x1f")
 }
 
-type organizationProfileQuerier interface {
+// contextRowsQuerier is the multi-row read surface shared by *loggedTx and the
+// store's own database handle, so a listing can run inside a caller's
+// transaction or on its own.
+type contextRowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 }
 
 func (s *Store) loadOrganizationProfileContext(
-	ctx context.Context, queryer organizationProfileQuerier,
+	ctx context.Context, queryer contextRowsQuerier,
 	organization *Organization, includeSuperseded bool,
 ) (*OrganizationProfile, error) {
 	profile := &OrganizationProfile{Organization: *organization}
@@ -1204,7 +1232,7 @@ func (s *Store) loadOrganizationProfileContext(
 }
 
 func queryOrganizationRows[T any](
-	ctx context.Context, queryer organizationProfileQuerier, base string,
+	ctx context.Context, queryer contextRowsQuerier, base string,
 	organizationID int64, includeSuperseded bool,
 	scan func(scanner) (*T, error),
 ) ([]T, error) {

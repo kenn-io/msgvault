@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/vcard"
+
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
@@ -25,11 +27,18 @@ type CopyResult struct {
 	Elapsed       time.Duration
 }
 
+// ErrSubsetVCardResourcesRequireProfiles reports IncludeVCardResources
+// without IncludeProfiles: native vCard bodies are only copied alongside the
+// structured profiles they project into.
+var ErrSubsetVCardResourcesRequireProfiles = errors.New(
+	"vCard resources require profiles: set IncludeProfiles with IncludeVCardResources")
+
 // CopySubsetOptions controls optional sensitive metadata included in a subset.
 type CopySubsetOptions struct {
-	IncludeIdentity   bool
-	IncludeAttributes bool
-	IncludeProfiles   bool
+	IncludeIdentity       bool
+	IncludeAttributes     bool
+	IncludeProfiles       bool
+	IncludeVCardResources bool
 }
 
 // CopySubset copies rowCount most recent messages (and all referenced
@@ -47,9 +56,11 @@ type CopySubsetOptions struct {
 // shared person bindings until every included cluster and person binding set
 // is complete, which exposes identifiers of linked identities that have no
 // messages in the subset. Structured profile values and their provenance
-// dependencies require the separate IncludeProfiles opt-in. Person attribute
-// definitions and values also require callers to explicitly use
-// CopySubsetWithOptions with IncludeAttributes. When attributes are included, person-valued references
+// dependencies require the separate IncludeProfiles opt-in, and the native
+// vCard bodies they were projected from require IncludeVCardResources on top
+// of it. Person attribute definitions and values also require callers to
+// explicitly use CopySubsetWithOptions with IncludeAttributes. When attributes
+// are included, person-valued references
 // follow the same boundary: references to excluded people are omitted by
 // default, while IncludeIdentity follows references from included people and
 // copies each target's complete identity profile.
@@ -76,11 +87,23 @@ func CopySubset(
 // rows. Organization attribute values ride IncludeAttributes but only exist
 // in the subset when IncludeProfiles also ran, because the organizations
 // themselves cross the boundary through employment references.
+// IncludeVCardResources copies the native vCard resources of copied people:
+// the opaque original wire bodies and the retired-UID aliases that resolve to
+// them. A body is copied whole rather than decomposed, so it carries whatever
+// the contact source recorded — custom properties, RELATED entries naming
+// people outside the subset, and residue no structured table represents —
+// which is why it needs its own authorization instead of riding
+// IncludeProfiles. It requires IncludeProfiles, whose structured fields the
+// body projects into; asking for the bodies without the profiles is an error
+// rather than a silent no-op.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
 	if rowCount <= 0 {
 		return nil, fmt.Errorf("rowCount must be positive, got %d", rowCount)
+	}
+	if options.IncludeVCardResources && !options.IncludeProfiles {
+		return nil, ErrSubsetVCardResourcesRequireProfiles
 	}
 
 	start := time.Now()
@@ -500,6 +523,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, err
 		}
 		result.Sources += extraSources
+		if options.IncludeVCardResources {
+			if err := copyVCardResourceEnvelopes(tx); err != nil {
+				return nil, err
+			}
+		}
 		if err := copySubsetRelationships(tx); err != nil {
 			return nil, err
 		}
@@ -652,6 +680,15 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			  )`); err != nil {
 				return nil, fmt.Errorf("copy organization attribute values: %w", err)
 			}
+		}
+	}
+	// Every table a native vCard mapping can own a row in — profile
+	// components, relationships, employments, attribute values — has been
+	// copied or deliberately skipped by now, so this is the first point at
+	// which a mapping's owner being absent means the subset left it behind.
+	if options.IncludeProfiles && options.IncludeVCardResources {
+		if err := releaseVCardMappingsToMissingOwners(tx); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1094,11 +1131,23 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		)`); err != nil {
 		return fmt.Errorf("link relationship type inverses: %w", err)
 	}
+	// source_resource_uid arrived after the relationship tables; a source
+	// that predates it has no column to read, and its rows carry no resource.
+	edgeResourceUID, err := sourceColumnExpression(
+		tx, "person_relationships", "source_resource_uid", "edge")
+	if err != nil {
+		return err
+	}
+	reviewResourceUID, err := sourceColumnExpression(
+		tx, "person_relationship_reviews", "source_resource_uid", "review")
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO person_relationships (
 		    id, source_person_id, target_person_id, relationship_type_id,
 		    start_year, start_month, start_day, end_year, end_month, end_day,
-		    status, notes, source, source_ref, confidence,
+		    status, notes, source, source_ref, source_resource_uid, confidence,
 		    vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid,
 		    created_by, updated_by, revision, created_at, updated_at
 		)
@@ -1107,7 +1156,8 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    destination_type.id,
 		    edge.start_year, edge.start_month, edge.start_day,
 		    edge.end_year, edge.end_month, edge.end_day,
-		    edge.status, edge.notes, edge.source, edge.source_ref, edge.confidence,
+		    edge.status, edge.notes, edge.source, edge.source_ref,
+		    ` + edgeResourceUID + `, edge.confidence,
 		    edge.vcard_property, edge.vcard_group, edge.vcard_prop_id,
 		    edge.vcard_pid, edge.vcard_altid,
 		    edge.created_by, edge.updated_by, edge.revision,
@@ -1125,9 +1175,9 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		INSERT INTO person_relationship_reviews (
 		    id, person_id, raw_related_value, raw_related_type, value_kind,
 		    matched_person_id, accepted_relationship_id, status, source,
-		    source_ref, vcard_property, vcard_group, vcard_prop_id, vcard_pid,
-		    vcard_altid, created_by, reviewed_by, reviewed_at,
-		    created_at, updated_at
+		    source_ref, source_resource_uid, vcard_property, vcard_group,
+		    vcard_prop_id, vcard_pid, vcard_altid, created_by, reviewed_by,
+		    reviewed_at, created_at, updated_at
 		)
 		SELECT
 		    review.id, review.person_id, review.raw_related_value,
@@ -1137,6 +1187,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    CASE WHEN review.accepted_relationship_id IN (SELECT id FROM person_relationships)
 		         THEN review.accepted_relationship_id END,
 		    review.status, review.source, review.source_ref,
+		    ` + reviewResourceUID + `,
 		    review.vcard_property, review.vcard_group, review.vcard_prop_id,
 		    review.vcard_pid, review.vcard_altid,
 		    review.created_by, review.reviewed_by, review.reviewed_at,
@@ -1321,6 +1372,161 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 	return extraSources, nil
 }
 
+// copyVCardResourceEnvelopes copies the native vCard resources of people
+// already inside the subset. Callers gate it on IncludeVCardResources: an
+// envelope body is opaque here, so the person boundary is the only boundary
+// this copy can enforce over its contents. The source-table checks retain
+// compatibility with archives created before the envelope and retired-UID
+// tables existed.
+func copyVCardResourceEnvelopes(tx *sql.Tx) error {
+	hasEnvelopes, err := sourceTableExists(tx, "vcard_resource_envelopes")
+	if err != nil {
+		return fmt.Errorf("check vCard resource envelope schema: %w", err)
+	}
+	if hasEnvelopes {
+		if _, err := copyByName(tx, "vcard_resource_envelopes",
+			`person_id IN (SELECT id FROM persons)`); err != nil {
+			return fmt.Errorf("copy vCard resource envelopes: %w", err)
+		}
+	}
+
+	hasAliases, err := sourceTableExists(tx, "person_uid_aliases")
+	if err != nil {
+		return fmt.Errorf("check retired person UID alias schema: %w", err)
+	}
+	if hasAliases {
+		if _, err := copyByName(tx, "person_uid_aliases",
+			`surviving_person_id IN (SELECT id FROM persons)`); err != nil {
+			return fmt.Errorf("copy retired person UID aliases: %w", err)
+		}
+	}
+	return nil
+}
+
+// vcardMappingOwnerTables are the tables a native vCard mapping may name as
+// the owner of an occurrence, matching the projection's owner fields in
+// internal/vcardmap. Every one of them has an integer id primary key. A mapping
+// on a table not listed here is left as it is: the projection leaves such
+// mappings alone too.
+var vcardMappingOwnerTables = map[string]struct{}{
+	"persons": {}, "person_names": {}, "person_contact_points": {},
+	"person_addresses": {}, "person_dates": {}, "person_categories": {},
+	"person_media": {}, "person_attribute_values": {}, "employments": {},
+	"person_relationships": {}, "person_relationship_reviews": {},
+}
+
+// releaseVCardMappingsToMissingOwners drops, from every copied envelope, the
+// native mappings whose owner rows the subset did not copy — an edge to a
+// person outside it, an attribute value the options excluded — and returns
+// their occurrences to the residue. The body is copied verbatim; only the
+// metadata's claim of ownership goes, so a later projection sees an unmanaged
+// occurrence to keep rather than a stale owner whose occurrence it retires. It
+// must run only after every owner table has been copied.
+func releaseVCardMappingsToMissingOwners(tx *sql.Tx) error {
+	copied, err := listCopiedVCardEnvelopeMetadata(tx)
+	if err != nil {
+		return err
+	}
+	for _, envelope := range copied {
+		if err := releaseEnvelopeMappingsToMissingOwners(tx, envelope.id, envelope.metadata); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type copiedVCardEnvelope struct {
+	id       int64
+	metadata string
+}
+
+// listCopiedVCardEnvelopeMetadata reads every copied envelope's metadata up
+// front, so the mapping release below can update rows without a cursor open.
+func listCopiedVCardEnvelopeMetadata(tx *sql.Tx) ([]copiedVCardEnvelope, error) {
+	rows, err := tx.Query(`SELECT id, resource_metadata FROM vcard_resource_envelopes ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list copied vCard resource envelopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	copied := make([]copiedVCardEnvelope, 0)
+	for rows.Next() {
+		var envelope copiedVCardEnvelope
+		if err := rows.Scan(&envelope.id, &envelope.metadata); err != nil {
+			return nil, fmt.Errorf("scan copied vCard resource envelope: %w", err)
+		}
+		copied = append(copied, envelope)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list copied vCard resource envelopes: %w", err)
+	}
+	return copied, nil
+}
+
+func releaseEnvelopeMappingsToMissingOwners(tx *sql.Tx, id int64, metadata string) error {
+	envelope, err := vcard.UnmarshalResourceMetadata([]byte(metadata))
+	if err != nil {
+		return fmt.Errorf("decode copied vCard resource envelope %d: %w", id, err)
+	}
+	kept := make([]vcard.NativeMapping, 0, len(envelope.NativeMappings))
+	for _, mapping := range envelope.NativeMappings {
+		present, err := vcardMappingOwnerCopied(tx, mapping)
+		if err != nil {
+			return fmt.Errorf("check owner of vCard resource envelope %d mapping: %w", id, err)
+		}
+		if present {
+			kept = append(kept, mapping)
+		}
+	}
+	if len(kept) == len(envelope.NativeMappings) {
+		return nil
+	}
+	envelope.NativeMappings = kept
+	envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, kept)
+	updated, err := vcard.MarshalResourceMetadata(envelope)
+	if err != nil {
+		return fmt.Errorf("encode copied vCard resource envelope %d: %w", id, err)
+	}
+	if _, err := tx.Exec(`UPDATE vcard_resource_envelopes SET resource_metadata = ? WHERE id = ?`,
+		string(updated), id); err != nil {
+		return fmt.Errorf("release vCard resource envelope %d mappings: %w", id, err)
+	}
+	return nil
+}
+
+// vcardMappingOwnerCopied reports whether the mapping's owner row exists in
+// the destination and still stands behind its occurrence. Owners on tables
+// outside vcardMappingOwnerTables count as present, since nothing here can
+// check them. A relationship review whose accepted edge this copy filtered
+// out keeps its ledger row but will never reappear in a projection snapshot,
+// so its mapping counts as released too.
+func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, error) {
+	if _, known := vcardMappingOwnerTables[mapping.Table]; !known {
+		return true, nil
+	}
+	var one int
+	err := tx.QueryRow(`SELECT 1 FROM `+mapping.Table+` WHERE id = ?`, mapping.RowID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if mapping.Table != "person_relationship_reviews" {
+		return true, nil
+	}
+	var edgeCleared bool
+	err = tx.QueryRow(`
+		SELECT copied.accepted_relationship_id IS NULL
+		   AND original.accepted_relationship_id IS NOT NULL
+		FROM person_relationship_reviews copied
+		JOIN src.person_relationship_reviews original ON original.id = copied.id
+		WHERE copied.id = ?`, mapping.RowID).Scan(&edgeCleared)
+	if err != nil {
+		return false, fmt.Errorf("check copied review %d accepted edge: %w", mapping.RowID, err)
+	}
+	return !edgeCleared, nil
+}
+
 // copyMessages copies the selected messages, naming the columns the source and
 // destination have in common, read from the two schemas at copy time.
 func copyMessages(tx *sql.Tx) error {
@@ -1410,6 +1616,20 @@ func sourceTableExists(tx *sql.Tx, table string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// sourceColumnExpression returns the qualified column reference when the
+// source table has the column and NULL when it does not, so an explicit
+// column list can read archives that predate the column.
+func sourceColumnExpression(tx *sql.Tx, table, column, alias string) (string, error) {
+	present, err := sourceColumnExists(tx, table, column)
+	if err != nil {
+		return "", fmt.Errorf("check %s.%s: %w", table, column, err)
+	}
+	if !present {
+		return "NULL", nil
+	}
+	return alias + "." + column, nil
 }
 
 func sourceColumnExists(tx *sql.Tx, table, column string) (bool, error) {

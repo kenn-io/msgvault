@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/textimport"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/ianaindex"
 )
 
@@ -75,11 +76,41 @@ func ParseFile(path string) ([]Contact, error) {
 }
 
 func decodeLegacyText(property Property) (string, error) {
+	raw, err := decodeLegacyRawValue(property)
+	if err != nil {
+		return "", err
+	}
+	return UnescapeText(raw)
+}
+
+// decodeLegacyRawValue performs the legacy transfer and character-set
+// decoding while preserving vCard syntax escapes and structured delimiters.
+// Callers that need a TEXT value can apply UnescapeText afterwards; canonical
+// v4 rendering must keep those delimiters in values such as N and ADR.
+func decodeLegacyRawValue(property Property) (string, error) {
+	raw, quotedPrintable, err := decodeLegacyTransfer(property)
+	if err != nil {
+		return "", err
+	}
+	if quotedPrintable {
+		raw = escapeDecodedLineBreaks(raw)
+	}
+	return raw, nil
+}
+
+// decodeLegacyTransfer undoes the quoted-printable transfer encoding and the
+// declared charset of a legacy value and reports whether it was
+// quoted-printable. Line breaks are left as decoded: a quoted-printable body
+// in a multibyte charset (UTF-16) carries CR and LF bytes inside its code
+// units, and rewriting them before the charset decode corrupts it, so callers
+// escape them only once the value is UTF-8.
+func decodeLegacyTransfer(property Property) (string, bool, error) {
 	raw := property.RawValue
-	if propertyIsQuotedPrintable(property) {
+	quotedPrintable := propertyIsQuotedPrintable(property)
+	if quotedPrintable {
 		decoded, err := DecodeQuotedPrintable(raw)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		raw = decoded
 	}
@@ -87,21 +118,45 @@ func decodeLegacyText(property Property) (string, error) {
 	if charset != "" && !strings.EqualFold(charset, "UTF-8") && !strings.EqualFold(charset, "UTF8") {
 		encoding, err := ianaindex.MIME.Encoding(charset)
 		if err != nil {
-			return "", fmt.Errorf("resolve charset %q: %w", charset, err)
+			return "", false, fmt.Errorf("resolve charset %q: %w", charset, err)
 		}
 		if encoding == nil {
-			return "", fmt.Errorf("charset %q is not supported", charset)
+			return "", false, fmt.Errorf("charset %q is not supported", charset)
 		}
 		decoded, err := encoding.NewDecoder().String(raw)
 		if err != nil {
-			return "", fmt.Errorf("decode charset %q: %w", charset, err)
+			return "", false, fmt.Errorf("decode charset %q: %w", charset, err)
 		}
 		raw = decoded
 	}
 	if !utf8.ValidString(raw) {
-		return "", errors.New("decoded text is not valid UTF-8")
+		if charset != "" {
+			return "", false, errors.New("decoded text is not valid UTF-8")
+		}
+		// vCard 2.1 leaves the charset of undeclared text to the producer, and
+		// ISO-8859-1 is what those producers wrote in practice. Every byte
+		// sequence decodes under it, so undeclared non-UTF-8 text is read as
+		// Latin-1 rather than refused, and the card stays canonicalizable.
+		decoded, err := charmap.ISO8859_1.NewDecoder().String(raw)
+		if err != nil {
+			return "", false, fmt.Errorf("decode undeclared legacy text as ISO-8859-1: %w", err)
+		}
+		raw = decoded
 	}
-	return UnescapeText(raw)
+	return raw, quotedPrintable, nil
+}
+
+// escapeDecodedLineBreaks turns the literal line breaks a quoted-printable
+// value may carry (=0D=0A in vCard 2.1 NOTE and ADR values) into the vCard
+// text escape, which is the only form a content line can hold them in. Only
+// line breaks are touched: structured delimiters and existing escapes pass
+// through untouched.
+func escapeDecodedLineBreaks(value string) string {
+	if !strings.ContainsAny(value, "\r\n") {
+		return value
+	}
+	replacer := strings.NewReplacer("\r\n", "\\n", "\r", "\\n", "\n", "\\n")
+	return replacer.Replace(value)
 }
 
 func propertyCharset(property Property) string {

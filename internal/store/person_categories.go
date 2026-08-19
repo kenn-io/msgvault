@@ -111,7 +111,7 @@ func (s *Store) addPersonCategoryTx(
 		created_at, updated_at
 	) VALUES (
 		?, ?, ?,
-		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		`+s.dialect.Now()+`, `+s.dialect.Now()+`
 	) RETURNING id`, args...).Scan(&id); err != nil {
 		return nil, fmt.Errorf("add person category: %w", err)

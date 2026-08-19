@@ -56,6 +56,7 @@ type PersonRelationship struct {
 	Notes              *string            `json:"notes,omitempty"`
 	Source             Provenance         `json:"source"`
 	SourceRef          *string            `json:"source_ref,omitempty"`
+	SourceResourceUID  *string            `json:"source_resource_uid,omitempty"`
 	Confidence         *float64           `json:"confidence,omitempty"`
 	VCardIdentity      VCardIdentity      `json:"vcard_identity"`
 	CreatedBy          string             `json:"created_by"`
@@ -68,17 +69,18 @@ type PersonRelationship struct {
 // PersonRelationshipInput declares one relationship. Status is derived from
 // EndDate rather than accepted as mutable caller input.
 type PersonRelationshipInput struct {
-	SourcePersonID int64
-	TargetPersonID int64
-	TypeSlug       string
-	StartDate      *PartialDate
-	EndDate        *PartialDate
-	Notes          *string
-	Source         Provenance
-	SourceRef      *string
-	Confidence     *float64
-	VCardIdentity  VCardIdentity
-	Actor          string
+	SourcePersonID    int64
+	TargetPersonID    int64
+	TypeSlug          string
+	StartDate         *PartialDate
+	EndDate           *PartialDate
+	Notes             *string
+	Source            Provenance
+	SourceRef         *string
+	SourceResourceUID *string
+	Confidence        *float64
+	VCardIdentity     VCardIdentity
+	Actor             string
 }
 
 // PersonRelationshipPatch replaces one or both mutable edge values through a
@@ -96,7 +98,7 @@ const personRelationshipColumns = `
 	t.slug, t.forward_label, t.reverse_label, t.is_symmetric,
 	r.start_year, r.start_month, r.start_day,
 	r.end_year, r.end_month, r.end_day, r.status, r.notes,
-	r.source, r.source_ref, r.confidence,
+	r.source, r.source_ref, r.source_resource_uid, r.confidence,
 	r.vcard_property, r.vcard_group, r.vcard_prop_id, r.vcard_pid, r.vcard_altid,
 	r.created_by, r.updated_by, r.revision, r.created_at, r.updated_at
 `
@@ -116,16 +118,19 @@ func (s *Store) AddPersonRelationshipContext(
 	if err != nil {
 		return nil, err
 	}
-	var created *PersonRelationship
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		var txErr error
-		created, txErr = s.addPersonRelationshipTx(ctx, tx, input, actor, notes)
-		return txErr
-	})
-	if err != nil {
-		return nil, err
-	}
-	return created, nil
+	// Relationship writes bump both endpoints' projections and so lock two
+	// person rows; a concurrent person deletion or another edge write can
+	// take them in the other order on PostgreSQL. A deadlock victim retries.
+	return retryContendedWrite(ctx, s, "add person relationship",
+		func() (*PersonRelationship, error) {
+			var created *PersonRelationship
+			err := s.withTxContext(ctx, func(tx *loggedTx) error {
+				var txErr error
+				created, txErr = s.addPersonRelationshipTx(ctx, tx, input, actor, notes)
+				return txErr
+			})
+			return created, err
+		})
 }
 
 func validatePersonRelationshipInput(input PersonRelationshipInput) (string, sql.NullString, error) {
@@ -174,7 +179,8 @@ func (s *Store) addPersonRelationshipTx(
 	args = append(args, relationshipDateArgs(input.EndDate)...)
 	args = append(args,
 		string(statusForInterval(input.EndDate)), notes,
-		string(input.Source), normalizeNullableText(input.SourceRef), confidenceArg(input.Confidence),
+		string(input.Source), normalizeNullableText(input.SourceRef),
+		normalizeNullableText(input.SourceResourceUID), confidenceArg(input.Confidence),
 		nullableVCardText(input.VCardIdentity.Property),
 		nullableVCardPointer(input.VCardIdentity.Group),
 		nullableVCardPointer(input.VCardIdentity.PropID),
@@ -187,10 +193,10 @@ func (s *Store) addPersonRelationshipTx(
 			INSERT INTO person_relationships (
 				source_person_id, target_person_id, relationship_type_id,
 				start_year, start_month, start_day, end_year, end_month, end_day,
-				status, notes, source, source_ref, confidence,
+				status, notes, source, source_ref, source_resource_uid, confidence,
 				vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid,
 				created_by, updated_by
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING id
 	`, args...).Scan(&insertedID)
 	if err != nil {
@@ -198,6 +204,14 @@ func (s *Store) addPersonRelationshipTx(
 			return nil, fmt.Errorf("%w: %d -> %d as %q", ErrPersonRelationshipDuplicate, sourceID, targetID, relationshipType.Slug)
 		}
 		return nil, fmt.Errorf("add person relationship: %w", err)
+	}
+	// Both endpoints: the edge is projected onto each person's card. Bumping
+	// here rather than in the callers covers the direct add, the RELATED
+	// import path, and review acceptance alike.
+	if err := s.bumpPersonVCardProjectionsTx(
+		ctx, tx, sourceID, targetID,
+	); err != nil {
+		return nil, err
 	}
 	return s.personRelationshipTx(ctx, tx, insertedID)
 }
@@ -284,8 +298,18 @@ func (s *Store) PatchPersonRelationshipContext(
 	if err != nil {
 		return nil, err
 	}
+	return retryContendedWrite(ctx, s, "patch person relationship",
+		func() (*PersonRelationship, error) {
+			return s.patchPersonRelationshipOnce(ctx, id, expectedRevision, patch, notes, trimmedActor)
+		})
+}
+
+func (s *Store) patchPersonRelationshipOnce(
+	ctx context.Context, id, expectedRevision int64, patch PersonRelationshipPatch,
+	notes sql.NullString, trimmedActor string,
+) (*PersonRelationship, error) {
 	var updated *PersonRelationship
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if patch.UpdateEndDate {
 			current, txErr := s.personRelationshipTx(ctx, tx, id)
 			if txErr != nil {
@@ -295,42 +319,24 @@ func (s *Store) PatchPersonRelationshipContext(
 				return txErr
 			}
 		}
-		var updatedID int64
-		var txErr error
-		switch {
-		case patch.UpdateEndDate && patch.UpdateNotes:
-			args := append(relationshipDateArgs(patch.EndDate), string(RelationshipStatusEnded), notes,
-				trimmedActor, id, expectedRevision)
-			txErr = tx.QueryRowContext(ctx, fmt.Sprintf(`
-				UPDATE person_relationships
-				SET end_year = ?, end_month = ?, end_day = ?, status = ?, notes = ?, updated_by = ?,
-				    revision = revision + 1, updated_at = %s
-				WHERE id = ? AND revision = ?
-				RETURNING id
-			`, s.dialect.Now()), args...).Scan(&updatedID)
-		case patch.UpdateEndDate:
-			args := append(relationshipDateArgs(patch.EndDate), string(RelationshipStatusEnded), trimmedActor,
-				id, expectedRevision)
-			txErr = tx.QueryRowContext(ctx, fmt.Sprintf(`
-				UPDATE person_relationships
-				SET end_year = ?, end_month = ?, end_day = ?, status = ?, updated_by = ?,
-				    revision = revision + 1, updated_at = %s
-				WHERE id = ? AND revision = ?
-				RETURNING id
-			`, s.dialect.Now()), args...).Scan(&updatedID)
-		default:
-			txErr = tx.QueryRowContext(ctx, fmt.Sprintf(`
-				UPDATE person_relationships
-				SET notes = ?, updated_by = ?, revision = revision + 1, updated_at = %s
-				WHERE id = ? AND revision = ?
-				RETURNING id
-			`, s.dialect.Now()), notes, trimmedActor, id, expectedRevision).Scan(&updatedID)
-		}
+		assignments, args := personRelationshipPatchAssignments(patch, notes)
+		args = append(args, trimmedActor, id, expectedRevision)
+		var updatedID, sourceID, targetID int64
+		txErr := tx.QueryRowContext(ctx, fmt.Sprintf(`
+			UPDATE person_relationships
+			SET %s, updated_by = ?, revision = revision + 1, updated_at = %s
+			WHERE id = ? AND revision = ?
+			RETURNING id, source_person_id, target_person_id
+		`, assignments, s.dialect.Now()), args...).Scan(&updatedID, &sourceID, &targetID)
 		if errors.Is(txErr, sql.ErrNoRows) {
 			return s.personRelationshipCASMissTx(ctx, tx, id)
 		}
 		if txErr != nil {
 			return fmt.Errorf("patch person relationship %d: %w", id, txErr)
+		}
+		// Only a patch that matched changed either endpoint's card.
+		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, sourceID, targetID); err != nil {
+			return err
 		}
 		updated, txErr = s.personRelationshipTx(ctx, tx, updatedID)
 		return txErr
@@ -341,19 +347,46 @@ func (s *Store) PatchPersonRelationshipContext(
 	return updated, nil
 }
 
+// personRelationshipPatchAssignments renders the SET fragment for the mutable
+// edge values a patch supplies, with the bind arguments in the same order.
+func personRelationshipPatchAssignments(
+	patch PersonRelationshipPatch, notes sql.NullString,
+) (string, []any) {
+	assignments := make([]string, 0, 3)
+	args := make([]any, 0, 5)
+	if patch.UpdateEndDate {
+		assignments = append(assignments, "end_year = ?, end_month = ?, end_day = ?, status = ?")
+		args = append(relationshipDateArgs(patch.EndDate), string(RelationshipStatusEnded))
+	}
+	if patch.UpdateNotes {
+		assignments = append(assignments, "notes = ?")
+		args = append(args, notes)
+	}
+	return strings.Join(assignments, ", "), args
+}
+
 func (s *Store) DeletePersonRelationshipContext(ctx context.Context, id, expectedRevision int64) error {
+	return retryContendedWriteErr(ctx, s, "delete person relationship", func() error {
+		return s.deletePersonRelationshipOnce(ctx, id, expectedRevision)
+	})
+}
+
+func (s *Store) deletePersonRelationshipOnce(ctx context.Context, id, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		var deletedID int64
-		err := tx.QueryRowContext(ctx,
-			`DELETE FROM person_relationships WHERE id = ? AND revision = ? RETURNING id`, id, expectedRevision,
-		).Scan(&deletedID)
+		var sourceID, targetID int64
+		err := tx.QueryRowContext(ctx, `
+			DELETE FROM person_relationships WHERE id = ? AND revision = ?
+			RETURNING source_person_id, target_person_id`, id, expectedRevision,
+		).Scan(&sourceID, &targetID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.personRelationshipCASMissTx(ctx, tx, id)
 		}
 		if err != nil {
 			return fmt.Errorf("delete person relationship %d: %w", id, err)
 		}
-		return nil
+		// The deleted row named its endpoints; the bump follows the DELETE
+		// so a stale delete moves nobody's card.
+		return s.bumpPersonVCardProjectionsTx(ctx, tx, sourceID, targetID)
 	})
 }
 
@@ -503,23 +536,24 @@ func scanVCardIdentity(property, group, propID, pid, altID sql.NullString) VCard
 }
 
 type personRelationshipScan struct {
-	edge       PersonRelationship
-	startYear  sql.NullInt64
-	startMonth sql.NullInt64
-	startDay   sql.NullInt64
-	endYear    sql.NullInt64
-	endMonth   sql.NullInt64
-	endDay     sql.NullInt64
-	status     string
-	notes      sql.NullString
-	source     string
-	sourceRef  sql.NullString
-	confidence sql.NullFloat64
-	property   sql.NullString
-	group      sql.NullString
-	propID     sql.NullString
-	pid        sql.NullString
-	altID      sql.NullString
+	edge              PersonRelationship
+	startYear         sql.NullInt64
+	startMonth        sql.NullInt64
+	startDay          sql.NullInt64
+	endYear           sql.NullInt64
+	endMonth          sql.NullInt64
+	endDay            sql.NullInt64
+	status            string
+	notes             sql.NullString
+	source            string
+	sourceRef         sql.NullString
+	sourceResourceUID sql.NullString
+	confidence        sql.NullFloat64
+	property          sql.NullString
+	group             sql.NullString
+	propID            sql.NullString
+	pid               sql.NullString
+	altID             sql.NullString
 }
 
 // destinations is the sole mapping for personRelationshipColumns. Both edge
@@ -530,7 +564,8 @@ func (scan *personRelationshipScan) destinations() []any {
 		&scan.edge.ID, &scan.edge.SourcePersonID, &scan.edge.TargetPersonID, &scan.edge.RelationshipTypeID,
 		&scan.edge.TypeSlug, &scan.edge.ForwardLabel, &scan.edge.ReverseLabel, &scan.edge.IsSymmetric,
 		&scan.startYear, &scan.startMonth, &scan.startDay, &scan.endYear, &scan.endMonth, &scan.endDay, &scan.status, &scan.notes,
-		&scan.source, &scan.sourceRef, &scan.confidence, &scan.property, &scan.group, &scan.propID, &scan.pid, &scan.altID,
+		&scan.source, &scan.sourceRef, &scan.sourceResourceUID, &scan.confidence,
+		&scan.property, &scan.group, &scan.propID, &scan.pid, &scan.altID,
 		&scan.edge.CreatedBy, &scan.edge.UpdatedBy, &scan.edge.Revision, &scan.edge.CreatedAt, &scan.edge.UpdatedAt,
 	}
 }
@@ -552,6 +587,9 @@ func (scan *personRelationshipScan) relationship() PersonRelationship {
 	}
 	if scan.sourceRef.Valid {
 		edge.SourceRef = &scan.sourceRef.String
+	}
+	if scan.sourceResourceUID.Valid {
+		edge.SourceResourceUID = &scan.sourceResourceUID.String
 	}
 	if scan.confidence.Valid {
 		edge.Confidence = &scan.confidence.Float64
@@ -601,6 +639,13 @@ type PersonRelationshipListOptions struct {
 func (s *Store) ListPersonRelationshipsContext(
 	ctx context.Context, personID int64, opts PersonRelationshipListOptions,
 ) ([]PersonRelationshipView, error) {
+	return s.listPersonRelationshipsContext(ctx, s.db, personID, opts)
+}
+
+func (s *Store) listPersonRelationshipsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	personID int64, opts PersonRelationshipListOptions,
+) ([]PersonRelationshipView, error) {
 	currentFilter := ""
 	if !opts.IncludeEnded {
 		currentFilter = " AND r.end_year IS NULL"
@@ -623,7 +668,7 @@ func (s *Store) ListPersonRelationshipsContext(
 		         LOWER(COALESCE(cp.display_name, cp.vcard_uid)),
 		         t.slug, r.id
 	`
-	rows, err := s.db.QueryContext(ctx, query,
+	rows, err := queryer.QueryContext(ctx, query,
 		personID,
 		personID, string(RelationshipDirectionOutgoing), string(RelationshipDirectionIncoming),
 		personID,

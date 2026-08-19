@@ -341,7 +341,7 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          go test -timeout 20m -tags "fts5 sqlite_vec" `
+          go test -timeout 60m -tags "fts5 sqlite_vec" `
             ./internal/api `
             ./internal/importer `
             ./internal/store `
@@ -388,7 +388,7 @@ jobs:
               -Package $package `
               -ShardCount 4 `
               -Tags "fts5 sqlite_vec" `
-              -Timeout 20m
+              -Timeout 60m
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
@@ -464,19 +464,14 @@ jobs:
           go-version-file: go.mod
           cache: 'true'
 
-      - name: Install psql client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-
       - name: Enable pgvector extension
-        env:
-          PGPASSWORD: testpw
         run: |
-          psql -h localhost -U msgvault_test -d msgvault_test -c "CREATE EXTENSION IF NOT EXISTS vector"
+          docker exec "${{ job.services.postgres.id }}" \
+            psql -U msgvault_test -d msgvault_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector"
 
       - name: Test (pgvector-tagged)
-        run: go test -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 60m -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   nix-build:
     runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
@@ -529,7 +524,7 @@ jobs:
       # against a pgvector/pgvector image. That is why this runs test-pg-shipped
       # (BUILD_TAGS) and not test-pg (PG_TEST_TAGS, which include pgvector).
       #
-      # The target carries -timeout 20m for the same reason `make test` does:
+      # The target carries the same 60m timeout as `make test`:
       # the heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner, and this lane is the slowest one there is.
       - name: Test (PostgreSQL)

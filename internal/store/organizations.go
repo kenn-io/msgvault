@@ -64,7 +64,7 @@ func (s *Store) MergeOrganizationsContext(
 	// retry re-reads both rows in a fresh transaction; if the contender
 	// changed either organization, the caller's revisions miss and the retry
 	// surfaces a typed revision conflict instead of a raw busy error.
-	return retryContendedWrite(s, "merge organizations", func() (*Organization, error) {
+	return retryContendedWrite(ctx, s, "merge organizations", func() (*Organization, error) {
 		return s.mergeOrganizationsOnce(
 			ctx, survivorID, survivorRevision, losingID, losingRevision)
 	})
@@ -106,6 +106,15 @@ func (s *Store) mergeOrganizationsOnce(
 		if lockedSurvivor.RetiredAt != nil {
 			return fmt.Errorf("%w: cannot merge into a retired organization",
 				ErrOrganizationInvalid)
+		}
+
+		// Both sides before anything moves: the losing organization's people
+		// keep their employments but gain a different employer profile, and
+		// the survivor's people gain the retained 'former' name.
+		if err := s.bumpEmployedPersonVCardProjectionsTx(
+			ctx, tx, survivorID, losingID,
+		); err != nil {
+			return err
 		}
 
 		var collisions int64
@@ -316,6 +325,12 @@ func (s *Store) CountOrganizationsContext(
 }
 
 // ReplaceOrganizationContext atomically replaces root fields and lifecycle state.
+//
+// The write locks the organization row and then the rows of everyone employed
+// there, to bump their vCard projections. Employment writes take those same
+// locks in the opposite order (claimEmploymentPeopleTx, then the employer FOR
+// UPDATE), so on PostgreSQL the two can deadlock; the detector aborts one side
+// and retryContendedWrite runs this side again from a clean transaction.
 func (s *Store) ReplaceOrganizationContext(
 	ctx context.Context, id, expectedRevision int64, input OrganizationInput, retired bool,
 ) (*Organization, error) {
@@ -323,8 +338,17 @@ func (s *Store) ReplaceOrganizationContext(
 	if err != nil {
 		return nil, err
 	}
+	return retryContendedWrite(ctx, s, "replace organization", func() (*Organization, error) {
+		return s.replaceOrganizationOnce(ctx, id, expectedRevision, input, retired)
+	})
+}
+
+func (s *Store) replaceOrganizationOnce(
+	ctx context.Context, id, expectedRevision int64, input OrganizationInput, retired bool,
+) (*Organization, error) {
 	var organization *Organization
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
 		organization, err = scanOrganization(tx.QueryRowContext(ctx, fmt.Sprintf(`
 			UPDATE organizations
 			SET name = ?, name_normalized = ?, kind = ?, primary_domain = ?,
@@ -342,7 +366,7 @@ func (s *Store) ReplaceOrganizationContext(
 		if err != nil {
 			return fmt.Errorf("replace organization %d: %w", id, err)
 		}
-		return nil
+		return s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id)
 	})
 	if err != nil {
 		return nil, err

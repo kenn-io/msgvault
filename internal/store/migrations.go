@@ -29,6 +29,7 @@ const (
 	migrationMessageWatermarkTriggers         = "message_and_attachment_triggers_v2"
 	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
 	migrationIdentityMatchSourceSupport       = "identity_match_source_support_v1"
+	migrationVCardSourceResourceIdentity      = "vcard_source_resource_identity_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.
