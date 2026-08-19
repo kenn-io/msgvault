@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/eval"
 	"go.kenn.io/msgvault/internal/query"
@@ -118,12 +118,11 @@ func docKeyNames() string {
 // evaluator bundles the engines and config needed to turn a query string into
 // a ranked list of document ids for a given search mode.
 type evaluator struct {
-	ctx    context.Context
-	qeng   query.Engine
-	heng   *hybrid.Engine
-	mainDB *sql.DB
-	keyOf  docKeyFunc
-	prov   eval.RunConfig
+	ctx   context.Context
+	qeng  query.Engine
+	heng  *hybrid.Engine
+	keyOf docKeyFunc
+	prov  eval.RunConfig
 }
 
 func (e *evaluator) rankedFTS(qstr string, limit int) ([]string, error) {
@@ -222,7 +221,8 @@ func runEval(cmd *cobra.Command, _ []string) error {
 
 	// Store + query engine: serves FTS search and the rowid -> source-id
 	// mapping for vector/hybrid hits. Opening it also runs the schema
-	// migrations the vector backend's raw sql.DB relies on.
+	// migrations the vector backend relies on, and its handle is the one every
+	// DB read in this command goes through.
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -242,7 +242,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 
 	if needVec {
-		cleanup, err := ev.attachVector(ctx)
+		cleanup, err := ev.attachVector(ctx, s)
 		if err != nil {
 			return err
 		}
@@ -326,7 +326,7 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 		modes = append(modes, m)
 	}
 	if len(modes) == 0 {
-		return nil, false, fmt.Errorf("--modes is empty")
+		return nil, false, errors.New("--modes is empty")
 	}
 	return modes, needVec, nil
 }
@@ -334,64 +334,82 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 // attachVector wires the sqlite-vec backend and hybrid engine onto the
 // evaluator (mirroring the search command's vector path) and returns a
 // cleanup closure that closes the resources it opened.
-func (e *evaluator) attachVector(ctx context.Context) (func(), error) {
+//
+// It reuses the caller's store handle rather than opening its own: that handle
+// already carries the DSN parameters store.Open applies (busy_timeout, WAL,
+// the registered driver's unicode_lower hook), and routing every DB operation
+// through the Store is this repo's rule.
+func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (func(), error) {
 	if !cfg.Vector.Enabled {
-		return nil, fmt.Errorf("vector/hybrid modes need [vector].enabled = true in config")
+		return nil, errors.New("vector/hybrid modes need [vector].enabled = true in config")
 	}
 	if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
-		return nil, fmt.Errorf("vector/hybrid modes need [vector.embeddings] endpoint and model in config")
+		return nil, errors.New("vector/hybrid modes need [vector.embeddings] endpoint and model in config")
+	}
+	mainPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(mainPath) {
+		// This command's vector path is the sqlite-vec one; a PG archive
+		// stores its embeddings in pgvector, alongside the messages. Fail
+		// clearly rather than pointing a sqlite-vec backend at a PG handle.
+		return nil, errors.New("vector/hybrid eval currently supports SQLite archives only; " +
+			"the configured database is PostgreSQL — run with --modes fts")
 	}
 
-	mainDB, err := sql.Open("sqlite3", cfg.DatabaseDSN())
+	// Resolve [vector.embed.scope] accounts to source IDs before deriving the
+	// build scope or the generation fingerprint, exactly as the serve/embed
+	// paths do. The fingerprint folds in the scope, so an unresolved config
+	// would compute a different one and every query would fail as "index
+	// stale" on any archive that scopes embedding by account.
+	vecCfg, err := resolvedVectorConfig(mainStore)
 	if err != nil {
-		return nil, fmt.Errorf("open main db: %w", err)
+		return nil, fmt.Errorf("vector embed scope: %w", err)
 	}
+	mainDB := mainStore.DB()
 
-	vecDBPath := cfg.Vector.DBPath
+	vecDBPath := vecCfg.DBPath
 	if vecDBPath == "" {
 		vecDBPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 	}
 	if err := sqlitevec.RegisterExtension(); err != nil {
-		_ = mainDB.Close()
 		return nil, fmt.Errorf("register sqlite-vec: %w", err)
 	}
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecDBPath,
-		MainPath:  cfg.DatabaseDSN(),
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    mainDB,
+		Path:       vecDBPath,
+		MainPath:   mainPath,
+		Dimension:  vecCfg.Embeddings.Dimension,
+		MainDB:     mainDB,
+		BuildScope: vecCfg.Embed.Scope.BuildScope(),
 	})
 	if err != nil {
-		_ = mainDB.Close()
 		return nil, fmt.Errorf("open vectors.db: %w", err)
 	}
-	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.Vector.GenerationFingerprint()); err != nil {
+	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, vecCfg.GenerationFingerprint()); err != nil {
 		_ = backend.Close()
-		_ = mainDB.Close()
 		return nil, fmt.Errorf("resolve active generation: %w", err)
 	}
 
 	embedClient := embed.NewClient(embed.Config{
-		Endpoint:   cfg.Vector.Embeddings.Endpoint,
-		APIKey:     cfg.Vector.Embeddings.APIKey(),
-		Model:      cfg.Vector.Embeddings.Model,
-		Dimension:  cfg.Vector.Embeddings.Dimension,
-		Timeout:    cfg.Vector.Embeddings.Timeout,
-		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
+		Endpoint:   vecCfg.Embeddings.Endpoint,
+		APIKey:     vecCfg.Embeddings.APIKey(),
+		Model:      vecCfg.Embeddings.Model,
+		Dimension:  vecCfg.Embeddings.Dimension,
+		Timeout:    vecCfg.Embeddings.Timeout,
+		MaxRetries: vecCfg.Embeddings.MaxRetries,
 	})
 	e.heng = hybrid.NewEngine(backend, mainDB, embedClient, hybrid.Config{
-		ExpectedFingerprint: cfg.Vector.GenerationFingerprint(),
-		RRFK:                cfg.Vector.Search.RRFK,
-		KPerSignal:          cfg.Vector.Search.KPerSignal,
-		SubjectBoost:        cfg.Vector.Search.SubjectBoost,
+		ExpectedFingerprint: vecCfg.GenerationFingerprint(),
+		RRFK:                vecCfg.Search.RRFK,
+		KPerSignal:          vecCfg.Search.KPerSignal,
+		SubjectBoost:        vecCfg.Search.SubjectBoost,
+		// Without this the engine's index-scope check short-circuits to nil,
+		// so an out-of-scope filter would run against an index holding no
+		// vectors for that scope and its near-zero hit count would be scored
+		// as genuinely poor retrieval instead of erroring.
+		BuildScope: vecCfg.Embed.Scope.BuildScope(),
 	})
-	e.mainDB = mainDB
-	e.collectVectorStats(vecDBPath)
+	e.collectVectorStats(vecCfg, backend, vecDBPath)
 
-	return func() {
-		_ = backend.Close()
-		_ = mainDB.Close()
-	}, nil
+	return func() { _ = backend.Close() }, nil
 }
 
 // collectCorpusStats records how big the searched archive is. It reads the
@@ -409,41 +427,27 @@ func (e *evaluator) collectCorpusStats(db *sql.DB) {
 // collectVectorStats records the embedding model, fusion parameters and index
 // size in force for this run, so a score can never be read without knowing
 // what produced it.
-func (e *evaluator) collectVectorStats(vecDBPath string) {
+func (e *evaluator) collectVectorStats(vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string) {
 	e.prov.VectorEnabled = true
-	e.prov.EmbeddingModel = cfg.Vector.Embeddings.Model
-	e.prov.Dimension = cfg.Vector.Embeddings.Dimension
-	e.prov.Endpoint = cfg.Vector.Embeddings.Endpoint
-	e.prov.Backend = cfg.Vector.Backend
-	e.prov.Fingerprint = cfg.Vector.GenerationFingerprint()
-	e.prov.RRFK = cfg.Vector.Search.RRFK
-	e.prov.KPerSignal = cfg.Vector.Search.KPerSignal
-	e.prov.SubjectBoost = cfg.Vector.Search.SubjectBoost
+	e.prov.EmbeddingModel = vecCfg.Embeddings.Model
+	e.prov.Dimension = vecCfg.Embeddings.Dimension
+	e.prov.Endpoint = vecCfg.Embeddings.Endpoint
+	e.prov.Backend = vecCfg.Backend
+	e.prov.Fingerprint = vecCfg.GenerationFingerprint()
+	e.prov.RRFK = vecCfg.Search.RRFK
+	e.prov.KPerSignal = vecCfg.Search.KPerSignal
+	e.prov.SubjectBoost = vecCfg.Search.SubjectBoost
 	e.prov.IndexPath = vecDBPath
 
 	if fi, err := os.Stat(vecDBPath); err == nil {
 		e.prov.IndexSizeBytes = fi.Size()
 	}
-	// Read the row count from a short-lived read-only handle: the vector
-	// backend owns its own connection and we must not disturb it.
-	if vdb, err := sql.Open("sqlite3", vecDBPath+"?mode=ro"); err == nil {
-		defer func() { _ = vdb.Close() }()
+	// Backend.DB() is the backend's own accessor for exactly this kind of
+	// read-only query, so the row count goes through it rather than opening a
+	// second connection to the same file.
+	if vdb := backend.DB(); vdb != nil {
 		_ = vdb.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM embeddings").Scan(&e.prov.IndexedVectors)
 	}
-}
-
-// humanBytes renders a byte count compactly for the table output.
-func humanBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // sortedCategories returns the category labels seen in a run, sorted for
@@ -475,7 +479,7 @@ func outputEvalTable(modes []string, aggs map[string]*eval.Aggregate, lats map[s
 		_, _ = fmt.Fprintf(pw, "  fusion\trrf_k=%d k_per_signal=%d subject_boost=%.2f\n",
 			p.RRFK, p.KPerSignal, p.SubjectBoost)
 		_, _ = fmt.Fprintf(pw, "  vector index\t%d vectors, %s (%s)\n",
-			p.IndexedVectors, humanBytes(p.IndexSizeBytes), p.IndexPath)
+			p.IndexedVectors, formatSize(p.IndexSizeBytes), p.IndexPath)
 	} else {
 		_, _ = fmt.Fprintf(pw, "  vector index\t(not used; --modes fts only)\n")
 	}
