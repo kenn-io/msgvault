@@ -2699,7 +2699,6 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
 	imapOpts := imapFolderStateOptions(s, src, false)
-	imapOpts = append(imapOpts, imapFolderStateSaveOption(s, src))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -2735,7 +2734,9 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	if err != nil {
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
 	}
-	saveIMAPFolderStates(s, src, apiClient, summary, 0)
+	if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
+		return nil, fmt.Errorf("save IMAP incremental state: %w", err)
+	}
 	return summary, nil
 }
 

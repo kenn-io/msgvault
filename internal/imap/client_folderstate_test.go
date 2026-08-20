@@ -69,7 +69,7 @@ func TestListMessages_RecordsFolderStates(t *testing.T) {
 	assert.NotZero(states["INBOX"].UIDValidity)
 }
 
-func TestListMessages_SkipsUnchangedFolders(t *testing.T) {
+func TestListMessages_FallsBackWhenSavedStatesLackModSeq(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
@@ -81,12 +81,12 @@ func TestListMessages_SkipsUnchangedFolders(t *testing.T) {
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Empty(ids, "unchanged folders must not be re-enumerated")
+	assert.Len(ids, 5, "a baseline without mod-sequences must be rebuilt completely")
 	assert.Equal(saved, second.ObservedFolderStates(),
-		"unchanged folders keep their saved state for the next save")
+		"the full fallback publishes the same complete baseline")
 }
 
-func TestListMessages_ListsOnlyNewMessages(t *testing.T) {
+func TestListMessages_FullFallbackIncludesExistingAndNewMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
@@ -100,8 +100,9 @@ func TestListMessages_ListsOnlyNewMessages(t *testing.T) {
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Equal([]string{"INBOX|3"}, ids,
-		"only the message appended after the saved state should be listed")
+	assert.Equal([]string{
+		"Archive|1", "Archive|2", "Archive|3", "INBOX|1", "INBOX|2", "INBOX|3",
+	}, ids, "a baseline without mod-sequences must be rebuilt completely")
 
 	states := second.ObservedFolderStates()
 	assert.Equal(uint32(4), states["INBOX"].UIDNext)
@@ -140,15 +141,15 @@ func TestListMessages_ReportsListProgress(t *testing.T) {
 	assert.Equal(5, final.found)
 	assert.Equal(0, final.unchanged)
 
-	// A resync with saved states reports every folder as unchanged.
+	// A resync without usable mod-sequences reports a complete full fallback.
 	saved := first.ObservedFolderStates()
 	require.NoError(first.Close())
 	calls = nil
 	second := newTestClient(t, addr, WithListProgress(record), WithFolderStates(saved))
-	require.Empty(listAllMessages(t, second))
+	require.Len(listAllMessages(t, second), 5)
 	final = calls[len(calls)-1]
-	assert.Equal(0, final.found)
-	assert.Equal(2, final.unchanged)
+	assert.Equal(5, final.found)
+	assert.Equal(0, final.unchanged)
 }
 
 func TestListMessages_UIDValidityChangeForcesFullRescan(t *testing.T) {
@@ -190,7 +191,7 @@ func TestListMessages_DateFilterDisablesFolderTracking(t *testing.T) {
 		"date-filtered runs must not record folder states")
 }
 
-func TestListMessages_AllMailboxRecordsFolderStatesForNoopResync(t *testing.T) {
+func TestListMessages_AllMailboxUnsupportedQresyncUsesFullFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"All Mail": 2, "Projects": 1})
@@ -210,9 +211,10 @@ func TestListMessages_AllMailboxRecordsFolderStatesForNoopResync(t *testing.T) {
 	second.mailboxCache = []string{"All Mail", "Projects"}
 	second.allMailFolder = "All Mail"
 	ids := listAllMessages(t, second)
-	assert.Empty(ids, "unchanged folders must not be re-enumerated when an All Mail folder exists")
+	assert.Len(ids, 3, "unsupported QRESYNC must force authoritative enumeration")
 	assert.Equal(saved, second.ObservedFolderStates())
-	assert.Nil(second.msgIDToLabels, "a no-op resync must not build the All Mail label map")
+	assert.NotNil(second.msgIDToLabels,
+		"authoritative fallback must rebuild the All Mail label map")
 }
 
 func TestAcknowledgeMessagesFlushesFolderStateWhenFolderComplete(t *testing.T) {
@@ -803,7 +805,97 @@ func TestClientReportsCompleteSnapshotWithoutAllMailboxOnFullScan(t *testing.T) 
 		"a fully enumerated server has an authoritative membership snapshot")
 }
 
-func TestClientReportsIncompleteSnapshotWithoutAllMailboxOnHighWaterScan(t *testing.T) {
+func TestFullScanLabelMapRecordsEveryMailboxMembership(t *testing.T) {
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX":   0,
+		"Archive": 0,
+	})
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "inbox-membership@example.com")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "archive-membership@example.com")
+	client := newTestClient(t, addr)
+
+	require.Len(t, listAllMessages(t, client), 2)
+	observed := client.ObservedMemberships()
+	assert.ElementsMatch(t, []MembershipObservation{
+		{
+			Mailbox: "INBOX", UIDValidity: client.ObservedFolderStates()["INBOX"].UIDValidity,
+			UID: 1, SourceMessageID: "INBOX|1", RFC822MessageID: "inbox-membership@example.com",
+			Flags: []string{},
+		},
+		{
+			Mailbox: "Archive", UIDValidity: client.ObservedFolderStates()["Archive"].UIDValidity,
+			UID: 1, SourceMessageID: "Archive|1", RFC822MessageID: "archive-membership@example.com",
+			Flags: []string{},
+		},
+	}, observed)
+}
+
+func TestGmailAllMailFullScanPublishesDeltaForLabelOnlyMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
+		t,
+		map[string]int{
+			"INBOX":            0,
+			"[Gmail]/All Mail": 0,
+		},
+		map[string][]imapv2.MailboxAttr{
+			"[Gmail]/All Mail": {imapv2.MailboxAttrAll},
+		},
+	)
+	const messageID = "gmail-overlap@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "[Gmail]/All Mail", messageID)
+	client := newTestClient(t, addr)
+
+	require.Equal([]string{"[Gmail]/All Mail|1"}, listAllMessages(t, client))
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(deltas, 2, "the label-map-only mailbox needs a durable baseline delta")
+	assert.ElementsMatch([]string{"INBOX", "[Gmail]/All Mail"}, []string{
+		deltas[0].Mailbox,
+		deltas[1].Mailbox,
+	})
+	client.mu.Lock()
+	supportsModSeq := client.conn.Caps().Has(imapv2.CapCondStore)
+	client.mu.Unlock()
+	for _, delta := range deltas {
+		assert.True(delta.Reset)
+		assert.NotZero(delta.State.UIDValidity)
+		assert.Equal(uint32(2), delta.State.UIDNext)
+		assert.Equal([]uint32{1}, delta.State.KnownUIDs)
+		if supportsModSeq {
+			assert.NotZero(delta.State.HighestModSeq)
+		}
+	}
+}
+
+func TestGmailAllMailStatusFailureSuppressesIncrementalPublication(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithStatusError(
+		t,
+		map[string]int{
+			"INBOX":            0,
+			"[Gmail]/All Mail": 0,
+		},
+		map[string][]imapv2.MailboxAttr{
+			"[Gmail]/All Mail": {imapv2.MailboxAttrAll},
+		},
+		"INBOX",
+	)
+	const messageID = "status-failure@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "[Gmail]/All Mail", messageID)
+	client := newTestClient(t, addr)
+
+	require.Equal([]string{"[Gmail]/All Mail|1"}, listAllMessages(t, client))
+	assert.False(client.LabelsSnapshotComplete())
+	assert.Nil(client.ObservedFolderStates())
+	assert.Nil(client.ObservedMailboxDeltas(),
+		"a missing STATUS must not expose a zero-valued mailbox cursor")
+}
+
+func TestClientRebuildsCompleteSnapshotWithoutAllMailboxOrModSeq(t *testing.T) {
 	require := require.New(t)
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
 		"INBOX":   1,
@@ -816,10 +908,11 @@ func TestClientReportsIncompleteSnapshotWithoutAllMailboxOnHighWaterScan(t *test
 
 	testutil.AppendIMAPMessage(t, user, "Archive")
 	second := newTestClient(t, addr, WithFolderStates(saved))
-	require.Equal([]string{"Archive|2"}, listAllMessages(t, second))
+	require.Equal([]string{"Archive|1", "Archive|2", "INBOX|1"},
+		listAllMessages(t, second))
 
-	assert.False(t, second.LabelsSnapshotComplete(),
-		"a high-water scan does not see memberships below the saved UIDNEXT")
+	assert.True(t, second.LabelsSnapshotComplete(),
+		"the conservative full fallback sees every mailbox membership")
 }
 
 func TestClientReportsIncompleteMailboxMembershipCollection(t *testing.T) {

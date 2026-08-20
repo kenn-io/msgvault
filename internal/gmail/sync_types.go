@@ -19,6 +19,7 @@ type SyncProgress interface {
 
 // SyncSummary contains statistics about a completed sync.
 type SyncSummary struct {
+	SyncRunID        int64
 	StartTime        time.Time
 	EndTime          time.Time
 	Duration         time.Duration

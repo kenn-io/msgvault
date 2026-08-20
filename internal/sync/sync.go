@@ -89,11 +89,23 @@ type labelSnapshotCompleteness interface {
 	LabelsSnapshotComplete() bool
 }
 
+type authoritativeLabelReconciliationDeferrer interface {
+	DefersAuthoritativeLabelReconciliation() bool
+}
+
+type limitedFullEnumerationForcer interface {
+	ForceFullEnumerationForLimitedSync()
+}
+
 type sourceMessageMatcher interface {
 	SourceMessageMatches(
 		ctx context.Context,
 		messageID, expectedRFC822MessageID string,
 	) (matches bool, conclusive bool, err error)
+}
+
+type sourceMessageAliaser interface {
+	CanonicalSourceMessageID(sourceMessageID string) (string, bool)
 }
 
 type preferredIMAPSourceID interface {
@@ -122,6 +134,12 @@ func New(client gmail.API, store *store.Store, opts *Options) *Syncer {
 		opts = DefaultOptions()
 	}
 
+	if opts.Limit > 0 {
+		if forcer, ok := client.(limitedFullEnumerationForcer); ok {
+			forcer.ForceFullEnumerationForLimitedSync()
+		}
+	}
+
 	return &Syncer{
 		client:   client,
 		store:    store,
@@ -148,6 +166,16 @@ func (s *Syncer) labelsSnapshotComplete() bool {
 	return !ok || completeness.LabelsSnapshotComplete()
 }
 
+func (s *Syncer) defersAuthoritativeLabelReconciliation() bool {
+	// Only an unlimited run can publish the deferred mailbox snapshot. Limited
+	// runs must reconcile each processed message before returning.
+	if s.opts.SourceType != sourceTypeIMAP || s.opts.Limit > 0 || !s.labelsSnapshotComplete() {
+		return false
+	}
+	deferrer, ok := s.client.(authoritativeLabelReconciliationDeferrer)
+	return ok && deferrer.DefersAuthoritativeLabelReconciliation()
+}
+
 // WithSuccessfulSyncHook installs one best-effort post-completion hook.
 func (s *Syncer) WithSuccessfulSyncHook(name string, hook SuccessfulSyncHook) *Syncer {
 	s.successfulHookName = strings.TrimSpace(name)
@@ -169,14 +197,20 @@ func (s *Syncer) runSuccessfulSyncHook(ctx context.Context, source *store.Source
 	}
 }
 
-// completeSyncWithoutHook marks the run complete and reports whether that
-// durable write succeeded.
-func (s *Syncer) completeSyncWithoutHook(syncID int64, historyID string) bool {
-	if err := s.store.CompleteSync(syncID, historyID); err != nil {
-		s.logger.Warn("failed to complete sync", "error", err)
-		return false
+// completeSyncWithoutHook atomically publishes the source cursor and marks the
+// still-current run complete.
+func (s *Syncer) completeSyncWithoutHook(
+	ctx context.Context, syncID int64, sourceID int64, historyID string,
+) error {
+	if err := s.store.CompleteSyncAndUpdateSourceCursorContext(
+		ctx, syncID, sourceID, historyID,
+	); err != nil {
+		if !errors.Is(err, store.ErrSyncRunSuperseded) {
+			s.failSyncUnlessCanceled(syncID, err)
+		}
+		return fmt.Errorf("publish completed sync: %w", err)
 	}
-	return true
+	return nil
 }
 
 func (s *Syncer) completeSyncAndRunHook(
@@ -184,11 +218,12 @@ func (s *Syncer) completeSyncAndRunHook(
 	syncID int64,
 	historyID string,
 	source *store.Source,
-) {
-	if !s.completeSyncWithoutHook(syncID, historyID) {
-		return
+) error {
+	if err := s.completeSyncWithoutHook(ctx, syncID, source.ID, historyID); err != nil {
+		return err
 	}
 	s.runSuccessfulSyncHook(ctx, source, true)
+	return nil
 }
 
 // identityDiscoveryRetryBackoff is the delay before the second per-page
@@ -391,10 +426,29 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	result.sourceMessageIDs = messageIDs
 
 	// Check which messages already exist
+	lookupMessageIDs := append([]string(nil), messageIDs...)
+	aliases := make(map[string]string)
+	if s.opts.SourceType == sourceTypeIMAP {
+		if aliaser, ok := s.client.(sourceMessageAliaser); ok {
+			for _, sourceMessageID := range messageIDs {
+				canonicalSourceMessageID, exists := aliaser.CanonicalSourceMessageID(sourceMessageID)
+				if !exists || canonicalSourceMessageID == sourceMessageID {
+					continue
+				}
+				aliases[sourceMessageID] = canonicalSourceMessageID
+				lookupMessageIDs = append(lookupMessageIDs, canonicalSourceMessageID)
+			}
+		}
+	}
 	existingMap, err := s.store.MessageMetadataWithRawBatch(
-		sourceID, messageIDs)
+		sourceID, lookupMessageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check existing: %w", err)
+	}
+	for sourceMessageID, canonicalSourceMessageID := range aliases {
+		if canonical, exists := existingMap[canonicalSourceMessageID]; exists {
+			existingMap[sourceMessageID] = canonical
+		}
 	}
 
 	// Existing exact IDs only need current label metadata. Clients with a
@@ -681,17 +735,20 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			if alreadyExists {
-				changed, err := s.store.ReconcileMessageLabels(
-					existing.ID,
-					labelIDsFor(raw.LabelIDs, labelMap),
-					false,
-				)
-				if err != nil {
-					s.logger.Warn("failed to merge existing message labels",
-						"id", sourceMessageID, "error", err)
-					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
-					checkpoint.ErrorsCount++
-					continue
+				changed := false
+				if !s.defersAuthoritativeLabelReconciliation() {
+					changed, err = s.store.ReconcileMessageLabels(
+						existing.ID,
+						labelIDsFor(raw.LabelIDs, labelMap),
+						false,
+					)
+					if err != nil {
+						s.logger.Warn("failed to merge existing message labels",
+							"id", sourceMessageID, "error", err)
+						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+						checkpoint.ErrorsCount++
+						continue
+					}
 				}
 				if changed {
 					result.updated++
@@ -775,6 +832,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	if err != nil {
 		return nil, err
 	}
+	summary.SyncRunID = state.syncID
 	summary.WasResumed = state.wasResumed
 	summary.ResumedFromToken = state.pageToken
 
@@ -912,12 +970,10 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 			"errors", state.checkpoint.ErrorsCount,
 			"history_id", historyIDStr)
 	}
-	if err := s.store.UpdateSourceSyncCursor(source.ID, historyIDStr); err != nil {
-		s.logger.Warn("failed to update sync cursor", "error", err)
-	}
-
 	// Mark sync complete before running best-effort provider maintenance.
-	s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source)
+	if err := s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source); err != nil {
+		return nil, err
+	}
 
 	// Checkpoint WAL after sync to fold it back into the main database.
 	// This prevents WAL accumulation across long sync sessions and ensures
@@ -1296,7 +1352,11 @@ func (s *Syncer) ingestMessage(
 						oldSourceMessageID, err)
 				}
 			}
+			deferLabels := s.defersAuthoritativeLabelReconciliation()
 			if !conclusive {
+				if deferLabels {
+					return false, errDeferredIMAPIdentity
+				}
 				changed, err := s.store.ReconcileMessageLabels(
 					existingID, labelIDs, false)
 				return dedupMutationResultWithSentinel(
@@ -1308,11 +1368,14 @@ func (s *Syncer) ingestMessage(
 			}
 			complete := s.labelsSnapshotComplete()
 			if matches {
-				changed, err := s.store.ReconcileMessageLabels(
-					existingID, labelIDs, complete)
-				if err != nil {
-					return false, fmt.Errorf(
-						"reconcile validated dedup labels: %w", err)
+				changed := false
+				if !deferLabels {
+					changed, err = s.store.ReconcileMessageLabels(
+						existingID, labelIDs, complete)
+					if err != nil {
+						return false, fmt.Errorf(
+							"reconcile validated dedup labels: %w", err)
+					}
 				}
 				if complete && oldSourceMessageID != data.message.SourceMessageID {
 					if preferred, ok := s.client.(preferredIMAPSourceID); ok &&
@@ -1335,6 +1398,20 @@ func (s *Syncer) ingestMessage(
 					changed, "reconcile validated dedup labels", nil)
 			}
 			if complete {
+				if deferLabels {
+					rekeyed, err := s.store.RekeyMessageSourceID(
+						existingID, oldSourceMessageID, data.message.SourceMessageID)
+					if err != nil {
+						return false, fmt.Errorf("rekey dedup message: %w", err)
+					}
+					if !rekeyed {
+						return false, fmt.Errorf(
+							"source message ID %q changed before dedup rekey",
+							oldSourceMessageID)
+					}
+					return dedupMutationResult(
+						true, "rekey dedup message", nil)
+				}
 				changed, err := s.store.UpdateMessageOnDedup(
 					existingID,
 					data.message.SourceMessageID,
@@ -1390,10 +1467,14 @@ func (s *Syncer) reconcileValidatedMessageLabels(
 	labelIDs []int64,
 	snapshotComplete bool,
 ) (bool, error) {
-	changed, err := s.store.ReconcileMessageLabels(
-		existingID, labelIDs, snapshotComplete)
-	if err != nil {
-		return false, err
+	changed := false
+	if !s.defersAuthoritativeLabelReconciliation() {
+		var err error
+		changed, err = s.store.ReconcileMessageLabels(
+			existingID, labelIDs, snapshotComplete)
+		if err != nil {
+			return false, err
+		}
 	}
 	if seeder, ok := s.client.(validatedMessageDedupSeeder); ok {
 		if err := seeder.SeedValidatedMessageDedup(

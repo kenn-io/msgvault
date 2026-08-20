@@ -588,6 +588,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS sync_config JSONB`, "sync_config"},
+		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
@@ -1530,7 +1531,7 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources — a real race before it was added here.
 //   - sync_checkpoints: cascade-reachable from sources; no writer today, but
 //     included so a future checkpoint writer cannot race the cascade.
-//   - imap_folder_state: written by UpsertIMAPFolderStates after IMAP syncs
+//   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
@@ -1552,7 +1553,7 @@ var exclusiveLockTables = []string{
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
-	"imap_folder_state",
+	"imap_folder_state", "imap_message_memberships",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

@@ -341,11 +341,17 @@ func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.Fo
 	if err != nil {
 		return nil, err
 	}
+	knownUIDs, err := s.GetIMAPKnownUIDs(sourceID)
+	if err != nil {
+		return nil, err
+	}
 	states := make(map[string]imaplib.FolderState, len(saved))
 	for _, st := range saved {
 		states[st.Mailbox] = imaplib.FolderState{
-			UIDValidity: st.UIDValidity,
-			UIDNext:     st.UIDNext,
+			UIDValidity:   st.UIDValidity,
+			UIDNext:       st.UIDNext,
+			HighestModSeq: st.HighestModSeq,
+			KnownUIDs:     append([]uint32{}, knownUIDs[st.Mailbox]...),
 		}
 	}
 	return states, nil
@@ -369,54 +375,137 @@ func imapFolderStateOptions(
 	} else if len(states) > 0 {
 		opts = append(opts, imaplib.WithFolderStates(states))
 	}
+	aliases, err := s.GetIMAPSourceMessageAliases(src.ID)
+	if err != nil {
+		logger.Warn("failed to load IMAP source message aliases", "source", src.Identifier, "error", err)
+	} else if len(aliases) > 0 {
+		opts = append(opts, imaplib.WithSourceMessageAliases(aliases))
+	}
 	if forceRescan {
 		opts = append(opts, imaplib.WithForceFullEnumeration())
 	}
 	return opts
 }
 
-func saveIMAPFolderState(s *store.Store, src *store.Source, mailbox string, st imaplib.FolderState) {
-	err := s.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{{
-		Mailbox:     mailbox,
-		UIDValidity: st.UIDValidity,
-		UIDNext:     st.UIDNext,
-	}})
-	if err != nil {
-		logger.Warn("failed to save IMAP folder state",
-			"source", src.Identifier, "mailbox", mailbox, "error", err)
+func applyIMAPMailboxDeltas(
+	ctx context.Context,
+	s *store.Store,
+	src *store.Source,
+	syncRunID int64,
+	deltas []imaplib.MailboxDelta,
+	observations []imaplib.MembershipObservation,
+) error {
+	type membershipKey struct {
+		mailbox     string
+		uidValidity uint32
+		uid         uint32
 	}
+	normalizedObservations := make([]store.IMAPMembershipObservation, 0, len(observations))
+	observationIndexes := make(map[membershipKey]int, len(observations))
+	for _, observation := range observations {
+		key := membershipKey{
+			mailbox: observation.Mailbox, uidValidity: observation.UIDValidity, uid: observation.UID,
+		}
+		if index, exists := observationIndexes[key]; exists {
+			existing := &normalizedObservations[index]
+			if existing.CanonicalSourceMessageID == "" {
+				existing.CanonicalSourceMessageID = observation.CanonicalSourceMessageID
+			}
+			if existing.RFC822MessageID == "" {
+				existing.RFC822MessageID = observation.RFC822MessageID
+			}
+			if existing.RawSHA256 == ([32]byte{}) {
+				existing.RawSHA256 = observation.RawSHA256
+			}
+			if existing.RawSize == 0 {
+				existing.RawSize = observation.RawSize
+			}
+			continue
+		}
+		observationIndexes[key] = len(normalizedObservations)
+		normalizedObservations = append(normalizedObservations, store.IMAPMembershipObservation{
+			Mailbox:                  observation.Mailbox,
+			UIDValidity:              observation.UIDValidity,
+			UID:                      observation.UID,
+			SourceMessageID:          observation.SourceMessageID,
+			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+			RFC822MessageID:          observation.RFC822MessageID,
+			RawSHA256:                observation.RawSHA256,
+			RawSize:                  observation.RawSize,
+			Flags:                    append([]string(nil), observation.Flags...),
+		})
+	}
+	byMailbox := make(map[string][]store.IMAPMembershipObservation)
+	for _, observation := range normalizedObservations {
+		byMailbox[observation.Mailbox] = append(byMailbox[observation.Mailbox], observation)
+	}
+
+	storeDeltas := make([]store.IMAPMailboxDelta, 0, len(deltas))
+	seenMailboxes := make(map[string]struct{}, len(deltas))
+	for _, delta := range deltas {
+		if _, exists := seenMailboxes[delta.Mailbox]; exists {
+			return fmt.Errorf("duplicate IMAP mailbox delta for %q", delta.Mailbox)
+		}
+		seenMailboxes[delta.Mailbox] = struct{}{}
+		vanished := make([]uint32, len(delta.VanishedUIDs))
+		for i, uid := range delta.VanishedUIDs {
+			vanished[i] = uint32(uid)
+		}
+		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
+			Mailbox: delta.Mailbox,
+			State: store.IMAPFolderState{
+				Mailbox:       delta.Mailbox,
+				UIDValidity:   delta.State.UIDValidity,
+				UIDNext:       delta.State.UIDNext,
+				HighestModSeq: delta.State.HighestModSeq,
+			},
+			Memberships:  byMailbox[delta.Mailbox],
+			VanishedUIDs: vanished,
+			Reset:        delta.Reset,
+		})
+		delete(byMailbox, delta.Mailbox)
+	}
+	for mailbox := range byMailbox {
+		return fmt.Errorf("IMAP membership observation for mailbox %q has no mailbox delta", mailbox)
+	}
+	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
 
-func imapFolderStateSaveOption(s *store.Store, src *store.Source) imaplib.Option {
-	return imaplib.WithFolderStateSave(func(mailbox string, st imaplib.FolderState) {
-		saveIMAPFolderState(s, src, mailbox, st)
-	})
+func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit int) bool {
+	return summary != nil &&
+		ctx.Err() == nil &&
+		summary.Errors == 0 &&
+		!summary.WasResumed &&
+		limit == 0
 }
 
-// saveIMAPFolderStates persists the per-mailbox states observed during
-// listing, but only after a sync that completed cleanly: an
-// interrupted, truncated (--limit), or partly failed run must not
-// advance the high water marks, or the messages it skipped would never be
-// fetched. Save failures only cost the next run's speedup, so they are
-// logged and swallowed.
-func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) {
+// saveIMAPFolderStates atomically persists mailbox membership and cursor
+// observations only after a clean, unlimited, unfiltered sync.
+func saveIMAPFolderStates(
+	ctx context.Context,
+	s *store.Store,
+	src *store.Source,
+	apiClient gmail.API,
+	summary *gmail.SyncSummary,
+	limit int,
+) error {
 	imapClient, ok := apiClient.(*imaplib.Client)
-	if !ok || summary == nil {
-		return
+	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
+		return nil
 	}
-	if summary.Errors > 0 {
-		return
+	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
+		return nil
 	}
-	if limit > 0 && summary.MessagesFound >= int64(limit) {
-		return
+	deltas := imapClient.ObservedMailboxDeltas()
+	if deltas == nil {
+		return nil
 	}
-	observed := imapClient.ObservedFolderStates()
-	if len(observed) == 0 {
-		return
+	if err := applyIMAPMailboxDeltas(
+		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(),
+	); err != nil {
+		return fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}
-	for mailbox, st := range observed {
-		saveIMAPFolderState(s, src, mailbox, st)
-	}
+	return nil
 }
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
@@ -443,7 +532,6 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
-			imapFolderStateSaveOption(s, src),
 		)
 	}
 	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
@@ -512,7 +600,9 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	}
 
 	if src.SourceType == sourceTypeIMAP {
-		saveIMAPFolderStates(s, src, apiClient, summary, opts.Limit)
+		if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, opts.Limit); err != nil {
+			return fmt.Errorf("save IMAP incremental state: %w", err)
+		}
 	}
 
 	// Print summary; skip the spacer when no progress lines were

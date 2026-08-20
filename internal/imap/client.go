@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -80,33 +79,42 @@ type Client struct {
 	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
 	logger      *slog.Logger
 
-	mu                  sync.Mutex
-	conn                *imapclient.Client
-	selectedMailbox     string               // currently selected mailbox
-	selectedNumMessages uint32               // EXISTS count from the last SELECT
-	mailboxCache        []string             // cached list of selectable mailboxes
-	messageListCache    []gmailapi.MessageID // full message ID list, built once per session
-	trashMailbox        string               // cached trash mailbox name
-	junkMailbox         string               // cached junk/spam mailbox name
-	allMailFolder       string               // mailbox with \All attribute (empty if not detected)
-	msgIDToLabels       map[string][]string  // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs       map[string]bool      // dedup overlapping mailbox copies
-	labelMapComplete    bool                 // latest listing collected every mailbox membership
-	since               time.Time            // IMAP SINCE date filter (zero = no filter)
-	before              time.Time            // IMAP BEFORE date filter (zero = no filter)
+	mu                    sync.Mutex
+	conn                  *imapclient.Client
+	selectedMailbox       string               // currently selected mailbox
+	selectedUIDValidity   uint32               // UIDVALIDITY from the last SELECT
+	selectedNumMessages   uint32               // EXISTS count from the last SELECT
+	mailboxCache          []string             // cached list of selectable mailboxes
+	messageListCache      []gmailapi.MessageID // full message ID list, built once per session
+	trashMailbox          string               // cached trash mailbox name
+	junkMailbox           string               // cached junk/spam mailbox name
+	allMailFolder         string               // mailbox with \All attribute (empty if not detected)
+	msgIDToLabels         map[string][]string  // RFC822 Message-ID → mailbox memberships
+	seenRFC822IDs         map[string]bool      // dedup overlapping mailbox copies
+	preferredRawSourceIDs map[[32]byte]string  // raw digest → canonical \All source ID
+	sourceMessageAliases  map[string]string    // mailbox UID source ID → durable canonical source ID
+	activeSourceAliases   map[string]string    // aliases validated by this session's QRESYNC SELECTs
+	labelMapComplete      bool                 // latest listing collected every mailbox membership
+	since                 time.Time            // IMAP SINCE date filter (zero = no filter)
+	before                time.Time            // IMAP BEFORE date filter (zero = no filter)
 
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
 
-	forceFullEnumeration bool
-	priorFolderStates    map[string]FolderState // saved states from the last completed sync
-	observedFolderStates map[string]FolderState // states captured during this session's listing
-	folderStateSave      func(string, FolderState)
-	pendingFolderStates  map[string]FolderState
-	pendingFolderCounts  map[string]int
-	pendingMessageFolder map[string]string
-	completedFolders     map[string]bool
+	forceFullEnumeration  bool
+	priorFolderStates     map[string]FolderState // saved states from the last completed sync
+	observedFolderStates  map[string]FolderState // states captured during this session's listing
+	folderStateSave       func(string, FolderState)
+	pendingFolderStates   map[string]FolderState
+	pendingFolderCounts   map[string]int
+	pendingMessageFolder  map[string]string
+	completedFolders      map[string]bool
+	observedMailboxDeltas []MailboxDelta
+	observedMemberships   []MembershipObservation
+	qresyncEnabled        bool
+	qresyncCaptureMu      sync.Mutex
+	qresyncCapture        *protocolDeltaCapture
 
 	// listProgress, when set, is invoked during message-list
 	// enumeration: once with done=0 after the mailbox list is known,
@@ -168,7 +176,11 @@ func (c *Client) connect(ctx context.Context) error {
 	addr := c.config.Addr()
 	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
 
-	imapOpts := &imapclient.Options{}
+	imapOpts := &imapclient.Options{
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+			Vanished: c.captureQresyncVanished,
+		},
+	}
 	var (
 		conn *imapclient.Client
 		err  error
@@ -214,6 +226,8 @@ func (c *Client) connect(ctx context.Context) error {
 
 	c.conn = conn
 	c.selectedMailbox = ""
+	c.selectedUIDValidity = 0
+	c.qresyncEnabled = false
 	c.logger.Debug("connected and authenticated", "user", c.config.Username)
 	return nil
 }
@@ -230,6 +244,9 @@ func (c *Client) reconnect(ctx context.Context) error {
 		c.conn = nil
 	}
 	c.selectedMailbox = ""
+	c.selectedUIDValidity = 0
+	c.qresyncEnabled = false
+	c.clearQresyncCapture()
 	c.logger.Debug("reconnecting to IMAP server", "addr", c.config.Addr())
 	return c.connect(ctx)
 }
@@ -251,6 +268,9 @@ func (c *Client) withConn(ctx context.Context, fn func(*imapclient.Client) error
 		}
 		c.conn = nil
 		c.selectedMailbox = ""
+		c.selectedUIDValidity = 0
+		c.qresyncEnabled = false
+		c.clearQresyncCapture()
 	}
 	return err
 }
@@ -265,6 +285,7 @@ func (c *Client) selectMailbox(mailbox string) error {
 		return fmt.Errorf("SELECT %q: %w", mailbox, err)
 	}
 	c.selectedMailbox = mailbox
+	c.selectedUIDValidity = data.UIDValidity
 	c.selectedNumMessages = data.NumMessages
 	return nil
 }
@@ -346,6 +367,17 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 	return names, nil
 }
 
+// clearMailboxDiscoveryLocked discards connection-derived mailbox and
+// special-use metadata. Conservative fallback calls this after reconnect so
+// the authoritative scan cannot reuse a mailbox topology from the failed
+// QRESYNC connection.
+func (c *Client) clearMailboxDiscoveryLocked() {
+	c.mailboxCache = nil
+	c.trashMailbox = ""
+	c.junkMailbox = ""
+	c.allMailFolder = ""
+}
+
 // enumerateMailboxSearchCriteria always constrains the search with an
 // explicit UID range: some servers (e.g. iCloud) return sequence-number-like
 // values for an unconstrained UID SEARCH, which later fail to fetch.
@@ -372,7 +404,8 @@ func enumerateMailboxSearchCriteria(since, before time.Time, minUID imap.UID) *i
 
 func messageIDHeaderFetchOptions() *imap.FetchOptions {
 	return &imap.FetchOptions{
-		UID: true,
+		UID:   true,
+		Flags: true,
 		BodySection: []*imap.FetchItemBodySection{{
 			Specifier:    imap.PartSpecifierHeader,
 			HeaderFields: []string{"Message-ID"},
@@ -461,26 +494,27 @@ func (c *Client) enumerateMailbox(
 }
 
 // fetchMailboxMessageIDs fetches RFC822 Message-ID headers for all
-// UIDs in the given mailbox. Returns a map of
-// Message-ID → true for all messages found.
+// UIDs in the given mailbox. Returns the valid Message-IDs and the UIDs whose
+// header had no usable Message-ID, so callers can fetch those copies raw.
 // Caller must hold mu.
 func (c *Client) fetchMailboxMessageIDs(
 	ctx context.Context, mailbox string, uids []imap.UID,
-) (map[string]bool, error) {
+) (map[string]bool, []imap.UID, error) {
 	if len(uids) == 0 {
-		return nil, nil //nolint:nilnil // empty input -> empty result, not an error
+		return nil, nil, nil
 	}
 
 	if err := c.selectMailbox(mailbox); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	result := make(map[string]bool, len(uids))
+	var unidentified []imap.UID
 	fetchOpts := messageIDHeaderFetchOptions()
 
 	for chunkStart := 0; chunkStart < len(uids); chunkStart += fetchChunkSize {
 		if ctx.Err() != nil {
-			return result, ctx.Err()
+			return result, unidentified, ctx.Err()
 		}
 
 		end := min(chunkStart+fetchChunkSize, len(uids))
@@ -492,13 +526,25 @@ func (c *Client) fetchMailboxMessageIDs(
 
 		msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
 		if err != nil {
-			return result, fmt.Errorf(
+			return result, unidentified, fmt.Errorf(
 				"message-ID fetch failed in %q: %w", mailbox, err)
 		}
 
-		addMessageIDsFromHeaderFetchResults(result, msgs)
+		for _, msg := range msgs {
+			var rfc822MessageID string
+			if len(msg.BodySection) > 0 {
+				rfc822MessageID = rawMIMEMessageID(msg.BodySection[0].Bytes)
+			}
+			c.recordMembershipLocked(
+				mailbox, msg.UID, "", rfc822MessageID, [32]byte{}, 0, msg.Flags)
+			if rfc822MessageID == "" {
+				unidentified = append(unidentified, msg.UID)
+			} else {
+				result[rfc822MessageID] = true
+			}
+		}
 	}
-	return result, nil
+	return result, unidentified, nil
 }
 
 // buildLabelMap enumerates every mailbox except \All (whose memberships come
@@ -508,13 +554,14 @@ func (c *Client) fetchMailboxMessageIDs(
 // Caller must hold mu.
 func (c *Client) buildLabelMap(
 	ctx context.Context, allMailboxes []string,
-) (bool, error) {
+) (bool, []gmailapi.MessageID, error) {
 	c.msgIDToLabels = make(map[string][]string)
 	complete := true
+	var unidentified []gmailapi.MessageID
 
 	for _, mailbox := range allMailboxes {
 		if ctx.Err() != nil {
-			return false, ctx.Err()
+			return false, unidentified, ctx.Err()
 		}
 		if mailbox == c.allMailFolder {
 			continue
@@ -531,12 +578,17 @@ func (c *Client) buildLabelMap(
 			continue
 		}
 
-		msgIDs, err := c.fetchMailboxMessageIDs(ctx, mailbox, uids)
+		msgIDs, unidentifiedUIDs, err := c.fetchMailboxMessageIDs(ctx, mailbox, uids)
 		if err != nil {
 			complete = false
 			c.logger.Warn("failed to fetch envelopes for label map",
 				"mailbox", mailbox, "error", err)
 			continue
+		}
+		for _, uid := range unidentifiedUIDs {
+			unidentified = append(unidentified, gmailapi.MessageID{
+				ID: compositeID(mailbox, uid),
+			})
 		}
 
 		for msgID := range msgIDs {
@@ -546,7 +598,7 @@ func (c *Client) buildLabelMap(
 		c.logger.Debug("built label map for mailbox",
 			"mailbox", mailbox, "messages", len(msgIDs))
 	}
-	return complete, nil
+	return complete, unidentified, nil
 }
 
 // buildMessageListCache enumerates mailboxes and populates
@@ -563,51 +615,62 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// this listing additive rather than authoritative.
 	c.labelMapComplete = false
 	c.seenRFC822IDs = nil
+	c.preferredRawSourceIDs = nil
+	c.activeSourceAliases = nil
+	c.observedMailboxDeltas = nil
+	c.observedMemberships = nil
 
-	allMailboxes, err := c.listMailboxesLocked()
+	var allMailboxes, listMailboxes []string
+	var isGmailAllMail bool
+	buildMailboxPlan := func() error {
+		mailboxes, listErr := c.listMailboxesLocked()
+		if listErr != nil {
+			return listErr
+		}
+
+		allMailboxes = filterMailboxes(
+			mailboxes,
+			c.effectiveFolderIncludeLocked(),
+			c.folderFilterExclude,
+		)
+		listMailboxes = allMailboxes
+		isGmailAllMail = false
+		if c.allMailFolder != "" {
+			isGmailAllMail = strings.HasPrefix(c.allMailFolder, "[Gmail]/")
+			if isGmailAllMail && slices.Contains(allMailboxes, c.allMailFolder) {
+				// Gmail's All Mail contains every message except Trash
+				// and Spam. Enumerate those alongside All Mail to catch
+				// messages only in those folders, but only when each
+				// canonical mailbox remains in the effective folder filter.
+				listMailboxes = []string{c.allMailFolder}
+				if slices.Contains(allMailboxes, c.trashMailbox) {
+					listMailboxes = append(listMailboxes, c.trashMailbox)
+				}
+				if slices.Contains(allMailboxes, c.junkMailbox) {
+					listMailboxes = append(listMailboxes, c.junkMailbox)
+				}
+			}
+		}
+		c.preferredRawSourceIDs = nil
+		if c.allMailFolder != "" {
+			c.preferredRawSourceIDs = make(map[[32]byte]string)
+		}
+		return nil
+	}
+
+	err := buildMailboxPlan()
 	if err != nil {
 		if isNetworkError(err) {
 			if reconErr := c.reconnect(ctx); reconErr != nil {
 				return fmt.Errorf("reconnect after LIST error: %w", reconErr)
 			}
-			allMailboxes, err = c.listMailboxesLocked()
+			c.clearMailboxDiscoveryLocked()
+			err = buildMailboxPlan()
 		}
 		if err != nil {
 			return err
 		}
 	}
-
-	// Apply folder selection once against the full LIST result so CLI
-	// includes can override configuration, and CLI exclusions apply
-	// regardless of whether --folder was provided.
-	allMailboxes = filterMailboxes(
-		allMailboxes,
-		c.effectiveFolderIncludeLocked(),
-		c.folderFilterExclude,
-	)
-
-	// Determine which mailboxes to list for canonical message IDs.
-	listMailboxes := allMailboxes
-	isGmailAllMail := false
-	if c.allMailFolder != "" {
-		isGmailAllMail = strings.HasPrefix(c.allMailFolder, "[Gmail]/")
-		if isGmailAllMail && slices.Contains(allMailboxes, c.allMailFolder) {
-			// Gmail's All Mail contains every message except Trash
-			// and Spam. Enumerate those alongside All Mail to catch
-			// messages only in those folders, but only when each
-			// canonical mailbox remains in the effective folder filter.
-			listMailboxes = []string{c.allMailFolder}
-			if slices.Contains(allMailboxes, c.trashMailbox) {
-				listMailboxes = append(
-					listMailboxes, c.trashMailbox)
-			}
-			if slices.Contains(allMailboxes, c.junkMailbox) {
-				listMailboxes = append(
-					listMailboxes, c.junkMailbox)
-			}
-		}
-	}
-
 	// Folder-state tracking skips unchanged mailboxes via STATUS
 	// UIDVALIDITY/UIDNEXT. Disabled under a date filter because a
 	// filtered run does not fetch everything up to UIDNEXT, so the
@@ -616,42 +679,63 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// unchanged resync can return immediately.
 	trackFolders := c.since.IsZero() && c.before.IsZero()
 	var folderStatuses map[string]FolderState
-	var unchangedStatuses int
 	if trackFolders {
 		c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
-		folderStatuses, unchangedStatuses = c.observeFolderStates(ctx, allMailboxes)
-		if !c.forceFullEnumeration &&
-			c.allMailFolder != "" &&
-			len(folderStatuses) == len(allMailboxes) &&
-			unchangedStatuses == len(allMailboxes) {
-			maps.Copy(c.observedFolderStates, folderStatuses)
-			if c.listProgress != nil {
-				c.listProgress(0, len(allMailboxes), "", 0, 0)
-				c.listProgress(len(allMailboxes), len(allMailboxes), "", 0, unchangedStatuses)
-			}
-			c.logger.Info("skipped unchanged mailboxes",
-				"unchanged", unchangedStatuses, "total", len(allMailboxes))
-			c.messageListCache = []gmailapi.MessageID{}
-			c.labelMapComplete = true
-			return nil
-		}
+		folderStatuses = c.observeFolderStates(ctx, allMailboxes)
 	} else {
 		c.clearFolderAcknowledgements()
 	}
 
-	// A scan without saved folder states enumerates every UID, so it can build
-	// an authoritative membership map even when the server has no \All
-	// mailbox. Saved-state scans may skip unchanged mailboxes or enumerate only
-	// UIDs above UIDNEXT; keep those partial views additive.
+	qresyncFallback := false
+	if trackFolders {
+		requireQresync := !c.forceFullEnumeration &&
+			!c.labelsSnapshotFilteredLocked() &&
+			len(c.priorFolderStates) > 0
+		handled, deltaErr := c.tryBuildQresyncMessageList(ctx, allMailboxes, folderStatuses)
+		if deltaErr != nil || (requireQresync && !handled) {
+			if deltaErr != nil {
+				c.logger.Warn("QRESYNC failed, reconnecting for full enumeration", "error", deltaErr)
+			} else {
+				c.logger.Info("QRESYNC unavailable, reconnecting for full enumeration")
+			}
+			c.observedMailboxDeltas = nil
+			c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
+			c.messageListCache = nil
+			c.clearFolderAcknowledgements()
+			if reconErr := c.reconnect(ctx); reconErr != nil {
+				return fmt.Errorf("reconnect after QRESYNC failure: %w", reconErr)
+			}
+			c.clearMailboxDiscoveryLocked()
+			if listErr := buildMailboxPlan(); listErr != nil {
+				return fmt.Errorf("LIST after QRESYNC fallback: %w", listErr)
+			}
+			c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
+			folderStatuses = c.observeFolderStates(ctx, allMailboxes)
+			qresyncFallback = true
+		} else if handled {
+			return nil
+		}
+	}
+	if trackFolders && !c.labelsSnapshotFilteredLocked() {
+		// A clean full scan publishes the complete current topology. Keep a
+		// non-nil empty slice so zero current mailboxes still reaches the
+		// authoritative store apply and retires the prior topology.
+		c.observedMailboxDeltas = make([]MailboxDelta, 0, len(allMailboxes))
+	}
+
+	// A scan without saved folder states or after a QRESYNC fallback enumerates
+	// every UID, so it can build an authoritative membership map even when the
+	// server has no \All mailbox. Filtered saved-state scans remain additive.
 	fullScanWithoutAll := c.allMailFolder == "" &&
 		trackFolders &&
-		(c.forceFullEnumeration || len(c.priorFolderStates) == 0) &&
+		(c.forceFullEnumeration || qresyncFallback || len(c.priorFolderStates) == 0) &&
 		c.config != nil &&
 		len(c.config.Folders) == 0 &&
 		len(c.folderFilterInclude) == 0 &&
 		len(c.folderFilterExclude) == 0
 	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll
 	labelMapComplete := false
+	var unidentifiedMembershipMessages []gmailapi.MessageID
 	if c.allMailFolder != "" {
 		// On non-Gmail servers with \All, enumerate all selectable
 		// mailboxes — \All may not be a superset of every folder.
@@ -664,7 +748,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 	if buildMembershipMap {
 		var mapErr error
-		labelMapComplete, mapErr = c.buildLabelMap(ctx, allMailboxes)
+		labelMapComplete, unidentifiedMembershipMessages, mapErr = c.buildLabelMap(ctx, allMailboxes)
 		if mapErr != nil {
 			return mapErr
 		}
@@ -676,6 +760,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 
 	var messages []gmailapi.MessageID
+	activeSourceAliases := make(map[string]string)
 	var unchangedFolders int
 
 	listOne := func(mailbox string) bool {
@@ -688,19 +773,21 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				observed = &status
 				trackState = status
 				canTrackFolder = true
-				if !c.forceFullEnumeration {
+				if !c.forceFullEnumeration && !qresyncFallback {
 					if prior, ok := c.priorFolderStates[mailbox]; ok &&
 						prior.UIDValidity == status.UIDValidity &&
 						prior.UIDNext <= status.UIDNext {
-						if prior.UIDNext == status.UIDNext {
+						if folderStateUnchanged(prior, status) {
 							// Unchanged since the last completed sync:
 							// no new messages possible, skip enumeration.
 							c.observedFolderStates[mailbox] = status
 							unchangedFolders++
 							return true
 						}
-						// Only new messages need listing.
-						minUID = imap.UID(prior.UIDNext)
+						if prior.HighestModSeq == 0 && status.HighestModSeq == 0 {
+							// Without CONDSTORE, UIDNEXT is the only available high water mark.
+							minUID = imap.UID(prior.UIDNext)
+						}
 					}
 				}
 			}
@@ -716,16 +803,42 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.logger.Warn("skipping mailbox", "mailbox", mailbox, "error", err)
 			return false
 		}
+		knownUIDs := uidsToUint32(uids)
+		if minUID != 0 {
+			knownUIDs = mergeKnownUIDs(c.priorFolderStates[mailbox].KnownUIDs, uids)
+		}
 		if observed != nil {
+			observed.KnownUIDs = knownUIDs
 			c.observedFolderStates[mailbox] = *observed
 		}
 		if canTrackFolder {
+			trackState.KnownUIDs = knownUIDs
 			c.trackFolderMessages(mailbox, trackState, uids)
 		}
 		for _, uid := range uids {
+			sourceMessageID := compositeID(mailbox, uid)
 			messages = append(messages, gmailapi.MessageID{
-				ID:       compositeID(mailbox, uid),
+				ID:       sourceMessageID,
 				ThreadID: "",
+			})
+			if prior, ok := c.priorFolderStates[mailbox]; ok &&
+				prior.UIDValidity == trackState.UIDValidity {
+				if canonicalSourceMessageID := c.sourceMessageAliases[sourceMessageID]; canonicalSourceMessageID != "" {
+					activeSourceAliases[sourceMessageID] = canonicalSourceMessageID
+				}
+			}
+		}
+		if canTrackFolder {
+			_, hadPrior := c.priorFolderStates[mailbox]
+			reset := !hadPrior || qresyncFallback || minUID == 0
+			if prior, ok := c.priorFolderStates[mailbox]; ok && prior.UIDValidity != trackState.UIDValidity {
+				reset = true
+			}
+			c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
+				Mailbox:     mailbox,
+				State:       trackState,
+				ChangedUIDs: append([]imap.UID(nil), uids...),
+				Reset:       reset,
 			})
 		}
 		c.logger.Debug("listed mailbox", "mailbox", mailbox, "count", len(uids))
@@ -747,12 +860,47 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.listProgress(i+1, len(listMailboxes), mailbox, len(messages), unchangedFolders)
 		}
 	}
-	if trackFolders && c.allMailFolder != "" {
+	for _, message := range unidentifiedMembershipMessages {
+		mailbox, _, parseErr := parseCompositeID(message.ID)
+		if parseErr == nil && !slices.Contains(listMailboxes, mailbox) {
+			messages = append(messages, message)
+		}
+	}
+	statusesComplete := folderStatusesCoverMailboxes(allMailboxes, folderStatuses)
+	authoritativeSnapshot := trackFolders && !c.labelsSnapshotFilteredLocked()
+	if authoritativeSnapshot && (!statusesComplete || !labelMapComplete || !enumerationComplete) {
+		labelMapComplete = false
+		c.observedFolderStates = nil
+		c.observedMailboxDeltas = nil
+		c.clearFolderAcknowledgements()
+	} else if authoritativeSnapshot && c.allMailFolder != "" {
 		if labelMapComplete && enumerationComplete {
-			maps.Copy(c.observedFolderStates, folderStatuses)
-		} else {
-			c.observedFolderStates = nil
-			c.clearFolderAcknowledgements()
+			deltaByMailbox := make(map[string]int, len(c.observedMailboxDeltas))
+			for i, delta := range c.observedMailboxDeltas {
+				deltaByMailbox[delta.Mailbox] = i
+			}
+			for _, mailbox := range allMailboxes {
+				state := folderStatuses[mailbox]
+				if deltaIndex, ok := deltaByMailbox[mailbox]; ok {
+					state.KnownUIDs = append(
+						[]uint32(nil), c.observedMailboxDeltas[deltaIndex].State.KnownUIDs...)
+					c.observedMailboxDeltas[deltaIndex].State = state
+				} else {
+					state.KnownUIDs = make([]uint32, 0)
+					for _, observation := range c.observedMemberships {
+						if observation.Mailbox == mailbox && observation.UIDValidity == state.UIDValidity {
+							state.KnownUIDs = append(state.KnownUIDs, observation.UID)
+						}
+					}
+					slices.Sort(state.KnownUIDs)
+					c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
+						Mailbox: mailbox,
+						State:   state,
+						Reset:   true,
+					})
+				}
+				c.observedFolderStates[mailbox] = state
+			}
 		}
 	}
 	if unchangedFolders > 0 {
@@ -761,8 +909,24 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 
 	c.messageListCache = messages
+	c.activeSourceAliases = activeSourceAliases
 	c.labelMapComplete = labelMapComplete && enumerationComplete
 	return nil
+}
+
+func folderStatusesCoverMailboxes(
+	mailboxes []string,
+	statuses map[string]FolderState,
+) bool {
+	if len(statuses) != len(mailboxes) {
+		return false
+	}
+	for _, mailbox := range mailboxes {
+		if _, ok := statuses[mailbox]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // isNetworkError reports whether err indicates the underlying TCP connection
@@ -1127,6 +1291,7 @@ func (c *Client) Close() error {
 	conn := c.conn
 	c.conn = nil
 	c.selectedMailbox = ""
+	c.selectedUIDValidity = 0
 	if err := conn.Logout().Wait(); err != nil {
 		return fmt.Errorf("IMAP logout: %w", err)
 	}

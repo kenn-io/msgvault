@@ -137,6 +137,17 @@ type staticLabelsAPI struct {
 	labels []*gmail.Label
 }
 
+type supersedingProfileAPI struct {
+	*gmail.MockAPI
+
+	supersede func()
+}
+
+func (a *supersedingProfileAPI) GetProfile(ctx context.Context) (*gmail.Profile, error) {
+	a.supersede()
+	return a.MockAPI.GetProfile(ctx)
+}
+
 func (a *staticLabelsAPI) ListLabels(_ context.Context) ([]*gmail.Label, error) {
 	return a.labels, nil
 }
@@ -269,6 +280,92 @@ func TestFullSyncProviderHookDoesNotRunAfterFailedSync(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Zero(t, hookCalls)
+}
+
+func TestFullSyncSupersededGenerationDoesNotPublishCursorOrReturnSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	require.NoError(env.Store.UpdateSourceSyncCursor(source.ID, "baseline-cursor"))
+	var newerSyncID int64
+	env.Syncer = New(&supersedingProfileAPI{
+		MockAPI: env.Mock,
+		supersede: func() {
+			var err error
+			newerSyncID, err = env.Store.StartSync(source.ID, "full")
+			require.NoError(err)
+		},
+	}, env.Store, nil)
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+	assert.Nil(summary)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err)
+	assert.Equal("baseline-cursor", source.SyncCursor.String)
+	active, err := env.Store.GetActiveSync(source.ID)
+	require.NoError(err)
+	assert.Equal(newerSyncID, active.ID)
+}
+
+func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject the completion failure")
+	env := newTestEnv(t)
+	_, err := env.Store.DB().Exec(`
+		CREATE TRIGGER fail_sync_completion
+		BEFORE UPDATE OF status ON sync_runs
+		FOR EACH ROW WHEN NEW.status = 'completed'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced sync completion failure');
+		END
+	`)
+	require.NoError(err)
+	t.Cleanup(func() {
+		_, _ = env.Store.DB().Exec("DROP TRIGGER IF EXISTS fail_sync_completion")
+	})
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+
+	require.ErrorContains(err, "forced sync completion failure")
+	assert.Nil(summary)
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err)
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, run.Status)
+	assert.Contains(run.ErrorMessage.String, "forced sync completion failure")
+}
+
+func TestIncrementalSyncSupersededGenerationDoesNotPublishCursorOrReturnSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.Mock.Profile.HistoryID = 1000
+	var newerSyncID int64
+	env.Syncer = New(&supersedingProfileAPI{
+		MockAPI: env.Mock,
+		supersede: func() {
+			var err error
+			newerSyncID, err = env.Store.StartSync(source.ID, "incremental")
+			require.NoError(err)
+		},
+	}, env.Store, nil)
+
+	summary, err := env.Syncer.Incremental(env.Context, source)
+
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+	assert.Nil(summary)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err)
+	assert.Equal("1000", source.SyncCursor.String)
+	active, err := env.Store.GetActiveSync(source.ID)
+	require.NoError(err)
+	assert.Equal(newerSyncID, active.ID)
 }
 
 // TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion also pins the
@@ -2988,7 +3085,7 @@ func TestIMAPCompleteSnapshotAdoptsAllMailCanonicalID(t *testing.T) {
 	assert.Equal(t, "All Mail|1", sourceMessageID)
 }
 
-func TestIMAPHighWaterMoveReplacesMissingIDAndMergesLabels(t *testing.T) {
+func TestIMAPUnsupportedQresyncMoveUsesFullFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3026,8 +3123,8 @@ func TestIMAPHighWaterMoveReplacesMissingIDAndMergesLabels(t *testing.T) {
 	).Scan(&sourceMessageID)
 	require.NoError(err)
 	assert.Equal("Trash|1", sourceMessageID)
-	assertMessageHasLabel(t, env.Store, sourceMessageID, "INBOX")
 	assertMessageHasLabel(t, env.Store, sourceMessageID, "Trash")
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "INBOX")
 }
 
 func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
@@ -3219,7 +3316,7 @@ func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
 	assertSummary(t, summary, WantSummary{
 		Added:   new(int64(0)),
 		Updated: new(int64(0)),
-		Skipped: new(int64(0)),
+		Skipped: new(int64(1)),
 	})
 }
 
@@ -3500,7 +3597,7 @@ func TestIMAPFilteredMoveReconcilesBeforeAdvancingFolderState(t *testing.T) {
 	assert.Equal("Trash|1", sourceMessageID)
 }
 
-func TestIMAPHighWaterRenameReplacesMissingMailboxID(t *testing.T) {
+func TestIMAPUnsupportedQresyncRenameUsesFullFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3548,8 +3645,8 @@ func TestIMAPHighWaterRenameReplacesMissingMailboxID(t *testing.T) {
 	).Scan(&sourceMessageID)
 	require.NoError(err)
 	assert.Equal("Projects|1", sourceMessageID)
-	assertMessageHasLabel(t, env.Store, sourceMessageID, "Archive")
 	assertMessageHasLabel(t, env.Store, sourceMessageID, "Projects")
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "Archive")
 	assert.Contains(acknowledged, "Projects")
 }
 
@@ -3752,20 +3849,28 @@ func TestIMAPHighWaterValidationFailureRemainsRetryable(t *testing.T) {
 	assert.NotContains(highWaterAPI.acknowledged, "TRASH|99")
 }
 
+type immediateLabelIMAPClient struct {
+	*imapclient.Client
+}
+
+func (*immediateLabelIMAPClient) DefersAuthoritativeLabelReconciliation() bool {
+	return false
+}
+
 func newSyncTestIMAPClient(
 	t *testing.T, addr string, clientOpts ...imapclient.Option,
-) *imapclient.Client {
+) *immediateLabelIMAPClient {
 	t.Helper()
 	host, portString, err := net.SplitHostPort(addr)
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portString)
 	require.NoError(t, err)
 
-	client := imapclient.NewClient(&imapclient.Config{
+	client := &immediateLabelIMAPClient{Client: imapclient.NewClient(&imapclient.Config{
 		Host:     host,
 		Port:     port,
 		Username: testutil.IMAPTestUsername,
-	}, testutil.IMAPTestPassword, clientOpts...)
+	}, testutil.IMAPTestPassword, clientOpts...)}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
@@ -3778,6 +3883,10 @@ type incompleteLabelSnapshotAPI struct {
 
 func (*incompleteLabelSnapshotAPI) LabelsSnapshotComplete() bool {
 	return false
+}
+
+func (*incompleteLabelSnapshotAPI) DefersAuthoritativeLabelReconciliation() bool {
+	return true
 }
 
 func (*incompleteLabelSnapshotAPI) LabelsSnapshotFiltered() bool {
@@ -3794,6 +3903,7 @@ type labelMetadataSnapshotAPI struct {
 	*gmail.MockAPI
 
 	complete    bool
+	deferLabels bool
 	filtered    bool
 	labelCalls  [][]string
 	labelErrors map[string]error
@@ -3802,6 +3912,10 @@ type labelMetadataSnapshotAPI struct {
 
 func (a *labelMetadataSnapshotAPI) LabelsSnapshotComplete() bool {
 	return a.complete
+}
+
+func (a *labelMetadataSnapshotAPI) DefersAuthoritativeLabelReconciliation() bool {
+	return a.deferLabels
 }
 
 func (a *labelMetadataSnapshotAPI) LabelsSnapshotFiltered() bool {
@@ -3993,6 +4107,47 @@ func TestIMAPCompleteRescanReplacesExactIDLabels(t *testing.T) {
 		Updated: new(int64(0)),
 	})
 	assert.Equal([][]string{{sourceMessageID}}, completeAPI.labelCalls)
+}
+
+func TestIMAPCompleteLimitedRescanReconcilesProcessedExistingLabels(t *testing.T) {
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "[Gmail]/All Mail", Name: "All Mail", Type: labelTypeSystem},
+		{ID: "Archive", Name: "Archive", Type: "user"},
+	}
+
+	const processedID = "[Gmail]/All Mail|41"
+	const truncatedID = "[Gmail]/All Mail|42"
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.MessagePages = [][]string{{processedID, truncatedID}}
+	env.Mock.AddMessage(processedID, testMIME(), []string{"[Gmail]/All Mail", "Archive"})
+	env.Mock.AddMessage(truncatedID, testMIME(), []string{"[Gmail]/All Mail", "Archive"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+	assertMessageHasLabel(t, env.Store, processedID, "Archive")
+
+	env.Mock.Messages[processedID].LabelIDs = []string{"[Gmail]/All Mail"}
+	limitedOpts := DefaultOptions()
+	limitedOpts.SourceType = sourceTypeIMAP
+	limitedOpts.Limit = 1
+	completeAPI := &labelMetadataSnapshotAPI{
+		MockAPI:     env.Mock,
+		complete:    true,
+		deferLabels: true,
+	}
+	env.Syncer = New(completeAPI, env.Store, limitedOpts)
+
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Found:   new(int64(1)),
+		Updated: new(int64(1)),
+	})
+	assert.Equal(t, [][]string{{processedID}}, completeAPI.labelCalls)
+	assertMessageNotHasLabel(t, env.Store, processedID, "Archive")
+	assertMessageHasLabel(t, env.Store, truncatedID, "Archive")
 }
 
 func TestIMAPLabelMetadataFailureDoesNotAbortBatch(t *testing.T) {

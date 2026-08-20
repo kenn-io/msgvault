@@ -1235,6 +1235,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
+		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},

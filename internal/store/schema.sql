@@ -667,11 +667,30 @@ CREATE TABLE IF NOT EXISTS imap_folder_state (
     mailbox TEXT NOT NULL,
     uidvalidity INTEGER NOT NULL,
     uidnext INTEGER NOT NULL,
+    highest_modseq TEXT NOT NULL DEFAULT '0',
 
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (source_id, mailbox)
 );
+
+-- Durable IMAP mailbox membership. Provider flags stay on the membership:
+-- messages.is_read is local application state, not a projection of \Seen.
+CREATE TABLE IF NOT EXISTS imap_message_memberships (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    uid INTEGER NOT NULL,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    flags TEXT NOT NULL DEFAULT '[]',
+
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox, uidvalidity, uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
+    ON imap_message_memberships(source_id, message_id);
 
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (

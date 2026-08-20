@@ -26,6 +26,10 @@ const (
 // absence apart from real DB errors.
 var ErrSyncRunNotFound = errors.New("sync run not found")
 
+// ErrSyncRunSuperseded is returned when a terminal write belongs to a sync
+// generation that is no longer running or current for its source.
+var ErrSyncRunSuperseded = errors.New("sync run superseded")
+
 // ErrSourceImportItemNotFound is returned by GetSourceImportItem when no
 // import-item row matches. Wrapped via fmt.Errorf for errors.Is checks.
 var ErrSourceImportItemNotFound = errors.New("source import item not found")
@@ -386,14 +390,130 @@ func (s *Store) CompleteSync(syncID int64, finalHistoryID string) error {
 
 // CompleteSyncContext is the request-aware form of CompleteSync.
 func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHistoryID string) error {
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sync_runs
 		SET status = 'completed',
 		    completed_at = %s,
 		    cursor_after = ?
-		WHERE id = ?
+		WHERE id = ? AND status = 'running'
 	`, s.dialect.Now()), finalHistoryID, syncID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("complete sync %d: inspect update: %w", syncID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
+	}
+	return nil
+}
+
+// CompleteSyncAndUpdateSourceCursor atomically publishes a source cursor and
+// completes its still-current sync generation.
+func (s *Store) CompleteSyncAndUpdateSourceCursor(
+	syncID int64, sourceID int64, finalHistoryID string,
+) error {
+	return s.CompleteSyncAndUpdateSourceCursorContext(
+		context.Background(), syncID, sourceID, finalHistoryID,
+	)
+}
+
+// CompleteSyncAndUpdateSourceCursorContext is the request-aware form of
+// CompleteSyncAndUpdateSourceCursor. It shares the source lock used by
+// StartSync, so a newer generation cannot start between cursor publication and
+// run completion.
+func (s *Store) CompleteSyncAndUpdateSourceCursorContext(
+	ctx context.Context, syncID int64, sourceID int64, finalHistoryID string,
+) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := validateCurrentSyncGeneration(
+			ctx, tx, sourceID, syncID, SyncStatusRunning,
+		); err != nil {
+			return fmt.Errorf("complete sync %d: %w", syncID, err)
+		}
+
+		now := s.dialect.Now()
+		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE sources
+			SET sync_cursor = ?, last_sync_at = %s, updated_at = %s
+			WHERE id = ?
+		`, now, now), finalHistoryID, sourceID)
+		if err != nil {
+			return fmt.Errorf("complete sync %d: update source cursor: %w", syncID, err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("complete sync %d: inspect source cursor update: %w", syncID, err)
+		}
+		if rows != 1 {
+			return fmt.Errorf("complete sync %d: source %d not found", syncID, sourceID)
+		}
+
+		result, err = tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE sync_runs
+			SET status = 'completed',
+			    completed_at = %s,
+			    cursor_after = ?
+			WHERE id = ? AND source_id = ? AND status = 'running'
+		`, now), finalHistoryID, syncID, sourceID)
+		if err != nil {
+			return fmt.Errorf("complete sync %d: %w", syncID, err)
+		}
+		rows, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("complete sync %d: inspect update: %w", syncID, err)
+		}
+		if rows != 1 {
+			return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
+		}
+		return nil
+	})
+}
+
+func validateCurrentSyncGeneration(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	syncRunID int64,
+	expectedStatus string,
+) error {
+	result, err := tx.ExecContext(
+		ctx, `UPDATE sources SET updated_at = updated_at WHERE id = ?`, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("lock source %d for sync generation: %w", sourceID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lock source %d for sync generation: inspect update: %w", sourceID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("lock source %d for sync generation: source not found", sourceID)
+	}
+
+	var latestID int64
+	var latestStatus string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, status FROM sync_runs
+		WHERE source_id = ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, sourceID).Scan(&latestID, &latestStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSyncRunSuperseded
+	}
+	if err != nil {
+		return fmt.Errorf("query current sync generation for source %d: %w", sourceID, err)
+	}
+	if latestID != syncRunID || latestStatus != expectedStatus {
+		return fmt.Errorf(
+			"latest sync %d is %s, want sync %d in %s: %w",
+			latestID, latestStatus, syncRunID, expectedStatus, ErrSyncRunSuperseded,
+		)
+	}
+	return nil
 }
 
 // FailSync marks a sync as failed with an error message.

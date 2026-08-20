@@ -531,11 +531,28 @@ CREATE TABLE IF NOT EXISTS imap_folder_state (
     mailbox TEXT NOT NULL,
     uidvalidity BIGINT NOT NULL,
     uidnext BIGINT NOT NULL,
+    highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0,
 
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (source_id, mailbox)
 );
+
+CREATE TABLE IF NOT EXISTS imap_message_memberships (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity BIGINT NOT NULL,
+    uid BIGINT NOT NULL,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    flags JSONB NOT NULL DEFAULT '[]'::JSONB,
+
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox, uidvalidity, uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
+    ON imap_message_memberships(source_id, message_id);
 
 CREATE TABLE IF NOT EXISTS source_import_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

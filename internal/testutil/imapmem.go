@@ -40,6 +40,26 @@ type selectErrorSession struct {
 	remaining int
 }
 
+type statusErrorSession struct {
+	imapserver.Session
+
+	mailbox string
+}
+
+func (s *statusErrorSession) Status(
+	mailbox string,
+	options *imap.StatusOptions,
+) (*imap.StatusData, error) {
+	if mailbox == s.mailbox {
+		return nil, fmt.Errorf("synthetic STATUS failure for %q", mailbox)
+	}
+	data, err := s.Session.Status(mailbox, options)
+	if err != nil {
+		return nil, fmt.Errorf("status %q: %w", mailbox, err)
+	}
+	return data, nil
+}
+
 func (s *selectErrorSession) Select(
 	mailbox string,
 	options *imap.SelectOptions,
@@ -132,7 +152,7 @@ func AppendIMAPMessageWithMessageID(
 // down via t.Cleanup.
 func StartIMAPMemServer(t *testing.T, messagesPerMailbox map[string]int) (string, *imapmemserver.User) {
 	t.Helper()
-	return startIMAPMemServer(t, messagesPerMailbox, nil, "", 0)
+	return startIMAPMemServer(t, messagesPerMailbox, nil, "", 0, "")
 }
 
 // StartIMAPMemServerWithSpecialUse runs an in-memory IMAP server whose LIST
@@ -143,7 +163,20 @@ func StartIMAPMemServerWithSpecialUse(
 	specialUse map[string][]imap.MailboxAttr,
 ) (string, *imapmemserver.User) {
 	t.Helper()
-	return startIMAPMemServer(t, messagesPerMailbox, specialUse, "", 0)
+	return startIMAPMemServer(t, messagesPerMailbox, specialUse, "", 0, "")
+}
+
+// StartIMAPMemServerWithStatusError runs an in-memory IMAP server that rejects
+// STATUS for one mailbox while serving LIST, SELECT, SEARCH, and FETCH normally.
+func StartIMAPMemServerWithStatusError(
+	t *testing.T,
+	messagesPerMailbox map[string]int,
+	specialUse map[string][]imap.MailboxAttr,
+	statusErrorMailbox string,
+) (string, *imapmemserver.User) {
+	t.Helper()
+	return startIMAPMemServer(
+		t, messagesPerMailbox, specialUse, "", 0, statusErrorMailbox)
 }
 
 // StartIMAPMemServerWithSelectError runs an in-memory IMAP server that rejects
@@ -156,7 +189,7 @@ func StartIMAPMemServerWithSelectError(
 ) (string, *imapmemserver.User) {
 	t.Helper()
 	return startIMAPMemServer(
-		t, messagesPerMailbox, specialUse, selectErrorMailbox, -1)
+		t, messagesPerMailbox, specialUse, selectErrorMailbox, -1, "")
 }
 
 // StartIMAPMemServerWithOneShotSelectError runs an in-memory IMAP server that
@@ -169,7 +202,7 @@ func StartIMAPMemServerWithOneShotSelectError(
 ) (string, *imapmemserver.User) {
 	t.Helper()
 	return startIMAPMemServer(
-		t, messagesPerMailbox, specialUse, selectErrorMailbox, 1)
+		t, messagesPerMailbox, specialUse, selectErrorMailbox, 1, "")
 }
 
 func startIMAPMemServer(
@@ -178,6 +211,7 @@ func startIMAPMemServer(
 	specialUse map[string][]imap.MailboxAttr,
 	selectErrorMailbox string,
 	selectErrorCount int,
+	statusErrorMailbox string,
 ) (string, *imapmemserver.User) {
 	t.Helper()
 	user := imapmemserver.NewUser(IMAPTestUsername, IMAPTestPassword)
@@ -209,6 +243,12 @@ func startIMAPMemServer(
 					Session:   session,
 					mailbox:   selectErrorMailbox,
 					remaining: selectErrorCount,
+				}
+			}
+			if statusErrorMailbox != "" {
+				session = &statusErrorSession{
+					Session: session,
+					mailbox: statusErrorMailbox,
 				}
 			}
 			return session, nil, nil

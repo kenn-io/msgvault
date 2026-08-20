@@ -2,22 +2,24 @@ package store
 
 import (
 	"fmt"
+	"strconv"
 )
 
-// IMAPFolderState records the UIDVALIDITY and UIDNEXT of one IMAP
-// mailbox as observed at the start of the last fully completed sync.
+// IMAPFolderState records the UIDVALIDITY, UIDNEXT, and highest mod-sequence
+// of one IMAP mailbox at the last fully completed sync.
 // A mailbox whose current values match the saved ones has received no
 // new messages since that sync and can be skipped entirely.
 type IMAPFolderState struct {
-	Mailbox     string
-	UIDValidity uint32
-	UIDNext     uint32
+	Mailbox       string
+	UIDValidity   uint32
+	UIDNext       uint32
+	HighestModSeq uint64
 }
 
 // GetIMAPFolderStates returns the saved per-mailbox sync states for a source.
 func (s *Store) GetIMAPFolderStates(sourceID int64) ([]IMAPFolderState, error) {
 	rows, err := s.db.Query(`
-		SELECT mailbox, uidvalidity, uidnext
+		SELECT mailbox, uidvalidity, uidnext, highest_modseq
 		FROM imap_folder_state
 		WHERE source_id = ?
 	`, sourceID)
@@ -29,8 +31,13 @@ func (s *Store) GetIMAPFolderStates(sourceID int64) ([]IMAPFolderState, error) {
 	var states []IMAPFolderState
 	for rows.Next() {
 		var st IMAPFolderState
-		if err := rows.Scan(&st.Mailbox, &st.UIDValidity, &st.UIDNext); err != nil {
+		var highestModSeq string
+		if err := rows.Scan(&st.Mailbox, &st.UIDValidity, &st.UIDNext, &highestModSeq); err != nil {
 			return nil, fmt.Errorf("scan imap folder state: %w", err)
+		}
+		st.HighestModSeq, err = strconv.ParseUint(highestModSeq, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse highest mod-sequence for mailbox %q: %w", st.Mailbox, err)
 		}
 		states = append(states, st)
 	}
@@ -46,14 +53,17 @@ func (s *Store) GetIMAPFolderStates(sourceID int64) ([]IMAPFolderState, error) {
 func (s *Store) UpsertIMAPFolderStates(sourceID int64, states []IMAPFolderState) error {
 	for _, st := range states {
 		_, err := s.db.Exec(fmt.Sprintf(`
-			INSERT INTO imap_folder_state (source_id, mailbox, uidvalidity, uidnext, updated_at)
-			VALUES (?, ?, ?, ?, %s)
+			INSERT INTO imap_folder_state
+				(source_id, mailbox, uidvalidity, uidnext, highest_modseq, updated_at)
+			VALUES (?, ?, ?, ?, ?, %s)
 			ON CONFLICT(source_id, mailbox) DO UPDATE SET
 				uidvalidity = excluded.uidvalidity,
 				uidnext = excluded.uidnext,
+				highest_modseq = excluded.highest_modseq,
 				updated_at = %s
 		`, s.dialect.Now(), s.dialect.Now()),
-			sourceID, st.Mailbox, st.UIDValidity, st.UIDNext)
+			sourceID, st.Mailbox, st.UIDValidity, st.UIDNext,
+			strconv.FormatUint(st.HighestModSeq, 10))
 		if err != nil {
 			return fmt.Errorf("upsert imap folder state for %q: %w", st.Mailbox, err)
 		}

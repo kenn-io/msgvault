@@ -137,6 +137,10 @@ linters:
       # SQL table names) recur many more times than the threshold.
       min-occurrences: 10
 
+    gomoddirectives:
+      replace-allow-list:
+        - github.com/emersion/go-imap/v2
+
     importas:
       alias:
         - pkg: github.com/stretchr/testify/assert
