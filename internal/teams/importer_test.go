@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2593,7 +2594,11 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 	assert := assert.New(t)
 
 	const tieTS = "2026-01-01T00:00:00.123Z"
+	tie, err := time.Parse(time.RFC3339Nano, tieTS)
+	require.NoError(err)
+
 	var secondSync atomic.Bool
+	var filters graphFilterFake
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -2604,21 +2609,21 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 			_, _ = w.Write([]byte(`{"value":[]}`))
 		case strings.Contains(r.URL.Path, "/messages"):
 			// m2 lands after the first sync, sharing m1's exact timestamp.
-			msgs := map[string]string{"tm1": tieTS}
+			ids := []string{"tm1"}
 			if secondSync.Load() {
-				msgs["tm2"] = tieTS
+				ids = append(ids, "tm2")
 			}
-			cutoff := parseGraphGTFilter(t, r.URL.Query().Get("$filter"))
+			cutoff, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+			if !ok {
+				return
+			}
 			var out []string
-			for id, ts := range msgs {
-				got, perr := time.Parse(time.RFC3339Nano, ts)
-				require.NoError(perr)
-				if cutoff != nil && !got.After(*cutoff) {
-					continue // exactly what Graph does for "gt"
+			if cutoff == nil || tie.After(*cutoff) { // exactly what Graph does for "gt"
+				for _, id := range ids {
+					out = append(out, `{"id":"`+id+`","createdDateTime":"`+tieTS+
+						`","lastModifiedDateTime":"`+tieTS+
+						`","body":{"contentType":"text","content":"`+id+`"}}`)
 				}
-				out = append(out, `{"id":"`+id+`","createdDateTime":"`+ts+
-					`","lastModifiedDateTime":"`+ts+
-					`","body":{"contentType":"text","content":"`+id+`"}}`)
 			}
 			_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
 		default:
@@ -2643,31 +2648,177 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 	assert.EqualValues(1, sum.MessagesAdded,
 		"only tm2 is new; the re-read of tm1 must not be counted as added")
 
-	var ids []string
+	filters.check(t)
+
+	var got []string
 	rows, err := st.DB().Query(`SELECT source_message_id FROM messages WHERE message_type='teams' ORDER BY source_message_id`)
 	require.NoError(err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		require.NoError(rows.Scan(&id))
-		ids = append(ids, id)
+		got = append(got, id)
 	}
 	require.NoError(rows.Err())
-	assert.Len(ids, 2, "both messages persisted, no duplicate from the overlap re-read")
+	assert.Len(got, 2, "both messages persisted, no duplicate from the overlap re-read")
 }
 
-// parseGraphGTFilter extracts the timestamp from a
-// "lastModifiedDateTime gt <ts>" filter, returning nil when there is no
-// filter. It rejects any other operator the way Graph does.
-func parseGraphGTFilter(t *testing.T, filter string) *time.Time {
-	t.Helper()
+// graphFilterFake applies a Graph `$filter` inside a test double the way the
+// service does. A filter Graph would reject is answered 400 and recorded for
+// the test body to assert on rather than failed on the spot: a require inside
+// an HTTP handler aborts the server goroutine, not the test.
+type graphFilterFake struct {
+	mu  sync.Mutex
+	err error
+}
+
+// cutoff extracts the timestamp from a "lastModifiedDateTime gt <ts>" filter,
+// returning a nil cutoff when there is no filter. It rejects any other operator
+// the way Graph does. The bool reports whether the handler should carry on.
+func (g *graphFilterFake) cutoff(w http.ResponseWriter, filter string) (*time.Time, bool) {
 	if filter == "" {
-		return nil
+		return nil, true
 	}
 	const prefix = "lastModifiedDateTime gt "
-	require.True(t, strings.HasPrefix(filter, prefix),
-		"Graph rejects any operator but gt/lt on lastModifiedDateTime; got %q", filter)
+	if !strings.HasPrefix(filter, prefix) {
+		g.reject(w, fmt.Errorf("graph rejects any operator but gt/lt on lastModifiedDateTime; got %q", filter))
+		return nil, false
+	}
 	ts, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(filter, prefix))
+	if err != nil {
+		g.reject(w, fmt.Errorf("malformed $filter timestamp in %q: %w", filter, err))
+		return nil, false
+	}
+	return &ts, true
+}
+
+// reject records the first bad filter and answers the way Graph would.
+func (g *graphFilterFake) reject(w http.ResponseWriter, err error) {
+	g.mu.Lock()
+	if g.err == nil {
+		g.err = err
+	}
+	g.mu.Unlock()
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+// check fails the test if the fake ever saw a filter Graph would have rejected.
+func (g *graphFilterFake) check(t *testing.T) {
+	t.Helper()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	require.NoError(t, g.err)
+}
+
+// roborev raised that the overlap is fetched under opts.Limit, so preexisting
+// boundary messages can exhaust the cap before a newly arrived tied message is
+// returned. That is real, but it is not data loss: a truncated read never
+// advances the cursor (see the truncated check in syncChats), so the tie stays
+// in range and any unlimited run recovers it.
+//
+// Tied messages have no deterministic secondary ordering, so the fake returns
+// them in a fixed order to make the truncation deterministic; the assertions
+// below do not depend on which tied message the cap happens to admit.
+func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	const tieTS = "2026-01-01T00:00:00.123Z"
+	const chatID = "19:tielimit@thread.v2"
+	tie, err := time.Parse(time.RFC3339Nano, tieTS)
+	require.NoError(err)
+
+	var lateArrived atomic.Bool
+	var filters graphFilterFake
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"` + chatID + `","chatType":"oneOnOne","topic":"TieLimit"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			ids := []string{"ta1", "ta2"}
+			if lateArrived.Load() {
+				ids = append(ids, "tlate")
+			}
+			cutoff, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+			if !ok {
+				return
+			}
+			var out []string
+			if cutoff == nil || tie.After(*cutoff) {
+				for _, id := range ids {
+					out = append(out, `{"id":"`+id+`","createdDateTime":"`+tieTS+
+						`","lastModifiedDateTime":"`+tieTS+
+						`","body":{"contentType":"text","content":"`+id+`"}}`)
+				}
+			}
+			_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	base := ImportOptions{Email: "me@example.com", IncludeChannels: false}
+
+	_, err = imp.Import(context.Background(), base)
+	require.NoError(err)
+	require.Equal(2, teamsMessageCount(t, st), "first sync archives both tied messages")
+
+	// A third message arrives sharing the cursor timestamp; the cap is smaller
+	// than the number of tied messages now in range.
+	lateArrived.Store(true)
+	limited := base
+	limited.Limit = 1
+	for i := range 3 {
+		_, lerr := imp.Import(context.Background(), limited)
+		require.NoErrorf(lerr, "limited sync %d", i)
+	}
+
+	// Guard against the test going vacuous: the cap must actually be deferring
+	// the late message, otherwise the assertions below prove nothing.
+	require.Equal(2, teamsMessageCount(t, st),
+		"the cap should still be deferring the late tied message at this point")
+
+	// That deferral is fine. What must hold is that the cursor did not move
+	// past the deferred message.
+	cursor := chatCursorAfterLastSync(t, st, chatID)
+	require.NotEmpty(cursor, "cursor exists after the unlimited first sync")
+	parsed, perr := time.Parse(time.RFC3339Nano, cursor)
+	require.NoError(perr)
+	assert.False(parsed.After(tie),
+		"a capped run must not advance the cursor past the tied timestamp (cursor=%s)", cursor)
+
+	// Therefore an unlimited run still recovers it: nothing was lost.
+	_, err = imp.Import(context.Background(), base)
+	require.NoError(err)
+	assert.Equal(3, teamsMessageCount(t, st),
+		"an unlimited sync recovers the late tied message the cap had deferred")
+
+	filters.check(t)
+}
+
+func teamsMessageCount(t *testing.T, st *store.Store) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&n))
+	return n
+}
+
+func chatCursorAfterLastSync(t *testing.T, st *store.Store, chatID string) string {
+	t.Helper()
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
 	require.NoError(t, err)
-	return &ts
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(t, err)
+	require.True(t, run.CursorAfter.Valid)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(t, err)
+	return state.ChatCursor(chatID)
 }
