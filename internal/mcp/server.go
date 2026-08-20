@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // Tool name constants.
@@ -275,7 +276,12 @@ func newMCPHTTPServerWithPolicy(
 			Stateless:                    true,
 			JSONResponse:                 true,
 			PropagateRequestCancellation: true,
-			MaxRequestBodyBytes:          1 << 20,
+			// The visual search tool carries a query image of up to
+			// visual.MaxQueryImageBytes as base64 inside the JSON-RPC body;
+			// a smaller cap rejects valid images at the transport before the
+			// handler can see them. 2 MiB covers every other tool's payload
+			// plus the JSON envelope.
+			MaxRequestBodyBytes: (visual.MaxQueryImageBytes*4)/3 + 2<<20,
 		},
 	)
 	mux := http.NewServeMux()

@@ -1,7 +1,9 @@
 package visual
 
 import (
+	"context"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -473,4 +475,41 @@ func TestRetryOwnerBypassesTerminalConvergence(t *testing.T) {
 	result, err = reconciler.RetryOwner(t.Context(), messageID, strings.Repeat("81", 32))
 	require.NoError(err)
 	assert.Len(result.Work, 1, "retry of a terminal outcome must produce fresh work")
+}
+
+type switchableOpener struct{ inner StreamOpener }
+
+func (o *switchableOpener) OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error) {
+	return o.inner.OpenStream(ctx, hash)
+}
+
+func TestRetryableOutcomeRecoversWhenTransientConditionClears(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	testVisualCandidate(t, f, "retryable-recover", strings.Repeat("91", 32))
+	opener := &switchableOpener{inner: memoryOpener{openErr: ErrContentUnavailable}}
+	reconciler := testReconciler(t, f, generation.ID, opener, "visual-test/retryable-recover")
+
+	// The blob is temporarily unavailable: reconciliation records a
+	// retryable outcome and completes its baseline over it.
+	result, err := reconciler.FullReconcile(t.Context())
+	require.NoError(err)
+	assert.Empty(result.Work)
+	assert.Equal(int64(1), result.Retryable)
+	needsFull, err := reconciler.NeedsFullReconcile(t.Context())
+	require.NoError(err)
+	require.False(needsFull)
+
+	// Once the blob is back, the stale sweep must reconsider the owner —
+	// otherwise the generation could never reach activation.
+	opener.inner = memoryOpener{data: encodedPNG(t, 2, 2)}
+	result, err = reconciler.Replay(t.Context())
+	require.NoError(err)
+	require.Len(result.Work, 1, "a recovered retryable owner must be re-claimed by the sweep")
+	publishReconciledWork(t, f, result.Work[0])
+	result, err = reconciler.Replay(t.Context())
+	require.NoError(err)
+	assert.Empty(result.Work)
 }

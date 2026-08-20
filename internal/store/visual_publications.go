@@ -162,9 +162,14 @@ func (s *Store) ListStaleVisualMessageIDs(ctx context.Context, generationID int6
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("stale visual message limit must be between 1 and 1000")
 	}
+	// Retryable outcomes stay in the sweep: a transient provider failure or
+	// temporarily unavailable blob must be reconsidered on later passes or
+	// the generation could never activate. Terminal outcomes converge until
+	// their revision changes or an operator retries.
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT DISTINCT message_id FROM visual_publications
-		WHERE generation_id = ? AND state = 'stale' AND outcome_kind IS NULL
+		WHERE generation_id = ? AND state = 'stale'
+		  AND (outcome_kind IS NULL OR outcome_kind = 'retryable')
 		ORDER BY message_id LIMIT ?`), generationID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list stale visual messages: %w", err)
