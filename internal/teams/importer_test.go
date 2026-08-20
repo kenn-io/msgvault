@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2577,4 +2579,95 @@ func messageIDBySourceMessageID(t *testing.T, st *store.Store, sourceMessageID s
 	require.NoError(t, st.DB().QueryRow(st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&messageID))
 	return messageID
+}
+
+// A message can share the exact lastModifiedDateTime of the stored cursor.
+// Graph only supports an exclusive "gt" filter on that property and its
+// timestamps are millisecond-resolution, so without a backwards overlap such a
+// message would be filtered out on every subsequent sync and lost permanently.
+//
+// Unlike a mock that merely echoes $filter back, this server applies the
+// filter, so the test fails if the overlap is removed.
+func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	const tieTS = "2026-01-01T00:00:00.123Z"
+	var secondSync atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:tie@thread.v2","chatType":"oneOnOne","topic":"Tie"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			// m2 lands after the first sync, sharing m1's exact timestamp.
+			msgs := map[string]string{"tm1": tieTS}
+			if secondSync.Load() {
+				msgs["tm2"] = tieTS
+			}
+			cutoff := parseGraphGTFilter(t, r.URL.Query().Get("$filter"))
+			var out []string
+			for id, ts := range msgs {
+				got, perr := time.Parse(time.RFC3339Nano, ts)
+				require.NoError(perr)
+				if cutoff != nil && !got.After(*cutoff) {
+					continue // exactly what Graph does for "gt"
+				}
+				out = append(out, `{"id":"`+id+`","createdDateTime":"`+ts+
+					`","lastModifiedDateTime":"`+ts+
+					`","body":{"contentType":"text","content":"`+id+`"}}`)
+			}
+			_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	opts := ImportOptions{Email: "me@example.com", IncludeChannels: false}
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.EqualValues(1, sum.MessagesAdded, "first sync stores tm1")
+
+	// The cursor is now exactly tieTS, the timestamp tm2 also carries.
+	secondSync.Store(true)
+	sum, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(2, sum.MessagesProcessed, "second sync re-reads tm1 and recovers tm2")
+	assert.EqualValues(1, sum.MessagesAdded,
+		"only tm2 is new; the re-read of tm1 must not be counted as added")
+
+	var ids []string
+	rows, err := st.DB().Query(`SELECT source_message_id FROM messages WHERE message_type='teams' ORDER BY source_message_id`)
+	require.NoError(err)
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		require.NoError(rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(rows.Err())
+	assert.Len(ids, 2, "both messages persisted, no duplicate from the overlap re-read")
+}
+
+// parseGraphGTFilter extracts the timestamp from a
+// "lastModifiedDateTime gt <ts>" filter, returning nil when there is no
+// filter. It rejects any other operator the way Graph does.
+func parseGraphGTFilter(t *testing.T, filter string) *time.Time {
+	t.Helper()
+	if filter == "" {
+		return nil
+	}
+	const prefix = "lastModifiedDateTime gt "
+	require.True(t, strings.HasPrefix(filter, prefix),
+		"Graph rejects any operator but gt/lt on lastModifiedDateTime; got %q", filter)
+	ts, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(filter, prefix))
+	require.NoError(t, err)
+	return &ts
 }

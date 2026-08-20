@@ -158,6 +158,31 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 	return sum, err
 }
 
+// chatCursorOverlap widens the incremental chat window backwards before
+// querying. Graph only accepts an exclusive "gt" filter on
+// lastModifiedDateTime, so a message sharing the cursor's exact timestamp
+// would be skipped forever; Graph timestamps are millisecond-resolution, so
+// such collisions are possible. Re-reading a small overlap costs a handful of
+// messages per chat and is free of side effects: persistence upserts on
+// (source_id, source_message_id), and maxTime is seeded from the stored cursor
+// so a re-read of older messages cannot move it backwards.
+const chatCursorOverlap = time.Second
+
+// chatQuerySince rewinds a stored chat cursor by chatCursorOverlap. An empty
+// or unparseable cursor is passed through untouched, so a first sync stays
+// unfiltered and a malformed cursor degrades to the previous behavior rather
+// than dropping the filter entirely.
+func chatQuerySince(cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339Nano, cursor)
+	if err != nil {
+		return cursor
+	}
+	return t.Add(-chatCursorOverlap).Format(time.RFC3339Nano)
+}
+
 func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts ImportOptions, state *SyncState, sum *ImportSummary) error {
 	chats, err := imp.client.ListChats(ctx)
 	if err != nil {
@@ -205,7 +230,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		}
 
 		since := state.ChatCursor(ch.ID)
-		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, since, opts.Limit)
+		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, chatQuerySince(since), opts.Limit)
 		if err != nil {
 			sum.Errors++
 			continue
@@ -213,6 +238,23 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		var maxTime time.Time
 		if since != "" {
 			maxTime, _ = time.Parse(time.RFC3339Nano, since)
+		}
+		// The overlap window deliberately re-reads messages at the cursor
+		// boundary, so "persisted" no longer implies "new". Resolve which of
+		// these IDs the archive already holds, so MessagesAdded stays a count
+		// of genuinely new messages. Identity is the only reliable test here:
+		// a message sharing the cursor timestamp may be a boundary re-read or
+		// the very tie the overlap exists to recover. On error, fall back to
+		// counting every persist, matching the pre-overlap behavior.
+		var preexisting map[string]int64
+		if since != "" && len(msgs) > 0 {
+			ids := make([]string, 0, len(msgs))
+			for i := range msgs {
+				ids = append(ids, chatSourceMessageID(ch.ID, msgs[i].ID))
+			}
+			if found, eerr := imp.store.MessageExistsBatch(sourceID, ids); eerr == nil {
+				preexisting = found
+			}
 		}
 		var convCount int
 		var persistedIDs []int64
@@ -229,7 +271,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				persistedIDs = append(persistedIDs, messageID)
 			}
 			if added {
-				sum.MessagesAdded++
+				if _, seen := preexisting[chatSourceMessageID(ch.ID, gm.ID)]; !seen {
+					sum.MessagesAdded++
+				}
 			}
 			sum.MessagesProcessed++
 			convCount++
