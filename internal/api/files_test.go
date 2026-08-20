@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 type fixedFileBlobStore struct{ content []byte }
@@ -902,4 +903,70 @@ func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) 
 		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
 	require.NoError(t, err, "look up attachment for message %d", messageID)
 	return id
+}
+
+func TestParticipantFileSearchAcceptsVisualQueryFields(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	person, err := st.EnsureParticipant("visual-person@example.com", "Visual Person", "example.com")
+	require.NoError(err)
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{}, TotalCount: 0, CacheRevision: "cache-files",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	// The web Files workspace sends the same visual fields to the person
+	// scope as to the global one; strict decoding must accept them. Visual
+	// search is not initialized here, so the request reports 503 rather
+	// than 400 unknown-field.
+	request := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person),
+		bytes.NewBufferString(`{"predicate":{},"visual_query":"red bicycle"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Contains(response.Body.String(), "visual_search_not_ready")
+}
+
+func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: &querytest.MockEngine{}, Logger: testLogger(),
+	})
+	srv.SetVisualOperations(nil, nil, nil,
+		func(context.Context, bool) (visual.Status, error) { return visual.Status{}, nil }, nil)
+	router := srv.Router()
+	get := func(origin string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status?coverage=1", nil)
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	// An ambient cross-origin GET on a keyless loopback daemon must not be
+	// able to trigger an archive-wide coverage scan.
+	response := get("https://evil.example")
+	require.Equal(http.StatusForbidden, response.Code, response.Body.String())
+	require.Contains(response.Body.String(), "cross_origin_loopback")
+
+	// Same-origin requests scan, and the dedicated limiter (burst 1) rejects
+	// an immediate repeat even though the scan mutex is free again.
+	response = get("")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	response = get("")
+	require.Equal(http.StatusTooManyRequests, response.Code, response.Body.String())
+
+	// The light status path stays unmetered.
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status", nil)
+	light := httptest.NewRecorder()
+	router.ServeHTTP(light, request)
+	require.Equal(http.StatusOK, light.Code, light.Body.String())
 }

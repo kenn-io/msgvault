@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	webapp "go.kenn.io/msgvault/internal/web"
 )
 
@@ -263,6 +264,7 @@ type Server struct {
 	rateLimiter               *RateLimiter
 	changesRateLimiter        *RateLimiter
 	documentSearchRateLimiter *RateLimiter
+	visualCoverageRateLimiter *RateLimiter
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
@@ -315,8 +317,17 @@ type Server struct {
 	hybridEngine *hybrid.Engine
 	vectorCfg    vector.Config
 	backend      vector.Backend
-	vectorStatus VectorStatus
-	vectorErr    string
+	visualSearch *visual.SearchService
+	visualBuild  func(context.Context) error
+	visualRun    func(context.Context) error
+	visualRetry  func(context.Context, int64, string) error
+	visualStatus func(context.Context, bool) (visual.Status, error)
+	// visualCoverageScan serializes the archive-wide coverage scan behind
+	// GET /multimodal/status?coverage=1.
+	visualCoverageScan sync.Mutex
+	visualRetire       func(context.Context) error
+	vectorStatus       VectorStatus
+	vectorErr          string
 	// vectorStaleLatch pins a stale status that refreshVectorStatusIfStale
 	// must not clear: set when the durable embedding scope drifts from the
 	// scope the installed components were initialized with. The active
@@ -563,6 +574,8 @@ func (s *Server) setupRouter() http.Handler {
 		changeFeedRequestsPerSecond, changeFeedRequestBurst)
 	s.documentSearchRateLimiter = NewRateLimiter(
 		documentSearchRequestsPerSecond, documentSearchRequestBurst)
+	s.visualCoverageRateLimiter = NewRateLimiter(
+		visualCoverageScansPerSecond, visualCoverageScanBurst)
 
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
@@ -759,6 +772,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.documentSearchRateLimiter != nil {
 		s.documentSearchRateLimiter.Close()
+	}
+	if s.visualCoverageRateLimiter != nil {
+		s.visualCoverageRateLimiter.Close()
 	}
 	if s.sessions != nil {
 		s.sessions.Close()

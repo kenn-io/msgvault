@@ -13,7 +13,11 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
+
+// limitParam names the shared pagination query/form parameter.
+const limitParam = "limit"
 
 const (
 	apiKeySecurityScheme = "apiKey"
@@ -239,6 +243,37 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
+	visualSearchOp := rawAPIV1Operation("searchVisualAttachments", http.MethodPost, "/search/attachments/visual", "Search visual attachment content")
+	// Tagged Exploration: the handler reads the committed vector index and
+	// calls the embedding provider without touching archive state, so the
+	// operation gate classifies it with the other analytical POST reads.
+	visualSearchOp.Tags = []string{"Exploration"}
+	visualSearchOp.RequestBody = jsonRequestBodyFor[visualTextSearchRequest](apiV1)
+	// Image queries arrive as multipart/form-data with an `image` file field
+	// plus the same scalar fields as the JSON body.
+	visualSearchOp.RequestBody.Content["multipart/form-data"] = &huma.MediaType{
+		Schema: &huma.Schema{
+			Type: huma.TypeObject,
+			Properties: map[string]*huma.Schema{
+				"image":    {Type: huma.TypeString, Format: "binary", Description: "Query image (JPEG, PNG, WebP, or still GIF)"},
+				limitParam: {Type: huma.TypeString}, "sender_person_id": {Type: huma.TypeString},
+				"source_id": {Type: huma.TypeString}, "message_id": {Type: huma.TypeString},
+				"filename": {Type: huma.TypeString}, "mime_prefix": {Type: huma.TypeString},
+				"cursor": {Type: huma.TypeString}, "after": {Type: huma.TypeString}, "before": {Type: huma.TypeString},
+			},
+			Required: []string{"image"},
+		},
+	}
+	visualSearchOp.Responses = jsonResponsesFor[visual.SearchResponse](apiV1)
+	addErrorResponses(apiV1, visualSearchOp.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	registerRawHumaRoute(apiV1, visualSearchOp, s.handleVisualSearch)
+	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
+	registerAPIV1RawHumaJSONRouteWithRequest[visualBuildRequest, visual.Status](apiV1, "startVisualAttachmentBuild", http.MethodPost, "/multimodal/build", "Consent and run one bounded visual attachment embedding pass", s.handleVisualBuild)
+	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "resumeVisualAttachmentBuild", http.MethodPost, "/multimodal/run", "Resume one bounded visual attachment embedding pass", s.handleVisualRun)
+	registerAPIV1RawHumaJSONRouteWithRequest[visualRetryRequest, visual.Status](apiV1, "retryVisualAttachmentOwner", http.MethodPost, "/multimodal/retry", "Retry one visual attachment owner", s.handleVisualRetry)
+	retireVisualOp := withAPIKeySecurity(huma.Operation{OperationID: "retireVisualAttachmentGeneration", Method: http.MethodPost, Path: "/multimodal/retire", Tags: []string{"Search"}, Summary: "Retire the visual attachment generation", Responses: rawHumaResponses(http.StatusNoContent)})
+	retireVisualOp.RequestBody = jsonRequestBodyFor[visualRetireRequest](apiV1)
+	registerRawHumaRoute(apiV1, retireVisualOp, s.handleVisualRetire)
 	registerAPIV1RawHumaJSONRoute[cliInitDBResponse](apiV1, "initCLIArchive", http.MethodPost, "/cli/init-db", "Initialize the archive for CLI use", s.handleCLIInitDB)
 	registerAPIV1RawHumaJSONRoute[cliStatsResponse](apiV1, "getCLIStats", http.MethodGet, "/cli/stats", "Get CLI-compatible archive statistics", s.handleCLIStats)
 	registerAPIV1RawHumaJSONRoute[cliSearchResponse](apiV1, "searchCLI", http.MethodGet, "/cli/search", "Search messages for CLI output", s.handleCLISearch)
@@ -571,7 +606,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "searchCLI":
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
-			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryIntegerParam("offset", "Zero-based row offset"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 		}, scopeParams()...)
@@ -582,7 +617,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRefArrayParam("message_type", "Message types to include; repeat or comma-separate values"),
 			queryIntegerParam("attachment_id", "Exact attachment occurrence ID"),
 			queryIntegerParam("message_id", "Exact containing message ID"),
-			queryIntegerParam("limit", "Maximum results to return (default 20, max 100)"),
+			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
 			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
 		}
 	case "getDocumentIndexStatus":
@@ -614,7 +649,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("query", "Gmail search query", false),
 			queryStringParam("after", "Only messages on or after this YYYY-MM-DD date", false),
 			queryStringParam("before", "Only messages before this YYYY-MM-DD date", false),
-			queryIntegerParam("limit", "Maximum messages to sync"),
+			queryIntegerParam(limitParam, "Maximum messages to sync"),
 			queryBooleanParam("noresume", "Ignore checkpoints and start fresh"),
 			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
 			queryRefArrayParam("skip-folder", "IMAP folder names to exclude (repeatable)"),
@@ -641,7 +676,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("state",
 				"Candidate state filter (candidate, accepted, rejected, conflict); "+
 					"repeat or comma-separate for multiple values", false),
-			queryIntegerParam("limit", "Maximum candidates to return (default 100, max 500)"),
+			queryIntegerParam(limitParam, "Maximum candidates to return (default 100, max 500)"),
 			queryIntegerParam("offset", "Zero-based candidate offset"),
 		}
 	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate":
@@ -724,12 +759,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryIntegerParam("offset", "Zero-based row offset"),
-			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 		}
 	case "findSimilarMessages":
 		return []*huma.Param{
 			queryRequiredIntegerParam("message_id", "Seed message ID"),
-			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryStringParam("account", "Account email or configured source identifier", false),
 			queryStringParam("message_type", "Message type filter", false),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
@@ -766,7 +801,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("view_type", "Text aggregate view type", false),
 			queryStringParam("sort", "Sort field: count or name", false),
 			queryStringParam("direction", "Sort direction: asc or desc", false),
-			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryStringParam("time_granularity", "Time bucket granularity", false),
 			queryIntegerParam("source_id", "Source ID"),
 			queryStringParam("search_query", "Search query", false),
@@ -779,7 +814,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{
 			queryStringParam("q", "Search query", true),
 			queryIntegerParam("offset", "Zero-based row offset"),
-			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 		}
 	case "getTextStats":
 		return []*huma.Param{
@@ -820,7 +855,7 @@ func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
-		queryIntegerParam("limit", "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
+		queryIntegerParam(limitParam, "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
 		queryStringParam("time_granularity", "Time bucket granularity", false),
 		queryIntegerParam("source_id", "Source ID"),
 		queryBooleanParam("attachments_only", "Only include messages with attachments"),
@@ -850,7 +885,7 @@ func messageFilterParams() []*huma.Param {
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("empty_targets", "Comma-separated aggregate view names to match empty values", false),
 		queryIntegerParam("offset", "Zero-based row offset"),
-		queryIntegerParam("limit", "Maximum number of rows to return (default and max 500; larger values are clamped)"),
+		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
 		queryStringParam("sort", "Sort field: date, size, or subject", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 	}
@@ -876,7 +911,7 @@ func changesParams() []*huma.Param {
 		// requests the server answers with 200 and would contradict this
 		// description. Every other clamping limit in this API is unbounded in
 		// the schema for the same reason.
-		queryIntegerParam("limit",
+		queryIntegerParam(limitParam,
 			"Maximum number of rows to return (default 100, max 500; values below 1 fall back to the default)"),
 	}
 }
@@ -893,7 +928,7 @@ func textFilterParams() []*huma.Param {
 		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryIntegerParam("offset", "Zero-based row offset"),
-		queryIntegerParam("limit", "Maximum number of rows to return"),
+		queryIntegerParam(limitParam, "Maximum number of rows to return"),
 		queryStringParam("sort", "Sort field: last_message, count, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 	}

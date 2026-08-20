@@ -1680,6 +1680,48 @@ strip_signatures = false
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
 }
 
+func TestLoadAllowsIndependentMultimodalVectorLane(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte(`
+[vector]
+enabled = false
+
+[vector.multimodal]
+enabled = true
+include_images = false
+include_video = true
+
+[vector.multimodal.scope]
+message_types = ["MMS", "beeper", "mms"]
+`), 0o600))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+	assert.False(cfg.Vector.Enabled)
+	assert.True(cfg.Vector.AnyLaneEnabled())
+	assert.False(cfg.Vector.Multimodal.ImagesEnabled())
+	assert.True(cfg.Vector.Multimodal.VideoEnabled())
+	assert.Equal([]string{"beeper", "mms"},
+		cfg.Vector.Multimodal.Scope.BuildScope().MessageTypes)
+}
+
+func TestLoadRejectsInvalidEnabledMultimodalConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[vector.multimodal]
+enabled = true
+dimension = 768
+`), 0o600))
+
+	_, err := Load(configPath, "")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "vector.multimodal.dimension")
+}
+
 func TestLoadWithNamedOAuthApps_RelativePaths(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()

@@ -13,8 +13,10 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // fakeCmdVectorBackend satisfies vector.Backend for the init tests. It only
@@ -59,7 +61,9 @@ func newVectorInitTestServer(t *testing.T) *api.Server {
 func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.Store, string, bool) (*vectorFeatures, error)) {
 	t.Helper()
 	prev := setupVectorFeaturesForRun
-	setupVectorFeaturesForRun = fn
+	setupVectorFeaturesForRun = func(ctx context.Context, s *store.Store, path string, readOnly bool, _ ...visual.StreamOpener) (*vectorFeatures, error) {
+		return fn(ctx, s, path, readOnly)
+	}
 	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
 }
 
@@ -116,6 +120,26 @@ func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 
 	h := startVectorInit(context.Background(), nil, "", nil, nil, nil)
 	assert.True(t, h.WaitTimeout(time.Second))
+}
+
+func TestStartVectorInitRunsForIndependentMultimodalLane(t *testing.T) {
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = false
+	c.Vector.Multimodal.Enabled = true
+	withTestConfig(t, c)
+
+	called := false
+	prev := setupVectorFeaturesForRun
+	setupVectorFeaturesForRun = func(context.Context, *store.Store, string, bool, ...visual.StreamOpener) (*vectorFeatures, error) {
+		called = true
+		return &vectorFeatures{Close: func() error { return nil }}, nil
+	}
+	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
+
+	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil,
+		newVectorInitTestServer(t), scheduler.New(nil))
+	require.True(t, h.WaitTimeout(5*time.Second))
+	assert.True(t, called, "multimodal-only enablement must initialize vector infrastructure")
 }
 
 func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
@@ -427,4 +451,23 @@ func TestRegisterEmbedJob_ContextualLifecycleRefusalsNeverActivateAnotherGenerat
 		check.Equal([]int64{5}, backend.sequences)
 		check.Empty(backend.activatedCalls)
 	})
+}
+
+func TestRequireVisualConsentRejectsRetiredGeneration(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "visual-consent-state", Model: "voyage-multimodal-3.5", Dimension: 1024,
+	})
+	require.NoError(err)
+	require.NoError(st.ConsentVisualGeneration(t.Context(), generation.ID, "policy-fp"))
+	vf := &visualFeatures{Archive: st, Generation: generation, PolicyFingerprint: "policy-fp"}
+	require.NoError(requireVisualConsent(t.Context(), vf))
+
+	// Once retired, the installed resume and retry callbacks must refuse to
+	// clean and repopulate the generation: activation can never expose it.
+	require.NoError(st.RetireVisualGeneration(t.Context(), generation.ID))
+	err = requireVisualConsent(t.Context(), vf)
+	require.Error(err)
+	require.Contains(err.Error(), "retired")
 }

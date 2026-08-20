@@ -1548,6 +1548,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/multimodal/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Consent and run one bounded visual attachment embedding pass */
+        post: operations["startVisualAttachmentBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire the visual attachment generation */
+        post: operations["retireVisualAttachmentGeneration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry one visual attachment owner */
+        post: operations["retryVisualAttachmentOwner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume one bounded visual attachment embedding pass */
+        post: operations["resumeVisualAttachmentBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get visual attachment embedding status */
+        get: operations["getVisualAttachmentStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations": {
         parameters: {
             query?: never;
@@ -2253,6 +2338,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/search/attachments/visual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search visual attachment content */
+        post: operations["searchVisualAttachments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search/coverage": {
         parameters: {
             query?: never;
@@ -2665,6 +2767,30 @@ export interface components {
             /** Format: int64 */
             size_bytes: number;
             url?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        AttachmentSearchResult: {
+            /** Format: int64 */
+            attachment_id: number;
+            blob_hash: string;
+            /** Format: int64 */
+            conversation_id: number;
+            filename: string;
+            /** Format: int64 */
+            message_id: number;
+            mime_type: string;
+            /** Format: int64 */
+            rank: number;
+            /** Format: double */
+            score: number;
+            /** Format: date-time */
+            sent_at: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: int64 */
+            source_id: number;
+            source_message_id: string;
         } & {
             [key: string]: unknown;
         };
@@ -3665,6 +3791,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        DuplicateCostRisk: {
+            at_least_once: boolean;
+            detail: string;
+            provider_idempotent: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         Employment: {
             /** Format: int64 */
             address_id?: number;
@@ -4037,6 +4170,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        FileSearchExplain: {
+            /** Format: int64 */
+            filename_rank?: number;
+            /** Format: double */
+            rrf: number;
+            /** Format: int64 */
+            visual_rank?: number;
+        } & {
+            [key: string]: unknown;
+        };
         FileSearchHTTPRequest: {
             cursor?: string;
             filename_query?: string;
@@ -4045,6 +4188,8 @@ export interface components {
             mime_families?: string[] | null;
             predicate: components["schemas"]["ExploreHTTPRequest"];
             sort: components["schemas"]["FileSearchSort"];
+            visual_image_base64?: string;
+            visual_query?: string;
         };
         FileSearchHTTPResponse: {
             cache_revision: string;
@@ -4078,6 +4223,7 @@ export interface components {
             participant_domains?: string[] | null;
             participant_ids?: number[] | null;
             participant_labels?: string[] | null;
+            search_explain?: components["schemas"]["FileSearchExplain"];
             /** Format: int64 */
             size_bytes: number;
             /** Format: int64 */
@@ -4111,6 +4257,23 @@ export interface components {
             recipients?: string[] | null;
             sender_domains?: string[] | null;
             senders?: string[] | null;
+        };
+        FormatCoverage: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            current: number;
+            /** Format: int64 */
+            eligible: number;
+            mime_type: string;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale: number;
+            /** Format: int64 */
+            terminal: number;
+        } & {
+            [key: string]: unknown;
         };
         GenerationSummary: {
             activated_at?: string;
@@ -5177,6 +5340,8 @@ export interface components {
             mime_families?: string[] | null;
             predicate: components["schemas"]["ExploreHTTPRequest"];
             sort: components["schemas"]["FileSearchSort"];
+            visual_image_base64?: string;
+            visual_query?: string;
         };
         PersonFileSearchHTTPResponse: {
             cache_revision: string;
@@ -5211,6 +5376,7 @@ export interface components {
             participant_ids?: number[] | null;
             participant_labels?: string[] | null;
             person_provenance: components["schemas"]["PersonFileProvenance"];
+            search_explain?: components["schemas"]["FileSearchExplain"];
             /** Format: int64 */
             size_bytes: number;
             /** Format: int64 */
@@ -5428,6 +5594,17 @@ export interface components {
             done: number;
             /** Format: int64 */
             total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        ProviderUsage: {
+            /** Format: double */
+            billed_units: number;
+            /** Format: int64 */
+            input_bytes: number;
+            /** Format: int64 */
+            requests: number;
+            usage_available: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -5702,6 +5879,17 @@ export interface components {
             /** Format: int64 */
             vector_generation?: number;
         };
+        SearchResponse: {
+            /** Format: int64 */
+            generation_id: number;
+            model: string;
+            next_cursor?: string;
+            query_mode: string;
+            results: components["schemas"]["AttachmentSearchResult"][] | null;
+            usage: components["schemas"]["Usage"];
+        } & {
+            [key: string]: unknown;
+        };
         SearchResult: {
             messages: components["schemas"]["MessageSummary"][] | null;
             /** Format: int64 */
@@ -5949,6 +6137,44 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Status: {
+            /** Format: int64 */
+            active_leases: number;
+            /** Format: int64 */
+            converged: number;
+            /** Format: double */
+            convergence_ratio: number;
+            /** Format: int64 */
+            convergence_total: number;
+            /** Format: int64 */
+            current: number;
+            duplicate_cost: components["schemas"]["DuplicateCostRisk"];
+            /** Format: int64 */
+            eligible: number;
+            formats: components["schemas"]["FormatCoverage"][] | null;
+            generation: components["schemas"]["VisualGeneration"];
+            /** Format: int64 */
+            journal_cursor: number;
+            /** Format: int64 */
+            journal_high_water: number;
+            /** Format: int64 */
+            journal_lag: number;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale: number;
+            /** Format: int64 */
+            terminal: number;
+            /** Format: int64 */
+            tombstoned: number;
+            /** Format: int64 */
+            unavailable: number;
+            /** Format: int64 */
+            unknown_role: number;
+            usage: components["schemas"]["ProviderUsage"];
+        } & {
+            [key: string]: unknown;
+        };
         StatusMessageResponse: {
             message: string;
             status: string;
@@ -6193,6 +6419,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Usage: {
+            available: boolean;
+            /** Format: int64 */
+            total_tokens: number;
+        } & {
+            [key: string]: unknown;
+        };
         VCardIdentity: {
             altid?: string;
             group?: string;
@@ -6251,6 +6484,49 @@ export interface components {
             status: string;
         } & {
             [key: string]: unknown;
+        };
+        VisualBuildRequest: {
+            consent: boolean;
+        };
+        VisualGeneration: {
+            consent_policy_fingerprint?: string;
+            consented: boolean;
+            /** Format: int64 */
+            dimension: number;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            model: string;
+            /** Format: int64 */
+            source_fence: number;
+            state: string;
+        } & {
+            [key: string]: unknown;
+        };
+        VisualRetireRequest: {
+            /** Format: int64 */
+            generation_id: number;
+        };
+        VisualRetryRequest: {
+            blob_hash: string;
+            /** Format: int64 */
+            message_id: number;
+        };
+        VisualTextSearchRequest: {
+            after?: string;
+            before?: string;
+            cursor?: string;
+            filename?: string;
+            /** Format: int64 */
+            limit?: number;
+            /** Format: int64 */
+            message_id?: number;
+            mime_prefix?: string;
+            /** Format: int64 */
+            sender_person_id?: number;
+            /** Format: int64 */
+            source_id?: number;
+            text: string;
         };
     };
     responses: never;
@@ -11769,6 +12045,159 @@ export interface operations {
             };
         };
     };
+    startVisualAttachmentBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retireVisualAttachmentGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retryVisualAttachmentOwner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resumeVisualAttachmentBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getVisualAttachmentStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listOrganizations: {
         parameters: {
             query?: {
@@ -15540,6 +15969,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResult"] | components["schemas"]["HybridSearchResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchVisualAttachments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualTextSearchRequest"];
+                "multipart/form-data": {
+                    after?: string;
+                    before?: string;
+                    cursor?: string;
+                    filename?: string;
+                    /**
+                     * Format: binary
+                     * @description Query image (JPEG, PNG, WebP, or still GIF)
+                     */
+                    image: string;
+                    limit?: string;
+                    message_id?: string;
+                    mime_prefix?: string;
+                    sender_person_id?: string;
+                    source_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

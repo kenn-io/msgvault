@@ -1058,6 +1058,180 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                 THEN a.attachment_role END
 		        FROM attachments a WHERE a.message_id = NEW.id;
 		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		    AFTER INSERT ON attachments FOR EACH ROW
+		    WHEN NEW.attachment_role = 'standalone'
+		      AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                              'importer_semantics', 'raw_mime_repair')
+		      AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = 'stale', superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		    AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		        storage_path, media_type, width, height, duration_ms,
+		        source_attachment_id, attachment_metadata, attachment_role,
+		        role_source, source_part_key, content_id, encryption_version
+		    ON attachments FOR EACH ROW
+		    WHEN OLD.message_id IS NOT NEW.message_id
+		      OR OLD.filename IS NOT NEW.filename
+		      OR OLD.mime_type IS NOT NEW.mime_type
+		      OR OLD.size IS NOT NEW.size
+		      OR OLD.content_hash IS NOT NEW.content_hash
+		      OR OLD.storage_path IS NOT NEW.storage_path
+		      OR OLD.media_type IS NOT NEW.media_type
+		      OR OLD.width IS NOT NEW.width
+		      OR OLD.height IS NOT NEW.height
+		      OR OLD.duration_ms IS NOT NEW.duration_ms
+		      OR OLD.source_attachment_id IS NOT NEW.source_attachment_id
+		      OR OLD.attachment_metadata IS NOT NEW.attachment_metadata
+		      OR OLD.attachment_role IS NOT NEW.attachment_role
+		      OR OLD.role_source IS NOT NEW.role_source
+		      OR OLD.source_part_key IS NOT NEW.source_part_key
+		      OR OLD.content_id IS NOT NEW.content_id
+		      OR OLD.encryption_version IS NOT NEW.encryption_version
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+
+		        UPDATE visual_publications
+		        SET state = 'stale', superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE NEW.attachment_role = 'standalone'
+		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                  'importer_semantics', 'raw_mime_repair')
+		          AND message_id = NEW.message_id
+		          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                      AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		    AFTER DELETE ON attachments FOR EACH ROW
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		    WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		          IS NOT
+		          (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN NEW.deleted_at IS NULL
+		                              AND NEW.deleted_from_source_at IS NULL
+		                         THEN 'stale' ELSE 'tombstoned' END,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		    AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		    WHEN OLD.subject IS NOT NEW.subject OR OLD.message_type IS NOT NEW.message_type
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		    AFTER INSERT ON message_bodies FOR EACH ROW
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_delete`,
+		`CREATE TRIGGER trg_visual_publication_message_body_delete
+		    AFTER DELETE ON message_bodies FOR EACH ROW
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		    AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		    WHEN OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html
+		    BEGIN
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
 	)
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {

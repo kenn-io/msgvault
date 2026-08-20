@@ -26,10 +26,15 @@ const (
 	migrationMessageAttributionProvenance     = "message_attribution_provenance_v3"
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
-	migrationMessageWatermarkTriggers         = "message_and_attachment_triggers_v2"
-	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
-	migrationIdentityMatchSourceSupport       = "identity_match_source_support_v1"
-	migrationVCardSourceResourceIdentity      = "vcard_source_resource_identity_v1"
+	// v4: the visual invalidation triggers park a cleared pending vector
+	// token in superseded_vector_token, clear durable outcomes on message
+	// context changes, and cover message_bodies deletion. Archives that
+	// installed v3 must reinstall to keep backend cleanup references and
+	// re-evaluate rejected owners whose context later changed.
+	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v4"
+	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
+	migrationIdentityMatchSourceSupport     = "identity_match_source_support_v1"
+	migrationVCardSourceResourceIdentity    = "vcard_source_resource_identity_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.

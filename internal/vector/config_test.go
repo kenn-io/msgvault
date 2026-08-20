@@ -509,3 +509,159 @@ func TestConfig_GenerationFingerprint_IncludesEmbedScopeSources(t *testing.T) {
 	assert.Contains(t, combined.GenerationFingerprint(), ":smt-email:src-3",
 		"message types and source IDs compose in one scope fingerprint")
 }
+
+func TestConfig_MultimodalEnabledWithoutTextVectors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var cfg Config
+	_, err := toml.Decode(`[multimodal]
+enabled = true
+provider = "voyage"
+model = "voyage-multimodal-3.5"
+dimension = 1024
+`, &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+
+	assert.False(cfg.Enabled)
+	assert.True(cfg.AnyLaneEnabled())
+	require.NoError(cfg.Validate())
+	assert.True(cfg.Multimodal.ImagesEnabled())
+	assert.True(cfg.Multimodal.VideoEnabled())
+	assert.True(cfg.Multimodal.ImageQueriesEnabled())
+	assert.False(cfg.Multimodal.AnimatedGIFsEnabled(),
+		"animated GIF stays opt-in; probed authority is still required at runtime")
+}
+
+func TestMultimodalDefaultsPreserveExplicitOptOuts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var cfg Config
+	_, err := toml.Decode(`[multimodal]
+enabled = true
+include_images = false
+include_video = true
+allow_image_queries = false
+`, &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+
+	assert.False(cfg.Multimodal.ImagesEnabled())
+	assert.True(cfg.Multimodal.VideoEnabled())
+	assert.False(cfg.Multimodal.ImageQueriesEnabled())
+	assert.Equal("voyage", cfg.Multimodal.Provider)
+	assert.Equal("https://api.voyageai.com/v1", cfg.Multimodal.Endpoint)
+	assert.Equal("VOYAGE_API_KEY", cfg.Multimodal.APIKeyEnv)
+	assert.Equal("voyage-multimodal-3.5", cfg.Multimodal.Model)
+	assert.Equal(1024, cfg.Multimodal.Dimension)
+	assert.Equal(4000, cfg.Multimodal.MaxContextChars)
+}
+
+func TestMultimodalValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{name: "valid"},
+		{name: "provider", mutate: func(c *Config) { c.Multimodal.Provider = "other" }, wantErr: "provider"},
+		{name: "endpoint", mutate: func(c *Config) { c.Multimodal.Endpoint = "file:///tmp/provider" }, wantErr: "endpoint"},
+		{name: "proxy endpoint", mutate: func(c *Config) { c.Multimodal.Endpoint = "https://proxy.example.test/v1" }, wantErr: "pinned provider endpoint"},
+		{name: "model", mutate: func(c *Config) { c.Multimodal.Model = "voyage-4-large" }, wantErr: "model"},
+		{name: "dimension", mutate: func(c *Config) { c.Multimodal.Dimension = 768 }, wantErr: "dimension"},
+		{name: "context cap", mutate: func(c *Config) { c.Multimodal.MaxContextChars = -1 }, wantErr: "max_context_chars"},
+		{name: "key env", mutate: func(c *Config) { c.Multimodal.APIKeyEnv = "BAD-NAME" }, wantErr: "api_key_env"},
+		{name: "no document media", mutate: func(c *Config) {
+			c.Multimodal.IncludeImages = new(false)
+			c.Multimodal.IncludeAnimatedGIFs = new(false)
+			c.Multimodal.IncludeVideo = new(false)
+		}, wantErr: "media type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Multimodal: MultimodalConfig{Enabled: true}}
+			cfg.ApplyDefaults()
+			if tt.mutate != nil {
+				tt.mutate(&cfg)
+			}
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestMultimodalFingerprintChangesForPolicyAndScope(t *testing.T) {
+	base := Config{Multimodal: MultimodalConfig{Enabled: true}}
+	base.ApplyDefaults()
+	baseline := base.MultimodalGenerationFingerprint()
+	require.NotEmpty(t, baseline)
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "endpoint", mutate: func(c *Config) { c.Multimodal.Endpoint = "https://voyage.example.test/v1" }},
+		{name: "model", mutate: func(c *Config) { c.Multimodal.Model = "replacement-model" }},
+		{name: "dimension", mutate: func(c *Config) { c.Multimodal.Dimension = 2048 }},
+		{name: "context", mutate: func(c *Config) { c.Multimodal.MaxContextChars++ }},
+		{name: "images", mutate: func(c *Config) { c.Multimodal.IncludeImages = new(false) }},
+		{name: "video", mutate: func(c *Config) { c.Multimodal.IncludeVideo = new(false) }},
+		{name: "image queries", mutate: func(c *Config) { c.Multimodal.AllowImageQueries = new(false) }},
+		{name: "scope", mutate: func(c *Config) { c.Multimodal.Scope.MessageTypes = []string{"MMS", "beeper"} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := base
+			tt.mutate(&changed)
+			assert.NotEqual(t, baseline, changed.MultimodalGenerationFingerprint())
+		})
+	}
+
+	equivalentEndpoint := base
+	equivalentEndpoint.Multimodal.Endpoint = "HTTPS://API.VOYAGEAI.COM/v1/"
+	assert.Equal(t, baseline, equivalentEndpoint.MultimodalGenerationFingerprint(),
+		"endpoint identity should normalize scheme, host, and trailing slash")
+
+	operationalOnly := base
+	operationalOnly.Multimodal.APIKeyEnv = "ROTATED_VOYAGE_KEY"
+	operationalOnly.Multimodal.Schedule.Cron = "*/5 * * * *"
+	operationalOnly.Multimodal.Schedule.RunAfterSync = true
+	assert.Equal(t, baseline, operationalOnly.MultimodalGenerationFingerprint(),
+		"credentials and scheduling do not change model input policy")
+}
+
+func TestVoyageKeyDoesNotEnableMultimodal(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("VOYAGE_API_KEY", "synthetic-key")
+	var cfg Config
+	cfg.ApplyDefaults()
+
+	assert.NotEmpty(cfg.Multimodal.APIKey())
+	assert.False(cfg.Multimodal.Enabled)
+	assert.False(cfg.AnyLaneEnabled())
+	assert.False(cfg.Multimodal.ImagesEnabled())
+}
+
+func TestMultimodalValidateCoversDisabledLaneForProbe(t *testing.T) {
+	require := require.New(t)
+	var cfg Config
+	// The probe runs before the lane is enabled, so Config.Validate skips
+	// these settings. The exported MultimodalConfig.Validate must still
+	// refuse a foreign destination, keeping its credential off Voyage.
+	_, err := toml.Decode(`[multimodal]
+enabled = false
+endpoint = "https://gateway.internal.example/v1"
+api_key_env = "INTERNAL_GATEWAY_KEY"
+`, &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+	require.NoError(cfg.Validate(), "disabled lanes stay out of Config.Validate")
+	err = cfg.Multimodal.Validate()
+	require.Error(err)
+	require.Contains(err.Error(), "pinned provider endpoint")
+}

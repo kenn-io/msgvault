@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 func newConvergenceChecker(vector.Config, *store.Store, vector.Backend) (scheduler.ConvergenceChecker, error) {
@@ -40,8 +41,8 @@ func errVectorBuildUnsupported(mainPath string) error {
 // (nil, nil) when vector search is disabled, and a descriptive error
 // when the user enabled vector search in config but built the binary
 // without -tags sqlite_vec.
-func setupVectorFeatures(_ context.Context, _ *store.Store, mainPath string, _ bool) (*vectorFeatures, error) {
-	if !cfg.Vector.Enabled {
+func setupVectorFeatures(_ context.Context, _ *store.Store, mainPath string, _ bool, _ ...visual.StreamOpener) (*vectorFeatures, error) {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	return nil, errVectorBuildUnsupported(mainPath)
@@ -52,7 +53,7 @@ func setupVectorFeatures(_ context.Context, _ *store.Store, mainPath string, _ b
 // backend construction, since the stub build never has a backend to
 // build.
 func precheckVectorFeatures(mainPath string) error {
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil
 	}
 	return errVectorBuildUnsupported(mainPath)

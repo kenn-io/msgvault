@@ -206,6 +206,25 @@ func (a AttachmentInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AttachmentSearchResult struct {
+	AttachmentID    int64     `json:"attachment_id"`
+	BlobHash        string    `json:"blob_hash" validate:"required"`
+	ConversationID  int64     `json:"conversation_id"`
+	Filename        string    `json:"filename" validate:"required"`
+	MessageID       int64     `json:"message_id"`
+	MimeType        string    `json:"mime_type" validate:"required"`
+	Rank            int64     `json:"rank"`
+	Score           float64   `json:"score"`
+	SentAt          time.Time `json:"sent_at" validate:"required"`
+	Size            int64     `json:"size"`
+	SourceID        int64     `json:"source_id"`
+	SourceMessageID string    `json:"source_message_id" validate:"required"`
+}
+
+func (a AttachmentSearchResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AttributeChoice struct {
 	Label string `json:"label" validate:"required"`
 	Value string `json:"value" validate:"required"`
@@ -1978,6 +1997,16 @@ func (d DomainSummary) Validate() error {
 	return errors
 }
 
+type DuplicateCostRisk struct {
+	AtLeastOnce        bool   `json:"at_least_once"`
+	Detail             string `json:"detail" validate:"required"`
+	ProviderIdempotent bool   `json:"provider_idempotent"`
+}
+
+func (d DuplicateCostRisk) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type Employment struct {
 	AddressID      *int64       `json:"address_id,omitempty"`
 	Confidence     *float64     `json:"confidence,omitempty"`
@@ -2892,13 +2921,21 @@ func (f FileMetadataResponse) Validate() error {
 	return errors
 }
 
+type FileSearchExplain struct {
+	FilenameRank *int64  `json:"filename_rank,omitempty"`
+	Rrf          float64 `json:"rrf"`
+	VisualRank   *int64  `json:"visual_rank,omitempty"`
+}
+
 type FileSearchHTTPRequest struct {
-	Cursor        *string            `json:"cursor,omitempty"`
-	FilenameQuery *string            `json:"filename_query,omitempty"`
-	Limit         *int64             `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
-	MimeFamilies  []string           `json:"mime_families,omitempty"`
-	Predicate     ExploreHTTPRequest `json:"predicate"`
-	Sort          FileSearchSort     `json:"sort"`
+	Cursor            *string            `json:"cursor,omitempty"`
+	FilenameQuery     *string            `json:"filename_query,omitempty"`
+	Limit             *int64             `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
+	MimeFamilies      []string           `json:"mime_families,omitempty"`
+	Predicate         ExploreHTTPRequest `json:"predicate"`
+	Sort              FileSearchSort     `json:"sort"`
+	VisualImageBase64 *string            `json:"visual_image_base64,omitempty"`
+	VisualQuery       *string            `json:"visual_query,omitempty"`
 }
 
 func (f FileSearchHTTPRequest) Validate() error {
@@ -2972,6 +3009,7 @@ type FileSearchRow struct {
 	ParticipantDomains []string                  `json:"participant_domains,omitempty"`
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                  `json:"participant_labels,omitempty"`
+	SearchExplain      *FileSearchExplain        `json:"search_explain,omitempty"`
 	SizeBytes          int64                     `json:"size_bytes"`
 	SourceID           int64                     `json:"source_id"`
 	SourceIdentifier   string                    `json:"source_identifier" validate:"required"`
@@ -3005,6 +3043,13 @@ func (f FileSearchRow) Validate() error {
 	}
 	if err := typesValidator.Var(f.OccurredAt, "required"); err != nil {
 		errors = errors.Append("OccurredAt", err)
+	}
+	if f.SearchExplain != nil {
+		if v, ok := any(f.SearchExplain).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SearchExplain", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(f.SourceIdentifier, "required"); err != nil {
 		errors = errors.Append("SourceIdentifier", err)
@@ -3058,6 +3103,20 @@ type Filters struct {
 	Recipients    []string `json:"recipients,omitempty"`
 	SenderDomains []string `json:"sender_domains,omitempty"`
 	Senders       []string `json:"senders,omitempty"`
+}
+
+type FormatCoverage struct {
+	Bytes     int64  `json:"bytes"`
+	Current   int64  `json:"current"`
+	Eligible  int64  `json:"eligible"`
+	MimeType  string `json:"mime_type" validate:"required"`
+	Retryable int64  `json:"retryable"`
+	Stale     int64  `json:"stale"`
+	Terminal  int64  `json:"terminal"`
+}
+
+func (f FormatCoverage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
 type GenerationSummary struct {
@@ -5414,13 +5473,15 @@ func (p PersonFileProvenance) Validate() error {
 }
 
 type PersonFileSearchHTTPRequest struct {
-	Cursor        *string                                 `json:"cursor,omitempty"`
-	Directions    []PersonFileSearchHTTPRequestDirections `json:"directions,omitempty"`
-	FilenameQuery *string                                 `json:"filename_query,omitempty"`
-	Limit         *int64                                  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
-	MimeFamilies  []string                                `json:"mime_families,omitempty"`
-	Predicate     ExploreHTTPRequest                      `json:"predicate"`
-	Sort          FileSearchSort                          `json:"sort"`
+	Cursor            *string                                 `json:"cursor,omitempty"`
+	Directions        []PersonFileSearchHTTPRequestDirections `json:"directions,omitempty"`
+	FilenameQuery     *string                                 `json:"filename_query,omitempty"`
+	Limit             *int64                                  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
+	MimeFamilies      []string                                `json:"mime_families,omitempty"`
+	Predicate         ExploreHTTPRequest                      `json:"predicate"`
+	Sort              FileSearchSort                          `json:"sort"`
+	VisualImageBase64 *string                                 `json:"visual_image_base64,omitempty"`
+	VisualQuery       *string                                 `json:"visual_query,omitempty"`
 }
 
 func (p PersonFileSearchHTTPRequest) Validate() error {
@@ -5502,6 +5563,7 @@ type PersonFileSearchRow struct {
 	ParticipantIds     []int64                         `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
 	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
+	SearchExplain      *FileSearchExplain              `json:"search_explain,omitempty"`
 	SizeBytes          int64                           `json:"size_bytes"`
 	SourceID           int64                           `json:"source_id"`
 	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`
@@ -5539,6 +5601,13 @@ func (p PersonFileSearchRow) Validate() error {
 	if v, ok := any(p.PersonProvenance).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("PersonProvenance", err)
+		}
+	}
+	if p.SearchExplain != nil {
+		if v, ok := any(p.SearchExplain).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SearchExplain", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(p.SourceIdentifier, "required"); err != nil {
@@ -6089,6 +6158,13 @@ type PingInfo struct {
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
+}
+
+type ProviderUsage struct {
+	BilledUnits    float64 `json:"billed_units"`
+	InputBytes     int64   `json:"input_bytes"`
+	Requests       int64   `json:"requests"`
+	UsageAvailable bool    `json:"usage_available"`
 }
 
 type PutPersonTrackingRequest struct {
@@ -6683,6 +6759,41 @@ func (s SearchFastResponse) Validate() error {
 type SearchProvenance struct {
 	LexicalIndexRevision *string `json:"lexical_index_revision,omitempty"`
 	VectorGeneration     *int64  `json:"vector_generation,omitempty"`
+}
+
+type SearchResponse struct {
+	GenerationID int64                    `json:"generation_id"`
+	Model        string                   `json:"model" validate:"required"`
+	NextCursor   *string                  `json:"next_cursor,omitempty"`
+	QueryMode    string                   `json:"query_mode" validate:"required"`
+	Results      []AttachmentSearchResult `json:"results,omitempty" validate:"required"`
+	Usage        Usage                    `json:"usage"`
+}
+
+func (s SearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Model, "required"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if err := typesValidator.Var(s.QueryMode, "required"); err != nil {
+		errors = errors.Append("QueryMode", err)
+	}
+	for i, item := range s.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(s.Usage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Usage", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SearchResult struct {
@@ -7293,6 +7404,58 @@ func (s StatsView) Validate() error {
 	return errors
 }
 
+type Status struct {
+	ActiveLeases     int64             `json:"active_leases"`
+	Converged        int64             `json:"converged"`
+	ConvergenceRatio float64           `json:"convergence_ratio"`
+	ConvergenceTotal int64             `json:"convergence_total"`
+	Current          int64             `json:"current"`
+	DuplicateCost    DuplicateCostRisk `json:"duplicate_cost"`
+	Eligible         int64             `json:"eligible"`
+	Formats          []FormatCoverage  `json:"formats,omitempty" validate:"required"`
+	Generation       VisualGeneration  `json:"generation"`
+	JournalCursor    int64             `json:"journal_cursor"`
+	JournalHighWater int64             `json:"journal_high_water"`
+	JournalLag       int64             `json:"journal_lag"`
+	Retryable        int64             `json:"retryable"`
+	Stale            int64             `json:"stale"`
+	Terminal         int64             `json:"terminal"`
+	Tombstoned       int64             `json:"tombstoned"`
+	Unavailable      int64             `json:"unavailable"`
+	UnknownRole      int64             `json:"unknown_role"`
+	Usage            ProviderUsage     `json:"usage"`
+}
+
+func (s Status) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.DuplicateCost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DuplicateCost", err)
+		}
+	}
+	for i, item := range s.Formats {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Formats[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(s.Generation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Generation", err)
+		}
+	}
+	if v, ok := any(s.Usage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Usage", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type StatusMessageResponse struct {
 	Message string `json:"message" validate:"required"`
 	Status  string `json:"status" validate:"required"`
@@ -7754,6 +7917,11 @@ func (u UpdateResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type Usage struct {
+	Available   bool  `json:"available"`
+	TotalTokens int64 `json:"total_tokens"`
+}
+
 type VCardIdentity struct {
 	Altid    *string  `json:"altid,omitempty"`
 	Group    *string  `json:"group,omitempty"`
@@ -7845,5 +8013,54 @@ type VectorHealth struct {
 }
 
 func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualBuildRequest struct {
+	Consent bool `json:"consent"`
+}
+
+type VisualGeneration struct {
+	ConsentPolicyFingerprint *string `json:"consent_policy_fingerprint,omitempty"`
+	Consented                bool    `json:"consented"`
+	Dimension                int64   `json:"dimension"`
+	Fingerprint              string  `json:"fingerprint" validate:"required"`
+	ID                       int64   `json:"id"`
+	Model                    string  `json:"model" validate:"required"`
+	SourceFence              int64   `json:"source_fence"`
+	State                    string  `json:"state" validate:"required"`
+}
+
+func (v VisualGeneration) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualRetireRequest struct {
+	GenerationID int64 `json:"generation_id"`
+}
+
+type VisualRetryRequest struct {
+	BlobHash  string `json:"blob_hash" validate:"required"`
+	MessageID int64  `json:"message_id"`
+}
+
+func (v VisualRetryRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualTextSearchRequest struct {
+	After          *string `json:"after,omitempty"`
+	Before         *string `json:"before,omitempty"`
+	Cursor         *string `json:"cursor,omitempty"`
+	Filename       *string `json:"filename,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	MessageID      *int64  `json:"message_id,omitempty"`
+	MimePrefix     *string `json:"mime_prefix,omitempty"`
+	SenderPersonID *int64  `json:"sender_person_id,omitempty"`
+	SourceID       *int64  `json:"source_id,omitempty"`
+	Text           string  `json:"text" validate:"required"`
+}
+
+func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }

@@ -1183,6 +1183,22 @@ type UnlinkMessageTaskResponse = TaskLinkMutationResponse
 
 type UnlinkMessageTaskErrorResponse = ErrorResponse
 
+type StartVisualAttachmentBuildResponse = Status
+
+type StartVisualAttachmentBuildErrorResponse = ErrorResponse
+
+type RetryVisualAttachmentOwnerResponse = Status
+
+type RetryVisualAttachmentOwnerErrorResponse = ErrorResponse
+
+type ResumeVisualAttachmentBuildResponse = Status
+
+type ResumeVisualAttachmentBuildErrorResponse = ErrorResponse
+
+type GetVisualAttachmentStatusResponse = Status
+
+type GetVisualAttachmentStatusErrorResponse = ErrorResponse
+
 type ListOrganizationsResponse = OrganizationsResponse
 
 type ListOrganizationsErrorResponse = ErrorResponse
@@ -1970,6 +1986,12 @@ func (s *SearchMessagesResponse) UnmarshalJSON(data []byte) error {
 }
 
 type SearchMessagesErrorResponse = ErrorResponse
+
+type SearchVisualAttachmentsResponse = SearchResponse
+
+type SearchVisualAttachmentsErrorResponse = ErrorResponse
+
+type SearchVisualAttachmentsErrorResponseJSON = ErrorResponse
 
 type GetSearchCoverageResponse = SearchCoverageResponse
 
@@ -3063,6 +3085,40 @@ type UnlinkMessageTaskResp struct {
 	JSON200      *UnlinkMessageTaskResponse
 }
 
+type StartVisualAttachmentBuildResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *StartVisualAttachmentBuildResponse
+}
+
+type RetireVisualAttachmentGenerationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
+type RetryVisualAttachmentOwnerResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RetryVisualAttachmentOwnerResponse
+}
+
+type ResumeVisualAttachmentBuildResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ResumeVisualAttachmentBuildResponse
+}
+
+type GetVisualAttachmentStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetVisualAttachmentStatusResponse
+}
+
 type ListOrganizationsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3753,6 +3809,15 @@ type SearchMessagesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *SearchMessagesResponse
+}
+
+type SearchVisualAttachmentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchVisualAttachmentsResponse
+	JSON400      *SearchVisualAttachmentsErrorResponse
+	JSON503      *SearchVisualAttachmentsErrorResponseJSON
 }
 
 type GetSearchCoverageResp struct {
