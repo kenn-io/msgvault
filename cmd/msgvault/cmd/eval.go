@@ -1095,6 +1095,20 @@ func requireDisjointSourceIDs(ctx context.Context, db *sql.DB, docKey string, sp
 		return fmt.Errorf("--doc-key %q has no archive column to check for cross-source id collisions; "+
 			"a doc-key whose ids come from elsewhere has to establish its own single-id-space guarantee", docKey)
 	}
+	// A single connected source cannot collide with itself, and that is the
+	// common archive shape, so a cheap distinct-source count (backed by
+	// idx_messages_source) skips the GROUP BY/HAVING scan — and its join, for
+	// --doc-key=conversation — entirely for the run that does not need it.
+	var sources int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(DISTINCT source_id) FROM messages WHERE "+store.LiveMessagesWhere("", true),
+	).Scan(&sources); err != nil {
+		return fmt.Errorf("count connected sources: %w", err)
+	}
+	if sources <= 1 {
+		return nil
+	}
+
 	// Enough ids to make the error concrete without pasting an entire
 	// re-imported mailbox into a terminal.
 	const show = 10
@@ -1107,7 +1121,7 @@ func requireDisjointSourceIDs(ctx context.Context, db *sql.DB, docKey string, sp
 	}
 	count := strconv.Itoa(len(ids))
 	if len(ids) > show {
-		ids, count = ids[:show], fmt.Sprintf("more than %d", show)
+		count = fmt.Sprintf("more than %d", show)
 	}
 	return fmt.Errorf("%s document ids in this archive (%s) belong to more than one connected source, "+
 		"so --doc-key=%s cannot name a single document: %s is unique only within the source that "+
