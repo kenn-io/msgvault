@@ -88,11 +88,11 @@ generation is resolved once at the start of the run; each query still searches
 whatever is active at query time, so a rebuild or activation you trigger while
 an eval is in flight can leave the reported vector count stale for topics
 scored after the swap.
-Anything that went wrong
-without being fatal — unparseable judgment lines, topics whose query string
-did not parse, hits that could not be hydrated from the archive, rankings cut
-short by the fusion pool, topics no mode could score — is reported under
-"Diagnostics" rather than silently folded into the scores.
+Anything that went wrong without being fatal — unparseable judgment lines,
+topics whose query string did not parse or parsed to no search criteria at
+all, hits that could not be hydrated from the archive, rankings cut short by
+the fusion pool, topics no mode could score — is reported under "Diagnostics"
+rather than silently folded into the scores.
 
 Note on topic phrasing: it is an experimental variable, not a constant. FTS5
 matches on AND semantics, so a verbose natural-language topic requires every
@@ -525,11 +525,28 @@ func (e *evaluator) ranked(mode, qstr string, q *search.Query) ([]string, error)
 // /cli/search) all reject such a query via Query.Err(); this one skips the
 // topic and says why, so one malformed line cannot quietly move a run's
 // headline numbers.
+//
+// Parsing cleanly is not enough, though: a topic can be non-empty text and
+// still parse to no search criteria at all. `subject:""` is the plain case —
+// the parser drops an empty operator value rather than building a `LIKE '%%'`
+// that matches everything — and the widest possible query is what is left
+// behind. That is the same corruption one step further along, and it is worse,
+// because the fts path answers an empty query by listing the whole live corpus
+// in its default order: the topic scores whatever the archive's date
+// distribution happens to give it. Production rejects the identical query
+// (cmd/search.go and the /cli/search handler both test Query.IsEmpty), so it
+// is skipped and reported here too.
 func parseTopic(t eval.Topic, diag *runDiagnostics) (*search.Query, bool) {
 	q := search.Parse(t.Query)
 	if err := q.Err(); err != nil {
 		diag.skipTopic(t.ID, fmt.Sprintf("query %q did not parse: %v — scoring it would have "+
 			"silently evaluated the broader query left after the bad filter was dropped", t.Query, err))
+		return nil, false
+	}
+	if q.IsEmpty() {
+		diag.skipTopic(t.ID, fmt.Sprintf("query %q parsed to no search criteria at all — scoring it "+
+			"would have ranked the whole live corpus in its default order rather than a retrieval "+
+			"of this topic; production search rejects the same query as empty", t.Query))
 		return nil, false
 	}
 	return q, true
