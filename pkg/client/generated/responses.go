@@ -1291,6 +1291,8 @@ type PutOrganizationProfileErrorResponseJSON = ErrorResponse
 
 type PutOrganizationProfileErrorResponseJSON409 = ErrorResponse
 
+type PutOrganizationProfileErrorResponseJSON413 = ErrorResponse
+
 type PutOrganizationProfileErrorResponseJSON428 = ErrorResponse
 
 type PutOrganizationProfileErrorResponseJSON503 = ErrorResponse
@@ -3218,6 +3220,7 @@ type PutOrganizationProfileResp struct {
 	JSON400      *PutOrganizationProfileErrorResponse
 	JSON404      *PutOrganizationProfileErrorResponseJSON
 	JSON409      *PutOrganizationProfileErrorResponseJSON409
+	JSON413      *PutOrganizationProfileErrorResponseJSON413
 	JSON428      *PutOrganizationProfileErrorResponseJSON428
 	JSON503      *PutOrganizationProfileErrorResponseJSON503
 }

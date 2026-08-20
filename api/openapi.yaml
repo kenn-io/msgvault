@@ -14394,6 +14394,7 @@ paths:
         - API
   /api/v1/organizations/{id}/profile:
     put:
+      description: Replaces all structured organization profile collections with at most 200 total values.
       operationId: putOrganizationProfile
       parameters:
         - description: Organization ID
@@ -14440,6 +14441,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
           content:
             application/json:
               schema:

@@ -417,6 +417,21 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 	}
 }
 
+func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
+	doc := OpenAPIDocument()
+	path := doc.Paths["/api/v1/organizations/{id}/profile"]
+	require.NotNil(t, path)
+	require.NotNil(t, path.Put)
+	assert.Contains(t, path.Put.Description, "200")
+
+	response := path.Put.Responses[httpStatusKey(http.StatusRequestEntityTooLarge)]
+	require.NotNil(t, response)
+	media := response.Content["application/json"]
+	require.NotNil(t, media)
+	require.NotNil(t, media.Schema)
+	assert.Equal(t, "#/components/schemas/ErrorResponse", media.Schema.Ref)
+}
+
 func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -567,11 +567,11 @@ go test -count=1 -tags "fts5 sqlite_vec" ./internal/api \
   -run 'Test(OrganizationHTTPProfileRejectsTooManyValues|OpenAPIOrganizationProfilePutDocumentsLimits)$'
 make api-generate
 make web-generate
-make openapi-check
 ```
 
 Expected: PASS, and generated changes are limited to the declared OpenAPI and
-client artifacts.
+client artifacts. Run `make openapi-check` after committing those artifacts;
+the check intentionally fails while generated changes are still uncommitted.
 
 - [ ] **Step 5: Commit the HTTP contract and generated artifacts**
 

@@ -1679,7 +1679,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replace organization profile collections */
+        /**
+         * Replace organization profile collections
+         * @description Replaces all structured organization profile collections with at most 200 total values.
+         */
         put: operations["putOrganizationProfile"];
         post?: never;
         delete?: never;
@@ -12590,6 +12593,15 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

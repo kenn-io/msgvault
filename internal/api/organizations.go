@@ -254,13 +254,24 @@ func (s *Server) registerOrganizationRoutes(api huma.API) {
 	addErrorResponses(api, history.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, history, s.handleGetOrganizationHistory)
 
-	profile := rawAPIV1Operation("putOrganizationProfile", http.MethodPut, "/organizations/{id}/profile", "Replace organization profile collections")
+	profile := rawAPIV1Operation(
+		"putOrganizationProfile", http.MethodPut, "/organizations/{id}/profile",
+		"Replace organization profile collections",
+	)
+	profile.Description = fmt.Sprintf(
+		"Replaces all structured organization profile collections with at most %d total values.",
+		store.MaxOrganizationProfileValues,
+	)
 	addOrganizationIDParameter(&profile)
 	addOrganizationIfMatchParameter(&profile)
 	profile.RequestBody = jsonRequestBodyFor[OrganizationProfileBody](api)
 	profile.Responses = jsonResponsesFor[store.OrganizationProfile](api)
 	addOrganizationETagHeader(profile.Responses[httpStatusKey(http.StatusOK)])
-	addErrorResponses(api, profile.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
+	addErrorResponses(api, profile.Responses,
+		http.StatusBadRequest, http.StatusConflict, http.StatusNotFound,
+		http.StatusPreconditionRequired, http.StatusRequestEntityTooLarge,
+		http.StatusServiceUnavailable,
+	)
 	registerRawHumaRoute(api, profile, s.handlePutOrganizationProfile)
 
 	attributes := rawAPIV1Operation("listOrganizationAttributes", http.MethodGet, "/organizations/{id}/attributes", "List organization typed attributes")
@@ -803,6 +814,9 @@ func (s *Server) writeOrganizationError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "organization_has_employments", "Organization still has employment records; retire it instead of deleting it")
 	case errors.Is(err, store.ErrOrganizationMergeConflict):
 		writeError(w, http.StatusConflict, "organization_merge_conflict", "Organization merge conflicts with existing employment records")
+	case errors.Is(err, store.ErrOrganizationProfileTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge,
+			"organization_profile_too_large", err.Error())
 	case errors.Is(err, store.ErrOrganizationInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_organization", err.Error())
 	case isOrganizationProfileValidationError(err):
