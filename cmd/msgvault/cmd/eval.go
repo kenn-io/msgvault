@@ -78,9 +78,9 @@ from your config.
 Every run reports the embedding model, index settings and index size that
 produced it, plus per-query latency, because a quality number is not
 comparable — or even interpretable — without them. Anything that went wrong
-without being fatal — unparseable judgment lines, hits that could not be
-hydrated from the archive, rankings cut short by the fusion pool, topics no
-mode could score — is reported under
+without being fatal — unparseable judgment lines, topics whose query string
+did not parse, hits that could not be hydrated from the archive, rankings cut
+short by the fusion pool, topics no mode could score — is reported under
 "Diagnostics" rather than silently folded into the scores.
 
 Note on topic phrasing: it is an experimental variable, not a constant. FTS5
@@ -231,6 +231,13 @@ type runDiagnostics struct {
 // skip records that one topic/mode combination could not be scored.
 func (d *runDiagnostics) skip(topicID, mode, reason string) {
 	d.SkippedCells = append(d.SkippedCells, fmt.Sprintf("topic %s / %s: %s", topicID, mode, reason))
+}
+
+// skipTopic records that a topic could not be scored by any mode. Unlike skip,
+// this is a property of the topic itself (a query string no mode can run), so
+// it is reported once rather than once per mode.
+func (d *runDiagnostics) skipTopic(topicID, reason string) {
+	d.SkippedCells = append(d.SkippedCells, fmt.Sprintf("topic %s: %s", topicID, reason))
 }
 
 // notes renders the diagnostics as human-readable lines, empty when the run
@@ -481,10 +488,10 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 	})
 }
 
-// ranked runs one topic through one mode, parsing the query string once for
-// whichever path the mode takes.
-func (e *evaluator) ranked(mode, qstr string) ([]string, error) {
-	q := search.Parse(qstr)
+// ranked runs one topic through one mode. The topic is parsed once by the
+// caller and handed in already validated: re-parsing per mode would let the
+// same malformed filter be dropped silently three times over.
+func (e *evaluator) ranked(mode, qstr string, q *search.Query) ([]string, error) {
 	switch mode {
 	case "fts":
 		return e.rankedFTS(q)
@@ -493,6 +500,28 @@ func (e *evaluator) ranked(mode, qstr string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown mode %q (want fts|vector|hybrid)", mode)
 	}
+}
+
+// parseTopic turns one topic's query string into a validated search.Query.
+//
+// search.Parse never fails outright: an operator it recognises but cannot
+// read — `before:invalid`, `larger:5X` — is recorded on the query and the
+// filter is simply dropped, leaving a *wider* query behind. That is a
+// reasonable default for an interactive search box, where the user sees the
+// results and can correct the typo, but it is silent corruption for a
+// benchmark: the topic still scores, against a question nobody asked. The
+// production front doors (the CLI search command, /api/v1/search,
+// /cli/search) all reject such a query via Query.Err(); this one skips the
+// topic and says why, so one malformed line cannot quietly move a run's
+// headline numbers.
+func parseTopic(t eval.Topic, diag *runDiagnostics) (*search.Query, bool) {
+	q := search.Parse(t.Query)
+	if err := q.Err(); err != nil {
+		diag.skipTopic(t.ID, fmt.Sprintf("query %q did not parse: %v — scoring it would have "+
+			"silently evaluated the broader query left after the bad filter was dropped", t.Query, err))
+		return nil, false
+	}
+	return q, true
 }
 
 func runEval(cmd *cobra.Command, _ []string) error {
@@ -613,10 +642,17 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		if len(rel) == 0 {
 			continue // topic has no judgments in this qrels file
 		}
+		// Parse once, before any mode runs it: a malformed filter is a
+		// property of the topic, not of the mode, and must not be silently
+		// widened into a different question three times over.
+		q, ok := parseTopic(t, diag)
+		if !ok {
+			continue
+		}
 		anyMode := false
 		for _, m := range modes {
 			start := time.Now()
-			ranked, err := ev.ranked(m, t.Query)
+			ranked, err := ev.ranked(m, t.Query, q)
 			elapsed := time.Since(start)
 			if err != nil {
 				if errors.Is(err, errNoFreeText) {

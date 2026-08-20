@@ -350,6 +350,44 @@ func TestRankedVector_FilterOnlyTopicIsRecoverable(t *testing.T) {
 	assert.Contains(t, err.Error(), topic, "the error names the offending topic")
 }
 
+// TestParseTopic_RejectsAMalformedFilter is the regression for silently
+// widened topics. search.Parse drops an operator value it cannot read and
+// carries on, so `before:invalid renewal` becomes the unfiltered query
+// `renewal` — a different question, scored under the original topic's id.
+func TestParseTopic_RejectsAMalformedFilter(t *testing.T) {
+	const bad = "before:invalid renewal"
+
+	// What the old code would have run: the date filter is gone, and only
+	// the bare term survives. This is the query that must NOT be scored.
+	widened := search.Parse(bad)
+	require.Error(t, widened.Err(), "fixture assumption: this topic does not parse cleanly")
+	require.Nil(t, widened.BeforeDate, "the malformed filter is dropped, not honoured")
+	require.Equal(t, []string{"renewal"}, widened.TextTerms, "leaving a strictly broader query behind")
+
+	diag := &runDiagnostics{}
+	q, ok := parseTopic(eval.Topic{ID: "q7", Query: bad}, diag)
+	assert.False(t, ok, "a topic that does not parse must not be scored")
+	assert.Nil(t, q)
+
+	notes := diag.notes()
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "topic q7", "the report names the offending topic")
+	assert.Contains(t, notes[0], "before", "and the operator that failed")
+}
+
+// TestParseTopic_AcceptsAWellFormedFilter: the guard rejects malformed values,
+// not filters in general. A topic with a valid date filter parses through with
+// the filter intact.
+func TestParseTopic_AcceptsAWellFormedFilter(t *testing.T) {
+	diag := &runDiagnostics{}
+	q, ok := parseTopic(eval.Topic{ID: "q8", Query: "before:2024-01-01 renewal"}, diag)
+	require.True(t, ok)
+	require.NotNil(t, q)
+	assert.NotNil(t, q.BeforeDate, "a filter that parses is kept")
+	assert.Equal(t, []string{"renewal"}, q.TextTerms)
+	assert.Empty(t, diag.notes(), "a clean topic says nothing")
+}
+
 // TestRunDiagnostics_Notes checks that every silent failure mode this run can
 // hit produces a line a user will actually read.
 func TestRunDiagnostics_Notes(t *testing.T) {

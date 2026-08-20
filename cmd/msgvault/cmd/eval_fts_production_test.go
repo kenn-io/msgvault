@@ -3,13 +3,17 @@
 package cmd
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -29,7 +33,12 @@ import (
 // former, minus m3.
 func seedRankingDivergenceArchive(t *testing.T) *store.Store {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
+	return seedRankingDivergenceArchiveIn(t, t.TempDir())
+}
+
+func seedRankingDivergenceArchiveIn(t *testing.T, dataDir string) *store.Store {
+	t.Helper()
+	dbPath := filepath.Join(dataDir, "msgvault.db")
 	s, err := store.Open(dbPath)
 	require.NoError(t, err, "open store")
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -172,4 +181,79 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 	require.NoError(t, err)
 	assert.Equal(t, []string{"<m1@example.com>"}, ranked,
 		"the eval must score the hits production returns, not zero")
+}
+
+// writeEvalFile writes one of the run's input files and returns its path.
+func writeEvalFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write %s", name)
+	return path
+}
+
+// TestRunEval_EndToEnd_RanksByRelevanceAndSkipsAMalformedTopic drives the whole
+// command against a real archive, so the two fixes are pinned where they
+// actually have to hold: at the call sites, not just in the helpers.
+//
+//   - q1 is scored through the production relevance-ranked FTS path. Its one
+//     judged message is the subject hit, which BM25 puts at rank 1 (MRR 1.0)
+//     and the old chronological path put at rank 3 (MRR 0.333).
+//   - q2 carries a malformed date filter. search.Parse drops it and leaves the
+//     broader query `renewal` behind, which would have scored exactly like q1
+//     under a question nobody asked. It must be skipped and reported instead.
+func TestRunEval_EndToEnd_RanksByRelevanceAndSkipsAMalformedTopic(t *testing.T) {
+	dir := t.TempDir()
+	seedRankingDivergenceArchiveIn(t, dir)
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = config.NewDefaultConfig()
+	cfg.Data.DataDir = dir
+
+	savedFlags := [...]any{evalQrels, evalTopics, evalModes, evalDocKey, evalLimit, evalJSON}
+	t.Cleanup(func() {
+		evalQrels, _ = savedFlags[0].(string)
+		evalTopics, _ = savedFlags[1].(string)
+		evalModes, _ = savedFlags[2].(string)
+		evalDocKey, _ = savedFlags[3].(string)
+		evalLimit, _ = savedFlags[4].(int)
+		evalJSON, _ = savedFlags[5].(bool)
+	})
+	evalQrels = writeEvalFile(t, dir, "qrels.txt",
+		"q1 0 <m1@example.com> 1\nq2 0 <m1@example.com> 1\n")
+	evalTopics = writeEvalFile(t, dir, "topics.tsv",
+		"q1\trenewal\nq2\tbefore:invalid renewal\n")
+	evalModes = "fts"
+	evalDocKey = "message"
+	evalLimit = 10
+	evalJSON = true
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	done := captureStdout(t)
+	err := runEval(cmd, nil)
+	out := done()
+	require.NoError(t, err, "eval run")
+
+	var report struct {
+		TopicsEvaluated int `json:"topics_evaluated"`
+		Results         map[string]struct {
+			MRR    float64 `json:"MRR"`
+			Topics int     `json:"topics"`
+		} `json:"results"`
+		Diagnostics struct {
+			SkippedCells []string `json:"skipped_cells"`
+		} `json:"diagnostics"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report), "parse report: %s", out)
+
+	assert.Equal(t, 1, report.TopicsEvaluated, "only the well-formed topic is scored")
+	assert.Equal(t, 1, report.Results["fts"].Topics)
+	assert.InDelta(t, 1.0, report.Results["fts"].MRR, 1e-9,
+		"the relevance-ranked path puts the subject hit first; the chronological one scored 0.333 here")
+
+	require.Len(t, report.Diagnostics.SkippedCells, 1, "the malformed topic must be reported, not dropped")
+	assert.Contains(t, report.Diagnostics.SkippedCells[0], "topic q2")
+	assert.Contains(t, report.Diagnostics.SkippedCells[0], "before:invalid renewal")
 }
