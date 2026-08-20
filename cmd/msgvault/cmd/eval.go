@@ -92,7 +92,9 @@ Anything that went wrong without being fatal — unparseable judgment lines,
 topics whose query string did not parse or parsed to no search criteria at
 all, hits that could not be hydrated from the archive, rankings cut short by
 the fusion pool, topics no mode could score — is reported under "Diagnostics"
-rather than silently folded into the scores.
+rather than silently folded into the scores. So is partial qrels coverage: a
+topic the judgments never mention cannot be scored, and the diagnostics say
+how many of the topics file that leaves the headline numbers standing on.
 
 Note on topic phrasing: it is an experimental variable, not a constant. FTS5
 matches on AND semantics, so a verbose natural-language topic requires every
@@ -232,6 +234,15 @@ type runDiagnostics struct {
 	DepthShortfalls int      `json:"depth_shortfalls,omitempty"`
 	PoolShortfalls  int      `json:"pool_shortfalls,omitempty"`
 	SkippedCells    []string `json:"skipped_cells,omitempty"`
+	// UnjudgedTopics names the topics the qrels file says nothing about.
+	// Leaving them out of the scoring is correct — an unjudged topic has
+	// nothing to be scored against — but leaving it *unsaid* is not: as soon
+	// as one topic is judged the run reports a headline number, and a qrels
+	// file that matches only a handful of a large topics file therefore
+	// reports it over a small, self-selected subset while looking like a
+	// complete run. Naming them makes the coverage of a run readable from its
+	// own output.
+	UnjudgedTopics []string `json:"unjudged_topics,omitempty"`
 
 	// kPerSignal is the fusion pool size in force for this run, used only to
 	// make the PoolShortfalls note actionable. Unexported so it stays out of
@@ -251,6 +262,14 @@ func (d *runDiagnostics) skipTopic(topicID, reason string) {
 	d.SkippedCells = append(d.SkippedCells, fmt.Sprintf("topic %s: %s", topicID, reason))
 }
 
+// unjudged records a topic this qrels file never mentions. It is not a skip:
+// nothing went wrong with the topic, there is simply nothing to score it
+// against. It is tracked so the run can report how much of the topics file its
+// headline numbers actually cover.
+func (d *runDiagnostics) unjudged(topicID string) {
+	d.UnjudgedTopics = append(d.UnjudgedTopics, topicID)
+}
+
 // notes renders the diagnostics as human-readable lines, empty when the run
 // was clean.
 func (d *runDiagnostics) notes() []string {
@@ -263,6 +282,17 @@ func (d *runDiagnostics) notes() []string {
 			out = append(out, fmt.Sprintf("%s %s: %s — skipped lines did not match the expected format",
 				l.kind, l.stats.Path, l.stats))
 		}
+	}
+	// Partial coverage is not an error — a topics file is often larger than
+	// the judgments gathered for it so far — but it changes what the headline
+	// numbers mean, so it is stated rather than inferred from the topic count.
+	if n := len(d.UnjudgedTopics); n > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d of %d topics had no matching qrels entry and were not scored (%s); "+
+				"the reported metrics cover the other %d, so they describe a subset of %s — "+
+				"check that the qids in both files refer to the same queries",
+			n, d.TopicsLoad.Parsed, eval.FormatIDList(d.UnjudgedTopics, 10),
+			d.TopicsLoad.Parsed-n, d.TopicsLoad.Path))
 	}
 	if d.UnhydratedHits > 0 {
 		out = append(out, fmt.Sprintf(
@@ -667,7 +697,12 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	scored := 0
 	for _, t := range topics {
 		if !qrels.HasJudgments(t.ID) {
-			continue // this qrels file says nothing at all about the topic
+			// This qrels file says nothing at all about the topic, so there is
+			// nothing to score it against. Record it: one judged topic is
+			// enough to produce a headline number, and a reader has to be able
+			// to see how much of the topics file that number covers.
+			diag.unjudged(t.ID)
+			continue
 		}
 		// May legitimately be empty: a topic judged but with every document
 		// graded non-relevant scores a real zero and belongs in the macro

@@ -1,10 +1,27 @@
 package eval
 
 import (
+	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"time"
 )
+
+// FormatIDList renders a list of ids for an error or diagnostic message,
+// naming at most limit of them and summarising the rest.
+//
+// The ids these messages carry come from user-supplied files, so their number
+// is unbounded: a topics file whose qids drifted from the qrels can leave
+// hundreds unmatched, and printing all of them buries the sentence that
+// explains what is wrong. A handful is enough to recognise the pattern and go
+// look.
+func FormatIDList(ids []string, limit int) string {
+	if limit < 1 || len(ids) <= limit {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s, and %d more", strings.Join(ids[:limit], ", "), len(ids)-limit)
+}
 
 // RunConfig records exactly what produced a set of numbers: which embedding
 // model and index settings were in force, and how big the index was.

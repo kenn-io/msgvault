@@ -94,3 +94,15 @@ func TestRunConfig_FTSOnlyOmitsVectorFields(t *testing.T) {
 	assert.NotContains(back, "index_size_bytes")
 	assert.Contains(back, "messages")
 }
+
+// TestFormatIDList pins the cap: enough ids to recognise the pattern, then a
+// count, so a diagnostic naming hundreds of unmatched qids stays readable.
+func TestFormatIDList(t *testing.T) {
+	assert := assert.New(t)
+	assert.Empty(FormatIDList(nil, 3))
+	assert.Equal("q1", FormatIDList([]string{"q1"}, 3))
+	assert.Equal("q1, q2, q3", FormatIDList([]string{"q1", "q2", "q3"}, 3))
+	assert.Equal("q1, q2, q3, and 2 more", FormatIDList([]string{"q1", "q2", "q3", "q4", "q5"}, 3))
+	// A non-positive cap is not a cap; list everything rather than nothing.
+	assert.Equal("q1, q2", FormatIDList([]string{"q1", "q2"}, 0))
+}
