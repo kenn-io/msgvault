@@ -68,6 +68,13 @@ the run retrieves at least that deep, and are clamped to -n below it (a run
 that only ever looks 20 deep has no recall@100, and labelling one would invite
 a false comparison). The column headers always name the depth actually used.
 
+Each mode runs the same code production search runs. fts is the
+relevance-ranked (BM25, subject-weighted) store path behind
+/api/v1/search?mode=fts — not a chronological listing — so it honours the same
+deletion scope and the same substring address-filter semantics real searches
+do; vector and hybrid go through the hybrid engine with the fusion parameters
+from your config.
+
 Every run reports the embedding model, index settings and index size that
 produced it, plus per-query latency, because a quality number is not
 comparable — or even interpretable — without them. Anything that went wrong
@@ -107,6 +114,41 @@ func init() {
 // aborting and discarding every score computed so far.
 var errNoFreeText = errors.New("topic has no free-text terms to embed")
 
+// evalHit is the doc-key-relevant projection of one retrieved message.
+//
+// The retrieval paths disagree about what a hit is: the store's
+// relevance-ranked FTS path returns store.APIMessage, while the vector path
+// hydrates hybrid hits into query.MessageSummary. A --doc-key has to mean the
+// same thing whichever engine produced the hit, so both paths project into
+// this one struct and the doc-key registry is defined over it alone.
+type evalHit struct {
+	// MessageID is the archive's own row id. No registered doc-key uses it
+	// yet; it is carried because the judged-unit extension the registry
+	// documents (a reconstructed-thread id resolved through an external
+	// mapping) resolves from an id, not from text.
+	MessageID            int64
+	SourceMessageID      string
+	SourceConversationID string
+}
+
+// hitFromAPIMessage projects a store-path (relevance-ranked FTS) result.
+func hitFromAPIMessage(m store.APIMessage) evalHit {
+	return evalHit{
+		MessageID:            m.ID,
+		SourceMessageID:      m.SourceMessageID,
+		SourceConversationID: m.SourceConversationID,
+	}
+}
+
+// hitFromSummary projects a hydrated vector/hybrid result.
+func hitFromSummary(m query.MessageSummary) evalHit {
+	return evalHit{
+		MessageID:            m.ID,
+		SourceMessageID:      m.SourceMessageID,
+		SourceConversationID: m.SourceConversationID,
+	}
+}
+
 // docKeySpec describes one --doc-key value.
 type docKeySpec struct {
 	// extract pulls, from a retrieved hit, the stable document id that qrels
@@ -114,7 +156,7 @@ type docKeySpec struct {
 	// scoring core (eval.Evaluate, eval.Aggregate, eval.DedupeKeys) operates
 	// on the opaque string keys these return and never learns what they
 	// identify.
-	extract func(query.MessageSummary) string
+	extract func(evalHit) string
 	// collapses is true when the judged unit is coarser than the retrieved
 	// one, so several hits routinely fold into a single key. Retrieval then
 	// has to over-fetch messages to fill the requested depth with *distinct*
@@ -138,12 +180,12 @@ func newDocKeyRegistry() map[string]docKeySpec {
 		// (the same message synced from two accounts), but they are rare
 		// enough that the depth does not need padding for them.
 		"message": {
-			extract: func(m query.MessageSummary) string { return m.SourceMessageID },
+			extract: func(h evalHit) string { return h.SourceMessageID },
 		},
 		// Many messages share one conversation, so filling n distinct threads
 		// takes more than n messages.
 		"conversation": {
-			extract:   func(m query.MessageSummary) string { return m.SourceConversationID },
+			extract:   func(h evalHit) string { return h.SourceConversationID },
 			collapses: true,
 		},
 	}
@@ -165,11 +207,13 @@ func docKeyNames(registry map[string]docKeySpec) string {
 // exists to expose, and a single unanswerable topic should not throw away
 // every other topic's score.
 type runDiagnostics struct {
-	QrelsLoad       eval.LoadStats `json:"qrels_load"`
-	TopicsLoad      eval.LoadStats `json:"topics_load"`
-	UnhydratedHits  int            `json:"unhydrated_hits,omitempty"`
-	DepthShortfalls int            `json:"depth_shortfalls,omitempty"`
-	SkippedCells    []string       `json:"skipped_cells,omitempty"`
+	QrelsLoad      eval.LoadStats `json:"qrels_load"`
+	TopicsLoad     eval.LoadStats `json:"topics_load"`
+	UnhydratedHits int            `json:"unhydrated_hits,omitempty"`
+	// DepthShortfalls counts runs that ran out of over-fetch budget with the
+	// engine still willing to give more.
+	DepthShortfalls int      `json:"depth_shortfalls,omitempty"`
+	SkippedCells    []string `json:"skipped_cells,omitempty"`
 }
 
 // skip records that one topic/mode combination could not be scored.
@@ -206,10 +250,34 @@ func (d *runDiagnostics) notes() []string {
 	return out
 }
 
+// ftsSearcher is the production relevance-ranked full-text path.
+//
+// It is deliberately the Store's search, not query.Engine.Search: those are
+// two different searches. query.Engine.Search returns matches in reverse
+// chronological order with no relevance component at all, so scoring it as a
+// *ranking* measures the archive's date distribution rather than its retrieval
+// quality. Store.SearchMessagesQueryContext is the path /api/v1/search?mode=fts
+// serves, ordering by the dialect's BM25 expression (subject-weighted) before
+// falling back to recency — the same messages_fts index and the same weights
+// the hybrid engine's BM25 leg fuses. It also matches production on the two
+// semantics that silently move scores: it honours search.DeletionScope
+// (active-only by default, so source-deleted messages are excluded), and its
+// from:/to:/cc: filters are substring matches rather than exact-address
+// equality.
+//
+// *store.Store satisfies this; the interface exists so tests can drive the
+// over-fetch loop without a database.
+type ftsSearcher interface {
+	SearchMessagesQueryContext(
+		ctx context.Context, q *search.Query, offset, limit int,
+	) ([]store.APIMessage, int64, error)
+}
+
 // evaluator bundles the engines and config needed to turn a query string into
 // a ranked list of document ids for a given search mode.
 type evaluator struct {
 	ctx   context.Context
+	fts   ftsSearcher
 	qeng  query.Engine
 	heng  *hybrid.Engine
 	key   docKeySpec
@@ -266,22 +334,25 @@ func (e *evaluator) rankedKeys(fetch func(n int) (fetchResult, error)) ([]string
 	return nil, nil
 }
 
-func (e *evaluator) rankedFTS(qstr string) ([]string, error) {
+// rankedFTS scores the production relevance-ranked FTS path. See ftsSearcher
+// for why that is the Store's search and not query.Engine.Search.
+func (e *evaluator) rankedFTS(q *search.Query) ([]string, error) {
 	return e.rankedKeys(func(n int) (fetchResult, error) {
-		res, err := e.qeng.Search(e.ctx, search.Parse(qstr), n, 0)
+		res, _, err := e.fts.SearchMessagesQueryContext(e.ctx, q, 0, n)
 		if err != nil {
 			return fetchResult{}, err
 		}
 		keys := make([]string, 0, len(res))
 		for _, m := range res {
-			keys = append(keys, e.key.extract(m))
+			keys = append(keys, e.key.extract(hitFromAPIMessage(m)))
 		}
+		// The store path pages a single ranked list, so a short page means
+		// the corpus ran out — there is no candidate pool to saturate.
 		return fetchResult{keys: keys, raw: len(res)}, nil
 	})
 }
 
-func (e *evaluator) rankedVector(mode, qstr string) ([]string, error) {
-	q := search.Parse(qstr)
+func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, error) {
 	// Both modes embed the free text, so a filter-only topic (`from:alice`)
 	// has nothing to embed and hybrid.Engine.Search would return a bare
 	// "empty query". Detect it here and hand runEval a recognisable error so
@@ -338,18 +409,21 @@ func (e *evaluator) rankedVector(mode, qstr string) ([]string, error) {
 				out.dropped++
 				continue
 			}
-			out.keys = append(out.keys, e.key.extract(m))
+			out.keys = append(out.keys, e.key.extract(hitFromSummary(m)))
 		}
 		return out, nil
 	})
 }
 
+// ranked runs one topic through one mode, parsing the query string once for
+// whichever path the mode takes.
 func (e *evaluator) ranked(mode, qstr string) ([]string, error) {
+	q := search.Parse(qstr)
 	switch mode {
 	case "fts":
-		return e.rankedFTS(qstr)
+		return e.rankedFTS(q)
 	case "vector", "hybrid":
-		return e.rankedVector(mode, qstr)
+		return e.rankedVector(mode, qstr, q)
 	default:
 		return nil, fmt.Errorf("unknown mode %q (want fts|vector|hybrid)", mode)
 	}
@@ -429,7 +503,11 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	}
 
 	ev := &evaluator{
-		ctx:   ctx,
+		ctx: ctx,
+		// The store serves --modes fts through the same relevance-ranked
+		// path /api/v1/search?mode=fts uses; the query engine serves the
+		// rowid -> source-id hydration the vector/hybrid path needs.
+		fts:   s,
 		qeng:  query.NewEngine(s.DB(), s.IsPostgreSQL()),
 		key:   keySpec,
 		limit: evalLimit,

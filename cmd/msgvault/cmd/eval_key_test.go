@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestDocKeyFuncs pins the doc-key registry: the scoring core only ever sees
@@ -17,7 +18,8 @@ import (
 // reconstructed-thread id resolved through an external mapping) is added as
 // one more entry here and must not require touching this contract.
 func TestDocKeyFuncs(t *testing.T) {
-	m := query.MessageSummary{
+	m := evalHit{
+		MessageID:            7,
 		SourceMessageID:      "<msg-1@example.com>",
 		SourceConversationID: "thread-42",
 	}
@@ -53,7 +55,7 @@ func TestNewDocKeyRegistry_IsPerRun(t *testing.T) {
 	second := newDocKeyRegistry()
 	require.Len(t, second, len(first))
 
-	first["thread"] = docKeySpec{extract: func(query.MessageSummary) string { return "x" }}
+	first["thread"] = docKeySpec{extract: func(evalHit) string { return "x" }}
 	_, leaked := newDocKeyRegistry()["thread"]
 	assert.False(t, leaked, "a run's registry must not mutate the next run's")
 }
@@ -62,4 +64,28 @@ func TestNewDocKeyRegistry_IsPerRun(t *testing.T) {
 // the rendering is stable.
 func TestDocKeyNames(t *testing.T) {
 	assert.Equal(t, "conversation|message", docKeyNames(newDocKeyRegistry()))
+}
+
+// TestEvalHitProjections_AgreeAcrossRetrievalPaths backs the claim evalHit
+// exists to make: a --doc-key means the same thing whichever engine produced
+// the hit. fts hits arrive as store.APIMessage and vector/hybrid hits as
+// query.MessageSummary, and if those two projected differently the same
+// message would score under two different ids.
+func TestEvalHitProjections_AgreeAcrossRetrievalPaths(t *testing.T) {
+	fromFTS := hitFromAPIMessage(store.APIMessage{
+		ID:                   7,
+		SourceMessageID:      "<msg-1@example.com>",
+		SourceConversationID: "thread-42",
+	})
+	fromVector := hitFromSummary(query.MessageSummary{
+		ID:                   7,
+		SourceMessageID:      "<msg-1@example.com>",
+		SourceConversationID: "thread-42",
+	})
+	assert.Equal(t, fromFTS, fromVector, "the same message must project identically")
+
+	for name, spec := range newDocKeyRegistry() {
+		assert.Equal(t, spec.extract(fromFTS), spec.extract(fromVector),
+			"--doc-key=%s must not depend on which engine returned the hit", name)
+	}
 }

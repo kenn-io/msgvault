@@ -11,21 +11,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/eval"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // threadedCorpus builds a ranked corpus of threads*perThread messages, ordered
 // thread by thread: the first perThread hits all belong to one conversation.
 // That is the shape that breaks a truncate-then-collapse ranking.
-func threadedCorpus(threads, perThread int) []query.MessageSummary {
-	out := make([]query.MessageSummary, 0, threads*perThread)
+func threadedCorpus(threads, perThread int) []store.APIMessage {
+	out := make([]store.APIMessage, 0, threads*perThread)
 	var id int64
 	for t := range threads {
 		for m := range perThread {
 			id++
-			out = append(out, query.MessageSummary{
+			out = append(out, store.APIMessage{
 				ID:                   id,
 				SourceMessageID:      fmt.Sprintf("<t%03d-m%d@example.com>", t, m),
 				SourceConversationID: fmt.Sprintf("thread-%03d", t),
@@ -35,25 +35,26 @@ func threadedCorpus(threads, perThread int) []query.MessageSummary {
 	return out
 }
 
-// pagingEngine serves the first n results of corpus and records the depths it
-// was asked for, so a test can assert both the answer and the work done to get
-// it.
-type pagingEngine struct {
-	*querytest.MockEngine
-
+// pagingFTS serves the first n results of corpus and records the depths it was
+// asked for, so a test can assert both the answer and the work done to get it.
+// It stands in for *store.Store on the production relevance-ranked FTS path.
+type pagingFTS struct {
+	corpus []store.APIMessage
 	depths []int
 }
 
-func newPagingEngine(corpus []query.MessageSummary) *pagingEngine {
-	e := &pagingEngine{MockEngine: &querytest.MockEngine{}}
-	e.SearchFunc = func(_ context.Context, _ *search.Query, limit, _ int) ([]query.MessageSummary, error) {
-		e.depths = append(e.depths, limit)
-		if limit > len(corpus) {
-			limit = len(corpus)
-		}
-		return corpus[:limit], nil
+func (p *pagingFTS) SearchMessagesQueryContext(
+	_ context.Context, _ *search.Query, _, limit int,
+) ([]store.APIMessage, int64, error) {
+	p.depths = append(p.depths, limit)
+	if limit > len(p.corpus) {
+		limit = len(p.corpus)
 	}
-	return e
+	return p.corpus[:limit], int64(len(p.corpus)), nil
+}
+
+func newPagingFTS(corpus []store.APIMessage) *pagingFTS {
+	return &pagingFTS{corpus: corpus}
 }
 
 // evalTestLimit is the retrieval depth every ranking test uses; it matches the
@@ -61,12 +62,21 @@ func newPagingEngine(corpus []query.MessageSummary) *pagingEngine {
 // the arithmetic a real run does.
 const evalTestLimit = 100
 
-func newTestEvaluator(t *testing.T, eng query.Engine, docKey string) (*evaluator, *runDiagnostics) {
+func newTestEvaluator(t *testing.T, fts ftsSearcher, docKey string) (*evaluator, *runDiagnostics) {
 	t.Helper()
 	spec, ok := newDocKeyRegistry()[docKey]
 	require.True(t, ok)
 	diag := &runDiagnostics{}
-	return &evaluator{ctx: t.Context(), qeng: eng, key: spec, limit: evalTestLimit, diag: diag}, diag
+	return &evaluator{ctx: t.Context(), fts: fts, key: spec, limit: evalTestLimit, diag: diag}, diag
+}
+
+// evalTestQuery parses a topic the way runEval does, so the ranking tests
+// exercise the same already-validated query object the command builds.
+func evalTestQuery(t *testing.T, qstr string) *search.Query {
+	t.Helper()
+	q := search.Parse(qstr)
+	require.NoError(t, q.Err())
+	return q
 }
 
 // TestRankedFTS_ConversationKeyFillsTheRequestedDepth is the regression for the
@@ -76,7 +86,7 @@ func newTestEvaluator(t *testing.T, eng query.Engine, docKey string) (*evaluator
 // hand back 100 distinct threads.
 func TestRankedFTS_ConversationKeyFillsTheRequestedDepth(t *testing.T) {
 	corpus := threadedCorpus(200, 4)
-	eng := newPagingEngine(corpus)
+	eng := newPagingFTS(corpus)
 	ev, diag := newTestEvaluator(t, eng, "conversation")
 
 	// For contrast, what the old ordering produced: collapsing the first
@@ -87,7 +97,7 @@ func TestRankedFTS_ConversationKeyFillsTheRequestedDepth(t *testing.T) {
 	}
 	require.Len(t, eval.DedupeKeys(firstPage), 25, "truncate-then-collapse caps out at 25 threads here")
 
-	ranked, err := ev.rankedFTS("lease renewal")
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
 	require.NoError(t, err)
 
 	require.Len(t, ranked, 100, "-n 100 with --doc-key=conversation means 100 distinct threads")
@@ -107,10 +117,10 @@ func TestRankedFTS_ConversationKeyFillsTheRequestedDepth(t *testing.T) {
 // hits, so padding the query would only inflate the latency this command
 // reports.
 func TestRankedFTS_MessageKeyDoesNotOverFetch(t *testing.T) {
-	eng := newPagingEngine(threadedCorpus(200, 5))
+	eng := newPagingFTS(threadedCorpus(200, 5))
 	ev, _ := newTestEvaluator(t, eng, "message")
 
-	ranked, err := ev.rankedFTS("lease renewal")
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
 	require.NoError(t, err)
 	assert.Len(t, ranked, 100)
 	assert.Equal(t, []int{100}, eng.depths, "no over-fetch for a 1:1 doc-key")
@@ -120,10 +130,10 @@ func TestRankedFTS_MessageKeyDoesNotOverFetch(t *testing.T) {
 // enough. With 50 messages per thread, limit*4 still only covers 8 threads, so
 // the pool has to grow.
 func TestRankedFTS_GrowsThePoolUntilTheDepthIsFilled(t *testing.T) {
-	eng := newPagingEngine(threadedCorpus(200, 50))
+	eng := newPagingFTS(threadedCorpus(200, 50))
 	ev, diag := newTestEvaluator(t, eng, "conversation")
 
-	ranked, err := ev.rankedFTS("lease renewal")
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
 	require.NoError(t, err)
 	assert.Len(t, ranked, 100)
 	assert.Equal(t, []int{400, 1600, 6400}, eng.depths, "the pool grows geometrically")
@@ -134,10 +144,10 @@ func TestRankedFTS_GrowsThePoolUntilTheDepthIsFilled(t *testing.T) {
 // must not trigger pointless retries, and the short answer is not a shortfall
 // worth warning about — there is simply nothing more to retrieve.
 func TestRankedFTS_StopsWhenTheEngineIsExhausted(t *testing.T) {
-	eng := newPagingEngine(threadedCorpus(6, 5)) // 30 messages, 6 threads
+	eng := newPagingFTS(threadedCorpus(6, 5)) // 30 messages, 6 threads
 	ev, diag := newTestEvaluator(t, eng, "conversation")
 
-	ranked, err := ev.rankedFTS("lease renewal")
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
 	require.NoError(t, err)
 	assert.Len(t, ranked, 6, "six threads exist; six threads come back")
 	assert.Equal(t, []int{400}, eng.depths, "the engine came back short, so stop")
@@ -150,10 +160,10 @@ func TestRankedFTS_StopsWhenTheEngineIsExhausted(t *testing.T) {
 func TestRankedFTS_ReportsADepthShortfall(t *testing.T) {
 	// One single thread, deeper than the biggest pool: every fetch is
 	// saturated, and every fetch collapses to one key.
-	eng := newPagingEngine(threadedCorpus(1, 20_000))
+	eng := newPagingFTS(threadedCorpus(1, 20_000))
 	ev, diag := newTestEvaluator(t, eng, "conversation")
 
-	ranked, err := ev.rankedFTS("lease renewal")
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"thread-000"}, ranked)
 	assert.Equal(t, []int{400, 1600, 6400}, eng.depths, "the pool grows to the documented ceiling and stops")
@@ -167,13 +177,15 @@ func TestRankedFTS_ReportsADepthShortfall(t *testing.T) {
 // run and discards every score computed so far.
 func TestRankedVector_FilterOnlyTopicIsRecoverable(t *testing.T) {
 	const topic = "from:alice@example.com"
-	require.Empty(t, search.Parse(topic).TextTerms, "fixture assumption: this topic is filter-only")
+	parsed := evalTestQuery(t, topic)
+	require.Empty(t, parsed.TextTerms, "fixture assumption: this topic is filter-only")
 
 	// heng is deliberately nil: the check must happen before the engine is
 	// ever touched.
-	ev, _ := newTestEvaluator(t, &querytest.MockEngine{}, "message")
+	ev, _ := newTestEvaluator(t, nil, "message")
+	ev.qeng = &querytest.MockEngine{}
 
-	_, err := ev.rankedVector("vector", topic)
+	_, err := ev.rankedVector("vector", topic, parsed)
 	require.Error(t, err)
 	require.ErrorIs(t, err, errNoFreeText)
 	assert.Contains(t, err.Error(), topic, "the error names the offending topic")
