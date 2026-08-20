@@ -52,6 +52,13 @@ type VisualClaimRequest struct {
 	Now              time.Time
 	LeaseDuration    time.Duration
 	SourceFence      int64
+	// ExpectedContentStamp, when non-nil, is recorded as the claim's
+	// content stamp instead of the live value: the caller read it together
+	// with the context snapshot the document was assembled from, so an edit
+	// racing the snapshot fails the commit-time CAS rather than being
+	// absorbed. The empty string is a legitimate never-edited stamp, hence
+	// the pointer.
+	ExpectedContentStamp *string
 }
 
 type VisualWorkClaim struct {
@@ -175,8 +182,8 @@ func (s *Store) ListObsoleteVisualTokens(ctx context.Context, generationID int64
 		WHERE generation_id = ? AND state <> 'current' AND current_vector_token IS NOT NULL
 		  AND (state = 'tombstoned' OR outcome_kind IS NOT NULL)
 		UNION
-		SELECT superseded_vector_token FROM visual_publications
-		WHERE generation_id = ? AND superseded_vector_token IS NOT NULL
+		SELECT vector_token FROM visual_obsolete_tokens
+		WHERE generation_id = ?
 		ORDER BY 1 LIMIT ?`), generationID, generationID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list obsolete visual tokens: %w", err)
@@ -199,8 +206,8 @@ func (s *Store) ListVisualGenerationTokens(ctx context.Context, generationID int
 		WHERE generation_id = ? AND current_vector_token IS NOT NULL
 		UNION SELECT pending_vector_token FROM visual_publications
 		WHERE generation_id = ? AND pending_vector_token IS NOT NULL
-		UNION SELECT superseded_vector_token FROM visual_publications
-		WHERE generation_id = ? AND superseded_vector_token IS NOT NULL`), generationID, generationID, generationID)
+		UNION SELECT vector_token FROM visual_obsolete_tokens
+		WHERE generation_id = ?`), generationID, generationID, generationID)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +230,8 @@ func (s *Store) ClearObsoleteVisualToken(ctx context.Context, generationID int64
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, s.dialect.Rebind(`
-		UPDATE visual_publications SET superseded_vector_token = NULL, updated_at = `+s.dialect.Now()+`
-		WHERE generation_id = ? AND superseded_vector_token = ?`), generationID, token)
+		DELETE FROM visual_obsolete_tokens
+		WHERE generation_id = ? AND vector_token = ?`), generationID, token)
 	return err
 }
 
@@ -246,25 +253,22 @@ func (s *Store) ClearVisualOutcome(ctx context.Context, generationID int64, owne
 }
 
 // ParkObsoleteVisualToken records a backend vector token whose inline delete
-// failed so the obsolete-token sweep retries it. The owner's row is the
-// ledger slot; the token is refused as a parking value if it is still the
-// row's live current token.
+// failed so the obsolete-token sweep retries it. The ledger is multi-row, so
+// parking never evicts another token still awaiting cleanup.
 func (s *Store) ParkObsoleteVisualToken(
 	ctx context.Context,
 	generationID int64,
 	owner VisualOwner,
 	token string,
 ) error {
+	_ = owner
 	if strings.TrimSpace(token) == "" {
 		return errors.New("visual token to park is required")
 	}
 	_, err := s.db.ExecContext(ctx, s.dialect.Rebind(`
-		UPDATE visual_publications
-		SET superseded_vector_token = ?, updated_at = `+s.dialect.Now()+`
-		WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
-		  AND media_input_key = ?
-		  AND (current_vector_token IS NULL OR current_vector_token <> ?)`),
-		token, generationID, owner.MessageID, owner.BlobHash, owner.MediaInputKey, token)
+		INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		VALUES (?, ?)
+		ON CONFLICT (generation_id, vector_token) DO NOTHING`), generationID, token)
 	if err != nil {
 		return fmt.Errorf("park obsolete visual token: %w", err)
 	}
@@ -323,11 +327,12 @@ func (s *Store) EnsureVisualGeneration(
 			// before restarting; refuse to restart over live references.
 			var remaining int64
 			if err := q.QueryRow(`
-				SELECT COUNT(*) FROM visual_publications
-				WHERE generation_id = ?
-				  AND (current_vector_token IS NOT NULL
-				       OR pending_vector_token IS NOT NULL
-				       OR superseded_vector_token IS NOT NULL)`, generation.ID).Scan(&remaining); err != nil {
+				SELECT (SELECT COUNT(*) FROM visual_publications
+				        WHERE generation_id = ?
+				          AND (current_vector_token IS NOT NULL
+				               OR pending_vector_token IS NOT NULL))
+				     + (SELECT COUNT(*) FROM visual_obsolete_tokens
+				        WHERE generation_id = ?)`, generation.ID, generation.ID).Scan(&remaining); err != nil {
 				return err
 			}
 			if remaining > 0 {
@@ -387,12 +392,23 @@ func (s *Store) ClaimVisualWork(
 	claim.GenerationID = request.GenerationID
 	claim.Owner = request.Owner
 	claim.ProposedRevision = request.ProposedRevision
+	stampExpr := visualContentStampExpr
+	stampArgs := []any{}
+	if request.ExpectedContentStamp != nil {
+		stampExpr = "?"
+		stampArgs = append(stampArgs, *request.ExpectedContentStamp)
+	}
+	args := []any{request.GenerationID, request.Owner.MessageID, request.Owner.BlobHash,
+		request.Owner.MediaInputKey, request.ProposedRevision, request.LeaseOwner,
+		expiresAt, request.SourceFence}
+	args = append(args, stampArgs...)
+	args = append(args, request.Owner.MessageID, request.Now)
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO visual_work_claims
 			(generation_id, message_id, blob_hash, media_input_key,
 			 proposed_revision, lease_owner, lease_expires_at, fencing_token,
 			 source_fence, claimed_content_stamp)
-		SELECT ?, ?, ?, ?, ?, ?, ?, 1, ?, `+visualContentStampExpr+`
+		SELECT ?, ?, ?, ?, ?, ?, ?, 1, ?, `+stampExpr+`
 		FROM messages WHERE id = ?
 		ON CONFLICT (generation_id, message_id, blob_hash, media_input_key, proposed_revision)
 		DO UPDATE SET
@@ -404,9 +420,7 @@ func (s *Store) ClaimVisualWork(
 			updated_at = `+s.dialect.Now()+`
 		WHERE visual_work_claims.lease_expires_at <= ?
 		RETURNING lease_owner, lease_expires_at, fencing_token, source_fence, claimed_content_stamp
-	`, request.GenerationID, request.Owner.MessageID, request.Owner.BlobHash,
-		request.Owner.MediaInputKey, request.ProposedRevision, request.LeaseOwner,
-		expiresAt, request.SourceFence, request.Owner.MessageID, request.Now).Scan(
+	`, args...).Scan(
 		&claim.LeaseOwner, &claim.LeaseExpiresAt, &claim.FencingToken, &claim.SourceFence,
 		&claim.ContentStamp,
 	)
@@ -469,6 +483,7 @@ func (s *Store) PrepareVisualPublication(
 	if err != nil {
 		return "", err
 	}
+	sourceChanged := false
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualClaim(q, prepared.Claim, time.Now().UTC()); err != nil {
@@ -477,7 +492,38 @@ func (s *Store) PrepareVisualPublication(
 		if err := verifyVisualOwner(q, prepared.Claim.Owner); err != nil {
 			return err
 		}
-		_, err := q.Exec(`
+		// The provider request follows this reservation; repeat the journal
+		// and context freshness checks here so a source that moved between
+		// claim and prepare skips the paid upload instead of being caught
+		// only after it.
+		changed, err := visualOwnerChangedAfter(q, prepared.Claim.Owner, prepared.Claim.SourceFence)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			changed, err = visualOwnerContextChanged(q, prepared.Claim)
+			if err != nil {
+				return err
+			}
+		}
+		if changed {
+			sourceChanged = true
+			return releaseVisualClaim(q, s.dialect, prepared.Claim)
+		}
+		// A crash between PutUnpublished and commit leaves the previous
+		// pending token behind; ledger it before this reservation replaces
+		// it so its possible backend vector is swept rather than orphaned.
+		if _, err := q.Exec(`
+			INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+			SELECT generation_id, pending_vector_token FROM visual_publications
+			WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
+			  AND media_input_key = ? AND pending_vector_token IS NOT NULL
+			ON CONFLICT (generation_id, vector_token) DO NOTHING
+		`, prepared.Claim.GenerationID, prepared.Claim.Owner.MessageID,
+			prepared.Claim.Owner.BlobHash, prepared.Claim.Owner.MediaInputKey); err != nil {
+			return err
+		}
+		_, err = q.Exec(`
 			INSERT INTO visual_publications
 				(generation_id, message_id, blob_hash, media_input_key,
 				 prepared_revision, source_fence, representative_attachment_id,
@@ -490,10 +536,6 @@ func (s *Store) PrepareVisualPublication(
 				representative_attachment_id = excluded.representative_attachment_id,
 				attachment_role = excluded.attachment_role,
 				role_source = excluded.role_source,
-				superseded_vector_token = CASE
-				    WHEN visual_publications.pending_vector_token IS NOT NULL
-				    THEN visual_publications.pending_vector_token
-				    ELSE visual_publications.superseded_vector_token END,
 				pending_vector_token = excluded.pending_vector_token,
 				outcome_kind = NULL,
 				outcome_reason = NULL,
@@ -507,6 +549,9 @@ func (s *Store) PrepareVisualPublication(
 	})
 	if err != nil {
 		return "", err
+	}
+	if sourceChanged {
+		return "", ErrVisualSourceChanged
 	}
 	return token, nil
 }
@@ -547,13 +592,21 @@ func (s *Store) CommitVisualPublication(
 		if changed {
 			sourceChanged = true
 			// The discarded pending token already holds a backend vector
-			// (PutUnpublished precedes commit), so park it in
-			// superseded_vector_token for the sweep as well.
+			// (PutUnpublished precedes commit), so ledger it for the sweep
+			// before clearing the reference.
+			if _, err := q.Exec(`
+				INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+				SELECT generation_id, pending_vector_token FROM visual_publications
+				WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
+				  AND media_input_key = ? AND pending_vector_token = ?
+				ON CONFLICT (generation_id, vector_token) DO NOTHING
+			`, claim.GenerationID, claim.Owner.MessageID, claim.Owner.BlobHash,
+				claim.Owner.MediaInputKey, vectorToken); err != nil {
+				return err
+			}
 			if _, err := q.Exec(`
 				UPDATE visual_publications
-				SET state = 'stale',
-				    superseded_vector_token = pending_vector_token,
-				    pending_vector_token = NULL, updated_at = `+s.dialect.Now()+`
+				SET state = 'stale', pending_vector_token = NULL, updated_at = `+s.dialect.Now()+`
 				WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
 				  AND media_input_key = ? AND pending_vector_token = ?
 			`, claim.GenerationID, claim.Owner.MessageID, claim.Owner.BlobHash,
@@ -562,19 +615,26 @@ func (s *Store) CommitVisualPublication(
 			}
 			return releaseVisualClaim(q, s.dialect, claim)
 		}
-		// superseded_vector_token records the replaced backend token in the
-		// same transaction that drops it from current_vector_token, so a
-		// failed inline backend delete is retried by the obsolete-token
-		// sweep instead of orphaning the vector. Last-writer-wins: an
-		// un-swept older token is only lost if two consecutive inline
-		// deletes for the same owner fail between sweep passes.
+		// The replaced current token is recorded in the obsolete-token
+		// ledger in the same transaction that drops it, so a failed inline
+		// backend delete is retried by the sweep instead of orphaning the
+		// vector. The ledger is multi-row: parking one token never evicts
+		// another still awaiting cleanup.
+		if _, err := q.Exec(`
+			INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+			SELECT generation_id, current_vector_token FROM visual_publications
+			WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
+			  AND media_input_key = ? AND pending_vector_token = ?
+			  AND current_vector_token IS NOT NULL AND current_vector_token <> pending_vector_token
+			ON CONFLICT (generation_id, vector_token) DO NOTHING
+		`, claim.GenerationID, claim.Owner.MessageID, claim.Owner.BlobHash,
+			claim.Owner.MediaInputKey, vectorToken); err != nil {
+			return err
+		}
 		result, err := q.Exec(`
 			UPDATE visual_publications
 			SET published_revision = prepared_revision,
 			    prepared_revision = NULL,
-			    superseded_vector_token = CASE
-			        WHEN current_vector_token IS NOT NULL AND current_vector_token <> pending_vector_token
-			        THEN current_vector_token ELSE superseded_vector_token END,
 			    current_vector_token = pending_vector_token,
 			    pending_vector_token = NULL,
 			    state = 'current', outcome_kind = NULL, outcome_reason = NULL,
@@ -699,6 +759,16 @@ func (s *Store) RejectVisualPublication(
 			return releaseVisualClaim(q, s.dialect, claim)
 		}
 		if _, err := q.Exec(`
+			INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+			SELECT generation_id, pending_vector_token FROM visual_publications
+			WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
+			  AND media_input_key = ? AND pending_vector_token IS NOT NULL
+			ON CONFLICT (generation_id, vector_token) DO NOTHING
+		`, claim.GenerationID, claim.Owner.MessageID, claim.Owner.BlobHash,
+			claim.Owner.MediaInputKey); err != nil {
+			return err
+		}
+		if _, err := q.Exec(`
 			INSERT INTO visual_publications
 				(generation_id, message_id, blob_hash, media_input_key,
 				 prepared_revision, source_fence, attachment_role, role_source,
@@ -708,10 +778,6 @@ func (s *Store) RejectVisualPublication(
 			DO UPDATE SET
 				prepared_revision = excluded.prepared_revision,
 				source_fence = excluded.source_fence,
-				superseded_vector_token = CASE
-				    WHEN visual_publications.pending_vector_token IS NOT NULL
-				    THEN visual_publications.pending_vector_token
-				    ELSE visual_publications.superseded_vector_token END,
 				pending_vector_token = NULL,
 				state = 'stale',
 				outcome_kind = excluded.outcome_kind,

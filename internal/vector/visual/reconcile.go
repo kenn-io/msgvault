@@ -418,7 +418,8 @@ func (r *Reconciler) reconcileCandidates(
 		if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
 			return getErr
 		}
-		claim, acquired, err := r.claim(ctx, candidate.Owner, document.Revision, sourceFence)
+		claim, acquired, err := r.claimWithStamp(ctx, candidate.Owner, document.Revision,
+			sourceFence, &messageContext.ContentStamp)
 		if err != nil {
 			return err
 		}
@@ -455,10 +456,24 @@ func (r *Reconciler) claim(
 	revision string,
 	sourceFence int64,
 ) (store.VisualWorkClaim, bool, error) {
+	return r.claimWithStamp(ctx, owner, revision, sourceFence, nil)
+}
+
+// claimWithStamp records the content stamp the caller read together with the
+// context snapshot, so an edit racing the snapshot fails the commit-time CAS
+// instead of being absorbed by a claim that reads the post-edit stamp.
+func (r *Reconciler) claimWithStamp(
+	ctx context.Context,
+	owner store.VisualOwner,
+	revision string,
+	sourceFence int64,
+	expectedContentStamp *string,
+) (store.VisualWorkClaim, bool, error) {
 	return r.archive.ClaimVisualWork(ctx, store.VisualClaimRequest{
 		GenerationID: r.config.GenerationID, Owner: owner, ProposedRevision: revision,
 		LeaseOwner: r.config.LeaseOwner, Now: r.config.Now(),
 		LeaseDuration: r.config.LeaseDuration, SourceFence: sourceFence,
+		ExpectedContentStamp: expectedContentStamp,
 	})
 }
 

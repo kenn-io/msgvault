@@ -58,6 +58,10 @@ type VisualMessageContext struct {
 	Subject     string
 	Body        string
 	MessageType string
+	// ContentStamp is the message's content_changed_at CAS stamp read in the
+	// same statement as the context columns; claims record it so commits can
+	// refuse a document assembled from a superseded snapshot.
+	ContentStamp string
 }
 
 // ListVisualCandidates returns source-authoritative standalone owners for a
@@ -260,10 +264,13 @@ func (s *Store) GetVisualMessageContext(ctx context.Context, messageID int64) (V
 		return VisualMessageContext{}, errors.New("visual message ID must be positive")
 	}
 	var result VisualMessageContext
+	// The stamp is read in the same statement as the context columns it
+	// covers, so a claim recording this stamp makes any later edit —
+	// including one racing this read — fail the commit-time CAS.
 	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
-		SELECT COALESCE(subject, ''), COALESCE(message_type, '')
+		SELECT COALESCE(subject, ''), COALESCE(message_type, ''), `+visualContentStampExpr+`
 		FROM messages WHERE id = ? AND `+LiveMessagesWhere("", true)), messageID).
-		Scan(&result.Subject, &result.MessageType)
+		Scan(&result.Subject, &result.MessageType, &result.ContentStamp)
 	if err != nil {
 		return VisualMessageContext{}, fmt.Errorf("read visual message context: %w", err)
 	}

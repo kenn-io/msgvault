@@ -1067,8 +1067,17 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		      AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
 		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
-		        SET state = 'stale', superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = NEW.message_id
 		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
 		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
@@ -1100,6 +1109,16 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		      OR OLD.content_id IS NOT NEW.content_id
 		      OR OLD.encryption_version IS NOT NEW.encryption_version
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL
+		          AND message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN EXISTS (
 		                SELECT 1 FROM attachments a
@@ -1115,7 +1134,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
 		                               visual_publications.blob_hash))
 		            ) THEN 'stale' ELSE 'tombstoned' END,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = OLD.message_id
 		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
@@ -1123,8 +1142,22 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                   AND LOWER(OLD.storage_path) =
 		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
 
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND NEW.attachment_role = 'standalone'
+		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                  'importer_semantics', 'raw_mime_repair')
+		          AND message_id = NEW.message_id
+		          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                      AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
-		        SET state = 'stale', superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
 		        WHERE NEW.attachment_role = 'standalone'
 		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
 		                                  'importer_semantics', 'raw_mime_repair')
@@ -1140,6 +1173,16 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_visual_publication_attachment_delete
 		    AFTER DELETE ON attachments FOR EACH ROW
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL
+		          AND message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN EXISTS (
 		                SELECT 1 FROM attachments a
@@ -1155,7 +1198,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
 		                               visual_publications.blob_hash))
 		            ) THEN 'stale' ELSE 'tombstoned' END,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = OLD.message_id
 		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
@@ -1170,11 +1213,16 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		          IS NOT
 		          (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN NEW.deleted_at IS NULL
 		                              AND NEW.deleted_from_source_at IS NULL
 		                         THEN 'stale' ELSE 'tombstoned' END,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = NEW.id;
 		    END`,
@@ -1183,10 +1231,17 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
 		    WHEN OLD.subject IS NOT NEW.subject OR OLD.message_type IS NOT NEW.message_type
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
 		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = NEW.id AND state <> 'tombstoned'
 		          AND (state = 'current' OR prepared_revision IS NOT NULL
@@ -1196,10 +1251,17 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_visual_publication_message_body_insert
 		    AFTER INSERT ON message_bodies FOR EACH ROW
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
 		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
 		          AND (state = 'current' OR prepared_revision IS NOT NULL
@@ -1209,10 +1271,17 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_visual_publication_message_body_delete
 		    AFTER DELETE ON message_bodies FOR EACH ROW
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = OLD.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
 		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = OLD.message_id AND state <> 'tombstoned'
 		          AND (state = 'current' OR prepared_revision IS NOT NULL
@@ -1223,10 +1292,17 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
 		    WHEN OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html
 		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
 		        UPDATE visual_publications
 		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
 		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
-		            superseded_vector_token = COALESCE(pending_vector_token, superseded_vector_token), pending_vector_token = NULL,
+		            pending_vector_token = NULL,
 		            updated_at = CURRENT_TIMESTAMP
 		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
 		          AND (state = 'current' OR prepared_revision IS NOT NULL

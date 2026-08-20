@@ -49,6 +49,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
@@ -7433,4 +7434,33 @@ func TestHandleGetMessage_ExposesAttachmentContentHash(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	require.Len(resp.Attachments, 1, "attachments")
 	assert.Equal(hash, resp.Attachments[0]["content_hash"], "content_hash")
+}
+
+// TestStatsReportsTextLaneSeparatelyFromMultimodal verifies a multimodal-only
+// daemon does not advertise text-vector capability: the shared status is
+// ready (the visual lane works), but vector_text_status is disabled so MCP
+// text-tool registration can consult the lane that actually backs it.
+func TestStatsReportsTextLaneSeparatelyFromMultimodal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &mockStore{},
+		Logger: testLogger(),
+	})
+	srv.SetVectorFeatures(nil, nil, vector.Config{Multimodal: vector.MultimodalConfig{Enabled: true}})
+	srv.SetVisualSearch(&visual.SearchService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		VectorStatus     string `json:"vector_status"`
+		VectorTextStatus string `json:"vector_text_status"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("ready", resp.VectorStatus)
+	assert.Equal("disabled", resp.VectorTextStatus,
+		"a multimodal-only daemon must not advertise text-vector capability")
 }

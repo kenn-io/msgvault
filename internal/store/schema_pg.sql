@@ -550,16 +550,24 @@ CREATE TABLE IF NOT EXISTS visual_publications (
     role_source TEXT NOT NULL,
     current_vector_token TEXT,
     pending_vector_token TEXT,
-    -- Backend token replaced by the last commit whose vector still needs
-    -- deleting. Written in the same transaction that drops the token from
-    -- current_vector_token, so a failed inline backend delete leaves a
-    -- durable record for the obsolete-token sweep instead of an orphan.
-    superseded_vector_token TEXT,
     state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'tombstoned')),
     outcome_kind TEXT,
     outcome_reason TEXT,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key)
+);
+
+-- Backend vector tokens the archive no longer references but whose backend
+-- rows still need deleting. Every statement that drops a token from
+-- current_vector_token or pending_vector_token records it here in the same
+-- transaction, so a crashed or failed inline backend delete is retried by
+-- the obsolete-token sweep instead of orphaning the vector. Multi-row: any
+-- number of tokens can be pending cleanup for one owner.
+CREATE TABLE IF NOT EXISTS visual_obsolete_tokens (
+    generation_id BIGINT NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    vector_token TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, vector_token)
 );
 
 CREATE TABLE IF NOT EXISTS visual_work_claims (

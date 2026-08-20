@@ -1323,10 +1323,13 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 
 func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
 	require := require.New(t)
+	// The timeout must be far beyond the test's cancel latency: this test
+	// proves caller CANCELLATION reaches a marked request, and a 5ms budget
+	// let slow CI runners hit the deadline before cancel() ran.
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
+		RequestTimeout: 5 * time.Second,
 	})
 
 	started := make(chan struct{})

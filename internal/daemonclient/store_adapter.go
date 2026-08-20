@@ -43,6 +43,12 @@ func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
 	if resp == nil || resp.JSON200 == nil {
 		return false, nil
 	}
+	// Newer daemons report the text lane separately: a multimodal-only
+	// daemon is vector-"ready" without serving semantic message search, so
+	// the shared status must not enable text-vector tools there.
+	if textStatus := resp.JSON200.VectorTextStatus; textStatus != nil && *textStatus != "" {
+		return *textStatus != vectorStatusDisabled, nil
+	}
 	if status := resp.JSON200.VectorStatus; status != nil && *status != "" {
 		return *status != vectorStatusDisabled, nil
 	}

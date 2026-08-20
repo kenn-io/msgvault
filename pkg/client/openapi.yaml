@@ -7823,6 +7823,8 @@ components:
           $ref: "#/components/schemas/StatsView"
         vector_status:
           type: string
+        vector_text_status:
+          type: string
       required:
         - total_messages
         - active_messages

@@ -27,7 +27,7 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT EXISTS (
 			SELECT 1 FROM applied_migrations
-			WHERE name = 'message_and_attachment_triggers_v2'
+			WHERE name = 'message_and_attachment_triggers_v4'
 		)
 	`).Scan(&watermarkMigrationApplied)
 	require.NoError(err)

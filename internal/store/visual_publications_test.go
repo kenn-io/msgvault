@@ -617,3 +617,99 @@ func TestRestartRetiredGenerationRefusesLiveTokenReferences(t *testing.T) {
 	assert.Equal(store.VisualGenerationBuilding, restarted.State)
 	assert.False(restarted.Consented)
 }
+
+func TestClaimRecordsSnapshotStampSoStaleContextCannotCommit(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	generation := createVisualGeneration(t, f)
+	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-stamp-cas")
+	snapshot, err := f.Store.GetVisualMessageContext(t.Context(), owner.MessageID)
+	require.NoError(err)
+
+	// The message is edited AFTER the context snapshot but BEFORE the claim.
+	// A claim reading the live stamp would absorb the edit and let a vector
+	// built from the stale snapshot commit as current. The stamp is bumped
+	// explicitly because CURRENT_TIMESTAMP's one-second resolution can
+	// otherwise leave a same-second edit undetectable.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET subject = ? WHERE id = ?`), "edited mid-snapshot", owner.MessageID)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
+		time.Now().UTC().Add(time.Hour), owner.MessageID)
+	require.NoError(err)
+
+	claim, acquired, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{
+		GenerationID: generation.ID, Owner: owner, ProposedRevision: "revision-stale",
+		LeaseOwner: "worker", Now: time.Now().UTC(), LeaseDuration: time.Minute,
+		SourceFence:          sourceFence,
+		ExpectedContentStamp: &snapshot.ContentStamp,
+	})
+	require.NoError(err)
+	require.True(acquired)
+	_, err = f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.ErrorIs(err, store.ErrVisualSourceChanged,
+		"preparation must refuse a claim carrying a superseded snapshot stamp")
+}
+
+func TestPrepareRefusesContextChangeAfterClaim(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	generation := createVisualGeneration(t, f)
+	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-prepare-fresh")
+	claim := claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
+
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET subject = ? WHERE id = ?`), "edited before prepare", owner.MessageID)
+	require.NoError(err)
+	// Explicit stamp bump: a same-second edit is invisible at
+	// CURRENT_TIMESTAMP resolution.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
+		time.Now().UTC().Add(time.Hour), owner.MessageID)
+	require.NoError(err)
+	_, err = f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.ErrorIs(err, store.ErrVisualSourceChanged,
+		"the paid provider request must be skipped when the source moved after the claim")
+}
+
+func TestObsoleteTokenLedgerHoldsMultipleTokens(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	generation := createVisualGeneration(t, f)
+	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-ledger-multi")
+	claim := claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
+	firstToken, err := f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.NoError(err)
+	require.NoError(f.Store.CommitVisualPublication(t.Context(), claim, firstToken))
+
+	// A previously parked token (failed inline delete) must survive a
+	// successor commit parking the replaced current token: the single-slot
+	// design lost one of them.
+	require.NoError(f.Store.ParkObsoleteVisualToken(t.Context(), generation.ID, owner, "orphaned-pending-token"))
+	claim = claimVisualOwner(t, f, generation.ID, owner, "revision-2", sourceFence)
+	secondToken, err := f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.NoError(err)
+	require.NoError(f.Store.CommitVisualPublication(t.Context(), claim, secondToken))
+
+	obsolete, err := f.Store.ListObsoleteVisualTokens(t.Context(), generation.ID, 100)
+	require.NoError(err)
+	assert.ElementsMatch([]string{firstToken, "orphaned-pending-token"}, obsolete)
+}

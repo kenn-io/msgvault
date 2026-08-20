@@ -56,6 +56,11 @@ type StatsResponse struct {
 	DatabaseSize          int64             `json:"database_size_bytes"`
 	VectorSearch          *vector.StatsView `json:"vector_search,omitempty"`
 	VectorStatus          string            `json:"vector_status,omitempty"`
+	// VectorTextStatus reports the TEXT vector lane specifically. A
+	// multimodal-only daemon is vector-"ready" without serving semantic
+	// message search, so text-tool registration must consult this field,
+	// not the shared subsystem status.
+	VectorTextStatus string `json:"vector_text_status,omitempty"`
 }
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
@@ -556,6 +561,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
+		resp.VectorTextStatus = string(status)
+		// Once init settles, the hybrid engine is the text lane: a
+		// multimodal-only configuration reaches ready without one. While
+		// still initializing the outcome is unknown, so the shared status is
+		// mirrored and text tools stay registered (matching the documented
+		// initializing-is-capable behavior).
+		engine, _, _ := s.vectorComponents()
+		if engine == nil && status != VectorStatusInitializing {
+			resp.VectorTextStatus = string(VectorStatusDisabled)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

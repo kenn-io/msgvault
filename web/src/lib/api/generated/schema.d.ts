@@ -6125,6 +6125,7 @@ export interface components {
             total_threads: number;
             vector_search?: components["schemas"]["StatsView"];
             vector_status?: string;
+            vector_text_status?: string;
         } & {
             [key: string]: unknown;
         };

@@ -209,6 +209,11 @@ func (s *Store) PurgeRetiredVisualGeneration(ctx context.Context, generationID i
 		if _, err := q.Exec(`DELETE FROM visual_publications WHERE generation_id = ?`, generationID); err != nil {
 			return fmt.Errorf("purge retired visual publications: %w", err)
 		}
+		// The caller deleted this generation's backend vectors (including
+		// every ledgered token) before purging, so the ledger drains here.
+		if _, err := q.Exec(`DELETE FROM visual_obsolete_tokens WHERE generation_id = ?`, generationID); err != nil {
+			return fmt.Errorf("purge retired visual obsolete tokens: %w", err)
+		}
 		return nil
 	})
 }

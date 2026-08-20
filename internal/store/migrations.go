@@ -26,11 +26,11 @@ const (
 	migrationMessageAttributionProvenance     = "message_attribution_provenance_v3"
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
-	// v4: the visual invalidation triggers park a cleared pending vector
-	// token in superseded_vector_token, clear durable outcomes on message
-	// context changes, and cover message_bodies deletion. Archives that
-	// installed v3 must reinstall to keep backend cleanup references and
-	// re-evaluate rejected owners whose context later changed.
+	// v4: the visual invalidation triggers record a cleared pending vector
+	// token in the visual_obsolete_tokens ledger, clear durable outcomes on
+	// message context changes, and cover message_bodies deletion. Archives
+	// that installed v3 must reinstall to keep backend cleanup references
+	// and re-evaluate rejected owners whose context later changed.
 	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v4"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	migrationIdentityMatchSourceSupport     = "identity_match_source_support_v1"

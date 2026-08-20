@@ -7360,6 +7360,7 @@ type StatsResponse struct {
 	TotalThreads          int64      `json:"total_threads"`
 	VectorSearch          *StatsView `json:"vector_search,omitempty"`
 	VectorStatus          *string    `json:"vector_status,omitempty"`
+	VectorTextStatus      *string    `json:"vector_text_status,omitempty"`
 }
 
 func (s StatsResponse) Validate() error {

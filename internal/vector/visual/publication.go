@@ -30,6 +30,7 @@ func (w *Worker) preparePublication(
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrVisualClaimLost) ||
+			errors.Is(err, store.ErrVisualSourceChanged) ||
 			errors.Is(err, store.ErrVisualOwnerMissing) {
 			result.Obsolete++
 			return "", "", false, nil
