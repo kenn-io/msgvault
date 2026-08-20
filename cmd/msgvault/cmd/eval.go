@@ -640,10 +640,14 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	catCounts := map[string]int{}
 	scored := 0
 	for _, t := range topics {
-		rel := qrels.RelevantSet(t.ID)
-		if len(rel) == 0 {
-			continue // topic has no judgments in this qrels file
+		if !qrels.HasJudgments(t.ID) {
+			continue // this qrels file says nothing at all about the topic
 		}
+		// May legitimately be empty: a topic judged but with every document
+		// graded non-relevant scores a real zero and belongs in the macro
+		// average. Dropping it would quietly raise every reported mean — see
+		// eval.Qrels.HasJudgments.
+		rel := qrels.RelevantSet(t.ID)
 		// Parse once, before any mode runs it: a malformed filter is a
 		// property of the topic, not of the mode, and must not be silently
 		// widened into a different question three times over.

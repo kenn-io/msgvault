@@ -121,6 +121,35 @@ func TestLoadQrels_WrongColumnCount(t *testing.T) {
 	assert.Equal("3 lines, 0 parsed, 3 skipped", stats.String())
 }
 
+// TestQrels_HasJudgmentsSeparatesUnjudgedFromAllNonRelevant is the regression
+// for topics that were judged and found to contain nothing relevant. Their
+// RelevantSet is empty, which used to be read as "this qrels file has nothing
+// to say about the topic" and the topic was dropped from the run — and because
+// such a topic can only ever score zero, dropping it lifts every macro average.
+// HasJudgments has to tell the two apart on the qrels alone.
+func TestQrels_HasJudgmentsSeparatesUnjudgedFromAllNonRelevant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := filepath.Join(t.TempDir(), "qrels.txt")
+	// 301 has a relevant document; 302 was judged and nothing was relevant.
+	require.NoError(os.WriteFile(p,
+		[]byte("301 0 docA 1\n302 0 docB 0\n302 0 docC 0\n"), 0o644))
+
+	q, _, err := LoadQrels(p)
+	require.NoError(err)
+
+	assert.True(q.HasJudgments("301"))
+	assert.True(q.HasJudgments("302"), "all-zero grades are judgments, not an absent qid")
+	assert.False(q.HasJudgments("999"), "a qid the file never mentions is unjudged")
+
+	assert.Empty(q.RelevantSet("302"), "and its relevant set is empty either way")
+	assert.Empty(q.RelevantSet("999"))
+
+	// What such a topic contributes once it is scored: a real zero across the
+	// board, which is exactly what excluding it used to hide.
+	assert.Equal(Scores{}, Evaluate([]string{"docB", "docC"}, q.RelevantSet("302"), StandardCutoffs))
+}
+
 // TestLoadStats_Suspect pins when a caller should warn: nothing usable came
 // out, or the skipped lines outnumber the parsed ones. A clean file, or one
 // with a stray line, must not trip it.

@@ -11,7 +11,21 @@ import (
 // Qrels maps a query id to its document-id → relevance-grade judgments.
 type Qrels map[string]map[string]int
 
+// HasJudgments reports whether qid was judged at all in this qrels file.
+//
+// It exists because "no relevant documents" and "no judgments" are different
+// facts that RelevantSet cannot tell apart: a topic whose every line grades
+// rel=0 produces an empty relevant set, exactly like a qid the file never
+// mentions. Conflating them drops the all-non-relevant topic from the run,
+// which silently raises every macro average — the topic can only score zero,
+// so excluding it removes a zero from the mean. TREC semantics are to score
+// such a topic normally; only an unjudged qid has nothing to score against.
+func (q Qrels) HasJudgments(qid string) bool {
+	return len(q[qid]) > 0
+}
+
 // RelevantSet returns the set of doc ids judged relevant (grade >= 1) for qid.
+// An empty result is ambiguous on its own — see HasJudgments.
 func (q Qrels) RelevantSet(qid string) map[string]struct{} {
 	out := make(map[string]struct{})
 	for d, r := range q[qid] {
