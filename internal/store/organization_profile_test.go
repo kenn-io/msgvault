@@ -161,12 +161,14 @@ func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
 }
 
 func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Example Org", Kind: store.OrganizationKindCompany,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	categories := make([]store.OrganizationCategoryInput, store.MaxOrganizationProfileValues)
 	for i := range categories {
@@ -178,15 +180,15 @@ func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
 	input := store.OrganizationProfileInput{Categories: categories}
 	first, err := st.ReplaceOrganizationProfileContext(
 		ctx, organization.ID, organization.Revision, input)
-	require.NoError(t, err)
-	require.Len(t, first.Categories, store.MaxOrganizationProfileValues)
+	requirements.NoError(err)
+	requirements.Len(first.Categories, store.MaxOrganizationProfileValues)
 
 	second, err := st.ReplaceOrganizationProfileContext(
 		ctx, organization.ID, first.Organization.Revision, input)
-	require.NoError(t, err)
-	require.Len(t, second.Categories, store.MaxOrganizationProfileValues)
+	requirements.NoError(err)
+	requirements.Len(second.Categories, store.MaxOrganizationProfileValues)
 	for i := range first.Categories {
-		assert.Equal(t, first.Categories[i].Envelope.ID, second.Categories[i].Envelope.ID)
+		assertions.Equal(first.Categories[i].Envelope.ID, second.Categories[i].Envelope.ID)
 	}
 
 	oversized := append([]store.OrganizationCategoryInput(nil), categories...)
@@ -197,20 +199,22 @@ func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
 	_, err = st.ReplaceOrganizationProfileContext(
 		ctx, organization.ID, second.Organization.Revision,
 		store.OrganizationProfileInput{Categories: oversized})
-	require.ErrorIs(t, err, store.ErrOrganizationProfileTooLarge)
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
 
 	unchanged, err := st.GetOrganizationContext(ctx, organization.ID)
-	require.NoError(t, err)
-	assert.Equal(t, second.Organization.Revision, unchanged.Revision)
+	requirements.NoError(err)
+	assertions.Equal(second.Organization.Revision, unchanged.Revision)
 }
 
 func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Example Org", Kind: store.OrganizationKindCompany,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	shared := make([]byte, store.MaxPersonMediaBytes)
 	media := make([]store.OrganizationMediaInput, 0, 5)
@@ -235,20 +239,22 @@ func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
 	_, err = st.ReplaceOrganizationProfileContext(
 		ctx, organization.ID, organization.Revision,
 		store.OrganizationProfileInput{Media: media})
-	require.ErrorIs(t, err, store.ErrOrganizationProfileTooLarge)
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
 
 	unchanged, err := st.GetOrganizationContext(ctx, organization.ID)
-	require.NoError(t, err)
-	assert.Equal(t, organization.Revision, unchanged.Revision)
+	requirements.NoError(err)
+	assertions.Equal(organization.Revision, unchanged.Revision)
 }
 
 func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Example Org", Kind: store.OrganizationKindCompany,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	data := make([]byte, 256<<10)
 	first, err := st.ReplaceOrganizationProfileContext(
@@ -258,9 +264,9 @@ func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
 			Data:      data,
 			Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 		}}})
-	require.NoError(t, err)
-	require.Len(t, first.Media, 1)
-	require.NotNil(t, first.Media[0].ContentHash)
+	requirements.NoError(err)
+	requirements.Len(first.Media, 1)
+	requirements.NotNil(first.Media[0].ContentHash)
 
 	copyCount := int(store.MaxOrganizationProfileMediaBytes/int64(len(data))) + 1
 	media := make([]store.OrganizationMediaInput, copyCount)
@@ -278,16 +284,16 @@ func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
 	_, err = st.ReplaceOrganizationProfileContext(
 		ctx, organization.ID, first.Organization.Revision,
 		store.OrganizationProfileInput{Media: media})
-	require.ErrorIs(t, err, store.ErrOrganizationProfileTooLarge)
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
 
 	unchanged, err := st.GetOrganizationProfileContext(ctx, organization.ID, false)
-	require.NoError(t, err)
-	require.Len(t, unchanged.Media, 1)
-	assert.Equal(t, first.Organization.Revision, unchanged.Organization.Revision)
+	requirements.NoError(err)
+	requirements.Len(unchanged.Media, 1)
+	assertions.Equal(first.Organization.Revision, unchanged.Organization.Revision)
 	stored, _, err := st.ReadOrganizationMediaDataContext(
 		ctx, organization.ID, unchanged.Media[0].Envelope.ID)
-	require.NoError(t, err)
-	assert.Equal(t, data, stored)
+	requirements.NoError(err)
+	assertions.Equal(data, stored)
 }
 
 func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testing.T) {

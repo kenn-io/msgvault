@@ -497,12 +497,14 @@ func TestOrganizationHTTPProfileAcceptsInlineMediaBeyondGenericRequestLimit(t *t
 }
 
 func TestOrganizationHTTPProfileRejectsTooManyValues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv := newOrganizationTestServer(t)
 	createdResponse := organizationRequest(t, srv, http.MethodPost, organizationsPath,
 		[]byte(`{"name":"Example Org","kind":"company"}`), "")
-	require.Equal(t, http.StatusCreated, createdResponse.Code)
+	requirements.Equal(http.StatusCreated, createdResponse.Code)
 	var created store.Organization
-	require.NoError(t, json.Unmarshal(createdResponse.Body.Bytes(), &created))
+	requirements.NoError(json.Unmarshal(createdResponse.Body.Bytes(), &created))
 
 	categories := make([]OrganizationCategoryBody, store.MaxOrganizationProfileValues+1)
 	for i := range categories {
@@ -514,14 +516,14 @@ func TestOrganizationHTTPProfileRejectsTooManyValues(t *testing.T) {
 		}
 	}
 	body, err := json.Marshal(OrganizationProfileBody{Categories: categories})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	response := organizationRequest(t, srv, http.MethodPut,
 		fmt.Sprintf("%s/%d/profile", organizationsPath, created.ID), body,
 		createdResponse.Header().Get("ETag"))
-	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
+	requirements.Equal(http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
 
 	apiError := decodeErrorEnvelope(t, response)
-	assert.Equal(t, "organization_profile_too_large", apiError.Error)
+	assertions.Equal("organization_profile_too_large", apiError.Error)
 }
 
 func TestOrganizationHTTPProfilePutRoundTripsEnvelopeMetadata(t *testing.T) {
