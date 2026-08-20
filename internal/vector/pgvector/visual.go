@@ -74,7 +74,8 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 		JOIN attachments a ON a.id = vp.representative_attachment_id
 		WHERE vp.generation_id = $1 AND vg.state = 'active'
 		  AND vp.state = 'current' AND ` + store.LiveMessagesWhere("m", true) + `
-		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'`
+		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'
+		  AND vv.dimension = 1024`
 	args := []any{int64(request.GenerationID), vectorLiteral(request.Vector), request.Limit}
 	if request.SenderPersonID > 0 {
 		query += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM person_participants pp WHERE pp.person_id = $%d AND pp.participant_id = m.sender_id)`, len(args)+1)
