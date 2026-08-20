@@ -153,6 +153,14 @@ type OrganizationProfileInput struct {
 	Categories    []OrganizationCategoryInput
 }
 
+const (
+	MaxOrganizationProfileValues           = 200
+	MaxOrganizationProfileMediaBytes int64 = 32 << 20
+)
+
+var ErrOrganizationProfileTooLarge = errors.New(
+	"organization profile exceeds the aggregate size limit")
+
 type preparedOrganizationContact struct {
 	input                OrganizationContactPointInput
 	serviceID            any
@@ -163,14 +171,15 @@ type preparedOrganizationContact struct {
 }
 
 type preparedOrganizationProfile struct {
-	input          OrganizationProfileInput
-	nameKeys       []string
-	identifierKeys []string
-	addressKeys    []string
-	contacts       []preparedOrganizationContact
-	contactKeys    []string
-	mediaKeys      []string
-	categoryKeys   []string
+	input              OrganizationProfileInput
+	explicitMediaBytes int64
+	nameKeys           []string
+	identifierKeys     []string
+	addressKeys        []string
+	contacts           []preparedOrganizationContact
+	contactKeys        []string
+	mediaKeys          []string
+	categoryKeys       []string
 }
 
 func (s *Store) GetOrganizationProfileContext(
@@ -250,10 +259,38 @@ func (s *Store) replaceOrganizationProfileOnce(
 	return profile, err
 }
 
+func validateOrganizationProfileLimits(input OrganizationProfileInput) (int64, error) {
+	valueCount := len(input.Names) + len(input.Identifiers) + len(input.Addresses) +
+		len(input.ContactPoints) + len(input.Media) + len(input.Categories)
+	if valueCount > MaxOrganizationProfileValues {
+		return 0, fmt.Errorf(
+			"%w: profile contains %d values; maximum is %d",
+			ErrOrganizationProfileTooLarge, valueCount, MaxOrganizationProfileValues)
+	}
+
+	var explicitMediaBytes int64
+	for i := range input.Media {
+		size := int64(len(input.Media[i].Data))
+		if size > MaxOrganizationProfileMediaBytes-explicitMediaBytes {
+			return 0, fmt.Errorf(
+				"%w: inline media exceeds %d bytes",
+				ErrOrganizationProfileTooLarge, MaxOrganizationProfileMediaBytes)
+		}
+		explicitMediaBytes += size
+	}
+	return explicitMediaBytes, nil
+}
+
 func (s *Store) prepareOrganizationProfileContext(
 	ctx context.Context, input OrganizationProfileInput,
 ) (*preparedOrganizationProfile, error) {
-	prepared := &preparedOrganizationProfile{input: input}
+	explicitMediaBytes, err := validateOrganizationProfileLimits(input)
+	if err != nil {
+		return nil, err
+	}
+	prepared := &preparedOrganizationProfile{
+		input: input, explicitMediaBytes: explicitMediaBytes,
+	}
 	nameSeen := map[string]int{}
 	for i := range prepared.input.Names {
 		row := &prepared.input.Names[i]
