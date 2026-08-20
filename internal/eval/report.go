@@ -28,8 +28,15 @@ type RunConfig struct {
 	Conversations int64 `json:"conversations"`
 
 	// Embeddings / vector index (zero-valued when only --modes fts is run)
-	VectorEnabled  bool    `json:"vector_enabled"`
-	EmbeddingModel string  `json:"embedding_model,omitempty"`
+	VectorEnabled  bool   `json:"vector_enabled"`
+	EmbeddingModel string `json:"embedding_model,omitempty"`
+	// APIFormat is the embeddings protocol the run's queries were embedded
+	// with ("openai" or "voyage-contextual"). Two models are not the only
+	// variable an operator changes: the same corpus indexed and queried
+	// through the contextual endpoint is a different retrieval system from
+	// the same model over the OpenAI-compatible one, so the format belongs
+	// beside the model name.
+	APIFormat      string  `json:"embedding_api_format,omitempty"`
 	Dimension      int     `json:"embedding_dimension,omitempty"`
 	Endpoint       string  `json:"embedding_endpoint,omitempty"`
 	Backend        string  `json:"vector_backend,omitempty"`

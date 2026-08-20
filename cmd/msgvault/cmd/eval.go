@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
-	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -73,10 +72,13 @@ relevance-ranked (BM25, subject-weighted) store path behind
 /api/v1/search?mode=fts — not a chronological listing — so it honours the same
 deletion scope and the same substring address-filter semantics real searches
 do; vector and hybrid go through the hybrid engine with the fusion parameters
-from your config.
+from your config. Query embedding follows [vector.embeddings] api_format, so an
+index built through the Voyage contextual endpoint is queried through it too —
+comparing "voyage-context-4" against an OpenAI-compatible model is a matter of
+pointing the command at each config in turn.
 
-Every run reports the embedding model, index settings and index size that
-produced it, plus per-query latency, because a quality number is not
+Every run reports the embedding model, api format, index settings and index
+size that produced it, plus per-query latency, because a quality number is not
 comparable — or even interpretable — without them. Anything that went wrong
 without being fatal — unparseable judgment lines, topics whose query string
 did not parse, hits that could not be hydrated from the archive, rankings cut
@@ -743,9 +745,6 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	if !cfg.Vector.Enabled {
 		return nil, errors.New("vector/hybrid modes need [vector].enabled = true in config")
 	}
-	if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
-		return nil, errors.New("vector/hybrid modes need [vector.embeddings] endpoint and model in config")
-	}
 	mainPath := cfg.DatabaseDSN()
 	if store.IsPostgresURL(mainPath) {
 		// This command's vector path is the sqlite-vec one; a PG archive
@@ -763,6 +762,26 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	vecCfg, err := resolvedVectorConfig(mainStore)
 	if err != nil {
 		return nil, fmt.Errorf("vector embed scope: %w", err)
+	}
+	// Validate the resolved config with the same check serve runs before it
+	// opens anything. It names the offending key and value — including an
+	// api_format this binary has no client for, which must fail here rather
+	// than fall back to a client that talks a different protocol to the
+	// endpoint that built the index.
+	if err := vecCfg.Validate(); err != nil {
+		return nil, fmt.Errorf("vector/hybrid modes need a valid [vector] config: %w", err)
+	}
+
+	// Select the query client by api_format, exactly as the serve path does,
+	// and before anything is opened. A run scored with the OpenAI-compatible
+	// client against a voyage-contextual index would measure a protocol
+	// mismatch, not retrieval quality. Every eval call is query-time, and each
+	// client's EmbedQuery carries its own query role (Voyage sends
+	// input_type=query to /contextualizedembeddings), so no document-side
+	// wiring is needed here.
+	embedClient, err := newQueryEmbeddingClient(vecCfg)
+	if err != nil {
+		return nil, err
 	}
 	mainDB := mainStore.DB()
 
@@ -788,14 +807,6 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 		return nil, fmt.Errorf("resolve active generation: %w", err)
 	}
 
-	embedClient := embed.NewClient(embed.Config{
-		Endpoint:   vecCfg.Embeddings.Endpoint,
-		APIKey:     vecCfg.Embeddings.APIKey(),
-		Model:      vecCfg.Embeddings.Model,
-		Dimension:  vecCfg.Embeddings.Dimension,
-		Timeout:    vecCfg.Embeddings.Timeout,
-		MaxRetries: vecCfg.Embeddings.MaxRetries,
-	})
 	e.heng = hybrid.NewEngine(backend, mainDB, embedClient, hybrid.Config{
 		ExpectedFingerprint: vecCfg.GenerationFingerprint(),
 		RRFK:                vecCfg.Search.RRFK,
@@ -830,6 +841,7 @@ func (e *evaluator) collectCorpusStats(db *sql.DB) {
 func (e *evaluator) collectVectorStats(vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string) {
 	e.prov.VectorEnabled = true
 	e.prov.EmbeddingModel = vecCfg.Embeddings.Model
+	e.prov.APIFormat = string(vecCfg.Embeddings.EffectiveAPIFormat())
 	e.prov.Dimension = vecCfg.Embeddings.Dimension
 	e.prov.Endpoint = vecCfg.Embeddings.Endpoint
 	e.prov.Backend = vecCfg.Backend
@@ -901,6 +913,7 @@ func (r evalReport) table() {
 	_, _ = fmt.Fprintf(pw, "  corpus\t%d messages, %d conversations\n", r.prov.Messages, r.prov.Conversations)
 	if r.prov.VectorEnabled {
 		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", r.prov.EmbeddingModel, r.prov.Dimension)
+		_, _ = fmt.Fprintf(pw, "  embedding api format\t%s\n", r.prov.APIFormat)
 		_, _ = fmt.Fprintf(pw, "  embedding endpoint\t%s\n", r.prov.Endpoint)
 		_, _ = fmt.Fprintf(pw, "  vector backend\t%s\n", r.prov.Backend)
 		_, _ = fmt.Fprintf(pw, "  generation fingerprint\t%s\n", r.prov.Fingerprint)
