@@ -83,7 +83,11 @@ comparable — or even interpretable — without them. Those numbers describe wh
 was searched, not what merely exists: the corpus count covers live messages
 only (dedup-hidden duplicates and messages deleted from their source account
 are excluded, as they are from every search here), and the vector count covers
-the active generation only, not the retired ones vectors.db still holds.
+the active generation only, not the retired ones vectors.db still holds. That
+generation is resolved once at the start of the run; each query still searches
+whatever is active at query time, so a rebuild or activation you trigger while
+an eval is in flight can leave the reported vector count stale for topics
+scored after the swap.
 Anything that went wrong
 without being fatal — unparseable judgment lines, topics whose query string
 did not parse, hits that could not be hydrated from the archive, rankings cut

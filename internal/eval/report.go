@@ -52,7 +52,10 @@ type RunConfig struct {
 	// IndexedVectors counts the rows in the active generation alone — the one
 	// search resolved and queried. A vectors.db retains retired generations
 	// and may hold a rebuild in progress, so a whole-table count describes
-	// the file on disk, which is what IndexSizeBytes is for.
+	// the file on disk, which is what IndexSizeBytes is for. The generation
+	// is resolved once when the run starts; each query still searches
+	// whatever is active at query time, so an activation or rebuild
+	// triggered mid-run can leave this count stale for later topics.
 	IndexedVectors int64  `json:"indexed_vectors,omitempty"`
 	IndexSizeBytes int64  `json:"index_size_bytes,omitempty"`
 	IndexPath      string `json:"index_path,omitempty"`
