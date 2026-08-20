@@ -2061,3 +2061,21 @@ repo = "backups"
 	expected := filepath.Join(tmpDir, "backups")
 	assert.Equal(expected, cfg.Backup.Repo)
 }
+
+func TestLoadNormalizesMultimodalCapabilitiesFile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte(`
+[vector.multimodal]
+capabilities_file = "manifests/voyage.json"
+`), 0o600))
+
+	// With --config, relative paths resolve against the config directory so
+	// the manifest does not depend on the daemon's working directory.
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+	assert.Equal(filepath.Join(tmpDir, "manifests/voyage.json"),
+		cfg.Vector.Multimodal.CapabilitiesFile)
+}

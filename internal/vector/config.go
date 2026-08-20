@@ -541,6 +541,12 @@ func (m MultimodalConfig) validate() error {
 	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
 		return errors.New("vector.multimodal: at least one document media type must be enabled")
 	}
+	// Animated GIFs are an image subtype: the runtime media policy only
+	// admits animated media when still images are enabled, so an
+	// animated-only lane would reject every attachment yet still activate.
+	if m.configuredAnimatedGIFs() && !m.configuredImages() {
+		return errors.New("vector.multimodal.include_animated_gifs: requires include_images = true")
+	}
 	return nil
 }
 

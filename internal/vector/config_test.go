@@ -665,3 +665,22 @@ api_key_env = "INTERNAL_GATEWAY_KEY"
 	require.Error(err)
 	require.Contains(err.Error(), "pinned provider endpoint")
 }
+
+func TestMultimodalRejectsAnimatedGIFsWithoutImages(t *testing.T) {
+	require := require.New(t)
+	var cfg Config
+	// The runtime media policy only admits animated media when still images
+	// are enabled; an animated-only lane would reject every attachment yet
+	// still validate and activate.
+	_, err := toml.Decode(`[multimodal]
+enabled = true
+include_images = false
+include_video = false
+include_animated_gifs = true
+`, &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+	err = cfg.Validate()
+	require.Error(err)
+	require.Contains(err.Error(), "include_animated_gifs")
+}

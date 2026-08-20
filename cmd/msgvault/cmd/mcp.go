@@ -98,8 +98,11 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 	}
 	// The daemon owns the multimodal lane; a remote-only MCP client's local
 	// config says nothing about it, so availability is probed, not assumed.
-	if visualStatus, visualErr := st.VisualStatus(ctx); visualErr == nil &&
-		visualStatus.Generation.State == "active" {
+	// The probe gates on the lane being served at all, not on the current
+	// generation state: this one-time check must not hide the tool for the
+	// process lifetime because a build or swap was in flight at startup —
+	// per-request errors report transient readiness instead.
+	if _, visualErr := st.VisualStatus(ctx); visualErr == nil {
 		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 	}
 	return opts, nil
