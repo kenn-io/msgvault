@@ -843,8 +843,25 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// parseEvalModes splits and validates the --modes flag.
+// parseEvalModes splits and validates the --modes flag, keeping each mode once
+// in the order it was first named.
+//
+// A repeated mode is deduplicated rather than rejected. The scoring loop
+// evaluates and aggregates the list entry by entry into a per-mode Aggregate,
+// so `--modes fts,fts` would run every topic through fts twice, add each score
+// to the same aggregate twice — doubling that mode's topic count while leaving
+// its means unchanged — and double the latency work and its sample. Rejecting
+// it, as a repeated qid in the topics file is rejected, would be the wrong
+// shape here: two topic rows sharing a qid carry different query text, so the
+// file is genuinely ambiguous and picking one silently answers a question
+// nobody asked, whereas `fts,fts` has exactly one possible reading. There is
+// nothing to disambiguate, so it is simply honoured once.
+//
+// Validation still runs per entry, before the duplicate is dropped, so a
+// repeated invalid mode is still an error. Order is preserved because it is the
+// order the report's rows come out in, and that belongs to the user.
 func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
+	seen := make(map[string]bool, 3)
 	for m := range strings.SplitSeq(spec, ",") {
 		m = strings.TrimSpace(m)
 		if m == "" {
@@ -857,6 +874,10 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 		default:
 			return nil, false, fmt.Errorf("invalid mode %q in --modes (want fts|vector|hybrid)", m)
 		}
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
 		modes = append(modes, m)
 	}
 	if len(modes) == 0 {

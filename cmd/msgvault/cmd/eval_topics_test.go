@@ -144,6 +144,35 @@ func TestRunEval_UnjudgedCoverageNoteCountsWhatWasActuallyScored(t *testing.T) {
 		"not 2 (Parsed-unjudged): q2 was judged but never scored")
 }
 
+// TestRunEval_CountsEachTopicOnceForARepeatedMode is the end-to-end regression
+// for a duplicated --modes value. The aggregates are keyed by mode name, so
+// `--modes fts,fts` added every topic's score to the fts aggregate twice: the
+// report claimed two topics for a two-topic run over one mode, over a run that
+// had also issued every query twice. The count beside the means is the
+// denominator a reader compares two runs by, so it has to be the number of
+// topics, not the number of times the list mentioned the mode.
+func TestRunEval_CountsEachTopicOnceForARepeatedMode(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	seedRankingDivergenceArchiveIn(t, dir)
+	configureEvalRun(t, dir,
+		"q1 0 <m1@example.com> 1\nq2 0 <m2@example.com> 1\n",
+		"q1\trenewal\nq2\trenewal\n")
+	// configureEvalRun snapshots and restores every eval flag, so overriding
+	// one after it is safe.
+	evalModes = evalTestMode + "," + evalTestMode
+
+	var report evalTopicReport
+	runEvalForReport(t, &report)
+
+	require.Len(report.Results, 1, "a repeated mode is still one mode")
+	assert.Equal(2, report.TopicsEvaluated)
+	assert.Equal(2, report.Results[evalTestMode].Topics,
+		"two topics scored once each; counting the mode twice reported 4")
+}
+
 // findEvalNote re-renders the diagnostics the table output would print and
 // returns the line covering the given unjudged topics. scored is the number
 // of topics the run actually scored and parsed is the topics file's total,
