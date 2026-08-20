@@ -34,9 +34,9 @@ size.
 
 The store will expose shared organization-profile limit constants and a typed
 `ErrOrganizationProfileTooLarge` error. A common validator will count all
-collection values and explicit media bytes. Both the HTTP conversion path and
-`ReplaceOrganizationProfileContext` will call it, so direct store callers
-cannot bypass the limits.
+collection values and explicit media bytes at the start of the store
+preparation path, so direct store callers cannot bypass the limits without
+duplicating validation in the HTTP conversion path.
 
 Retained media bytes are only known after the store finds the active source
 rows. Retention resolution will start with the explicit-byte total, add the
@@ -59,8 +59,9 @@ or a temporary table.
 The organization profile PUT endpoint will map
 `ErrOrganizationProfileTooLarge` to HTTP 413 with the existing
 `organization_profile_too_large` error code. Its OpenAPI operation will declare
-the 413 response and describe the aggregate value limit. Other profile
-validation errors will retain their current status and response codes.
+the 413 response and describe the aggregate value limit. The API schema version
+will advance to distinguish the updated contract. Other profile validation
+errors will retain their current status and response codes.
 
 ## Tests
 

@@ -209,7 +209,9 @@ import (
 // /api/v1/health so remote CLI clients can verify compatibility on connect.
 // 2.2.0 adds participant-scoped file search responses and direction controls.
 // Additive (minor bump): the archive-wide file routes are unchanged.
-const APISchemaVersion = "2.2.0"
+// 2.3.0 bounds organization profile replacements to 200 structured values and
+// 32 MiB of logical inline media, and documents the resulting 413 response.
+const APISchemaVersion = "2.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

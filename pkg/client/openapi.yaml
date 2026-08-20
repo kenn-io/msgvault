@@ -8345,7 +8345,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.2.0
+  version: 2.3.0
 openapi: 3.0.3
 paths:
   /api/ping:
