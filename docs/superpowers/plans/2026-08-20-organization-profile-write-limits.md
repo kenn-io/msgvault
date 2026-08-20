@@ -279,7 +279,7 @@ func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
 			MediaKind: store.PersonMediaLogo,
 			Data:      data,
 			Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-		}})
+		}}})
 	require.NoError(t, err)
 	require.Len(t, first.Media, 1)
 	require.NotNil(t, first.Media[0].ContentHash)

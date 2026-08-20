@@ -242,6 +242,54 @@ func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
 	assert.Equal(t, organization.Revision, unchanged.Revision)
 }
 
+func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+		Name: "Example Org", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(t, err)
+
+	data := make([]byte, 256<<10)
+	first, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision,
+		store.OrganizationProfileInput{Media: []store.OrganizationMediaInput{{
+			MediaKind: store.PersonMediaLogo,
+			Data:      data,
+			Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		}}})
+	require.NoError(t, err)
+	require.Len(t, first.Media, 1)
+	require.NotNil(t, first.Media[0].ContentHash)
+
+	copyCount := int(store.MaxOrganizationProfileMediaBytes/int64(len(data))) + 1
+	media := make([]store.OrganizationMediaInput, copyCount)
+	for i := range media {
+		ordinal := i
+		media[i] = store.OrganizationMediaInput{
+			MediaKind:   store.PersonMediaLogo,
+			ContentHash: first.Media[0].ContentHash,
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceUser, Ordinal: &ordinal,
+			},
+		}
+	}
+
+	_, err = st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, first.Organization.Revision,
+		store.OrganizationProfileInput{Media: media})
+	require.ErrorIs(t, err, store.ErrOrganizationProfileTooLarge)
+
+	unchanged, err := st.GetOrganizationProfileContext(ctx, organization.ID, false)
+	require.NoError(t, err)
+	require.Len(t, unchanged.Media, 1)
+	assert.Equal(t, first.Organization.Revision, unchanged.Organization.Revision)
+	stored, _, err := st.ReadOrganizationMediaDataContext(
+		ctx, organization.ID, unchanged.Media[0].Envelope.ID)
+	require.NoError(t, err)
+	assert.Equal(t, data, stored)
+}
+
 func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testing.T) {
 	require := require.New(t)
 	ctx := t.Context()

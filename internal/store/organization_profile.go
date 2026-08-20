@@ -602,7 +602,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		return err
 	}
 	if err := s.resolveOrganizationMediaRetentionTx(
-		ctx, tx, current.Media, prepared.input.Media); err != nil {
+		ctx, tx, current.Media, prepared.input.Media, prepared.explicitMediaBytes,
+	); err != nil {
 		return err
 	}
 	if err := reconcileOrganizationCollection(ctx, tx, s, organizationID,
@@ -1135,30 +1136,69 @@ func organizationMediaInputHash(input OrganizationMediaInput) string {
 func (s *Store) resolveOrganizationMediaRetentionTx(
 	ctx context.Context, tx *loggedTx,
 	currentMedia []OrganizationMedia, inputs []OrganizationMediaInput,
+	explicitMediaBytes int64,
 ) error {
+	type retentionSource struct {
+		id       int64
+		byteSize *int64
+	}
+	sources := make(map[string]retentionSource, len(currentMedia))
+	for _, row := range currentMedia {
+		if !row.HasData || row.ContentHash == nil {
+			continue
+		}
+		if _, exists := sources[*row.ContentHash]; !exists {
+			sources[*row.ContentHash] = retentionSource{
+				id: row.Envelope.ID, byteSize: row.ByteSize,
+			}
+		}
+	}
+
+	retainedBytes := explicitMediaBytes
 	for i := range inputs {
 		input := &inputs[i]
 		if len(input.Data) > 0 || input.ContentHash == nil {
 			continue
 		}
-		var sourceID int64
-		for _, row := range currentMedia {
-			if row.HasData && row.ContentHash != nil &&
-				*row.ContentHash == *input.ContentHash {
-				sourceID = row.Envelope.ID
-				break
-			}
-		}
-		if sourceID == 0 {
+		source, exists := sources[*input.ContentHash]
+		if !exists {
 			return fmt.Errorf(
 				"%w: media[%d].content_hash %q does not match an active media row; re-send data or drop content_hash",
 				ErrOrganizationInvalid, i, *input.ContentHash)
 		}
-		var data []byte
-		if err := tx.QueryRowContext(ctx,
-			`SELECT data FROM organization_media WHERE id = ?`, sourceID,
-		).Scan(&data); err != nil {
-			return fmt.Errorf("load retained media %d content: %w", sourceID, err)
+		if source.byteSize == nil || *source.byteSize <= 0 {
+			return fmt.Errorf(
+				"active organization media %d has invalid byte_size", source.id)
+		}
+		if *source.byteSize > MaxOrganizationProfileMediaBytes-retainedBytes {
+			return fmt.Errorf(
+				"%w: inline media exceeds %d bytes",
+				ErrOrganizationProfileTooLarge, MaxOrganizationProfileMediaBytes)
+		}
+		retainedBytes += *source.byteSize
+	}
+
+	dataByHash := make(map[string][]byte, len(sources))
+	for i := range inputs {
+		input := &inputs[i]
+		if len(input.Data) > 0 || input.ContentHash == nil {
+			continue
+		}
+		contentHash := *input.ContentHash
+		data, loaded := dataByHash[contentHash]
+		if !loaded {
+			source := sources[contentHash]
+			if err := tx.QueryRowContext(ctx,
+				`SELECT data FROM organization_media WHERE id = ?`, source.id,
+			).Scan(&data); err != nil {
+				return fmt.Errorf("load retained media %d content: %w", source.id, err)
+			}
+			if int64(len(data)) != *source.byteSize {
+				return fmt.Errorf(
+					"active organization media %d byte_size does not match stored data",
+					source.id)
+			}
+			dataByHash[contentHash] = data
 		}
 		input.Data = data
 	}
