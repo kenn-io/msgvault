@@ -261,8 +261,19 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		        'mistral-ocr-4-0', ?, 1);
 		INSERT INTO document_units
 			(extraction_id, unit_index, unit_kind, text, checksum, char_count)
-		VALUES ('subset-extraction', 0, 'page', 'private extracted evidence', ?, 26)`,
+		VALUES ('subset-extraction', 0, 'page', 'private extracted evidence', ?, 26);
+		INSERT INTO person_inference_profiles
+			(fingerprint, provider_kind, endpoint, model, api_key_env,
+			 retention_posture, training_posture, allowed_sources,
+			 source_since, policy_json)
+		VALUES (?, 'openai_compatible', 'https://api.example.test/v1',
+		        'gpt-test', 'TEST_KEY', 'zero_retention', 'no_training',
+		        '["conversation_text"]', '2025-01-01', '{}');
+		INSERT INTO person_inference_consents
+			(profile_fingerprint, granted_by)
+		VALUES (?, 'cli')`,
 		fingerprint, fingerprint, strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
+		strings.Repeat("e", 64), strings.Repeat("e", 64),
 	)
 	require.NoError(err)
 	require.NoError(db.Close())
@@ -277,6 +288,7 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		"document_extraction_rebuilds", "document_extraction_rebuild_targets",
 		"document_extraction_heads", "document_units", "document_chunks", "document_chunk_spans",
 		"document_occurrences", "document_extraction_claims",
+		"person_inference_profiles", "person_inference_consents",
 	} {
 		var count int
 		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)

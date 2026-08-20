@@ -22,7 +22,7 @@ func newPersonTrackingCommand(action string, tracked bool) *cobra.Command {
 		Short: action + " a durable person for future profile maintenance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			personID, err := positivePersonCLIArg(cmd, args[0], "person")
+			personID, err := positivePersonCLIArg(cmd, args[0], personValue)
 			if err != nil {
 				return err
 			}

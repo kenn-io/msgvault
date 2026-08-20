@@ -799,7 +799,7 @@ type calendarSyncNextOptions struct {
 }
 
 func calendarSyncNextCommand(email, oauthApp string, opts calendarSyncNextOptions) string {
-	parts := []string{"msgvault", "sync-calendar"}
+	parts := []string{daemonService, "sync-calendar"}
 	if oauthApp != "" {
 		parts = append(parts, "--oauth-app", oauthApp)
 	}

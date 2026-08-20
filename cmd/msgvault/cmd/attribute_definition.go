@@ -269,7 +269,7 @@ var attributeDefinitionDeleteCmd = &cobra.Command{
 
 func attributeObjectTypeArg(cmd *cobra.Command) (string, error) {
 	value := strings.TrimSpace(attributeDefinitionObjectType)
-	if value == "" || value == "person" || value == "organization" {
+	if value == "" || value == personValue || value == "organization" {
 		return value, nil
 	}
 	return "", usageErr(cmd, errors.New("object type must be person or organization"))

@@ -20,8 +20,10 @@ var (
 	personClearDisplayName bool
 )
 
+const personValue = "person"
+
 var personCmd = &cobra.Command{
-	Use:   "person",
+	Use:   personValue,
 	Short: "Manage durable person profiles",
 }
 
@@ -63,7 +65,7 @@ var personGetCmd = &cobra.Command{
 	Short: "Get a durable person profile",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := positivePersonCLIArg(cmd, args[0], "person")
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}
@@ -124,7 +126,7 @@ var personSetDisplayNameCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := positivePersonCLIArg(cmd, args[0], "person")
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}
@@ -173,7 +175,7 @@ var personDeleteCmd = &cobra.Command{
 		"the same cluster afterwards creates a new person with a new UID.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := positivePersonCLIArg(cmd, args[0], "person")
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}
@@ -248,6 +250,7 @@ func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 
 func init() {
 	rootCmd.AddCommand(personCmd)
+	personCmd.AddCommand(newPersonProviderCommand(defaultPersonProviderCommandDeps()))
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
 		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd)
 	for _, command := range []*cobra.Command{

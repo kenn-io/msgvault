@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
@@ -410,6 +411,7 @@ type Config struct {
 	Discord      DiscordConfig                   `toml:"discord"`
 	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity     ActivityConfig                  `toml:"activity"`
+	People       peoplesweep.PeopleConfig        `toml:"people"`
 	Teams        TeamsConfig                     `toml:"teams"`
 
 	// Computed paths (not from config file)
@@ -669,6 +671,7 @@ func NewDefaultConfig() *Config {
 	cfg.Web.ApplyDefaults()
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
+	cfg.People.Sweep.ApplyDefaults()
 	return cfg
 }
 
@@ -745,13 +748,21 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
-	if _, err := toml.Decode(string(content), cfg); err != nil {
+	metadata, err := toml.Decode(string(content), cfg)
+	if err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
 			strings.Contains(err.Error(), "hexadecimal digits after") {
 			return nil, fmt.Errorf("decode config: %w -- hint: Windows paths in TOML must use "+
 				"forward slashes (C:/Games/msgvault) or single quotes ('C:\\Games\\msgvault')", err)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	if cfg.People.Sweep.Provider.AllowAnonymous &&
+		!metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
+		// The default authenticated credential is loaded before TOML decoding.
+		// Anonymous loopback mode instead defaults to no credential, while an
+		// explicitly configured key remains visible to validation and is rejected.
+		cfg.People.Sweep.Provider.APIKeyEnv = ""
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
@@ -814,6 +825,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.People.Sweep.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {

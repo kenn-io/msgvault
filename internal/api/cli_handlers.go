@@ -1349,12 +1349,14 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 	return nil
 }
 
+const cliRunPersonCommand = "person"
+
 // cliRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
-// alone; command groups whose subcommand matters (currently "backup" and
-// "documents") are checked against args[1] as well. Backup admits only the
-// frozen create path, while documents admits only mutations that must run
-// under the daemon's writer lock.
+// alone; command groups whose subcommand matters are checked against their
+// nested command path. Backup admits only the frozen create path, documents
+// admits only mutations that must run under the daemon's writer lock, and
+// person admits only the provider consent boundary.
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -1368,6 +1370,17 @@ func cliRunCommandAllowed(args []string) bool {
 		}
 		switch args[1] {
 		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+			return true
+		default:
+			return false
+		}
+	}
+	if args[0] == cliRunPersonCommand {
+		if len(args) < 3 || args[1] != "provider" {
+			return false
+		}
+		switch args[2] {
+		case "status", "consent", "revoke", "check":
 			return true
 		default:
 			return false
@@ -1464,6 +1477,7 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 	for _, keyEnv := range []string{
 		s.cfg.Vector.Embeddings.APIKeyEnv,
 		s.cfg.Attachments.Documents.APIKeyEnv,
+		s.cfg.People.Sweep.Provider.APIKeyEnv,
 	} {
 		if keyEnv != "" && name == keyEnv {
 			return true

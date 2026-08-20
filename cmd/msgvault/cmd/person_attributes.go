@@ -46,7 +46,7 @@ var personAttributesListCmd = &cobra.Command{
 	Short: "List a person's attribute definitions and values",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		personID, err := positivePersonCLIArg(cmd, args[0], "person")
+		personID, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ var personAttributesSetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		personAttributeOrdinalSet = cmd.Flags().Changed("ordinal")
 		personAttributeConfidenceSet = cmd.Flags().Changed("confidence")
-		personID, err := positivePersonCLIArg(cmd, args[0], "person")
+		personID, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ var personAttributesClearCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		personAttributeOrdinalSet = cmd.Flags().Changed("ordinal")
 		expectedValueIDSet := cmd.Flags().Changed("expected-value-id")
-		personID, err := positivePersonCLIArg(cmd, args[0], "person")
+		personID, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}

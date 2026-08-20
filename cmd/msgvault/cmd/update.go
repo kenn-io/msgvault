@@ -220,5 +220,5 @@ func updateExecutableName() string {
 	if runtime.GOOS == "windows" {
 		return "msgvault.exe"
 	}
-	return "msgvault"
+	return daemonService
 }

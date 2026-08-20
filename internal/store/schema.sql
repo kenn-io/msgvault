@@ -179,6 +179,41 @@ CREATE TABLE IF NOT EXISTS person_tracking (
     tracked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Immutable egress policy for model-backed people maintenance. Credentials
+-- are never stored; api_key_env records only the exact configured variable
+-- name. Runtime timeout is operational and intentionally outside the policy.
+CREATE TABLE IF NOT EXISTS person_inference_profiles (
+    fingerprint          TEXT PRIMARY KEY,
+    provider_kind        TEXT NOT NULL,
+    endpoint             TEXT NOT NULL,
+    model                TEXT NOT NULL,
+    api_key_env          TEXT NOT NULL,
+    allow_anonymous      BOOLEAN NOT NULL DEFAULT FALSE,
+    retention_posture    TEXT NOT NULL,
+    training_posture     TEXT NOT NULL,
+    allowed_sources      JSON NOT NULL,
+    source_since         TEXT NOT NULL,
+    source_until         TEXT,
+    allow_sensitive      BOOLEAN NOT NULL DEFAULT FALSE,
+    policy_json          JSON NOT NULL,
+    created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Revocation stamps the active grant instead of deleting it. Regranting the
+-- same exact profile creates a new audit row.
+CREATE TABLE IF NOT EXISTS person_inference_consents (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_fingerprint  TEXT NOT NULL REFERENCES person_inference_profiles(fingerprint),
+    granted_by           TEXT NOT NULL,
+    granted_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by           TEXT,
+    revoked_at           DATETIME,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_inference_consents_active
+    ON person_inference_consents(profile_fingerprint)
+    WHERE revoked_at IS NULL;
+
 -- Lossless native vCard resources. Typed profile tables remain the semantic
 -- source of truth; this table retains exact wire bodies and normalized
 -- occurrence metadata for future CardDAV layers.
