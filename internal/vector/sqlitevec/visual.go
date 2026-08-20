@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
@@ -247,6 +248,7 @@ func sqliteLiveVisualTokens(ctx context.Context, db *sql.DB, request visual.Sear
 		FROM visual_publications vp
 		JOIN visual_generations vg ON vg.id = vp.generation_id
 		JOIN messages m ON m.id = vp.message_id
+		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.id = vp.representative_attachment_id
 		WHERE vp.generation_id = ? AND vg.state = 'active'
 		  AND vp.state = 'current' AND vp.current_vector_token IS NOT NULL
@@ -254,15 +256,10 @@ func sqliteLiveVisualTokens(ctx context.Context, db *sql.DB, request visual.Sear
 		  AND a.message_id = vp.message_id
 		  AND a.attachment_role = 'standalone'`
 	args := []any{int64(request.GenerationID)}
-	if request.SenderPersonID > 0 {
-		// Legacy imports leave sender_id NULL and record the sender as a
-		// 'from' recipient row; fall back the same way the message list
-		// queries do so those results are not silently excluded.
-		query += ` AND EXISTS (SELECT 1 FROM person_participants pp WHERE pp.person_id = ? AND pp.participant_id = COALESCE(m.sender_id, (
-			SELECT mr.participant_id FROM message_recipients mr
-			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			ORDER BY mr.id LIMIT 1)))`
-		args = append(args, request.SenderPersonID)
+	if request.Person != nil {
+		predicate, personArgs := personscope.MessagePredicate(*request.Person, "m", "c")
+		query += ` AND (` + predicate + `)`
+		args = append(args, personArgs...)
 	}
 	if request.SourceID > 0 {
 		query += ` AND m.source_id = ?`

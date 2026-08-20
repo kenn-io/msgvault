@@ -436,7 +436,6 @@ func TestSearchFilesPersonScopeValidation(t *testing.T) {
 		name  string
 		scope PersonFileScope
 	}{
-		{name: "missing participant IDs", scope: PersonFileScope{Directions: []PersonFileDirection{PersonFileFromPerson}}},
 		{name: "non-positive participant ID", scope: PersonFileScope{ParticipantIDs: []int64{0}, Directions: []PersonFileDirection{PersonFileFromPerson}}},
 		{name: "missing directions", scope: PersonFileScope{ParticipantIDs: []int64{1}}},
 		{name: "unknown direction", scope: PersonFileScope{ParticipantIDs: []int64{1}, Directions: []PersonFileDirection{"sideways"}}},
@@ -447,6 +446,22 @@ func TestSearchFilesPersonScopeValidation(t *testing.T) {
 			require.ErrorIs(t, err, ErrInvalidExploreRequest)
 		})
 	}
+}
+
+func TestSearchFilesEmptyPersonPopulationReturnsNoFiles(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.test")
+	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated"})
+	b.AddAttachmentWithMIME(1, message, 10, "unrelated.pdf", "application/pdf")
+
+	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+		Person: &PersonFileScope{Directions: []PersonFileDirection{PersonFileFromPerson}},
+		Page:   PageSpec{Limit: 10},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, result.Files)
+	assert.Zero(t, result.TotalCount)
 }
 
 func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {

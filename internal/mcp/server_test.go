@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
@@ -33,6 +34,8 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
@@ -304,6 +307,94 @@ type recordingDocumentSearcher struct {
 	request store.DocumentSearchRequest
 }
 
+type recordingVisualSearcher struct{ request VisualSearchRequest }
+
+func (s *recordingVisualSearcher) SearchVisualAttachments(
+	_ context.Context,
+	request VisualSearchRequest,
+) (*visual.SearchResponse, error) {
+	s.request = request
+	return &visual.SearchResponse{Results: []visual.AttachmentSearchResult{}}, nil
+}
+
+func TestSearchVisualAttachmentsPreservesSharedPersonScope(t *testing.T) {
+	searcher := &recordingVisualSearcher{}
+	h := &handlers{visualSearcher: searcher}
+	runTool[visual.SearchResponse](t, ToolSearchVisualAttachments, h.searchVisualAttachments, map[string]any{
+		"text": "inspection diagram", "person_id": float64(40),
+		"directions": []any{"to_person", "group"},
+	})
+	assert.Equal(t, int64(40), searcher.request.PersonID)
+	assert.Equal(t, []personscope.Direction{personscope.ToPerson, personscope.Group}, searcher.request.Directions)
+}
+
+type recordingPersonFileSearcher struct {
+	request PersonFileSearchRequest
+}
+
+func (s *recordingPersonFileSearcher) SearchPersonFiles(
+	_ context.Context,
+	request PersonFileSearchRequest,
+) (generated.PersonFileSearchHTTPResponse, error) {
+	s.request = request
+	filename, mimeType := "inspection.png", "image/png"
+	return generated.PersonFileSearchHTTPResponse{
+		Files: []generated.PersonFileSearchRow{{
+			ID: 17, MessageID: 18, ConversationID: 19, SourceID: 20,
+			SourceIdentifier: "synthetic-source", Filename: &filename, MimeType: &mimeType,
+			PersonProvenance: generated.PersonFileProvenance{
+				ParticipantIds: []int64{4}, Roles: []generated.PersonFileProvenanceRoles{generated.From},
+				Directions: []generated.PersonFileProvenanceDirections{generated.FromPerson},
+			},
+		}},
+		TotalCount: 1, CacheRevision: "synthetic-revision",
+	}, nil
+}
+
+func TestSearchPersonFilesPreservesScopeAndProvenance(t *testing.T) {
+	assertions := assert.New(t)
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	response := runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
+		h.searchPersonFiles, map[string]any{
+			"person_id": float64(40), "directions": []any{"from_person", "group"},
+			"after": "2026-08-01", "before": "2026-08-20", "filename": "inspection",
+			"mime_families": []any{"image", "pdf"}, "limit": float64(25), "cursor": "opaque",
+		})
+
+	assertions.Equal(int64(40), searcher.request.PersonID)
+	assertions.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
+	assertions.Equal("2026-08-01", searcher.request.After.Format("2006-01-02"))
+	assertions.Equal("2026-08-20", searcher.request.Before.Format("2006-01-02"))
+	assertions.Equal("inspection", searcher.request.Filename)
+	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, searcher.request.MIMEFamilies)
+	assertions.Equal(25, searcher.request.Limit)
+	assertions.Equal("opaque", searcher.request.Cursor)
+	require.Len(t, response.Files, 1)
+	assertions.Equal(int64(18), response.Files[0].MessageID)
+	assertions.Equal([]generated.PersonFileProvenanceRoles{generated.From}, response.Files[0].PersonProvenance.Roles)
+}
+
+func TestSearchPersonFilesRejectsInvalidScopeBeforeDispatch(t *testing.T) {
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	result := runToolExpectError(t, ToolSearchPersonFiles, h.searchPersonFiles, map[string]any{
+		"person_id": float64(40), "directions": []any{"sideways"},
+	})
+	assert.Contains(t, resultText(t, result), "unknown person file direction")
+	assert.Zero(t, searcher.request.PersonID)
+}
+
+func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
+		h.searchPersonFiles, map[string]any{"person_id": float64(40)})
+
+	assert.Nil(t, searcher.request.Directions,
+		"an omitted direction must let the metadata route include unclassified roster rows")
+}
+
 func (s *recordingDocumentSearcher) SearchDocuments(
 	_ context.Context,
 	request store.DocumentSearchRequest,
@@ -316,29 +407,43 @@ func (s *recordingDocumentSearcher) SearchDocuments(
 			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
 			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
 			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
+			PersonProvenance: &personscope.Provenance{
+				ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
+				Directions: []personscope.Direction{personscope.FromPerson},
+			},
 		}},
 	}, nil
 }
 
 func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	searcher := &recordingDocumentSearcher{}
 	h := &handlers{documentSearcher: searcher}
 	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
 		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
-		"message_id": float64(18), "limit": float64(5), "cursor": "opaque",
+		"message_id": float64(18), "person_id": float64(40),
+		"directions": []any{"from_person", "group"},
+		"after":      "2026-08-01", "before": "2026-08-20",
+		"limit": float64(5), "cursor": "opaque",
 	})
 	assert.Equal("carton damage", searcher.request.Query)
 	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
 	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
 	assert.Equal(int64(17), searcher.request.AttachmentID)
 	assert.Equal(int64(18), searcher.request.MessageID)
+	assert.Equal(int64(40), searcher.request.PersonID)
+	assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
+	require.NotNil(searcher.request.After)
+	require.NotNil(searcher.request.Before)
 	assert.Equal(5, searcher.request.PageSize)
 	assert.Equal("opaque", searcher.request.Cursor)
-	require.Len(t, response.Results, 1)
+	require.Len(response.Results, 1)
 	assert.Equal("inspection.xlsx", response.Results[0].Filename)
 	assert.Equal("mistral", response.Results[0].Provider)
+	require.NotNil(response.Results[0].PersonProvenance)
+	assert.Equal([]int64{4}, response.Results[0].PersonProvenance.ParticipantIDs)
 }
 
 func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {

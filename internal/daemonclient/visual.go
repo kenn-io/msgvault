@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -26,6 +27,9 @@ type VisualSearchOptions struct {
 	Limit          int
 	Cursor         string
 	SenderPersonID int64
+	PersonID       int64
+	ParticipantID  int64
+	Directions     []personscope.Direction
 	SourceID       int64
 	MessageID      int64
 	Filename       string
@@ -52,6 +56,15 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 		if options.SenderPersonID > 0 {
 			_ = writer.WriteField("sender_person_id", strconv.FormatInt(options.SenderPersonID, 10))
 		}
+		if options.PersonID > 0 {
+			_ = writer.WriteField("person_id", strconv.FormatInt(options.PersonID, 10))
+		}
+		if options.ParticipantID > 0 {
+			_ = writer.WriteField("participant_id", strconv.FormatInt(options.ParticipantID, 10))
+		}
+		for _, direction := range options.Directions {
+			_ = writer.WriteField("direction", string(direction))
+		}
 		for key, value := range map[string]string{
 			"cursor": options.Cursor, "filename": options.Filename, "mime_prefix": options.MIMEPrefix,
 		} {
@@ -66,10 +79,10 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 			_ = writer.WriteField("message_id", strconv.FormatInt(options.MessageID, 10))
 		}
 		if options.After != nil {
-			_ = writer.WriteField("after", options.After.Format("2006-01-02"))
+			_ = writer.WriteField("after", options.After.UTC().Format(time.RFC3339Nano))
 		}
 		if options.Before != nil {
-			_ = writer.WriteField("before", options.Before.Format("2006-01-02"))
+			_ = writer.WriteField("before", options.Before.UTC().Format(time.RFC3339Nano))
 		}
 		if err := writer.Close(); err != nil {
 			return nil, fmt.Errorf("close visual search form: %w", err)
@@ -79,13 +92,15 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 		payload := map[string]any{
 			"text": options.Text, visualSearchLimitField: options.Limit, "cursor": options.Cursor,
 			"sender_person_id": options.SenderPersonID, "source_id": options.SourceID,
+			"person_id": options.PersonID, "participant_id": options.ParticipantID,
+			"directions": options.Directions,
 			"message_id": options.MessageID, "filename": options.Filename, "mime_prefix": options.MIMEPrefix,
 		}
 		if options.After != nil {
-			payload["after"] = options.After.Format("2006-01-02")
+			payload["after"] = options.After.UTC().Format(time.RFC3339Nano)
 		}
 		if options.Before != nil {
-			payload["before"] = options.Before.Format("2006-01-02")
+			payload["before"] = options.Before.UTC().Format(time.RFC3339Nano)
 		}
 		if err := json.NewEncoder(&body).Encode(payload); err != nil {
 			return nil, err

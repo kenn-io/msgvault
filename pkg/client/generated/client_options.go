@@ -5850,6 +5850,59 @@ func (o *ListPersonEmploymentsRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// SearchPersonFilesRequestOptions is the options needed to make a request to SearchPersonFiles.
+type SearchPersonFilesRequestOptions struct {
+	PathParams *SearchPersonFilesPath
+	Body       *SearchPersonFilesBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SearchPersonFilesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchPersonFilesRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchPersonFilesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchPersonFilesRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchPersonFilesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPersonStructuredProfileRequestOptions is the options needed to make a request to GetPersonStructuredProfile.
 type GetPersonStructuredProfileRequestOptions struct {
 	PathParams *GetPersonStructuredProfilePath

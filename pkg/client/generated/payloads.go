@@ -118,6 +118,8 @@ type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
+type SearchPersonFilesBody = PersonFileSearchHTTPRequest
+
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 
 type SetPersonTrackingBody = PutPersonTrackingRequest

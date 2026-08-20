@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/personscope"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -59,7 +61,7 @@ func (s *Server) registerDocumentSearchRoute(api huma.API) {
 		"Search extracted document attachments",
 		s.documentSearchGuard("document search", s.handleDocumentSearch),
 		http.StatusBadRequest, http.StatusForbidden, http.StatusConflict,
-		http.StatusTooManyRequests, http.StatusServiceUnavailable,
+		http.StatusNotFound, http.StatusTooManyRequests, http.StatusServiceUnavailable,
 	)
 	registerAPIV1RawHumaJSONRouteWithErrors[store.DocumentIndexStatusResponse](
 		api, "getDocumentIndexStatus", http.MethodGet, "/documents/status",
@@ -175,6 +177,18 @@ func (s *Server) handleDocumentSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	if request.PersonID > 0 || request.ParticipantID > 0 {
+		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: request.PersonID}
+		if request.ParticipantID > 0 {
+			reference = resolver.Reference{Kind: resolver.ReferenceParticipant, ID: request.ParticipantID}
+		}
+		resolved, resolveErr := resolver.Resolve(r.Context(), s.store, reference, request.Directions)
+		if resolveErr != nil {
+			s.writePersonScopeError(w, reference, resolveErr, "document")
+			return
+		}
+		request.Person = &resolved.Scope
+	}
 	response, err := searcher.SearchDocuments(r.Context(), request)
 	if err != nil {
 		s.writeDocumentSearchError(w, err)
@@ -226,6 +240,47 @@ func parseDocumentSearchRequest(r *http.Request) (store.DocumentSearchRequest, e
 	}
 	if request.MessageID, _, err = queryInt64(r, "message_id"); err != nil {
 		return request, err
+	}
+	var personPresent bool
+	if request.PersonID, personPresent, err = queryInt64(r, "person_id"); err != nil {
+		return request, err
+	}
+	if personPresent && request.PersonID <= 0 {
+		return request, errors.New("person_id must be a positive integer")
+	}
+	var participantPresent bool
+	if request.ParticipantID, participantPresent, err = queryInt64(r, "participant_id"); err != nil {
+		return request, err
+	}
+	if participantPresent && request.ParticipantID <= 0 {
+		return request, errors.New("participant_id must be a positive integer")
+	}
+	if request.PersonID > 0 && request.ParticipantID > 0 {
+		return request, errors.New("person_id and participant_id are mutually exclusive")
+	}
+	for _, raw := range r.URL.Query()["direction"] {
+		for value := range strings.SplitSeq(raw, ",") {
+			request.Directions = append(request.Directions, personscope.Direction(strings.TrimSpace(value)))
+		}
+	}
+	if len(request.Directions) > 0 && request.PersonID == 0 && request.ParticipantID == 0 {
+		return request, errors.New("direction requires person_id or participant_id")
+	}
+	if _, _, err = resolver.NormalizeDirections(request.Directions); err != nil {
+		return request, err
+	}
+	if value, ok, dateErr := queryDate(r, "after"); dateErr != nil {
+		return request, dateErr
+	} else if ok {
+		request.After = &value
+	}
+	if value, ok, dateErr := queryDate(r, "before"); dateErr != nil {
+		return request, dateErr
+	} else if ok {
+		request.Before = &value
+	}
+	if request.After != nil && request.Before != nil && !request.After.Before(*request.Before) {
+		return request, errors.New("after must be before before")
 	}
 	return request, nil
 }

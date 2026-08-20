@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -181,9 +182,10 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchFiles", "/files/search", "Search analytical files", s.handleSearchFiles,
 	)
-	registerExploreRoute[PersonFileSearchHTTPRequest, PersonFileSearchHTTPResponse](
-		api, "searchParticipantFiles", "/participants/{id}/files/search", "Search one participant cluster's analytical files", s.handleSearchParticipantFiles,
-	)
+	registerPersonFileRoute(api, "searchParticipantFiles", "/participants/{id}/files/search",
+		"Search one participant cluster's analytical files", "", s.handleSearchParticipantFiles)
+	registerPersonFileRoute(api, "searchPersonFiles", "/people/{id}/files/search",
+		"Search one durable person's analytical files", "Durable person ID", s.handleSearchPersonFiles)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchDomainFiles", "/domains/{domain}/files/search", "Search one domain's analytical files", s.handleSearchDomainFiles,
 	)
@@ -193,6 +195,27 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[FileMetadataResponse](
 		api, "getFile", http.MethodGet, "/files/{id}", "Get authoritative file metadata", s.handleGetFile,
 	)
+}
+
+func registerPersonFileRoute(
+	api huma.API,
+	operationID, path, summary, idDescription string,
+	handler http.HandlerFunc,
+) {
+	op := rawAPIV1Operation(operationID, http.MethodPost, path, summary)
+	op.Tags = []string{"Exploration"}
+	if idDescription != "" {
+		op.Parameters = append(op.Parameters, &huma.Param{
+			Name: "id", In: "path", Required: true, Description: idDescription,
+			Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
+		})
+	}
+	op.RequestBody = jsonRequestBodyFor[PersonFileSearchHTTPRequest](api)
+	op.Responses = jsonResponsesFor[PersonFileSearchHTTPResponse](api)
+	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusConflict,
+		http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
+	registerRawHumaRoute(api, op, handler)
 }
 
 func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
@@ -314,33 +337,48 @@ func (s *Server) handleSearchParticipantFiles(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	s.handleSearchPersonFilesReference(w, r, resolver.Reference{
+		Kind: resolver.ReferenceParticipant, ID: id,
+	})
+}
+
+func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/people/"), "/files/search")
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_person_id", "person ID must be a positive integer")
+		return
+	}
+	s.handleSearchPersonFilesReference(w, r, resolver.Reference{
+		Kind: resolver.ReferencePerson, ID: id,
+	})
+}
+
+func (s *Server) handleSearchPersonFilesReference(
+	w http.ResponseWriter,
+	r *http.Request,
+	reference resolver.Reference,
+) {
 	var personRequest PersonFileSearchHTTPRequest
 	if !decodeFileSearchJSON(w, r, &personRequest) {
 		return
 	}
-	directions, err := normalizePersonFileDirections(personRequest.Directions)
+	_, _, err := resolver.NormalizeDirections(personRequest.Directions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_person_file_directions", err.Error())
 		return
 	}
-	// Widen the scope to the person's whole identity cluster so files owned
-	// only by a linked alias are found — the same identity the person detail
-	// header and the relationship timeline report. clusterMemberIDs returns
-	// nil for an unlinked participant, leaving the scope on id alone.
-	members := s.clusterMemberIDs(id)
-	if len(members) < 2 {
-		members = []int64{id}
-	}
-	personScope := &query.PersonFileScope{
-		ParticipantIDs: members, Directions: directions,
-		IncludeUnclassifiedRosterRows: len(personRequest.Directions) == 0,
+	resolved, err := resolver.Resolve(r.Context(), s.store, reference, personRequest.Directions)
+	if err != nil {
+		s.writePersonScopeError(w, reference, err, "file")
+		return
 	}
 	s.handleSearchFilesRequest(w, r, FileSearchHTTPRequest{
 		Predicate: personRequest.Predicate, FilenameQuery: personRequest.FilenameQuery,
 		VisualQuery: personRequest.VisualQuery, VisualImageBase64: personRequest.VisualImageBase64,
 		MIMEFamilies: personRequest.MIMEFamilies, Sort: personRequest.Sort,
 		Cursor: personRequest.Cursor, Limit: personRequest.Limit,
-	}, nil, personScope)
+	}, nil, &resolved.Scope)
 }
 
 func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +615,7 @@ func (s *Server) handleSearchFilesRequest(
 // index's native predicates where an exact mapping exists.
 func applyVisualSearchScope(visualQuery *visual.SearchQuery, request query.FileSearchRequest) {
 	context := request.Explore.Context
+	visualQuery.Person = request.Person
 	if len(context.SourceIDs) == 1 {
 		visualQuery.SourceID = context.SourceIDs[0]
 	}
@@ -817,35 +856,6 @@ func canonicalScopedFileSearchHash(
 		Scope   *ExploreFilter         `json:"identity_scope,omitempty"`
 		Person  *query.PersonFileScope `json:"person_scope,omitempty"`
 	}{Request: request, Scope: scope, Person: person}, false)
-}
-
-func normalizePersonFileDirections(
-	directions []query.PersonFileDirection,
-) ([]query.PersonFileDirection, error) {
-	if len(directions) == 0 {
-		return []query.PersonFileDirection{
-			query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
-		}, nil
-	}
-	selected := make(map[query.PersonFileDirection]struct{}, len(directions))
-	for _, raw := range directions {
-		direction := query.PersonFileDirection(strings.ToLower(strings.TrimSpace(string(raw))))
-		switch direction {
-		case query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup:
-			selected[direction] = struct{}{}
-		default:
-			return nil, fmt.Errorf("unknown person file direction %q", raw)
-		}
-	}
-	result := make([]query.PersonFileDirection, 0, len(selected))
-	for _, direction := range []query.PersonFileDirection{
-		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
-	} {
-		if _, ok := selected[direction]; ok {
-			result = append(result, direction)
-		}
-	}
-	return result, nil
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {

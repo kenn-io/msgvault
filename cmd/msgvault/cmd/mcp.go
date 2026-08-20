@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var mcpForceSQL bool
@@ -80,12 +81,13 @@ Add to Claude Desktop config:
 
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
 	opts := mcpserver.ServeOptions{
-		Engine:           daemonclient.NewEngineAdapter(st),
-		AttachmentsDir:   cfg.AttachmentsDir(),
-		AttachmentReader: st,
-		ManifestSaver:    daemonMCPManifestSaver{client: st},
-		DocumentSearcher: st,
-		DataDir:          cfg.Data.DataDir,
+		Engine:             daemonclient.NewEngineAdapter(st),
+		AttachmentsDir:     cfg.AttachmentsDir(),
+		AttachmentReader:   st,
+		ManifestSaver:      daemonMCPManifestSaver{client: st},
+		DocumentSearcher:   st,
+		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
+		DataDir:            cfg.Data.DataDir,
 	}
 
 	vectorAvailable, err := st.VectorSearchAvailable(ctx)
@@ -114,12 +116,26 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 	return opts, nil
 }
 
+type daemonMCPPersonFileSearcher struct{ client *daemonclient.Client }
+
+func (s daemonMCPPersonFileSearcher) SearchPersonFiles(
+	ctx context.Context,
+	request mcpserver.PersonFileSearchRequest,
+) (generated.PersonFileSearchHTTPResponse, error) {
+	return s.client.SearchPersonFiles(ctx, daemonclient.PersonFileSearchOptions{
+		PersonID: request.PersonID, Directions: request.Directions,
+		After: request.After, Before: request.Before, Filename: request.Filename,
+		MIMEFamilies: request.MIMEFamilies, Limit: request.Limit, Cursor: request.Cursor,
+	})
+}
+
 type daemonMCPVisualSearcher struct{ client *daemonclient.Client }
 
 func (s daemonMCPVisualSearcher) SearchVisualAttachments(ctx context.Context, request mcpserver.VisualSearchRequest) (*visual.SearchResponse, error) {
 	return s.client.SearchVisualAttachmentsFiltered(ctx, daemonclient.VisualSearchOptions{
 		Text: request.Text, Image: request.Image, Limit: request.Limit, Cursor: request.Cursor,
 		SenderPersonID: request.SenderPersonID, SourceID: request.SourceID, MessageID: request.MessageID,
+		PersonID: request.PersonID, ParticipantID: request.ParticipantID, Directions: request.Directions,
 		Filename: request.Filename, MIMEPrefix: request.MIMEPrefix, After: request.After, Before: request.Before,
 	})
 }

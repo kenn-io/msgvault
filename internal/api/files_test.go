@@ -311,6 +311,44 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 		"an unlinked participant stays scoped to its own ID")
 }
 
+func TestPersonFilesSearchUsesOnePopulationForDurableAndParticipantReferences(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("scope-primary@example.test", "Primary", "example.test")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("scope-secondary@example.test", "Secondary", "example.test")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+	person, created, err := st.CreatePersonFromParticipant(primary)
+	requirements.NoError(err)
+	requirements.True(created)
+	_, err = st.UnlinkParticipants(primary, secondary)
+	requirements.NoError(err)
+
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{}, TotalCount: 0, CacheRevision: "cache-person-files",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	search := func(path string) []int64 {
+		response := postExploreJSON(t, srv, path, `{"predicate":{},"directions":["from_person"]}`)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		requirements.NotNil(engine.request.Person)
+		return append([]int64(nil), engine.request.Person.ParticipantIDs...)
+	}
+
+	durableIDs := search(fmt.Sprintf("/api/v1/people/%d/files/search", person.ID))
+	participantIDs := search(fmt.Sprintf("/api/v1/participants/%d/files/search", primary))
+	assertions.Equal([]int64{primary, secondary}, durableIDs,
+		"a durable person keeps every explicit binding after its observed cluster splits")
+	assertions.Equal(durableIDs, participantIDs,
+		"a bound participant translates through the durable root instead of silently narrowing")
+}
+
 func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

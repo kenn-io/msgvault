@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/personscope"
+	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -22,6 +24,9 @@ var (
 	multimodalBuildYes        bool
 	multimodalStatusJSON      bool
 	multimodalSenderPersonID  int64
+	multimodalPersonID        int64
+	multimodalParticipantID   int64
+	multimodalDirections      []string
 	multimodalSearchAfter     string
 	multimodalSearchBefore    string
 	multimodalSearchCursor    string
@@ -53,8 +58,26 @@ var multimodalSearchCmd = &cobra.Command{
 		if multimodalSearchLimit < 1 || multimodalSearchLimit > 100 {
 			return usageErr(cmd, errors.New("--limit must be between 1 and 100"))
 		}
-		if multimodalSenderPersonID < 0 || multimodalSearchSourceID < 0 || multimodalSearchMessageID < 0 {
+		if multimodalSenderPersonID < 0 || multimodalPersonID < 0 || multimodalParticipantID < 0 || multimodalSearchSourceID < 0 || multimodalSearchMessageID < 0 {
 			return usageErr(cmd, errors.New("ID filters must be positive"))
+		}
+		if multimodalSenderPersonID > 0 && (multimodalPersonID > 0 || multimodalParticipantID > 0 || len(multimodalDirections) > 0) {
+			return usageErr(cmd, errors.New("--sender-person cannot be combined with --person, --participant, or --direction"))
+		}
+		if multimodalPersonID > 0 && multimodalParticipantID > 0 {
+			return usageErr(cmd, errors.New("--person and --participant are mutually exclusive"))
+		}
+		if len(multimodalDirections) > 0 && multimodalPersonID == 0 && multimodalParticipantID == 0 {
+			return usageErr(cmd, errors.New("--direction requires --person or --participant"))
+		}
+		directions := make([]personscope.Direction, len(multimodalDirections))
+		for i, direction := range multimodalDirections {
+			directions[i] = personscope.Direction(direction)
+		}
+		if len(directions) > 0 {
+			if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
+				return usageErr(cmd, err)
+			}
 		}
 		var image []byte
 		if multimodalSearchImage != "" {
@@ -104,6 +127,7 @@ var multimodalSearchCmd = &cobra.Command{
 		response, err := client.SearchVisualAttachmentsFiltered(cmd.Context(), daemonclient.VisualSearchOptions{
 			Text: text, Image: image, Limit: multimodalSearchLimit, Cursor: multimodalSearchCursor,
 			SenderPersonID: multimodalSenderPersonID, SourceID: multimodalSearchSourceID,
+			PersonID: multimodalPersonID, ParticipantID: multimodalParticipantID, Directions: directions,
 			MessageID: multimodalSearchMessageID, Filename: multimodalSearchFilename,
 			MIMEPrefix: multimodalSearchMIME, After: after, Before: before,
 		})
@@ -250,6 +274,9 @@ func init() {
 	multimodalSearchCmd.Flags().IntVar(&multimodalSearchLimit, "limit", 20, "Maximum results")
 	multimodalSearchCmd.Flags().BoolVar(&multimodalSearchJSON, "json", false, "Output JSON")
 	multimodalSearchCmd.Flags().Int64Var(&multimodalSenderPersonID, "sender-person", 0, "Only attachments sent by this person ID")
+	multimodalSearchCmd.Flags().Int64Var(&multimodalPersonID, "person", 0, "Only attachments related to this durable person ID")
+	multimodalSearchCmd.Flags().Int64Var(&multimodalParticipantID, "participant", 0, "Only attachments related to this observed participant")
+	multimodalSearchCmd.Flags().StringSliceVar(&multimodalDirections, "direction", nil, "Person relation: from_person, to_person, or group")
 	multimodalSearchCmd.Flags().StringVar(&multimodalSearchAfter, "after", "", "Only messages on or after YYYY-MM-DD")
 	multimodalSearchCmd.Flags().StringVar(&multimodalSearchBefore, "before", "", "Only messages before YYYY-MM-DD")
 	multimodalSearchCmd.Flags().StringVar(&multimodalSearchCursor, "cursor", "", "Continue from an opaque search cursor")

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -127,6 +128,49 @@ func TestSearchCursorSurvivesDeletionAndRejectsQueryMismatch(t *testing.T) {
 	_, err = service.Search(t.Context(), SearchQuery{Text: "different", Limit: 1, Cursor: first.NextCursor})
 	requirements.ErrorIs(err, ErrInvalidCursor)
 	assertions.Equal(queriesBeforeMismatch, provider.queries)
+}
+
+func TestSearchServicePassesResolvedPersonScopeAndHydratesProvenance(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	messageID := testVisualCandidate(t, f, "search-person", strings.Repeat("93", 32))
+	participantID := f.EnsureParticipant("visual-person@example.test", "Visual Person", "example.test")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, messageID)
+	requirements.NoError(err)
+	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, "visual-test/search-person")
+	for {
+		result, reconcileErr := reconciler.FullReconcile(t.Context())
+		requirements.NoError(reconcileErr)
+		if len(result.Work) == 0 {
+			break
+		}
+		for _, work := range result.Work {
+			publishReconciledWork(t, f, work)
+		}
+	}
+	requirements.NoError(f.Store.ConsentVisualGeneration(t.Context(), generation.ID, "synthetic-policy-fingerprint"))
+	_, err = reconciler.Activate(t.Context())
+	requirements.NoError(err)
+	publication := visualPublicationForMessage(t, f, generation.ID, messageID)
+	backend := &searchBackend{hits: []Hit{{Token: VectorToken(publication.CurrentVectorToken), Score: .9, Rank: 1}}}
+	service, err := NewSearchService(f.Store, &searchProvider{}, backend, true)
+	requirements.NoError(err)
+	scope := &personscope.Scope{
+		ParticipantIDs: []int64{participantID},
+		Directions:     []personscope.Direction{personscope.FromPerson},
+	}
+	response, err := service.Search(t.Context(), SearchQuery{Text: "diagram", Limit: 1, Person: scope})
+	requirements.NoError(err)
+	requirements.Len(backend.requests, 1)
+	assertions.Equal(scope, backend.requests[0].Person)
+	requirements.Len(response.Results, 1)
+	assertions.Equal(&personscope.Provenance{
+		ParticipantIDs: []int64{participantID},
+		Roles:          []personscope.Role{personscope.RoleFrom},
+		Directions:     []personscope.Direction{personscope.FromPerson},
+	}, response.Results[0].PersonProvenance)
 }
 
 func TestDecodeQueryImageRejectsNonImage(t *testing.T) {

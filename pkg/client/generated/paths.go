@@ -407,6 +407,11 @@ type ListPersonEmploymentsPath struct {
 	ID int64 `json:"id"`
 }
 
+type SearchPersonFilesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonStructuredProfilePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

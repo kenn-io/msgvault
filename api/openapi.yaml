@@ -269,6 +269,8 @@ components:
           type: integer
         mime_type:
           type: string
+        person_provenance:
+          $ref: "#/components/schemas/Provenance"
         rank:
           format: int64
           type: integer
@@ -2368,6 +2370,9 @@ components:
           type: integer
         containing_title:
           type: string
+        conversation_id:
+          format: int64
+          type: integer
         excerpt:
           type: string
         extraction_id:
@@ -2405,11 +2410,16 @@ components:
           type: string
         model:
           type: string
+        occurred_at:
+          format: date-time
+          type: string
         occurrence_key:
           type: string
         other_live_copies:
           format: int64
           type: integer
+        person_provenance:
+          $ref: "#/components/schemas/Provenance"
         profile_id:
           type: string
         provider:
@@ -2420,6 +2430,8 @@ components:
         source_id:
           format: int64
           type: integer
+        source_message_id:
+          type: string
         source_part_key:
           type: string
         truncated:
@@ -2427,6 +2439,7 @@ components:
       required:
         - attachment_id
         - message_id
+        - conversation_id
         - source_id
         - occurrence_key
         - canonical_blob_hash
@@ -7067,6 +7080,43 @@ components:
         - done
         - total
       type: object
+    Provenance:
+      additionalProperties: true
+      properties:
+        directions:
+          items:
+            enum:
+              - from_person
+              - to_person
+              - group
+            type: string
+          type:
+            - array
+            - "null"
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        roles:
+          items:
+            enum:
+              - from
+              - to
+              - cc
+              - bcc
+              - conversation_member
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - participant_ids
+        - roles
+        - directions
+      type: object
     ProviderUsage:
       additionalProperties: true
       properties:
@@ -9219,6 +9269,12 @@ components:
           type: string
         cursor:
           type: string
+        directions:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         filename:
           type: string
         limit:
@@ -9229,6 +9285,12 @@ components:
           type: integer
         mime_prefix:
           type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
         sender_person_id:
           format: int64
           type: integer
@@ -9247,7 +9309,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.4.0
+  version: 2.5.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -12069,6 +12131,35 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Durable person ID
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Observed participant ID; translated through its durable person when bound
+          in: query
+          name: participant_id
+          schema:
+            format: int64
+            type: integer
+        - description: Person relation; repeat or comma-separate from_person, to_person, or group
+          in: query
+          name: direction
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages on or after an RFC3339 or YYYY-MM-DD date
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Only messages before an RFC3339 or YYYY-MM-DD date
+          in: query
+          name: before
+          schema:
+            type: string
         - description: Maximum results to return (default 20, max 100)
           in: query
           name: limit
@@ -12094,6 +12185,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
           content:
             application/json:
               schema:
@@ -15203,7 +15300,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -16137,6 +16246,73 @@ paths:
       summary: List a person's employment history
       tags:
         - API
+  /api/v1/people/{id}/files/search:
+    post:
+      operationId: searchPersonFiles
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonFileSearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFileSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search one durable person's analytical files
+      tags:
+        - Exploration
   /api/v1/people/{id}/profile:
     get:
       description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
@@ -17589,6 +17765,14 @@ paths:
                   type: string
                 cursor:
                   type: string
+                direction:
+                  items:
+                    enum:
+                      - from_person
+                      - to_person
+                      - group
+                    type: string
+                  type: array
                 filename:
                   type: string
                 image:
@@ -17601,6 +17785,10 @@ paths:
                 message_id:
                   type: string
                 mime_prefix:
+                  type: string
+                participant_id:
+                  type: string
+                person_id:
                   type: string
                 sender_person_id:
                   type: string
@@ -17618,6 +17806,18 @@ paths:
                 $ref: "#/components/schemas/SearchResponse"
           description: OK
         "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
           content:
             application/json:
               schema:

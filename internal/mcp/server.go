@@ -39,6 +39,7 @@ const (
 	ToolSearchVisualAttachments = "search_visual_attachments"
 	ToolSearchInMessage         = "search_in_message"
 	ToolSearchDocuments         = "search_document_attachments"
+	ToolSearchPersonFiles       = "search_person_files"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -53,14 +54,15 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	Engine           query.Engine
-	AttachmentsDir   string
-	AttachmentReader AttachmentReader
-	ManifestSaver    DeletionManifestSaver
-	HybridSearcher   HybridSearcher
-	SimilarSearcher  SimilarSearcher
-	DataDir          string
-	DocumentSearcher DocumentSearcher
+	Engine             query.Engine
+	AttachmentsDir     string
+	AttachmentReader   AttachmentReader
+	ManifestSaver      DeletionManifestSaver
+	HybridSearcher     HybridSearcher
+	SimilarSearcher    SimilarSearcher
+	DataDir            string
+	DocumentSearcher   DocumentSearcher
+	PersonFileSearcher PersonFileSearcher
 
 	// HybridEngine is optional. When nil, semantic_search_messages rejects
 	// vector/hybrid searches with a vector_not_enabled error.
@@ -180,18 +182,19 @@ func newMCPServerWithPolicy(
 	)
 
 	h := &handlers{
-		engine:           opts.Engine,
-		attachmentsDir:   opts.AttachmentsDir,
-		attachmentReader: opts.AttachmentReader,
-		manifestSaver:    opts.ManifestSaver,
-		hybridSearcher:   opts.HybridSearcher,
-		similarSearcher:  opts.SimilarSearcher,
-		dataDir:          opts.DataDir,
-		documentSearcher: opts.DocumentSearcher,
-		hybridEngine:     opts.HybridEngine,
-		vectorCfg:        opts.VectorCfg,
-		backend:          opts.Backend,
-		visualSearcher:   opts.VisualSearcher,
+		engine:             opts.Engine,
+		attachmentsDir:     opts.AttachmentsDir,
+		attachmentReader:   opts.AttachmentReader,
+		manifestSaver:      opts.ManifestSaver,
+		hybridSearcher:     opts.HybridSearcher,
+		similarSearcher:    opts.SimilarSearcher,
+		dataDir:            opts.DataDir,
+		documentSearcher:   opts.DocumentSearcher,
+		personFileSearcher: opts.PersonFileSearcher,
+		hybridEngine:       opts.HybridEngine,
+		vectorCfg:          opts.VectorCfg,
+		backend:            opts.Backend,
+		visualSearcher:     opts.VisualSearcher,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -28,6 +29,9 @@ func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
 	require.Len(t, response.Results, 1)
 	result := response.Results[0]
 	assert.Equal("synthetic.pdf", result.Filename)
+	assert.Equal(f.ConvID, result.ConversationID)
+	assert.Equal("document-publication", result.SourceMessageID)
+	assert.Nil(result.OccurredAt)
 	assert.Equal(hash, result.CanonicalBlobHash)
 	assert.Equal(profile.ID, result.ProfileID)
 	assert.Equal("mistral", result.Provider)
@@ -38,6 +42,129 @@ func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
 	assert.Equal(10, result.HighlightEnd)
 	assert.Zero(result.OtherLiveCopies)
 	assert.Equal(1, result.Rank)
+}
+
+func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "person nebula evidence", "search-person")
+
+	firstParticipant := f.EnsureParticipant("first@example.test", "First", "example.test")
+	secondParticipant := f.EnsureParticipant("second@example.test", "Second", "example.test")
+	var firstAttachmentID, firstMessageID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT id, message_id FROM attachments WHERE content_hash = ?`), hash).
+		Scan(&firstAttachmentID, &firstMessageID))
+	when := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sender_id = ?, sent_at = ? WHERE id = ?`),
+		firstParticipant, when, firstMessageID)
+	requirements.NoError(err)
+
+	secondMessageID := f.CreateMessage("document-search-other-person")
+	secondAttachmentID := addSearchAttachment(t, f, secondMessageID, hash, "other.pdf", "provider:other")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sender_id = ?, sent_at = ? WHERE id = ?`),
+		secondParticipant, when, secondMessageID)
+	requirements.NoError(err)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), secondAttachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	after := when.Add(-time.Hour)
+	before := when.Add(time.Hour)
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", After: &after, Before: &before,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{firstParticipant},
+			Directions:     []personscope.Direction{personscope.FromPerson},
+		},
+	})
+	requirements.NoError(err)
+	requirements.Len(response.Results, 1)
+	assertions.Equal(firstMessageID, response.Results[0].MessageID)
+	assertions.Equal(&personscope.Provenance{
+		ParticipantIDs: []int64{firstParticipant},
+		Roles:          []personscope.Role{personscope.RoleFrom},
+		Directions:     []personscope.Direction{personscope.FromPerson},
+	}, response.Results[0].PersonProvenance)
+
+	var firstConversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT conversation_id FROM messages WHERE id = ?`), firstMessageID).
+		Scan(&firstConversationID))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE conversations SET conversation_type = 'direct_chat' WHERE id = ?`), firstConversationID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sender_id = NULL, is_from_me = FALSE WHERE id = ?`), firstMessageID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
+		firstMessageID, secondParticipant)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?)`),
+		firstConversationID, firstParticipant)
+	requirements.NoError(err)
+
+	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", AttachmentID: firstAttachmentID,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{firstParticipant},
+			Directions:     []personscope.Direction{personscope.ToPerson},
+		},
+	})
+	requirements.NoError(err)
+	requirements.Len(response.Results, 1,
+		"a direct-chat roster member is the inferred recipient when a different sender is known only from the envelope")
+	assertions.Equal([]personscope.Direction{personscope.ToPerson},
+		response.Results[0].PersonProvenance.Directions)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`DELETE FROM message_recipients WHERE message_id = ? AND participant_id = ? AND recipient_type = 'from'`),
+		firstMessageID, secondParticipant)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
+		firstMessageID, firstParticipant)
+	requirements.NoError(err)
+	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", AttachmentID: firstAttachmentID,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{firstParticipant},
+			Directions:     []personscope.Direction{personscope.ToPerson},
+		},
+	})
+	requirements.NoError(err)
+	assertions.Empty(response.Results,
+		"a person known as the envelope sender cannot also be inferred as the direct recipient")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`DELETE FROM message_recipients WHERE message_id = ? AND participant_id = ? AND recipient_type = 'from'`),
+		firstMessageID, firstParticipant)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
+		firstMessageID, secondParticipant)
+	requirements.NoError(err)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = ?`), firstConversationID)
+	requirements.NoError(err)
+	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", AttachmentID: firstAttachmentID,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{firstParticipant},
+			Directions:     []personscope.Direction{personscope.Group},
+		},
+	})
+	requirements.NoError(err)
+	requirements.Len(response.Results, 1)
+	assertions.Equal([]personscope.Role{personscope.RoleConversationMember},
+		response.Results[0].PersonProvenance.Roles)
+	assertions.Equal([]personscope.Direction{personscope.Group},
+		response.Results[0].PersonProvenance.Directions)
 }
 
 func TestSearchDocumentsFailsCleanlyWithoutFTS(t *testing.T) {

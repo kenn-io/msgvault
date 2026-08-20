@@ -207,22 +207,49 @@ func (a AttachmentInfo) Validate() error {
 }
 
 type AttachmentSearchResult struct {
-	AttachmentID    int64     `json:"attachment_id"`
-	BlobHash        string    `json:"blob_hash" validate:"required"`
-	ConversationID  int64     `json:"conversation_id"`
-	Filename        string    `json:"filename" validate:"required"`
-	MessageID       int64     `json:"message_id"`
-	MimeType        string    `json:"mime_type" validate:"required"`
-	Rank            int64     `json:"rank"`
-	Score           float64   `json:"score"`
-	SentAt          time.Time `json:"sent_at" validate:"required"`
-	Size            int64     `json:"size"`
-	SourceID        int64     `json:"source_id"`
-	SourceMessageID string    `json:"source_message_id" validate:"required"`
+	AttachmentID     int64       `json:"attachment_id"`
+	BlobHash         string      `json:"blob_hash" validate:"required"`
+	ConversationID   int64       `json:"conversation_id"`
+	Filename         string      `json:"filename" validate:"required"`
+	MessageID        int64       `json:"message_id"`
+	MimeType         string      `json:"mime_type" validate:"required"`
+	PersonProvenance *Provenance `json:"person_provenance,omitempty"`
+	Rank             int64       `json:"rank"`
+	Score            float64     `json:"score"`
+	SentAt           time.Time   `json:"sent_at" validate:"required"`
+	Size             int64       `json:"size"`
+	SourceID         int64       `json:"source_id"`
+	SourceMessageID  string      `json:"source_message_id" validate:"required"`
 }
 
 func (a AttachmentSearchResult) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.BlobHash, "required"); err != nil {
+		errors = errors.Append("BlobHash", err)
+	}
+	if err := typesValidator.Var(a.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(a.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if a.PersonProvenance != nil {
+		if v, ok := any(a.PersonProvenance).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PersonProvenance", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.SentAt, "required"); err != nil {
+		errors = errors.Append("SentAt", err)
+	}
+	if err := typesValidator.Var(a.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AttributeChoice struct {
@@ -1890,35 +1917,77 @@ func (d DocumentSearchResponse) Validate() error {
 }
 
 type DocumentSearchResult struct {
-	AttachmentID      int64    `json:"attachment_id"`
-	CanonicalBlobHash string   `json:"canonical_blob_hash" validate:"required"`
-	ChunkKey          string   `json:"chunk_key" validate:"required"`
-	ChunkOrdinal      int64    `json:"chunk_ordinal"`
-	ContainingTitle   *string  `json:"containing_title,omitempty"`
-	Excerpt           string   `json:"excerpt" validate:"required"`
-	ExtractionID      string   `json:"extraction_id" validate:"required"`
-	Filename          *string  `json:"filename,omitempty"`
-	FirstUnitIndex    int64    `json:"first_unit_index"`
-	HeadingPath       []string `json:"heading_path,omitempty"`
-	HighlightEnd      int64    `json:"highlight_end"`
-	HighlightStart    int64    `json:"highlight_start"`
-	LastUnitIndex     int64    `json:"last_unit_index"`
-	MatchedSignals    []string `json:"matched_signals,omitempty" validate:"required"`
-	MessageID         int64    `json:"message_id"`
-	MimeType          *string  `json:"mime_type,omitempty"`
-	Model             string   `json:"model" validate:"required"`
-	OccurrenceKey     string   `json:"occurrence_key" validate:"required"`
-	OtherLiveCopies   int64    `json:"other_live_copies"`
-	ProfileID         string   `json:"profile_id" validate:"required"`
-	Provider          string   `json:"provider" validate:"required"`
-	Rank              int64    `json:"rank"`
-	SourceID          int64    `json:"source_id"`
-	SourcePartKey     *string  `json:"source_part_key,omitempty"`
-	Truncated         bool     `json:"truncated"`
+	AttachmentID      int64       `json:"attachment_id"`
+	CanonicalBlobHash string      `json:"canonical_blob_hash" validate:"required"`
+	ChunkKey          string      `json:"chunk_key" validate:"required"`
+	ChunkOrdinal      int64       `json:"chunk_ordinal"`
+	ContainingTitle   *string     `json:"containing_title,omitempty"`
+	ConversationID    int64       `json:"conversation_id"`
+	Excerpt           string      `json:"excerpt" validate:"required"`
+	ExtractionID      string      `json:"extraction_id" validate:"required"`
+	Filename          *string     `json:"filename,omitempty"`
+	FirstUnitIndex    int64       `json:"first_unit_index"`
+	HeadingPath       []string    `json:"heading_path,omitempty"`
+	HighlightEnd      int64       `json:"highlight_end"`
+	HighlightStart    int64       `json:"highlight_start"`
+	LastUnitIndex     int64       `json:"last_unit_index"`
+	MatchedSignals    []string    `json:"matched_signals,omitempty" validate:"required"`
+	MessageID         int64       `json:"message_id"`
+	MimeType          *string     `json:"mime_type,omitempty"`
+	Model             string      `json:"model" validate:"required"`
+	OccurredAt        *time.Time  `json:"occurred_at,omitempty"`
+	OccurrenceKey     string      `json:"occurrence_key" validate:"required"`
+	OtherLiveCopies   int64       `json:"other_live_copies"`
+	PersonProvenance  *Provenance `json:"person_provenance,omitempty"`
+	ProfileID         string      `json:"profile_id" validate:"required"`
+	Provider          string      `json:"provider" validate:"required"`
+	Rank              int64       `json:"rank"`
+	SourceID          int64       `json:"source_id"`
+	SourceMessageID   *string     `json:"source_message_id,omitempty"`
+	SourcePartKey     *string     `json:"source_part_key,omitempty"`
+	Truncated         bool        `json:"truncated"`
 }
 
 func (d DocumentSearchResult) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.CanonicalBlobHash, "required"); err != nil {
+		errors = errors.Append("CanonicalBlobHash", err)
+	}
+	if err := typesValidator.Var(d.ChunkKey, "required"); err != nil {
+		errors = errors.Append("ChunkKey", err)
+	}
+	if err := typesValidator.Var(d.Excerpt, "required"); err != nil {
+		errors = errors.Append("Excerpt", err)
+	}
+	if err := typesValidator.Var(d.ExtractionID, "required"); err != nil {
+		errors = errors.Append("ExtractionID", err)
+	}
+	if err := typesValidator.Var(d.MatchedSignals, "required"); err != nil {
+		errors = errors.Append("MatchedSignals", err)
+	}
+	if err := typesValidator.Var(d.Model, "required"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if err := typesValidator.Var(d.OccurrenceKey, "required"); err != nil {
+		errors = errors.Append("OccurrenceKey", err)
+	}
+	if d.PersonProvenance != nil {
+		if v, ok := any(d.PersonProvenance).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PersonProvenance", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.ProfileID, "required"); err != nil {
+		errors = errors.Append("ProfileID", err)
+	}
+	if err := typesValidator.Var(d.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type DomainContextSummaryHTTPResponse struct {
@@ -6205,6 +6274,37 @@ type Progress struct {
 	Total int64 `json:"total"`
 }
 
+type Provenance struct {
+	Directions     []ProvenanceDirections `json:"directions,omitempty" validate:"required"`
+	ParticipantIds []int64                `json:"participant_ids,omitempty" validate:"required"`
+	Roles          []ProvenanceRoles      `json:"roles,omitempty" validate:"required"`
+}
+
+func (p Provenance) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Directions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Directions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
+	}
+	for i, item := range p.Roles {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Roles[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ProviderUsage struct {
 	BilledUnits    float64 `json:"billed_units"`
 	InputBytes     int64   `json:"input_bytes"`
@@ -8125,16 +8225,19 @@ func (v VisualRetryRequest) Validate() error {
 }
 
 type VisualTextSearchRequest struct {
-	After          *string `json:"after,omitempty"`
-	Before         *string `json:"before,omitempty"`
-	Cursor         *string `json:"cursor,omitempty"`
-	Filename       *string `json:"filename,omitempty"`
-	Limit          *int64  `json:"limit,omitempty"`
-	MessageID      *int64  `json:"message_id,omitempty"`
-	MimePrefix     *string `json:"mime_prefix,omitempty"`
-	SenderPersonID *int64  `json:"sender_person_id,omitempty"`
-	SourceID       *int64  `json:"source_id,omitempty"`
-	Text           string  `json:"text" validate:"required"`
+	After          *string  `json:"after,omitempty"`
+	Before         *string  `json:"before,omitempty"`
+	Cursor         *string  `json:"cursor,omitempty"`
+	Directions     []string `json:"directions,omitempty"`
+	Filename       *string  `json:"filename,omitempty"`
+	Limit          *int64   `json:"limit,omitempty"`
+	MessageID      *int64   `json:"message_id,omitempty"`
+	MimePrefix     *string  `json:"mime_prefix,omitempty"`
+	ParticipantID  *int64   `json:"participant_id,omitempty"`
+	PersonID       *int64   `json:"person_id,omitempty"`
+	SenderPersonID *int64   `json:"sender_person_id,omitempty"`
+	SourceID       *int64   `json:"source_id,omitempty"`
+	Text           string   `json:"text" validate:"required"`
 }
 
 func (v VisualTextSearchRequest) Validate() error {

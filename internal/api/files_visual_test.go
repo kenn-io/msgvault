@@ -46,6 +46,9 @@ func TestApplyVisualSearchScopeMapsHardFilters(t *testing.T) {
 			SourceIDs: []int64{7}, After: &after, Before: &before,
 		}},
 	}
+	request.Person = &query.PersonFileScope{
+		ParticipantIDs: []int64{4}, Directions: []query.PersonFileDirection{query.PersonFileFromPerson},
+	}
 	visualQuery := visual.SearchQuery{Text: "red square", Limit: 100}
 	applyVisualSearchScope(&visualQuery, request)
 	assert.Equal(int64(7), visualQuery.SourceID, "a single-account scope rides into the vector search")
@@ -53,6 +56,7 @@ func TestApplyVisualSearchScopeMapsHardFilters(t *testing.T) {
 	assert.Equal(&before, visualQuery.Before)
 	assert.Equal("image/", visualQuery.MIMEPrefix)
 	assert.Equal("diagram", visualQuery.Filename)
+	assert.Equal(request.Person, visualQuery.Person)
 
 	multi := query.FileSearchRequest{Explore: query.ExploreRequest{Context: query.Context{SourceIDs: []int64{1, 2}}}}
 	visualQuery = visual.SearchQuery{Text: "x", Limit: 100}

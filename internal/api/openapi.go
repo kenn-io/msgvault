@@ -213,7 +213,9 @@ import (
 // 32 MiB of logical inline media, and documents the resulting 413 response.
 // 2.4.0 adds exact source selection to CLI sync and deletion transports. CLI
 // clients check this version before asking a daemon to perform a scoped sync.
-const APISchemaVersion = "2.4.0"
+// 2.5.0 adds durable-person attachment retrieval across metadata, document,
+// and visual lanes while keeping participant references compatible.
+const APISchemaVersion = "2.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

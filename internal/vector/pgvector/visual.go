@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
@@ -64,29 +66,27 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 	if len(request.Vector) != visualDimension || !finiteVisualVector(request.Vector) {
 		return nil, errors.New("invalid visual query vector")
 	}
+	dimension := strconv.Itoa(visualDimension)
 	query := `
 		SELECT vv.vector_token,
-		       1 - (vv.embedding::vector(1024) <=> $2::vector(1024)) AS score
+		       1 - (vv.embedding::vector(` + dimension + `) <=> $2::vector(` + dimension + `)) AS score
 		FROM visual_vectors vv
 		JOIN visual_publications vp ON vp.current_vector_token = vv.vector_token
 		JOIN visual_generations vg ON vg.id = vp.generation_id
 		JOIN messages m ON m.id = vp.message_id
+		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.id = vp.representative_attachment_id
-		WHERE vp.generation_id = $1 AND vg.state = 'active'
+		WHERE vp.generation_id = $1 AND vg.state = 'active' AND vv.dimension = ` + dimension + `
 		  AND vp.state = 'current' AND ` + store.LiveMessagesWhere("m", true) + `
-		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'
-		  AND vv.dimension = 1024`
+		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'`
 	args := []any{int64(request.GenerationID), vectorLiteral(request.Vector), request.Limit}
-	if request.SenderPersonID > 0 {
-		// Legacy imports leave sender_id NULL and record the sender as a
-		// 'from' recipient row; fall back the same way the message list
-		// queries do so those results are not silently excluded.
-		query += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM person_participants pp WHERE pp.person_id = $%d
-			AND pp.participant_id = COALESCE(m.sender_id, (
-				SELECT mr.participant_id FROM message_recipients mr
-				WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-				ORDER BY mr.id LIMIT 1)))`, len(args)+1)
-		args = append(args, request.SenderPersonID)
+	if request.Person != nil {
+		predicate, personArgs := personscope.MessagePredicate(*request.Person, "m", "c")
+		for _, arg := range personArgs {
+			predicate = strings.Replace(predicate, "?", fmt.Sprintf("$%d", len(args)+1), 1)
+			args = append(args, arg)
+		}
+		query += ` AND (` + predicate + `)`
 	}
 	if request.SourceID > 0 {
 		query += fmt.Sprintf(` AND m.source_id = $%d`, len(args)+1)
@@ -115,13 +115,13 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 	if request.AfterScore != nil {
 		scoreArg := len(args) + 1
 		tokenArg := len(args) + 2
-		query += fmt.Sprintf(` AND ((1 - (vv.embedding::vector(1024) <=> $2::vector(1024))) < $%d
-			OR ((1 - (vv.embedding::vector(1024) <=> $2::vector(1024))) = $%d AND vv.vector_token > $%d))`,
-			scoreArg, scoreArg, tokenArg)
+		query += fmt.Sprintf(` AND ((1 - (vv.embedding::vector(%s) <=> $2::vector(%s))) < $%d
+			OR ((1 - (vv.embedding::vector(%s) <=> $2::vector(%s))) = $%d AND vv.vector_token > $%d))`,
+			dimension, dimension, scoreArg, dimension, dimension, scoreArg, tokenArg)
 		args = append(args, *request.AfterScore, string(request.AfterToken))
 	}
 	query += `
-		ORDER BY vv.embedding::vector(1024) <=> $2::vector(1024), vv.vector_token
+		ORDER BY vv.embedding::vector(` + dimension + `) <=> $2::vector(` + dimension + `), vv.vector_token
 		LIMIT $3`
 	rows, err := b.backend.db.QueryContext(ctx, query, args...)
 	if err != nil {

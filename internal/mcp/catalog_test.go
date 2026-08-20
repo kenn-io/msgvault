@@ -270,6 +270,7 @@ func TestCatalogSchemas(t *testing.T) {
 					"search_message_bodies",
 					"search_messages",
 					"search_metadata",
+					ToolSearchPersonFiles,
 					"semantic_search_messages",
 				}
 				if shape.similar {
@@ -294,6 +295,10 @@ func TestCatalogSchemas(t *testing.T) {
 				sort.Strings(searchMessagesProperties)
 				checks.Equal(searchMessagesProperties, toolPropertyNames(t, byName[ToolSearchMessages]))
 				checks.Equal(semanticProperties, toolPropertyNames(t, byName[ToolSemanticSearchMessages]))
+				checks.Equal(
+					[]string{"after", "before", "cursor", "directions", "filename", "limit", "mime_families", "person_id"},
+					toolPropertyNames(t, byName[ToolSearchPersonFiles]),
+				)
 
 				searchInMessageProperties := []string{"id", "limit", "offset", "query"}
 				if shape.vectorInMessage {
@@ -309,7 +314,7 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 				if shape.document {
 					checks.Equal(
-						[]string{"attachment_id", "cursor", "limit", "message_id", "message_types", "query", "source_ids"},
+						[]string{"after", "attachment_id", "before", "cursor", "directions", "limit", "message_id", "message_types", "participant_id", "person_id", "query", "source_ids"},
 						toolPropertyNames(t, byName[ToolSearchDocuments]),
 					)
 				}
