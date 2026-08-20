@@ -226,17 +226,34 @@ func TestLoadTopics_CategoryColumn(t *testing.T) {
 // TestCutoffsForDepth pins the anti-mislabelling rule: a run that only ever
 // looks 20 deep has no recall@100, so the depth it reports must be the depth it
 // used. Above the standard depths nothing is clamped.
+// It also pins Depth, which is not a clamp but the depth itself: MAP and MRR
+// take no cutoff, so the retrieval depth is the only thing bounding them and
+// the only thing a report can honestly label them with.
 func TestCutoffsForDepth(t *testing.T) {
 	assert := assert.New(t)
-	assert.Equal(StandardCutoffs, CutoffsForDepth(100))
-	assert.Equal(StandardCutoffs, CutoffsForDepth(1000))
-	assert.Equal(Cutoffs{P: 10, NDCG: 10, Recall: 20}, CutoffsForDepth(20))
-	assert.Equal(Cutoffs{P: 5, NDCG: 5, Recall: 5}, CutoffsForDepth(5))
-	assert.Equal(Cutoffs{P: 1, NDCG: 1, Recall: 1}, CutoffsForDepth(1))
+	assert.Equal(Cutoffs{P: 10, NDCG: 10, Recall: 100, Depth: 100}, CutoffsForDepth(100))
+	assert.Equal(Cutoffs{P: 10, NDCG: 10, Recall: 100, Depth: 1000}, CutoffsForDepth(1000))
+	assert.Equal(Cutoffs{P: 10, NDCG: 10, Recall: 20, Depth: 20}, CutoffsForDepth(20))
+	assert.Equal(Cutoffs{P: 5, NDCG: 5, Recall: 5, Depth: 5}, CutoffsForDepth(5))
+	assert.Equal(Cutoffs{P: 1, NDCG: 1, Recall: 1, Depth: 1}, CutoffsForDepth(1))
 	// A non-positive depth is not a depth; the CLI rejects it before we get
 	// here, so fall back to the standard set rather than inventing a zero one.
 	assert.Equal(StandardCutoffs, CutoffsForDepth(0))
 	assert.Equal(StandardCutoffs, CutoffsForDepth(-1))
+	assert.Zero(StandardCutoffs.Depth, "the standard set names metrics, not a run")
+}
+
+// TestCutoffs_IsStandard pins what the "depths were clamped" notice keys off:
+// the named cutoffs alone. A run at -n 100 and one at -n 500 both report the
+// standard P@10/nDCG@10/R@100 and neither is clamped, even though their MAP@n
+// and MRR@n differ — so Depth must not enter the comparison.
+func TestCutoffs_IsStandard(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(StandardCutoffs.IsStandard())
+	assert.True(CutoffsForDepth(100).IsStandard())
+	assert.True(CutoffsForDepth(500).IsStandard(), "a deeper run is not a clamped one")
+	assert.False(CutoffsForDepth(20).IsStandard())
+	assert.False(CutoffsForDepth(1).IsStandard())
 }
 
 // TestEvaluate_HonoursCutoffs shows why the clamp matters: with 20 results and

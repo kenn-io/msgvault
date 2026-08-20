@@ -1,7 +1,9 @@
 // Package eval provides retrieval-quality evaluation for msgvault: standard
 // information-retrieval metrics (precision@k, recall@k, nDCG@k, MAP, MRR)
 // computed over a ranked result list scored against relevance judgments
-// (qrels).
+// (qrels). Every one of them is bounded by the depth the ranking was
+// retrieved to, MAP and MRR included even though they take no k of their own,
+// so Cutoffs records that depth for a report to label them with.
 //
 // The metric functions are pure — no I/O, no engine or database dependencies —
 // so they are unit-testable in isolation and reused by the `msgvault eval`
@@ -24,15 +26,28 @@ type Cutoffs struct {
 	P      int // precision depth
 	NDCG   int // nDCG depth
 	Recall int // recall depth
+	// Depth is the retrieval depth itself: the rank past which the run never
+	// looked, so the length of the longest ranking Evaluate can be handed.
+	//
+	// It is here because MAP and MRR have no cutoff of their own — they run
+	// over the whole list they are given — which makes the list's length their
+	// cutoff whether or not anyone names it. Reporting them unqualified claims
+	// they saw every relevant document, when a run at -n 20 cannot see one at
+	// rank 21 and its "MRR" is really MRR@20. Zero when the depth is not known
+	// (the standard set), in which case a caller has nothing to qualify them
+	// with and should print them bare.
+	Depth int
 }
 
-// StandardCutoffs is the conventional depth set: P@10, nDCG@10, R@100.
+// StandardCutoffs is the conventional depth set: P@10, nDCG@10, R@100. It
+// carries no Depth: it names the metrics wanted, not a run that produced them.
 var StandardCutoffs = Cutoffs{P: 10, NDCG: 10, Recall: 100}
 
 // CutoffsForDepth clamps StandardCutoffs to the number of results a run
 // actually retrieves per query, so the reported metric is always one the run
-// could in principle have maximised. A non-positive limit is meaningless as a
-// depth and falls back to the standard set.
+// could in principle have maximised, and records that depth for the metrics
+// that are bounded by it without being named after it. A non-positive limit is
+// meaningless as a depth and falls back to the standard set.
 func CutoffsForDepth(limit int) Cutoffs {
 	if limit <= 0 {
 		return StandardCutoffs
@@ -41,19 +56,37 @@ func CutoffsForDepth(limit int) Cutoffs {
 		P:      min(StandardCutoffs.P, limit),
 		NDCG:   min(StandardCutoffs.NDCG, limit),
 		Recall: min(StandardCutoffs.Recall, limit),
+		Depth:  limit,
 	}
 }
 
+// IsStandard reports whether the named cutoffs are the conventional ones, so a
+// caller can tell a clamped run from a full-depth one. Depth is deliberately
+// ignored: runs at -n 100 and -n 500 both report P@10/nDCG@10/R@100, and only
+// the clamp is worth warning about.
+func (c Cutoffs) IsStandard() bool {
+	return c.P == StandardCutoffs.P &&
+		c.NDCG == StandardCutoffs.NDCG &&
+		c.Recall == StandardCutoffs.Recall
+}
+
 // Scores holds the standard metric set for a single query's ranking. The
-// depths P, NDCG and Recall were measured at are not stored here — they are a
-// property of the run, carried in Cutoffs, and every Scores folded into one
-// Aggregate must share them.
+// depths every field was measured at are not stored here — they are a property
+// of the run, carried in Cutoffs, and every Scores folded into one Aggregate
+// must share them.
 type Scores struct {
 	P      float64 // precision@Cutoffs.P
 	NDCG   float64 // normalized DCG@Cutoffs.NDCG (binary gains)
 	Recall float64 // recall@Cutoffs.Recall
-	MAP    float64 // average precision (the "AP" that MAP averages)
-	MRR    float64 // reciprocal rank of the first relevant hit
+	// MAP is average precision (the "AP" that MAP averages) and MRR the
+	// reciprocal rank of the first relevant hit. Neither takes a cutoff, but
+	// both are bounded by one all the same: they are computed over the ranking
+	// as handed in, and a run that retrieves Cutoffs.Depth results cannot see a
+	// relevant document below that rank. They are therefore MAP@Depth and
+	// MRR@Depth, and a report that labels them otherwise invites comparison
+	// against a run that looked deeper.
+	MAP float64
+	MRR float64
 }
 
 // Evaluate computes the standard metric set for one query. ranked is the
@@ -123,6 +156,10 @@ func NDCGAt(ranked []string, rel map[string]struct{}, k int) float64 {
 // AveragePrecision returns the average of the precision values computed at
 // each rank where a relevant document is retrieved, divided by the total
 // number of relevant documents (the standard AP that MAP averages).
+//
+// It has no cutoff argument because it scores the whole of ranked. That makes
+// the caller's retrieval depth its effective cutoff — see Cutoffs.Depth for
+// why the reported label has to say so.
 func AveragePrecision(ranked []string, rel map[string]struct{}) float64 {
 	if len(rel) == 0 {
 		return 0
@@ -138,7 +175,9 @@ func AveragePrecision(ranked []string, rel map[string]struct{}) float64 {
 	return sum / float64(len(rel))
 }
 
-// ReciprocalRank returns 1/rank of the first relevant hit, or 0 if none.
+// ReciprocalRank returns 1/rank of the first relevant hit, or 0 if none. Like
+// AveragePrecision it scores the whole of ranked, so the caller's retrieval
+// depth is its effective cutoff.
 func ReciprocalRank(ranked []string, rel map[string]struct{}) float64 {
 	for i, d := range ranked {
 		if isRel(rel, d) {

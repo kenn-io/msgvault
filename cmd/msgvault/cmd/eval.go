@@ -42,7 +42,9 @@ Runs each topic through one or more search modes (fts, vector, hybrid) against
 the local archive and scores the ranking against relevance judgments using
 standard IR metrics: precision@10, nDCG@10, recall@100, MAP and MRR. This makes
 the effect of an indexing, embedding, or fusion change measurable rather than
-guessed.
+guessed. MAP and MRR are reported as MAP@n / MRR@n: they take no cutoff of
+their own, but the ranking they score stops at -n, so a relevant message below
+that rank is as invisible to them as it is to recall.
 
 Inputs (TREC-style):
   --qrels   judgments file, one per line: "<qid> <iter> <docid> <rel>"
@@ -68,7 +70,9 @@ distinct threads. Reported latency therefore includes that over-fetch.
 Metric depths follow -n: the standard P@10 / nDCG@10 / R@100 are reported when
 the run retrieves at least that deep, and are clamped to -n below it (a run
 that only ever looks 20 deep has no recall@100, and labelling one would invite
-a false comparison). The column headers always name the depth actually used.
+a false comparison). MAP and MRR are always at -n, since the truncated ranking
+is the whole of what they see. The column headers always name the depth
+actually used.
 
 Each mode runs the same code production search runs. fts is the
 relevance-ranked (BM25, subject-weighted) store path behind
@@ -991,15 +995,29 @@ type evalReport struct {
 
 // metricHeaders names the metric columns at the depths this run actually used,
 // so a clamped cutoff can never be read as the standard one.
-func (r evalReport) metricHeaders() (p, ndcg, recall string) {
+//
+// MAP and MRR are qualified too. They take no cutoff, but the ranking handed to
+// them is truncated to -n, so a relevant document below that rank is invisible
+// to them exactly as it is to R@n: what the run measured is MAP@n and MRR@n.
+// Printing them bare would offer them for comparison against a run that
+// retrieved deeper, which is the same mislabeling the clamped headers exist to
+// prevent. If the depth is somehow unknown there is nothing to qualify them
+// with, so they stay bare rather than claiming a depth of zero.
+func (r evalReport) metricHeaders() (p, ndcg, recall, mapAt, mrr string) {
+	mapAt, mrr = "MAP", "MRR"
+	if r.cutoffs.Depth > 0 {
+		mapAt = fmt.Sprintf("MAP@%d", r.cutoffs.Depth)
+		mrr = fmt.Sprintf("MRR@%d", r.cutoffs.Depth)
+	}
 	return fmt.Sprintf("P@%d", r.cutoffs.P),
 		fmt.Sprintf("nDCG@%d", r.cutoffs.NDCG),
-		fmt.Sprintf("R@%d", r.cutoffs.Recall)
+		fmt.Sprintf("R@%d", r.cutoffs.Recall),
+		mapAt, mrr
 }
 
 func (r evalReport) table() {
 	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", r.topics, evalDocKey, evalLimit)
-	if r.cutoffs != eval.StandardCutoffs {
+	if !r.cutoffs.IsStandard() {
 		fmt.Printf("Metric depths are clamped to -n: the standard P@%d/nDCG@%d/R@%d need -n %d or more.\n",
 			eval.StandardCutoffs.P, eval.StandardCutoffs.NDCG, eval.StandardCutoffs.Recall,
 			eval.StandardCutoffs.Recall)
@@ -1027,13 +1045,13 @@ func (r evalReport) table() {
 	}
 	_ = pw.Flush()
 
-	pCol, ndcgCol, rCol := r.metricHeaders()
+	pCol, ndcgCol, rCol, mapCol, mrrCol := r.metricHeaders()
 	fmt.Printf("\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	// "topics" is per mode, not per run: a mode that cannot answer some topic
 	// (a filter-only query has nothing to embed) scores fewer of them, and the
 	// means are only comparable if the denominators are visible.
-	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, "MAP", "MRR", "med ms", "p95 ms"}
+	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, mapCol, mrrCol, "med ms", "p95 ms"}
 	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
 	rule := make([]string, len(header))
 	for i, h := range header {
@@ -1054,7 +1072,8 @@ func (r evalReport) table() {
 	if len(r.catCounts) > 0 {
 		fmt.Printf("\nBy query category\n")
 		cw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintf(cw, "MODE\tCATEGORY\ttopics\t%s\t%s\t%s\tMAP\tMRR\n", pCol, ndcgCol, rCol)
+		_, _ = fmt.Fprintf(cw, "MODE\tCATEGORY\ttopics\t%s\t%s\t%s\t%s\t%s\n",
+			pCol, ndcgCol, rCol, mapCol, mrrCol)
 		for _, m := range r.modes {
 			for _, c := range sortedCategories(r.catCounts) {
 				agg := r.catAggs[m][c]
@@ -1078,11 +1097,11 @@ func (r evalReport) table() {
 }
 
 func (r evalReport) json() error {
-	pCol, ndcgCol, rCol := r.metricHeaders()
+	pCol, ndcgCol, rCol, mapCol, mrrCol := r.metricHeaders()
 	metricsOf := func(a *eval.Aggregate) map[string]any {
 		s := a.Mean()
 		return map[string]any{
-			pCol: s.P, ndcgCol: s.NDCG, rCol: s.Recall, "MAP": s.MAP, "MRR": s.MRR,
+			pCol: s.P, ndcgCol: s.NDCG, rCol: s.Recall, mapCol: s.MAP, mrrCol: s.MRR,
 		}
 	}
 	results := make(map[string]any, len(r.modes))
@@ -1105,8 +1124,12 @@ func (r evalReport) json() error {
 		"topics_evaluated": r.topics,
 		"doc_key":          evalDocKey,
 		"limit":            evalLimit,
+		// One entry per metric, including the two whose depth is the retrieval
+		// depth rather than a cutoff of their own, so a consumer can read every
+		// metric's depth the same way instead of knowing which are special.
 		"cutoffs": map[string]int{
 			"precision": r.cutoffs.P, "ndcg": r.cutoffs.NDCG, "recall": r.cutoffs.Recall,
+			"map": r.cutoffs.Depth, "mrr": r.cutoffs.Depth,
 		},
 		"modes":       r.modes,
 		"run_config":  r.prov,

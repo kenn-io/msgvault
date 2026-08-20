@@ -87,7 +87,7 @@ func TestRunEval_ScoresATopicJudgedEntirelyNonRelevant(t *testing.T) {
 	var report struct {
 		TopicsEvaluated int `json:"topics_evaluated"`
 		Results         map[string]struct {
-			MRR    float64 `json:"MRR"`
+			MRR    float64 `json:"MRR@10"`
 			P      float64 `json:"P@10"`
 			Topics int     `json:"topics"`
 		} `json:"results"`

@@ -239,7 +239,7 @@ func TestRunEval_EndToEnd_RanksByRelevanceAndSkipsAMalformedTopic(t *testing.T) 
 	var report struct {
 		TopicsEvaluated int `json:"topics_evaluated"`
 		Results         map[string]struct {
-			MRR    float64 `json:"MRR"`
+			MRR    float64 `json:"MRR@10"`
 			Topics int     `json:"topics"`
 		} `json:"results"`
 		Diagnostics struct {
