@@ -1548,6 +1548,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"backup unknown subcommand rejected", []string{"backup", "restore"}, false},
 		{"logs still allowed", []string{"logs"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
+		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},

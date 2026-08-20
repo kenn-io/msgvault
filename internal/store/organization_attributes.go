@@ -136,7 +136,7 @@ func (s *Store) SetOrganizationAttributeValueContext(
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
 
-	return retryContendedWrite(s, "set organization attribute value",
+	return retryContendedWrite(ctx, s, "set organization attribute value",
 		func() (*OrganizationAttributeWrite, error) {
 			return s.setOrganizationAttributeValueOnce(ctx, input)
 		})
@@ -369,7 +369,7 @@ func (s *Store) SupersedeOrganizationAttributeValueContext(
 		at = input.At.UTC()
 	}
 
-	return retryContendedWrite(s, "supersede organization attribute value",
+	return retryContendedWrite(ctx, s, "supersede organization attribute value",
 		func() (*OrganizationAttributeWrite, error) {
 			return s.supersedeOrganizationAttributeValueOnce(ctx, at, input)
 		})

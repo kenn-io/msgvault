@@ -140,6 +140,9 @@ func printSlackSummary(cmd *cobra.Command, teamID string, sum *slack.ImportSumma
 	if sum.AttachmentsPending > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media pending (see backfill-slack-media)", sum.AttachmentsPending)
 	}
+	if sum.AttachmentsSkipped > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d media skipped by policy", sum.AttachmentsSkipped)
+	}
 	if sum.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d errors", sum.Errors)
 	}
@@ -197,12 +200,13 @@ func slackSyncExit(ctxErr error, syncErrors []string, cacheErr error) error {
 // slackImportOptions builds the config-derived import options shared by the
 // CLI and scheduler paths (flag overlays are applied by the CLI caller).
 func slackImportOptions(teamID, userID string) slack.ImportOptions {
+	policy := cfg.Slack.MediaPolicy(teamID)
 	return slack.ImportOptions{
 		TeamID:          teamID,
 		UserID:          userID,
 		AttachmentsDir:  cfg.AttachmentsDir(),
-		NoMedia:         !cfg.Slack.MediaEnabled(),
-		MaxMediaBytes:   cfg.Slack.MaxMediaBytes(),
+		MaxMediaBytes:   policy.MaxBytes,
+		MediaPolicy:     policy,
 		IncludeChannels: cfg.Slack.Channels,
 		ExcludeChannels: cfg.Slack.ExcludeChannels,
 	}

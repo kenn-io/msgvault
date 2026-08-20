@@ -21,7 +21,7 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	alice := st.mustParticipant(t, "alice@example.com", "alice", "example.com")
 	bob := st.mustParticipant(t, "bob@example.com", "bob", "example.com")
 
-	createdResponse := personRequest(t, srv, http.MethodPost, personsPath,
+	createdResponse := personRequest(t, srv, http.MethodPost, peoplePath,
 		fmt.Appendf(nil, `{"participant_id":%d}`, alice), "")
 	require.Equal(http.StatusCreated, createdResponse.Code)
 	var created store.Person
@@ -31,27 +31,27 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	etag := createdResponse.Header().Get("ETag")
 	assert.NotEmpty(etag)
 
-	repromotedResponse := personRequest(t, srv, http.MethodPost, personsPath,
+	repromotedResponse := personRequest(t, srv, http.MethodPost, peoplePath,
 		fmt.Appendf(nil, `{"participant_id":%d}`, alice), "")
 	require.Equal(http.StatusOK, repromotedResponse.Code)
 	var repromoted store.Person
 	require.NoError(json.Unmarshal(repromotedResponse.Body.Bytes(), &repromoted))
 	assert.Equal(created.ID, repromoted.ID)
 
-	listResponse := personRequest(t, srv, http.MethodGet, personsPath, nil, "")
+	listResponse := personRequest(t, srv, http.MethodGet, peoplePath, nil, "")
 	require.Equal(http.StatusOK, listResponse.Code)
-	var listed PersonsResponse
+	var listed PeopleResponse
 	require.NoError(json.Unmarshal(listResponse.Body.Bytes(), &listed))
-	require.Len(listed.Persons, 1)
-	assert.Equal(created.ID, listed.Persons[0].ID)
+	require.Len(listed.People, 1)
+	assert.Equal(created.ID, listed.People[0].ID)
 
 	getResponse := personRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("%s/%d", personsPath, created.ID), nil, "")
+		fmt.Sprintf("%s/%d", peoplePath, created.ID), nil, "")
 	require.Equal(http.StatusOK, getResponse.Code)
 	assert.Equal(etag, getResponse.Header().Get("ETag"))
 
 	updatedResponse := personRequest(t, srv, http.MethodPatch,
-		fmt.Sprintf("%s/%d", personsPath, created.ID),
+		fmt.Sprintf("%s/%d", peoplePath, created.ID),
 		[]byte(`{"display_name":"alice"}`), etag)
 	require.Equal(http.StatusOK, updatedResponse.Code)
 	var updated store.Person
@@ -60,7 +60,7 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	assert.Equal("alice", *updated.DisplayName)
 
 	clearedResponse := personRequest(t, srv, http.MethodPatch,
-		fmt.Sprintf("%s/%d", personsPath, created.ID),
+		fmt.Sprintf("%s/%d", peoplePath, created.ID),
 		[]byte(`{"display_name":null}`), updatedResponse.Header().Get("ETag"))
 	require.Equal(http.StatusOK, clearedResponse.Code)
 	var cleared store.Person
@@ -68,7 +68,7 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	assert.Nil(cleared.DisplayName)
 
 	staleResponse := personRequest(t, srv, http.MethodPatch,
-		fmt.Sprintf("%s/%d", personsPath, created.ID),
+		fmt.Sprintf("%s/%d", peoplePath, created.ID),
 		[]byte(`{"display_name":"alice stale"}`), etag)
 	assert.Equal(http.StatusConflict, staleResponse.Code)
 
@@ -86,7 +86,7 @@ func TestPersonProfileHTTPDelete(t *testing.T) {
 	alice := st.mustParticipant(t, "alice@example.com", "alice", "example.com")
 	person, _, err := st.CreatePersonFromParticipant(alice)
 	require.NoError(err)
-	path := fmt.Sprintf("%s/%d", personsPath, person.ID)
+	path := fmt.Sprintf("%s/%d", peoplePath, person.ID)
 	etag := fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision)
 
 	missingIfMatch := personRequest(t, srv, http.MethodDelete, path, nil, "")

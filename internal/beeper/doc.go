@@ -12,6 +12,6 @@
 // Beeper message IDs are unique only per installation. Anchor probes
 // (anchors.go) fingerprint the installation and are verified before any
 // stored cursor is trusted: a reinstall or re-index aborts the run instead of
-// silently duplicating the archive. Failed or over-cap media downloads leave
-// pending marker rows that BackfillMedia retries later.
+// silently duplicating the archive. Media outcomes are stored as typed marker
+// rows, and BackfillMedia retries only work eligible under current policy.
 package beeper

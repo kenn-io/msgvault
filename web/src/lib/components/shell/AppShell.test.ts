@@ -291,7 +291,7 @@ describe('AppShell', () => {
     }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path === '/api/v1/people/42') return Response.json({
+      if (path === '/api/v1/participants/42') return Response.json({
         id: 42, display_label: 'Legacy Person', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-legacy'
@@ -462,7 +462,7 @@ describe('AppShell', () => {
     }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path === '/api/v1/people/1') return Response.json({
+      if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
@@ -497,7 +497,7 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/people/1') return Response.json({
+      if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
@@ -542,7 +542,7 @@ describe('AppShell', () => {
     };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path === '/api/v1/people/1') return Response.json({
+      if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 1, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
@@ -550,7 +550,7 @@ describe('AppShell', () => {
       if (path === '/api/v1/relationships/1/timeline') return Response.json({
         canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
       });
-      if (path === '/api/v1/people/1/files/search') return Response.json({
+      if (path === '/api/v1/participants/1/files/search') return Response.json({
         files: [fileRow], total_count: 1, cache_revision: 'cache-rel', search_provenance: {}
       });
       if (path === '/api/v1/files/9') return Response.json({

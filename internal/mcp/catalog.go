@@ -264,6 +264,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 	semantic.Schema = ""
 	return &jsonschema.Schema{
 		Schema: schema202012,
+		Type:   "object",
 		OneOf:  []*jsonschema.Schema{metadata, semantic},
 	}
 }
@@ -541,7 +542,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolAggregate,
 		"Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
-			"Returns a JSON array of objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
+			"Returns an object with a data array containing objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
 		closedObject(map[string]*jsonschema.Schema{
 			"group_by": stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", "sender", "recipient", "domain", "label", "time"),
 			"account":  accountProperty(),
@@ -557,7 +558,8 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
-		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Useful for finding all communication with a company regardless of direction.",
+		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. "+
+			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
 		closedObject(map[string]*jsonschema.Schema{
 			"domains": stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
 			"limit":   nonNegativeIntegerSchema("Maximum results to return (default 100)", 100),
@@ -642,8 +644,12 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 type searchMetadataResponse paginatedResponse[query.MessageSummary]
 type searchInMessageResponse paginatedResponse[messageMatch]
 type listMessagesResponse paginatedResponse[query.MessageSummary]
-type aggregateResponse []query.AggregateRow
-type searchByDomainsResponse []query.MessageSummary
+type aggregateResponse struct {
+	Data []query.AggregateRow `json:"data"`
+}
+type searchByDomainsResponse struct {
+	Data []query.MessageSummary `json:"data"`
+}
 
 type getAttachmentResponse struct {
 	Filename string `json:"filename"`

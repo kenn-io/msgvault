@@ -470,11 +470,11 @@ func (s *SearchFiles_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
-type SearchPeople_ErrorResponse_503_AnyOf struct {
+type SearchParticipants_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
 
-func (s *SearchPeople_ErrorResponse_503_AnyOf) Validate() error {
+func (s *SearchParticipants_ErrorResponse_503_AnyOf) Validate() error {
 	if s.IsA() {
 		if v, ok := any(s.A).(runtime.Validator); ok {
 			return v.Validate()
@@ -488,11 +488,11 @@ func (s *SearchPeople_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
-type GetPerson_ErrorResponse_AnyOf struct {
+type GetParticipant_ErrorResponse_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
 
-func (g *GetPerson_ErrorResponse_AnyOf) Validate() error {
+func (g *GetParticipant_ErrorResponse_AnyOf) Validate() error {
 	if g.IsA() {
 		if v, ok := any(g.A).(runtime.Validator); ok {
 			return v.Validate()
@@ -506,11 +506,11 @@ func (g *GetPerson_ErrorResponse_AnyOf) Validate() error {
 	return nil
 }
 
-type SearchPersonFiles_ErrorResponse_503_AnyOf struct {
+type SearchParticipantFiles_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
 
-func (s *SearchPersonFiles_ErrorResponse_503_AnyOf) Validate() error {
+func (s *SearchParticipantFiles_ErrorResponse_503_AnyOf) Validate() error {
 	if s.IsA() {
 		if v, ok := any(s.A).(runtime.Validator); ok {
 			return v.Validate()
@@ -524,11 +524,11 @@ func (s *SearchPersonFiles_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
-type GetPersonContextSummary_ErrorResponse_503_AnyOf struct {
+type GetParticipantContextSummary_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
 
-func (g *GetPersonContextSummary_ErrorResponse_503_AnyOf) Validate() error {
+func (g *GetParticipantContextSummary_ErrorResponse_503_AnyOf) Validate() error {
 	if g.IsA() {
 		if v, ok := any(g.A).(runtime.Validator); ok {
 			return v.Validate()
@@ -542,11 +542,11 @@ func (g *GetPersonContextSummary_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
-type GetPersonTimeline_ErrorResponse_503_AnyOf struct {
+type GetParticipantTimeline_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
 
-func (g *GetPersonTimeline_ErrorResponse_503_AnyOf) Validate() error {
+func (g *GetParticipantTimeline_ErrorResponse_503_AnyOf) Validate() error {
 	if g.IsA() {
 		if v, ok := any(g.A).(runtime.Validator); ok {
 			return v.Validate()

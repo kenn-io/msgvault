@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 // ---- Graph response envelopes ----
@@ -146,11 +148,13 @@ type GraphUser struct {
 // ---- Importer options/summary ----
 
 type ImportOptions struct {
-	Email           string
-	AttachmentsDir  string
-	IncludeChannels bool      // default true; allows chats-only runs
-	Limit           int       // 0 = no limit (per-conversation message cap, for scoped runs)
-	After           time.Time // zero = no lower bound
+	Email             string
+	AttachmentsDir    string
+	MediaPolicy       attachmentpolicy.Policy
+	MediaConversation attachmentpolicy.Conversation
+	IncludeChannels   bool      // default true; allows chats-only runs
+	Limit             int       // 0 = no limit (per-conversation message cap, for scoped runs)
+	After             time.Time // zero = no lower bound
 	// Full forces a complete backfill: the prior sync cursor and any interrupted
 	// checkpoint are ignored, so every chat/channel message is re-fetched and
 	// re-persisted (upsert). Use to repair messages after an importer change.
@@ -172,18 +176,19 @@ type EmbedEnqueuer interface {
 }
 
 type ImportSummary struct {
-	Duration           time.Duration
-	SourceID           int64
-	ChatsProcessed     int64
-	ChannelsProcessed  int64
-	MessagesProcessed  int64
-	MessagesAdded      int64
-	MessagesUpdated    int64
-	ReactionsAdded     int64
-	AttachmentsFound   int64
-	InlineImagesCopied int64
-	Participants       int64
-	Errors             int64
+	Duration            time.Duration
+	SourceID            int64
+	ChatsProcessed      int64
+	ChannelsProcessed   int64
+	MessagesProcessed   int64
+	MessagesAdded       int64
+	MessagesUpdated     int64
+	ReactionsAdded      int64
+	AttachmentsFound    int64
+	InlineImagesCopied  int64
+	InlineImagesSkipped int64
+	Participants        int64
+	Errors              int64
 }
 
 // ChatMember is a member of a chat (direct or group), returned by /chats/{id}/members.

@@ -223,7 +223,7 @@ func (s *Store) reconcileSeededRelationshipTypeTx(
 		); err != nil {
 			return false, fmt.Errorf("repair seeded relationship type %q: %w", seed.Slug, err)
 		}
-		return false, nil
+		return false, s.bumpAllVCardProjectionsTx(ctx, tx)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE relationship_types
@@ -239,7 +239,7 @@ func (s *Store) reconcileSeededRelationshipTypeTx(
 	); err != nil {
 		return false, fmt.Errorf("repair seeded relationship type %q: %w", seed.Slug, err)
 	}
-	return false, nil
+	return false, s.bumpAllVCardProjectionsTx(ctx, tx)
 }
 
 // reconcileSeededInverseTypeTx repairs an inverse link and records a real
@@ -262,7 +262,7 @@ func (s *Store) reconcileSeededInverseTypeTx(
 		`, seed.InverseSlug, seed.UniversalID, seed.InverseSlug)
 		return err
 	}
-	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE relationship_types
 		SET inverse_type_id = (
 				SELECT inverse.id FROM relationship_types inverse WHERE inverse.slug = ?
@@ -273,7 +273,21 @@ func (s *Store) reconcileSeededInverseTypeTx(
 		           SELECT inverse.id FROM relationship_types inverse WHERE inverse.slug = ?
 		       ))
 	`, s.dialect.Now()), seed.InverseSlug, seed.UniversalID, seed.InverseSlug)
-	return err
+	if err != nil {
+		return err
+	}
+	// The statement's own WHERE clause decides whether anything drifted, so
+	// the projection bump has to read its row count rather than assume one:
+	// bumping unconditionally would invalidate every rendered envelope on
+	// every store open, since this runs from InitSchema each time.
+	repaired, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count repaired relationship type inverses: %w", err)
+	}
+	if repaired == 0 {
+		return nil
+	}
+	return s.bumpAllVCardProjectionsTx(ctx, tx)
 }
 
 // seededRelationshipTypeSymmetry returns the seed-defined symmetry for the

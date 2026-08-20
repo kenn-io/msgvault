@@ -239,29 +239,17 @@ func (u *logicalLineUnfolder) finish() error {
 	return u.flush()
 }
 
+// contentLineHasValidEncoding admits a line whose value bytes are not UTF-8
+// as long as its header is: legacy producers wrote bare Latin-1 values with
+// no CHARSET declaration. Which versions may actually carry such a value is
+// version-specific, and the version is unknown at the unfolding stage, so
+// ParseResourceEnvelope re-checks per property once the card version is read.
 func contentLineHasValidEncoding(line string) bool {
 	if utf8.ValidString(line) {
 		return true
 	}
 	colon, err := delimiterOutsideQuotes(line, ':')
-	return err == nil &&
-		colon >= 0 &&
-		utf8.ValidString(line[:colon]) &&
-		contentLineDeclaresCharset(line[:colon])
-}
-
-func contentLineDeclaresCharset(header string) bool {
-	parts, err := splitOutsideQuotesCapped(header, ';', maxParametersPerProperty+1)
-	if err != nil {
-		return false
-	}
-	for _, part := range parts[1:] {
-		name, _, found := strings.Cut(part, "=")
-		if found && strings.EqualFold(strings.TrimSpace(name), "CHARSET") {
-			return true
-		}
-	}
-	return false
+	return err == nil && colon >= 0 && utf8.ValidString(line[:colon])
 }
 
 func startsFoldBytes(line []byte) bool {

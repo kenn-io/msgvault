@@ -7,7 +7,29 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+**Breaking changes**
+
+- The HTTP API separates observed participant analytics from durable curated
+  people, and the API schema version moves from 1.44.0 to 2.1.0. The
+  analytical routes formerly under `/api/v1/people/*` (search, detail,
+  summary, timeline, files) now live under `/api/v1/participants/*`, and the
+  durable person routes formerly under `/api/v1/persons/*` now live under
+  `/api/v1/people/*`. The old paths are removed, not aliased: `/api/v1/people`
+  changed meaning, so an alias would silently serve differently shaped data.
+  The CLI and daemon refuse to interoperate across the 1.x/2.x schema
+  boundary with a clear error — upgrade both together. This covers configured
+  remotes too: the daemon reports `api_schema_version` on authenticated
+  `/api/v1/health`, and a CLI in remote mode verifies it on connect,
+  rejecting daemons that predate schema 2.0.
+
 **Features**
+
+- Person profile catalog and tracking foundation: eleven reconciled system
+  profile attributes (location, birthplace, membership, religion, politics,
+  personality, pets, interests, favorites) with portable `is_sensitive`
+  metadata, plus `msgvault person track|untrack` and
+  `/api/v1/people/{id}/tracking` to opt a durable person into future profile
+  maintenance.
 
 - Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
   keeps the daemon's scheduled embeds within the listed accounts, and

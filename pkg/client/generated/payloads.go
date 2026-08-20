@@ -98,17 +98,13 @@ type PatchOrganizationBody = OrganizationBody
 
 type PutOrganizationProfileBody = OrganizationProfileBody
 
-type SearchPeopleBody = IdentitySearchHTTPRequest
+type SearchParticipantsBody = IdentitySearchHTTPRequest
 
-type SearchPersonFilesBody = FileSearchHTTPRequest
+type SearchParticipantFilesBody = PersonFileSearchHTTPRequest
 
-type GetPersonContextSummaryBody = ExploreHTTPRequest
+type GetParticipantContextSummaryBody = ExploreHTTPRequest
 
-type GetPersonTimelineBody = ExploreHTTPRequest
-
-type CreatePersonRelationshipBody = CreatePersonRelationshipRequest
-
-type PatchPersonRelationshipBody = PatchPersonRelationshipRequest
+type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
 
@@ -117,6 +113,12 @@ type PatchPersonBody = PatchPersonRequest
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
+
+type SetPersonTrackingBody = PutPersonTrackingRequest
+
+type CreatePersonRelationshipBody = CreatePersonRelationshipRequest
+
+type PatchPersonRelationshipBody = PatchPersonRelationshipRequest
 
 type RunQueryBody = QueryRequest
 

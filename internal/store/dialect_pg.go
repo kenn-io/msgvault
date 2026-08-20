@@ -615,6 +615,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
+		{`ALTER TABLE attribute_definitions ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN NOT NULL DEFAULT FALSE`, "attribute_definitions.is_sensitive"},
 		// FTS tsvector column for legacy PG databases created before FTS
 		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
 		// pre-existing table), so without this an upgraded DB never gets the
@@ -651,6 +652,29 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_index_state ADD COLUMN IF NOT EXISTS target_profile_id TEXT`, "document_index_state.target_profile_id"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_state TEXT`, "attachments.attachment_state"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
+		// vcard_projection_revision: the lock and change token native vCard
+		// envelope commits serialize on. Existing rows take the same DEFAULT 1
+		// as fresh ones; the absolute value never matters, only that a
+		// projection write moves it, so no backfill is needed.
+		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS vcard_projection_revision BIGINT NOT NULL DEFAULT 1`,
+			"persons.vcard_projection_revision"},
+		{`ALTER TABLE person_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_names.source_resource_uid"},
+		{`ALTER TABLE person_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
+		{`ALTER TABLE person_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_addresses.source_resource_uid"},
+		{`ALTER TABLE person_dates ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_dates.source_resource_uid"},
+		{`ALTER TABLE person_categories ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_categories.source_resource_uid"},
+		{`ALTER TABLE person_media ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_media.source_resource_uid"},
+		{`ALTER TABLE participant_contact_observations ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "participant_contact_observations.source_resource_uid"},
+		{`ALTER TABLE organization_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_names.source_resource_uid"},
+		{`ALTER TABLE organization_identifiers ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_identifiers.source_resource_uid"},
+		{`ALTER TABLE organization_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_addresses.source_resource_uid"},
+		{`ALTER TABLE organization_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_contact_points.source_resource_uid"},
+		{`ALTER TABLE organization_categories ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_categories.source_resource_uid"},
+		{`ALTER TABLE organization_media ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_media.source_resource_uid"},
+		{`ALTER TABLE person_relationships ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_relationships.source_resource_uid"},
+		{`ALTER TABLE person_relationship_reviews ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_relationship_reviews.source_resource_uid"},
 	}
 }
 
@@ -1467,6 +1491,18 @@ func (d *PostgreSQLDialect) IsBusyError(err error) bool {
 	return isPgError(err, "55P03") || isPgError(err, "40P01") || isPgError(err, "57014")
 }
 
+// IsSerializationFailureError reports whether err is PostgreSQL's
+// serialization_failure (SQLSTATE 40001). Under REPEATABLE READ a
+// SELECT ... FOR UPDATE (or an UPDATE/DELETE) that targets a row another
+// transaction updated and committed after this transaction's snapshot cannot
+// be satisfied without either ignoring that commit or reading outside the
+// snapshot, so PostgreSQL aborts with 40001 rather than choose. The condition
+// it reports is exactly "the row I locked changed under me", which is why the
+// vCard envelope commit can translate it into a projection conflict.
+func (d *PostgreSQLDialect) IsSerializationFailureError(err error) bool {
+	return isPgError(err, "40001")
+}
+
 // IsFTSValueTooLargeError reports whether err is PostgreSQL's
 // program_limit_exceeded (SQLSTATE 54000), which to_tsvector raises as
 // "string is too long for tsvector". This is the single FTS error the backfill
@@ -1582,6 +1618,11 @@ func (d *PostgreSQLDialect) BeginWriteSQL() string { return "BEGIN" }
 // SelectForUpdate returns " FOR UPDATE" so a SELECT inside a write
 // transaction takes a row-level lock that serializes subsequent merges.
 func (d *PostgreSQLDialect) SelectForUpdate() string { return " FOR UPDATE" }
+
+// RowWriterLockSQL returns "": PostgreSQL row locks come from SelectForUpdate,
+// and a self-assign UPDATE would make concurrent REPEATABLE READ lockers of
+// the same row report a spurious serialization failure.
+func (d *PostgreSQLDialect) RowWriterLockSQL(table, column string) string { return "" }
 
 // MaintenanceTimeoutResetSQL disables the per-statement timeout for the
 // current transaction. SET LOCAL auto-resets at tx end, so the pool-wide

@@ -12,6 +12,7 @@ import type {
   ExploreSort,
   FileSearchSort,
   FileMIMEFamily,
+  PersonFileDirection,
   ExploreURLState,
   ExploreWorkspace,
   RelationshipFacet
@@ -57,6 +58,8 @@ const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'fileSort',
   'fileFilenameQuery',
   'fileMIMEFamilies',
+  'personFilePresentation',
+  'personFileDirections',
   'identityQuery',
   'identitySort',
   'analysisTarget',
@@ -67,6 +70,7 @@ const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
 const FILE_MIME_FAMILIES = new Set<FileMIMEFamily>([
   'image', 'pdf', 'audio', 'video', 'text', 'document', 'archive', 'other'
 ]);
+const PERSON_FILE_DIRECTIONS = new Set<PersonFileDirection>(['from_person', 'to_person', 'group']);
 
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
@@ -80,6 +84,8 @@ export const defaultExploreURLState: ExploreURLState = {
   fileSort: { field: 'occurred_at', direction: 'desc' },
   fileFilenameQuery: '',
   fileMIMEFamilies: [],
+  personFilePresentation: 'files',
+  personFileDirections: ['from_person'],
   identityQuery: '',
   identitySort: { field: 'activity_count', direction: 'desc' },
   analysisTarget: null,
@@ -119,6 +125,7 @@ function freshDefaults(): ExploreURLState {
     sort: defaultExploreURLState.sort.map((sort) => ({ ...sort })),
     fileSort: defaultExploreURLState.fileSort ? { ...defaultExploreURLState.fileSort } : undefined,
     fileMIMEFamilies: [...defaultExploreURLState.fileMIMEFamilies],
+    personFileDirections: [...defaultExploreURLState.personFileDirections],
     columns: [...defaultExploreURLState.columns],
     columnWidths: { ...defaultExploreURLState.columnWidths }
   };
@@ -186,6 +193,14 @@ function fileMIMEFamilies(value: unknown): FileMIMEFamily[] {
     typeof item === 'string' && FILE_MIME_FAMILIES.has(item as FileMIMEFamily))
     ? [...new Set(value)] as FileMIMEFamily[]
     : [];
+}
+
+function personFileDirections(value: unknown): PersonFileDirection[] {
+  if (!Array.isArray(value) || value.length === 0 || !value.every((item) =>
+    typeof item === 'string' && PERSON_FILE_DIRECTIONS.has(item as PersonFileDirection))) return ['from_person'];
+  const selected = new Set(value as PersonFileDirection[]);
+  return (['from_person', 'to_person', 'group'] as PersonFileDirection[])
+    .filter((direction) => selected.has(direction));
 }
 
 function widths(value: unknown): Partial<Record<ExploreColumn, number>> {
@@ -287,6 +302,8 @@ function normalize(value: unknown): ExploreURLState {
       ? value.fileFilenameQuery
       : '',
     fileMIMEFamilies: value.schemaVersion === 2 ? fileMIMEFamilies(value.fileMIMEFamilies) : [],
+    personFilePresentation: value.personFilePresentation === 'media' ? 'media' : 'files',
+    personFileDirections: personFileDirections(value.personFileDirections),
     identityQuery: typeof value.identityQuery === 'string' ? value.identityQuery : '',
     identitySort: isRecord(value.identitySort) &&
       (value.identitySort.field === 'activity_count' || value.identitySort.field === 'latest_at' || value.identitySort.field === 'display_label') &&

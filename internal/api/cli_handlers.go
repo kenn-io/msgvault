@@ -1411,6 +1411,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"list-folders",
 		"logs",
 		"pack-attachments",
+		"purge-excluded-media",
 		"repair-dates",
 		"repack-attachments",
 		"remove-account",

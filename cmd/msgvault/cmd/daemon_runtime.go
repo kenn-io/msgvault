@@ -337,7 +337,14 @@ func daemonRuntimeCompatibilityError(rt *DaemonRuntime) error {
 
 func apiSchemaCompatibilityError(peerVersion string) error {
 	if peerVersion == "" {
-		return nil
+		// Every daemon that writes a runtime record or serves authenticated
+		// health has reported its schema version since the daemon-only
+		// migration, so an unreported version means a daemon that predates
+		// schema 2.0.0 and its route-meaning changes.
+		return fmt.Errorf(
+			"daemon does not report an API schema version, so it predates schema "+
+				"2.0.0 and is incompatible with this CLI (schema %s); upgrade the daemon",
+			api.APISchemaVersion)
 	}
 	peerMajor, ok := apiSchemaMajor(peerVersion)
 	if !ok {

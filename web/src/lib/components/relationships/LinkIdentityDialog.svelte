@@ -73,7 +73,7 @@
     searching = true;
     searchError = null;
     try {
-      const { data, error, response } = await client.POST('/api/v1/people/search', {
+      const { data, error, response } = await client.POST('/api/v1/participants/search', {
         body: {
           predicate: {},
           identity_query: trimmed,

@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	internalexport "go.kenn.io/msgvault/internal/export"
 	internalmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -140,6 +141,71 @@ func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
 	stored, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(ref.StoragePath)))
 	require.NoError(err)
 	assert.Equal(content, stored)
+}
+
+func TestMediaArchiverPolicySkipsWithoutFetch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	var requests atomic.Int64
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte("must not download"))
+	}))
+	defer cdn.Close()
+
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+	archiver.SetPolicy(
+		attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect, MaxBytes: 1 << 20},
+		attachmentpolicy.Conversation{Type: "channel", ParticipantCount: 20},
+	)
+	result, err := archiver.PersistAttachments(context.Background(), f.messageID, []Attachment{
+		testDiscordAttachment(cdn.URL+"/attachments/301/401/policy.png", 5),
+	})
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaSkipped, result.Items[0].Outcome)
+	assert.Zero(requests.Load())
+
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	ref := refs["discord:"+mediaTestAttachmentID]
+	assert.Equal(attachmentpolicy.StateSkipped, ref.State)
+	assert.Equal(attachmentpolicy.SkipPolicyScope, ref.SkipReason)
+}
+
+func TestMediaArchiverReuseKeepsStoredState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	content := []byte("stored once")
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(content)
+	}))
+	defer cdn.Close()
+	rawURL := cdn.URL + "/attachments/301/401/stored.bin"
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+	_, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{
+		testDiscordAttachment(rawURL, int64(len(content))),
+	})
+	require.NoError(err)
+	_, err = archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{
+		testDiscordAttachment(rawURL, 1),
+	})
+	require.NoError(err)
+	assert.EqualValues(1, requests.Load())
+
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.Equal(attachmentpolicy.StateStored, refs["discord:"+mediaTestAttachmentID].State)
+	assert.Equal(len(content), refs["discord:"+mediaTestAttachmentID].Size,
+		"a smaller refreshed declaration must not erase the known stored size")
+	candidates, err := f.store.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	assert.Len(candidates, 1, "reused stored media must remain eligible for policy purge")
 }
 
 func TestMediaArchiverStoresEphemeralAttachment(t *testing.T) {
@@ -285,6 +351,41 @@ func TestMediaArchiverRepeatedPayloadRefreshesSetWithoutRetryingKnownPendingRows
 	assert.Equal("new.bin", refs["discord:402"].Filename)
 }
 
+func TestMediaArchiverRepeatedPayloadPreservesSuppressedOutcome(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      attachmentpolicy.DownloadState
+		skipReason attachmentpolicy.SkipReason
+	}{
+		{name: "skipped", state: attachmentpolicy.StateSkipped, skipReason: attachmentpolicy.SkipSizeCap},
+		{name: "failed", state: attachmentpolicy.StateFailed, skipReason: attachmentpolicy.SkipFetchFailure},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newMediaFixture(t)
+			ref := pendingDiscordRef("")
+			ref.State = tt.state
+			ref.SkipReason = tt.skipReason
+			require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{ref}))
+			cdn := httptest.NewServer(nil)
+			t.Cleanup(cdn.Close)
+			archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+			result, err := archiver.persistAttachments(
+				context.Background(), f.messageID, []Attachment{testDiscordAttachment("", 0)}, false,
+			)
+			require.NoError(err)
+			assert.Empty(result.Items)
+			refs, err := f.store.MessageDiscordAttachments(f.messageID)
+			require.NoError(err)
+			assert.Equal(tt.state, refs["discord:"+mediaTestAttachmentID].State)
+			assert.Equal(tt.skipReason, refs["discord:"+mediaTestAttachmentID].SkipReason)
+		})
+	}
+}
+
 func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -315,6 +416,8 @@ func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
 		Role:          store.AttachmentRoleUnknown,
 		RoleSource:    store.AttachmentRoleSourceUnknown,
 		SourcePartKey: "discord:401",
+		State:         attachmentpolicy.StateFailed,
+		SkipReason:    attachmentpolicy.SkipFetchFailure,
 	}, refs["discord:401"])
 	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
 	require.NoError(err)
@@ -378,12 +481,66 @@ func TestMediaArchiverEnforcesSizeCapBeforeAndDuringStreaming(t *testing.T) {
 			)
 			require.NoError(err)
 			require.Len(result.Items, 1)
-			assert.Equal(MediaPending, result.Items[0].Outcome)
+			assert.Equal(MediaSkipped, result.Items[0].Outcome)
 			require.ErrorIs(result.Items[0].Err, ErrMediaTooLarge)
 			assert.Equal(tt.wantRequests, requests.Load())
 			requirePendingDiscordAttachment(t, f, rawURL)
+			refs, err := f.store.MessageDiscordAttachments(f.messageID)
+			require.NoError(err)
+			assert.Greater(refs["discord:"+mediaTestAttachmentID].Size, 10,
+				"stream-detected oversize must remain excluded under the unchanged cap")
 		})
 	}
+}
+
+func TestMediaBackfillPreservesKnownSizeSkipAndChecksRefreshedSize(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	knownID := "discord:known-large"
+	retryID := "discord:retry"
+	require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{
+		{SourceAttachmentID: knownID, StoragePath: "old-known", Size: 11,
+			State: attachmentpolicy.StateSkipped, SkipReason: attachmentpolicy.SkipSizeCap},
+		{SourceAttachmentID: retryID, StoragePath: "old-retry", State: attachmentpolicy.StatePending},
+	}))
+	var cdnRequests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cdnRequests.Add(1)
+		_, _ = w.Write([]byte("must not download"))
+	}))
+	defer cdn.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeDiscordJSON(w, http.StatusOK, map[string]any{
+			"id": mediaTestMessageID, "channel_id": mediaTestChannelID,
+			"author": map[string]any{"id": "101"}, "timestamp": "2026-07-18T12:00:00Z",
+			"attachments": []map[string]any{
+				{"id": "known-large", "filename": "known.bin", "size": 11,
+					"url": cdn.URL + "/attachments/301/known-large/known.bin"},
+				{"id": "retry", "filename": "retry.bin", "size": 11,
+					"url": cdn.URL + "/attachments/301/retry/retry.bin"},
+			},
+		})
+	}))
+	defer api.Close()
+	client, err := NewClient(api.URL+"/api/v10", "synthetic-token")
+	require.NoError(err)
+	archiver := newTestArchiver(t, f, client, 10, cdn)
+	archiver.SetPolicy(attachmentpolicy.Policy{MaxBytes: 10}, attachmentpolicy.Conversation{Type: "channel"})
+
+	result, err := archiver.BackfillMessage(t.Context(), f.messageID, mediaTestChannelID, mediaTestMessageID)
+	require.NoError(err)
+	assert.Zero(cdnRequests.Load())
+	require.Len(result.Items, 2)
+	for _, item := range result.Items {
+		assert.Equal(MediaSkipped, item.Outcome)
+	}
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.Equal(attachmentpolicy.StateSkipped, refs[knownID].State)
+	assert.Equal(attachmentpolicy.SkipSizeCap, refs[knownID].SkipReason)
+	assert.Equal(attachmentpolicy.StateSkipped, refs[retryID].State)
+	assert.Equal(attachmentpolicy.SkipSizeCap, refs[retryID].SkipReason)
 }
 
 func TestMediaArchiverPreservesPendingMarkerOnHTTPAndStorageFailures(t *testing.T) {

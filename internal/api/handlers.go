@@ -186,6 +186,10 @@ type HealthResponse struct {
 	// new engine. Empty when the server was built without one (tests, embedded
 	// uses).
 	AnalyticsEngine string `json:"analytics_engine,omitempty"`
+	// APISchemaVersion reports the daemon's APISchemaVersion on authenticated
+	// /api/v1/health so remote CLI clients can refuse a major-version mismatch
+	// before issuing commands. Omitted on the public unauthenticated /health.
+	APISchemaVersion string `json:"api_schema_version,omitempty"`
 }
 
 type MessageListResponse struct {

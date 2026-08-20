@@ -1748,7 +1748,7 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 		return nil, newInternalError("aggregate messages", err)
 	}
 
-	return jsonResult(aggregateResponse(rows))
+	return jsonResult(aggregateResponse{Data: nonNilSlice(rows)})
 }
 
 // limitArg extracts a non-negative integer limit from a map, with a default.
@@ -2056,5 +2056,12 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return nil, newInternalError("search messages by domain", err)
 	}
 
-	return jsonResult(searchByDomainsResponse(results))
+	return jsonResult(searchByDomainsResponse{Data: nonNilSlice(results)})
+}
+
+func nonNilSlice[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
 }

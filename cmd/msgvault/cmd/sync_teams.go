@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -99,6 +100,7 @@ Examples:
 		opts := teams.ImportOptions{
 			Email:           email,
 			AttachmentsDir:  cfg.AttachmentsDir(),
+			MediaPolicy:     cfg.Teams.MediaPolicy(email),
 			IncludeChannels: !syncTeamsNoChannels,
 			Limit:           syncTeamsLimit,
 			Full:            syncTeamsFull,
@@ -113,21 +115,26 @@ Examples:
 			return fmt.Errorf("teams sync failed: %w", err)
 		}
 
-		_, _ = fmt.Fprintln(cmd.OutOrStdout())
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Teams sync complete!")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Duration:        %s\n", sum.Duration.Round(time.Second))
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Chats:           %d\n", sum.ChatsProcessed)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Channels:        %d\n", sum.ChannelsProcessed)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages added:  %d\n", sum.MessagesAdded)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Reactions:       %d\n", sum.ReactionsAdded)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments:     %d\n", sum.AttachmentsFound)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Inline images:   %d\n", sum.InlineImagesCopied)
-		if sum.Errors > 0 {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:          %d\n", sum.Errors)
-		}
+		writeTeamsSyncSummary(cmd.OutOrStdout(), sum)
 
 		return rebuildCacheAfterWrite(dbPath)
 	},
+}
+
+func writeTeamsSyncSummary(out io.Writer, sum *teams.ImportSummary) {
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Teams sync complete!")
+	_, _ = fmt.Fprintf(out, "  Duration:        %s\n", sum.Duration.Round(time.Second))
+	_, _ = fmt.Fprintf(out, "  Chats:           %d\n", sum.ChatsProcessed)
+	_, _ = fmt.Fprintf(out, "  Channels:        %d\n", sum.ChannelsProcessed)
+	_, _ = fmt.Fprintf(out, "  Messages added:  %d\n", sum.MessagesAdded)
+	_, _ = fmt.Fprintf(out, "  Reactions:       %d\n", sum.ReactionsAdded)
+	_, _ = fmt.Fprintf(out, "  Attachments:     %d\n", sum.AttachmentsFound)
+	_, _ = fmt.Fprintf(out, "  Inline images:   %d\n", sum.InlineImagesCopied)
+	_, _ = fmt.Fprintf(out, "  Inline skipped by policy: %d\n", sum.InlineImagesSkipped)
+	if sum.Errors > 0 {
+		_, _ = fmt.Fprintf(out, "  Errors:          %d\n", sum.Errors)
+	}
 }
 
 func init() {

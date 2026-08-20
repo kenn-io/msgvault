@@ -384,8 +384,10 @@ func TestDecodeRejectsMalformedFramingAndContentLines(t *testing.T) {
 			wantErr: "parameter value contains CR, LF, or NUL",
 		},
 		{
-			name:    "invalid utf8",
-			input:   "BEGIN:VCARD\r\nFN:Ali\xffce\r\nEND:VCARD\r\n",
+			// A non-UTF-8 value is admitted here and judged per version by
+			// ParseResourceEnvelope; a non-UTF-8 header never is.
+			name:    "invalid utf8 header",
+			input:   "BEGIN:VCARD\r\nF\xffN:Alice\r\nEND:VCARD\r\n",
 			wantErr: "not valid UTF-8",
 		},
 	}

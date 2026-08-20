@@ -70,7 +70,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
           modalities: 1, received_from_them: 1, sent_count: 1, sent_to_them: 1 } }
     ], total_count: 2, cache_revision: 'keyboard-100k', identity_revision: 1
   } }));
-  await page.route('**/api/v1/people/2', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/participants/2', (route) => route.fulfill({ json: {
     id: 2, display_label: 'Beta Person', partial_label: false, identifiers: [],
     activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-01-02T12:00:00Z',
     last_at: '2026-01-02T12:00:00Z', cache_revision: 'keyboard-100k'

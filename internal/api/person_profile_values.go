@@ -157,7 +157,7 @@ type PersonMediaInputRequest struct {
 
 func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 	get := rawAPIV1Operation(
-		"getPersonStructuredProfile", http.MethodGet, "/persons/{id}/profile",
+		"getPersonStructuredProfile", http.MethodGet, "/people/{id}/profile",
 		"Get a person's current structured profile",
 	)
 	get.Description = "Returns only current structured values at one person revision. " +
@@ -170,7 +170,7 @@ func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 	registerRawHumaRoute(api, get, s.handleGetPersonStructuredProfile)
 
 	patch := rawAPIV1Operation(
-		"patchPersonStructuredProfile", http.MethodPatch, "/persons/{id}/profile",
+		"patchPersonStructuredProfile", http.MethodPatch, "/people/{id}/profile",
 		"Atomically patch a person's structured profile",
 	)
 	patch.Description = "Applies up to 200 explicit adds and supersedes atomically under If-Match. " +
@@ -186,7 +186,7 @@ func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 	registerRawHumaRoute(api, patch, s.handlePatchPersonStructuredProfile)
 
 	history := rawAPIV1Operation(
-		"getPersonProfileHistory", http.MethodGet, "/persons/{id}/profile/history",
+		"getPersonProfileHistory", http.MethodGet, "/people/{id}/profile/history",
 		"Get a person's structured profile history",
 	)
 	history.Description = "Returns current and superseded structured values plus source-linked observations " +
@@ -199,7 +199,7 @@ func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 
 	mediaContent := rawAPIV1Operation(
 		"getPersonProfileMediaContent", http.MethodGet,
-		"/persons/{id}/profile/media/{media_id}/content",
+		"/people/{id}/profile/media/{media_id}/content",
 		"Download stored inline content for one person profile media value",
 	)
 	mediaContent.Description = "Returns the exact inline bytes stored for one media value. " +

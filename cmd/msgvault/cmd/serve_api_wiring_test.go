@@ -108,7 +108,7 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 		path string
 	}{
 		{"communication services", "/api/v1/communication-services"},
-		{"structured profile", fmt.Sprintf("/api/v1/persons/%d/profile", person.ID)},
+		{"structured profile", fmt.Sprintf("/api/v1/people/%d/profile", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)
@@ -119,6 +119,30 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		})
 	}
+}
+
+func TestStoreAPIAdapterServesPersonTracking(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"email", "tracking-adapter@example.test", "Tracking Adapter")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	request := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/v1/people/%d/tracking", person.ID),
+		strings.NewReader(`{"tracked":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"tracked":true`)
 }
 
 func TestStoreAPIAdapterServesPersonRelationshipRoutes(t *testing.T) {
@@ -159,7 +183,7 @@ func TestStoreAPIAdapterServesOrganizationAndEmploymentRoutes(t *testing.T) {
 		path string
 	}{
 		{"organizations", "/api/v1/organizations"},
-		{"employments", fmt.Sprintf("/api/v1/persons/%d/employments", person.ID)},
+		{"employments", fmt.Sprintf("/api/v1/people/%d/employments", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)

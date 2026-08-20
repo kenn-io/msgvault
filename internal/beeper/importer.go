@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -369,7 +370,7 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // incrementally extends the chat's messages. Returns the number of messages
 // processed for this chat.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (int64, error) {
-	convID, membershipComplete, err := imp.ensureConversation(
+	convID, membershipComplete, membership, err := imp.ensureConversation(
 		ctx, syncID, sourceID, ch, opts.AccountID, sum,
 	)
 	if err != nil {
@@ -381,6 +382,10 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
+	}
+	cc.opts.MediaConversation = attachmentpolicy.Conversation{
+		Type:             conversationType(ch.Type),
+		ParticipantCount: membership.policyCount(opts.MediaPolicy),
 	}
 	before := sum.MessagesProcessed
 
@@ -424,19 +429,55 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	return sum.MessagesProcessed - before, nil
 }
 
+// chatMembership is the roster media policy weighs for one chat: the
+// participant total Beeper reports, or the full participant list when no
+// total is reported. Neither is known when a truncated listing reports no
+// total and the detail fetch failed; that roster stays unresolved.
+type chatMembership struct {
+	count int
+	known bool
+}
+
+// chatMembershipOf resolves the roster from the freshest payload this run has
+// for the chat and whether that payload's participant list is complete.
+func chatMembershipOf(chat *Chat, membershipComplete bool) chatMembership {
+	if chat == nil {
+		return chatMembership{}
+	}
+	if chat.Participants.Total > 0 {
+		return chatMembership{count: chat.Participants.Total, known: true}
+	}
+	return chatMembership{count: len(chat.Participants.Items), known: membershipComplete}
+}
+
+// policyCount is the count media policy evaluates: an unresolved roster must
+// not read as a chat under a configured limit, so it fails closed there. The
+// resulting skips stay retryable, and the archived unknown marker keeps the
+// backfill closed until a run reads the roster.
+func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
+	if !m.known && policy.MaxParticipants > 0 {
+		return policy.MaxParticipants + 1
+	}
+	return m.count
+}
+
 // ensureConversation upserts the conversation row and its membership,
 // fetching the full participant list when the search listing truncated it
-// (chat search returns at most 20 participants per chat).
+// (chat search returns at most 20 participants per chat). It archives the
+// roster media policy weighs — the reported total, or the unknown marker
+// when there is none and the list is incomplete — so backfill and purge
+// evaluate the same membership rather than the participant rows, which a
+// truncated listing undercounts.
 func (imp *Importer) ensureConversation(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, accountID string, sum *ImportSummary,
-) (int64, bool, error) {
+) (int64, bool, chatMembership, error) {
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
 		d, gerr := imp.client.GetChat(ctx, ch.ID)
 		if gerr != nil {
 			if ctx.Err() != nil {
-				return 0, false, ctx.Err()
+				return 0, false, chatMembership{}, ctx.Err()
 			}
 			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
 			sum.FetchErrors++
@@ -446,9 +487,18 @@ func (imp *Importer) ensureConversation(
 			membershipComplete = !d.Participants.HasMore
 		}
 	}
+	membership := chatMembershipOf(detail, membershipComplete)
 	convID, err := imp.store.EnsureConversationWithType(sourceID, ch.ID, conversationType(ch.Type), ch.Title)
 	if err != nil {
-		return 0, false, err
+		return 0, false, chatMembership{}, err
+	}
+	if membership.known {
+		err = imp.store.SetConversationMemberCount(convID, membership.count)
+	} else {
+		err = imp.store.MarkConversationMemberCountUnknown(convID)
+	}
+	if err != nil {
+		return 0, false, chatMembership{}, err
 	}
 	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
 	type resolvedMember struct {
@@ -468,7 +518,7 @@ func (imp *Importer) ensureConversation(
 		p := &detail.Participants.Items[i]
 		pid, rerr := imp.res.resolveUser(&p.User)
 		if rerr != nil {
-			return 0, false, rerr
+			return 0, false, chatMembership{}, rerr
 		}
 		if pid == 0 {
 			continue
@@ -482,7 +532,7 @@ func (imp *Importer) ensureConversation(
 	}
 	if membershipComplete {
 		if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
-			return 0, false, err
+			return 0, false, chatMembership{}, err
 		}
 	} else {
 		for _, member := range members {
@@ -502,7 +552,7 @@ func (imp *Importer) ensureConversation(
 			sourceID, accountID, bridgePrefix, sum,
 		)
 	}
-	return convID, membershipComplete, nil
+	return convID, membershipComplete, membership, nil
 }
 
 // probeChatTail searches past a completed chat's oldest cursor and clears Done
@@ -975,7 +1025,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 	}
 
-	if !cc.opts.NoMedia && cc.opts.AttachmentsDir != "" {
+	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
 		imp.persistAttachments(ctx, cc.syncID, messageID, m, cc.opts, sum)
 	}
 

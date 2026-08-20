@@ -46,6 +46,48 @@ func TestPersonNamesRetainStructuredComponentsAndRFC9554Fields(t *testing.T) {
 	assert.Len(names, 2)
 }
 
+func TestPersonNameRetainsCompleteVCardResourceProvenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	personID := newTestPerson(t, st)
+	sourceRef := "address-book"
+	sourceResourceUID := "alice.vcf"
+	propID := "fn-1"
+
+	created, err := st.AddPersonNameContext(ctx, personID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"),
+		OriginalValue: "Alice Example",
+		Envelope: store.ValueEnvelopeInput{
+			Source: store.ProvenanceVCardImport, SourceRef: &sourceRef,
+			SourceResourceUID: &sourceResourceUID,
+			VCard:             store.VCardIdentity{Property: "FN", PropID: &propID},
+		},
+	})
+	require.NoError(err)
+	require.NotNil(created.Envelope.SourceResourceUID)
+	assert.Equal(sourceResourceUID, *created.Envelope.SourceResourceUID)
+
+	otherResourceUID := "alice-work.vcf"
+	_, err = st.AddPersonNameContext(ctx, personID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: new("Alice Work"),
+		OriginalValue: "Alice Work",
+		Envelope: store.ValueEnvelopeInput{
+			Source: store.ProvenanceVCardImport, SourceRef: &sourceRef,
+			SourceResourceUID: &otherResourceUID,
+			VCard:             store.VCardIdentity{Property: "FN", PropID: &propID},
+		},
+	})
+	require.NoError(err, "the same property identity on another card must remain distinct")
+
+	names, err := st.ListPersonNamesContext(ctx, personID, true)
+	require.NoError(err)
+	require.Len(names, 2)
+	require.NotNil(names[0].Envelope.SourceResourceUID)
+	assert.Equal(sourceResourceUID, *names[0].Envelope.SourceResourceUID)
+}
+
 func TestPersonNamesKeepMultipleFormattedFormsPerLanguage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

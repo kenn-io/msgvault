@@ -124,7 +124,7 @@ func TestActivityHTTPRealProjectionAndIntersectionContract(t *testing.T) {
 	f := newActivityRouteFixture(t)
 
 	stateResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/contact-state", f.personID), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
 	require.Equal(http.StatusOK, stateResponse.Code, stateResponse.Body.String())
 	var state store.ContactState
 	require.NoError(json.Unmarshal(stateResponse.Body.Bytes(), &state))
@@ -134,7 +134,7 @@ func TestActivityHTTPRealProjectionAndIntersectionContract(t *testing.T) {
 	assert.NotContains(stateResponse.Body.String(), "primary_channel")
 
 	daysResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days?from=%s&to=%s&limit=1&offset=0",
+		fmt.Sprintf("/api/v1/people/%d/days?from=%s&to=%s&limit=1&offset=0",
 			f.personID, f.date, f.date), nil, true)
 	require.Equal(http.StatusOK, daysResponse.Code, daysResponse.Body.String())
 	var days store.PersonDaysPage
@@ -145,7 +145,7 @@ func TestActivityHTTPRealProjectionAndIntersectionContract(t *testing.T) {
 	assert.Equal(int64(1), days.Days[0].EntryCount)
 
 	personDayResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days/%s?limit=1&offset=0&entry_limit=1&entry_offset=0",
+		fmt.Sprintf("/api/v1/people/%d/days/%s?limit=1&offset=0&entry_limit=1&entry_offset=0",
 			f.personID, f.date), nil, true)
 	require.Equal(http.StatusOK, personDayResponse.Code, personDayResponse.Body.String())
 	var personDay store.PersonDayPage
@@ -282,7 +282,7 @@ func TestActivityHTTPIndependentPagingPreviewAndNoteOnlyTargets(t *testing.T) {
 	assert.Equal(int64(2), day.Entries[0].Ordinal)
 
 	personDayResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days/%s?limit=1&offset=1&entry_limit=1&entry_offset=0",
+		fmt.Sprintf("/api/v1/people/%d/days/%s?limit=1&offset=1&entry_limit=1&entry_offset=0",
 			f.personID, f.date), nil, true)
 	require.Equal(http.StatusOK, personDayResponse.Code, personDayResponse.Body.String())
 	var personDay store.PersonDayPage
@@ -304,7 +304,7 @@ func TestActivityHTTPIndependentPagingPreviewAndNoteOnlyTargets(t *testing.T) {
 	})
 	require.NoError(err)
 	noteOnlyDay := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days/%s", noteOnly.ID, f.date), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/days/%s", noteOnly.ID, f.date), nil, true)
 	require.Equal(http.StatusOK, noteOnlyDay.Code, noteOnlyDay.Body.String())
 	var noteOnlyPage store.PersonDayPage
 	require.NoError(json.Unmarshal(noteOnlyDay.Body.Bytes(), &noteOnlyPage))
@@ -331,7 +331,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
 		&mockStore{}, nil, testLogger())
 	response := activityRequest(t, unavailable, http.MethodGet,
-		"/api/v1/persons/1/contact-state", nil, true)
+		"/api/v1/people/1/contact-state", nil, true)
 	assert.Equal(http.StatusServiceUnavailable, response.Code)
 
 	f := newActivityRouteFixture(t)
@@ -341,7 +341,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 		&failingActivityStore{Store: f.store, err: errors.New(sensitive)},
 		nil, testLogger())
 	response = activityRequest(t, failing, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/contact-state", f.personID), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
 	assert.Equal(http.StatusInternalServerError, response.Code)
 	assert.NotContains(response.Body.String(), sensitive)
 	assert.NotContains(response.Body.String(), "private@example.com")
@@ -351,12 +351,12 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 		&failingActivityStore{Store: f.store, err: context.Canceled},
 		nil, testLogger())
 	response = activityRequest(t, canceled, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/contact-state", f.personID), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
 	assert.Equal(http.StatusServiceUnavailable, response.Code)
 	assert.Contains(response.Body.String(), "query_canceled")
 
 	unknown := activityRequest(t, f.server, http.MethodGet,
-		"/api/v1/persons/999999/contact-state", nil, true)
+		"/api/v1/people/999999/contact-state", nil, true)
 	assert.Equal(http.StatusNotFound, unknown.Code)
 }
 
@@ -369,7 +369,7 @@ func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
 	require.NoError(err)
 
 	stateResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/contact-state", f.personID), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
 	require.Equal(http.StatusOK, stateResponse.Code, stateResponse.Body.String())
 	var state store.ContactState
 	require.NoError(json.Unmarshal(stateResponse.Body.Bytes(), &state))
@@ -379,7 +379,7 @@ func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
 	assert.Equal(store.CadenceUnknown, state.CadenceStatus)
 
 	daysResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days?offset=99", f.personID), nil, true)
+		fmt.Sprintf("/api/v1/people/%d/days?offset=99", f.personID), nil, true)
 	require.Equal(http.StatusOK, daysResponse.Code, daysResponse.Body.String())
 	var days store.PersonDaysPage
 	require.NoError(json.Unmarshal(daysResponse.Body.Bytes(), &days))
@@ -388,7 +388,7 @@ func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
 	assert.Empty(days.Days)
 
 	personDayResponse := activityRequest(t, f.server, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/days/%s?offset=99&entry_offset=99",
+		fmt.Sprintf("/api/v1/people/%d/days/%s?offset=99&entry_offset=99",
 			f.personID, f.date), nil, true)
 	require.Equal(http.StatusOK, personDayResponse.Code, personDayResponse.Body.String())
 	var personDay store.PersonDayPage
@@ -461,16 +461,16 @@ func TestActivityHTTPRejectsInvalidParametersAndAuthentication(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/api/v1/persons/0/contact-state"},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?limit=0", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?limit=501", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?offset=-1", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?from=2026-7-30", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?from=2026-07-31&to=2026-07-30", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?from=2026-07-30&from=garbage", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days?to=2026-07-30&to=garbage", f.personID)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days/%s?entry_limit=0", f.personID, f.date)},
-		{http.MethodGet, fmt.Sprintf("/api/v1/persons/%d/days/%s?entry_offset=-1", f.personID, f.date)},
+		{http.MethodGet, "/api/v1/people/0/contact-state"},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?limit=0", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?limit=501", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?offset=-1", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?from=2026-7-30", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?from=2026-07-31&to=2026-07-30", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?from=2026-07-30&from=garbage", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days?to=2026-07-30&to=garbage", f.personID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days/%s?entry_limit=0", f.personID, f.date)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/people/%d/days/%s?entry_offset=-1", f.personID, f.date)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/days/%s?activity_limit_per_person=501", f.date)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/days/%s?entry_limit=nope", f.date)},
 		{http.MethodGet, "/api/v1/days/2026-02-29"},
@@ -504,20 +504,20 @@ func TestActivityOpenAPIContract(t *testing.T) {
 		successSchema             string
 	}{
 		{
-			"/api/v1/persons/{id}/contact-state", http.MethodGet,
+			"/api/v1/people/{id}/contact-state", http.MethodGet,
 			"getPersonContactState", []string{"id"},
 			[]string{"200", "400", "401", "403", "404", "500", "503", activityTestDefaultResponse},
 			"200", "ContactState",
 		},
 		{
-			"/api/v1/persons/{id}/days", http.MethodGet,
+			"/api/v1/people/{id}/days", http.MethodGet,
 			"listPersonActivityDays",
 			[]string{"id", "from", "to", "limit", "offset"},
 			[]string{"200", "400", "401", "403", "404", "500", "503", activityTestDefaultResponse},
 			"200", "PersonDaysPage",
 		},
 		{
-			"/api/v1/persons/{id}/days/{date}", http.MethodGet,
+			"/api/v1/people/{id}/days/{date}", http.MethodGet,
 			"getPersonActivityDay",
 			[]string{"id", "date", "limit", "offset", "entry_limit", "entry_offset"},
 			[]string{"200", "400", "401", "403", "404", "500", "503", activityTestDefaultResponse},

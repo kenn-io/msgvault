@@ -776,6 +776,81 @@ func (o OrganizationNameBodySource) Validate() error {
 	}
 }
 
+type PersonFileProvenanceDirections string
+
+const (
+	FromPerson PersonFileProvenanceDirections = "from_person"
+	Group      PersonFileProvenanceDirections = "group"
+	ToPerson   PersonFileProvenanceDirections = "to_person"
+)
+
+// Validate checks if the PersonFileProvenanceDirections value is valid
+func (p PersonFileProvenanceDirections) Validate() error {
+	switch p {
+	case FromPerson, Group, ToPerson:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileProvenanceDirections value, got: %v", p))
+	}
+}
+
+type PersonFileProvenanceRoles string
+
+const (
+	Bcc                PersonFileProvenanceRoles = "bcc"
+	Cc                 PersonFileProvenanceRoles = "cc"
+	ConversationMember PersonFileProvenanceRoles = "conversation_member"
+	From               PersonFileProvenanceRoles = "from"
+	To                 PersonFileProvenanceRoles = "to"
+)
+
+// Validate checks if the PersonFileProvenanceRoles value is valid
+func (p PersonFileProvenanceRoles) Validate() error {
+	switch p {
+	case Bcc, Cc, ConversationMember, From, To:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileProvenanceRoles value, got: %v", p))
+	}
+}
+
+type PersonFileSearchHTTPRequestDirections string
+
+const (
+	PersonFileSearchHTTPRequestDirectionsFromPerson PersonFileSearchHTTPRequestDirections = "from_person"
+	PersonFileSearchHTTPRequestDirectionsGroup      PersonFileSearchHTTPRequestDirections = "group"
+	PersonFileSearchHTTPRequestDirectionsToPerson   PersonFileSearchHTTPRequestDirections = "to_person"
+)
+
+// Validate checks if the PersonFileSearchHTTPRequestDirections value is valid
+func (p PersonFileSearchHTTPRequestDirections) Validate() error {
+	switch p {
+	case PersonFileSearchHTTPRequestDirectionsFromPerson, PersonFileSearchHTTPRequestDirectionsGroup, PersonFileSearchHTTPRequestDirectionsToPerson:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchHTTPRequestDirections value, got: %v", p))
+	}
+}
+
+type PersonFileSearchRowContentState string
+
+const (
+	PersonFileSearchRowContentStateLocalContent PersonFileSearchRowContentState = "local_content"
+	PersonFileSearchRowContentStateMetadataOnly PersonFileSearchRowContentState = "metadata_only"
+	PersonFileSearchRowContentStateMissingBlob  PersonFileSearchRowContentState = "missing_blob"
+	PersonFileSearchRowContentStateURLOnly      PersonFileSearchRowContentState = "url_only"
+)
+
+// Validate checks if the PersonFileSearchRowContentState value is valid
+func (p PersonFileSearchRowContentState) Validate() error {
+	switch p {
+	case PersonFileSearchRowContentStateLocalContent, PersonFileSearchRowContentStateMetadataOnly, PersonFileSearchRowContentStateMissingBlob, PersonFileSearchRowContentStateURLOnly:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchRowContentState value, got: %v", p))
+	}
+}
+
 type RemoveResultCacheState string
 
 const (

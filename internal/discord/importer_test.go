@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -22,7 +24,11 @@ import (
 type importerFakeAPI struct {
 	mu sync.Mutex
 
-	guild       Guild
+	guild         Guild
+	guildMembers  int
+	guildCountErr error
+	guildCounts   int
+
 	channels    []Channel
 	active      []Channel
 	messages    map[string][]Message
@@ -37,12 +43,15 @@ type importerFakeAPI struct {
 
 func newImporterFakeAPI(channels ...Channel) *importerFakeAPI {
 	return &importerFakeAPI{
-		guild:       Guild{ID: "200", Name: "Test Guild"},
-		channels:    channels,
-		messages:    map[string][]Message{},
-		queries:     map[string][]MessageQuery{},
-		failBefore:  map[string]map[string]error{},
-		injectAfter: map[string][]Message{},
+		guild: Guild{ID: "200", Name: "Test Guild"},
+		// A guild holding only the archiving bot keeps the guild-wide floor out
+		// of the way of tests that exercise container or observed membership.
+		guildMembers: 1,
+		channels:     channels,
+		messages:     map[string][]Message{},
+		queries:      map[string][]MessageQuery{},
+		failBefore:   map[string]map[string]error{},
+		injectAfter:  map[string][]Message{},
 	}
 }
 
@@ -56,6 +65,26 @@ func (f *importerFakeAPI) Guild(_ context.Context, _ string) (Guild, error) {
 	}
 	return f.guild, nil
 }
+func (f *importerFakeAPI) GuildWithCounts(_ context.Context, _ string) (Guild, error) {
+	f.mu.Lock()
+	f.guildCounts++
+	countErr := f.guildCountErr
+	members := f.guildMembers
+	f.mu.Unlock()
+	if countErr != nil {
+		return Guild{}, countErr
+	}
+	guild := f.guild
+	guild.ApproximateMemberCount = members
+	return guild, nil
+}
+
+func (f *importerFakeAPI) guildCountRequests() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.guildCounts
+}
+
 func (f *importerFakeAPI) GuildChannels(_ context.Context, _ string) ([]Channel, error) {
 	if f.catalogErr != nil {
 		return nil, f.catalogErr
@@ -266,6 +295,516 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	assert.Equal(1, mentionCount)
 	assert.Equal(1, attachmentCount)
 	assert.Equal(7, conversationCount)
+}
+
+func TestImporterUsesContainerParticipantCountForMediaPolicy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	channel := importerTestChannel("300", "general")
+	channel.MemberCount = 20
+	api := newImporterFakeAPI(channel)
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MediaSkipped)
+	assert.Zero(summary.MediaPending)
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{MaxParticipants: 8})
+	require.NoError(err)
+	assert.Empty(retryable, "the archived catalog count must keep the unchanged exclusion out of backfill")
+	messageID := messageIDBySource(t, st, source.ID, "101")
+	contentHash := strings.Repeat("ab", 32)
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+		StoragePath: contentHash[:2] + "/" + contentHash, ContentHash: contentHash,
+		SourceAttachmentID: "discord:401", State: attachmentpolicy.StateStored,
+	}}))
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal(20, candidates[0].ParticipantCount, "purge sees catalog membership")
+	conversation, err := st.AttachmentConversation(messageID)
+	require.NoError(err)
+	assert.Equal(20, conversation.ParticipantCount, "catalog membership survives stat recomputation")
+	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","discord_channel_type":0,"member_count":20,"container_member_count":20}`,
+		metadata["300"].String,
+		"the container's own count is archived beside the resolved one so a later run can reconcile it",
+	)
+}
+
+func TestImporterUsesGuildMemberCountForOrdinaryChannelMediaPolicy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	// Discord reports member_count for threads only, so an ordinary guild
+	// channel arrives with no membership of its own.
+	api := newImporterFakeAPI(importerTestChannel("300", "general"), importerTestChannel("400", "random"))
+	api.guildMembers = 12
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MediaSkipped)
+	assert.Zero(summary.MediaPending)
+	assert.Empty(summary.CatalogIssues)
+	assert.Equal(1, api.guildCountRequests(), "guild membership is fetched once per sync, not per container")
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+}
+
+func TestImporterAdmitsMediaWhenGuildMemberCountIsUnderTheLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildMembers = 3
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err)
+	assert.Zero(summary.MediaSkipped)
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+	`).Scan(&state, &reason))
+	// The download itself cannot succeed against a fixture URL; reaching it at
+	// all proves policy admitted the attachment.
+	assert.Equal(string(attachmentpolicy.StateFailed), state)
+	assert.Equal(string(attachmentpolicy.SkipFetchFailure), reason)
+}
+
+func TestImporterFailsClosedWhenGuildMemberCountIsUnreadable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildCountErr = &APIError{
+		Operation: "guild member counts", StatusCode: http.StatusForbidden, Code: 50001,
+	}
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err, "unreadable membership restricts media, it does not fail the guild import")
+	assert.Equal(int64(1), summary.MediaSkipped)
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+	require.Len(summary.CatalogIssues, 1)
+	issue := summary.CatalogIssues[0]
+	assert.Equal(CatalogScopeGuildMembers, issue.Scope)
+	assert.Equal(CatalogIssueForbidden, issue.Kind)
+	assert.Equal("200", issue.GuildID)
+	assert.False(issue.Fatal)
+}
+
+func TestImporterSkipsGuildMemberCountWithoutParticipantLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildCountErr = errors.New("guild membership must not be requested")
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+	})
+	require.NoError(err)
+	assert.Zero(api.guildCountRequests(), "no participant limit needs no membership lookup")
+	assert.Empty(summary.CatalogIssues)
+}
+
+func TestImporterArchivesGuildParticipantFloorForOrdinaryChannels(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildMembers = 12
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+	policy := attachmentpolicy.Policy{MaxParticipants: 8}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(), MediaPolicy: policy,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MediaSkipped)
+
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","discord_channel_type":0,"member_count":12}`, metadata["300"].String,
+		"the membership sync evaluated must outlive the run that read it",
+	)
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
+	require.NoError(err)
+	assert.Empty(retryable, "backfill selection must not re-admit what the guild floor excluded")
+
+	messageID := messageIDBySource(t, st, source.ID, "101")
+	contentHash := strings.Repeat("cd", 32)
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+		StoragePath: contentHash[:2] + "/" + contentHash, ContentHash: contentHash,
+		SourceAttachmentID: "discord:401", State: attachmentpolicy.StateStored,
+	}}))
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal(12, candidates[0].ParticipantCount, "purge sees the guild floor")
+}
+
+func TestImporterArchivesGuildParticipantFloorWhenMediaIsAdmitted(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildMembers = 3
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err)
+	assert.Zero(summary.MediaSkipped)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","discord_channel_type":0,"member_count":3}`, metadata["300"].String,
+		"an admitting floor is archived too, so a later purge weighs the same membership",
+	)
+}
+
+func TestImporterMarksMembershipUnknownWhenGuildMembershipIsUnreadable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.guildMembers = 12
+	message := importerTestMessage("101", "300", "attachment")
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+	opts := ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	}
+	importer := newTestImporter(st, api)
+
+	_, err := importer.Import(t.Context(), opts)
+	require.NoError(err)
+	api.guildCountErr = &APIError{
+		Operation: "guild member counts", StatusCode: http.StatusForbidden, Code: 50001,
+	}
+	summary, err := importer.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Len(summary.CatalogIssues, 1)
+
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","discord_channel_type":0,"member_count":12,"member_count_unknown":true}`,
+		metadata["300"].String,
+		"an unreadable count keeps the membership an earlier run established for reference, "+
+			"but archives that the roster is unresolved",
+	)
+	messageID := messageIDBySource(t, st, source.ID, "101")
+	contentHash := strings.Repeat("cd", 32)
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+		StoragePath: contentHash[:2] + "/" + contentHash, ContentHash: contentHash,
+		SourceAttachmentID: "discord:401", State: attachmentpolicy.StateStored,
+	}}))
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.True(candidates[0].RosterUnresolved,
+		"purge must see the unresolved roster rather than trust the stale count")
+
+	// A readable count resolves the roster again and replaces the stale floor.
+	api.guildCountErr = nil
+	api.guildMembers = 5
+	_, err = importer.Import(t.Context(), opts)
+	require.NoError(err)
+	metadata, err = st.ConversationMetadataBatch(source.ID, []string{"300"})
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","discord_channel_type":0,"member_count":5}`, metadata["300"].String,
+		"a successful lookup clears the marker and lowers the archived floor",
+	)
+	candidates, err = st.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.False(candidates[0].RosterUnresolved)
+	assert.Equal(5, candidates[0].ParticipantCount)
+}
+
+// TestImporterArchiveGuildMembershipCoversEveryConversation pins the helper
+// sync and the media backfill share: the guild floor is guild-wide, so a
+// lookup outcome lands on every conversation of the source — including ones
+// this run did not catalog. An unreadable lookup marks each roster unresolved
+// and keeps the counts for reference; a readable one reconciles each floor
+// against the container's own archived count and clears the marker.
+func TestImporterArchiveGuildMembershipCoversEveryConversation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	archive := func(containerID, metadata string) int64 {
+		conversationID, err := st.EnsureConversationWithType(source.ID, containerID, discordConversationType, containerID)
+		require.NoError(err)
+		require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: metadata, Valid: true}))
+		return conversationID
+	}
+	channelID := archive("300", `{"guild_id":"200","discord_channel_type":0,"member_count":40}`)
+	threadID := archive("301", `{"guild_id":"200","discord_channel_type":11,"member_count":40,"container_member_count":20}`)
+	metadataOf := func(conversationID int64) string {
+		metadata, err := st.GetConversationMetadata(conversationID)
+		require.NoError(err)
+		return metadata.String
+	}
+	importer := newTestImporter(st, newImporterFakeAPI())
+
+	require.NoError(importer.ArchiveGuildMembership(source.ID, 9, errors.New("members unavailable")))
+	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":40,"member_count_unknown":true}`,
+		metadataOf(channelID))
+	assert.JSONEq(`{"guild_id":"200","discord_channel_type":11,"member_count":40,"container_member_count":20,`+
+		`"member_count_unknown":true}`, metadataOf(threadID))
+
+	require.NoError(importer.ArchiveGuildMembership(source.ID, 5, nil))
+	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":5}`, metadataOf(channelID))
+	assert.JSONEq(`{"guild_id":"200","discord_channel_type":11,"member_count":20,"container_member_count":20}`,
+		metadataOf(threadID), "the container's own count outlives a floor that no longer exceeds it")
+
+	// Without a participant limit no lookup is made, and nothing is rewritten.
+	require.NoError(importer.ArchiveGuildMembership(source.ID, 0, nil))
+	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":5}`, metadataOf(channelID))
+}
+
+func TestImporterArchivesGuildParticipantFloorForPreservedContainerMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "300", discordConversationType, "Archived thread",
+	)
+	require.NoError(err)
+	archived := `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`
+	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: archived, Valid: true}))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	highWater := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	baseline := NewSyncState()
+	baseline.Containers["300"] = ContainerState{
+		HighWater: highWater, BackfillUpper: highWater, BackfillBefore: "1", BackfillComplete: true,
+	}
+	blob, err := baseline.Marshal()
+	require.NoError(err)
+	runID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, blob))
+	api := newImporterFakeAPI()
+	api.guildMembers = 12
+
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err = importer.Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8},
+	})
+	require.NoError(err)
+	metadata, err := st.GetConversationMetadata(conversationID)
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,`+
+			`"thread":{"archived":true},"member_count":12}`, metadata.String,
+		"a container whose media the floor governs records it without losing archived keys",
+	)
+}
+
+// TestImporterReconcilesPreservedContainerFloorWhenGuildShrinks pins the
+// preserved-container half of the floor contract: a container this run does
+// not re-catalog still evaluates media against the guild membership Discord
+// answers with today, so a guild that shrank below the limit relaxes its
+// exclusions instead of keeping a count nobody can lower. A container-specific
+// count the catalog once reported outlives the floor that used to exceed it.
+func TestImporterReconcilesPreservedContainerFloorWhenGuildShrinks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	highWater := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	baseline := NewSyncState()
+	archiveThread := func(containerID, metadata string) int64 {
+		conversationID, err := st.EnsureConversationWithType(
+			source.ID, containerID, discordConversationType, "Archived thread "+containerID,
+		)
+		require.NoError(err)
+		require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: metadata, Valid: true}))
+		baseline.Containers[containerID] = ContainerState{
+			HighWater: highWater, BackfillUpper: highWater, BackfillBefore: "1", BackfillComplete: true,
+		}
+		return conversationID
+	}
+	// A floor of 40 was archived while the guild was large; 300 reported no
+	// membership of its own, 301 is a thread the catalog once counted at 20.
+	guildOnlyID := archiveThread("300", `{"guild_id":"200","parent_channel_id":"250",`+
+		`"discord_channel_type":11,"thread":{"archived":true},"member_count":40}`)
+	threadOwnID := archiveThread("301", `{"guild_id":"200","parent_channel_id":"250",`+
+		`"discord_channel_type":11,"thread":{"archived":true},"member_count":40,"container_member_count":20}`)
+	blob, err := baseline.Marshal()
+	require.NoError(err)
+	runID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, blob))
+	skippedMessage := func(conversationID int64, sourceMessageID, attachmentID string) int64 {
+		messageID, err := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversationID,
+			SourceMessageID: sourceMessageID, MessageType: "discord",
+		})
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+			SourceAttachmentID: "discord:" + attachmentID, Size: 5,
+			State: attachmentpolicy.StateSkipped, SkipReason: attachmentpolicy.SkipParticipantThreshold,
+		}}))
+		return messageID
+	}
+	guildOnlyMessageID := skippedMessage(guildOnlyID, "101", "401")
+	skippedMessage(threadOwnID, "102", "402")
+	policy := attachmentpolicy.Policy{MaxParticipants: 8}
+	api := newImporterFakeAPI()
+	api.guildMembers = 5
+	// New media in each container is weighed live against the same membership
+	// the reconciled metadata records.
+	freshMessage := func(containerID, attachmentID string, sequence uint64) Message {
+		message := importerTestMessage(importerTestSnowflake(t, now, sequence), containerID, "attachment")
+		message.Attachments = []Attachment{{ID: attachmentID, Filename: "private.bin", Size: 5}}
+		return message
+	}
+	api.messages["300"] = []Message{freshMessage("300", "403", 2)}
+	api.messages["301"] = []Message{freshMessage("301", "404", 3)}
+
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	summary, err := importer.Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(), MediaPolicy: policy,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MediaSkipped, "only the thread's own count still exceeds the limit")
+	attachmentOutcome := func(sourceAttachmentID string) (string, string) {
+		var state, reason sql.NullString
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT attachment_state, attachment_skip_reason FROM attachments WHERE source_attachment_id = ?
+		`), sourceAttachmentID).Scan(&state, &reason))
+		return state.String, reason.String
+	}
+	state, reason := attachmentOutcome("discord:403")
+	assert.Equal(string(attachmentpolicy.StateFailed), state, "the shrunken guild admits new media")
+	assert.Equal(string(attachmentpolicy.SkipFetchFailure), reason)
+	state, reason = attachmentOutcome("discord:404")
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason,
+		"a preserved container's own archived count governs its live media policy")
+
+	metadata, err := st.GetConversationMetadata(guildOnlyID)
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,`+
+			`"thread":{"archived":true},"member_count":5}`, metadata.String,
+		"a shrinking guild lowers the archived floor of a preserved container",
+	)
+	metadata, err = st.GetConversationMetadata(threadOwnID)
+	require.NoError(err)
+	assert.JSONEq(
+		`{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,`+
+			`"thread":{"archived":true},"member_count":20,"container_member_count":20}`, metadata.String,
+		"the container's own membership outlives a floor that no longer exceeds it",
+	)
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
+	require.NoError(err)
+	retryableIDs := make([]int64, 0, len(retryable))
+	for _, item := range retryable {
+		retryableIDs = append(retryableIDs, item.MessageID)
+		assert.Equal("300", item.ChatID, "only the container the guild floor alone governed becomes retryable")
+		assert.Equal(5, item.ParticipantCount)
+	}
+	assert.Contains(retryableIDs, guildOnlyMessageID,
+		"the exclusion the earlier floor produced is retryable once the guild shrinks")
+}
+
+func TestImporterUsesObservedParticipantCountForMediaPolicy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	message := importerTestMessage("101", "300", "attachment")
+	message.Mentions = []User{{ID: "mentioned", Username: "Mentioned User"}}
+	message.Attachments = []Attachment{{ID: "401", Filename: "private.bin", Size: 5}}
+	api.messages["300"] = []Message{message}
+
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{
+		GuildID: "200", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 1},
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MediaSkipped)
+	assert.Zero(summary.MediaPending)
+	var state, reason string
+	require.NoError(st.DB().QueryRow(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments
+	`).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
 }
 
 func TestImporterResumesFromNewestCheckpointMergedOverSuccessfulBaseline(t *testing.T) {

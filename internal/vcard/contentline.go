@@ -9,6 +9,7 @@ import (
 const (
 	maxParametersPerProperty = 100
 	maxValuesPerParameter    = 100
+	parameterTypeName        = "TYPE"
 )
 
 var errSplitPartLimit = errors.New("split part count limit exceeded")
@@ -78,7 +79,7 @@ func parseParameter(raw string) (Parameter, error) {
 			return Parameter{}, err
 		}
 		return Parameter{
-			Name:   "TYPE",
+			Name:   parameterTypeName,
 			Bare:   true,
 			Values: values,
 		}, nil

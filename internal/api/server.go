@@ -1294,10 +1294,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	writeJSON(w, http.StatusOK, HealthResponse{
-		Status:          "ok",
-		Vector:          s.vectorHealth(),
-		Operation:       s.operationHealth(),
-		AnalyticsEngine: s.analyticsModeForContext(r.Context()),
+		Status:           "ok",
+		Vector:           s.vectorHealth(),
+		Operation:        s.operationHealth(),
+		AnalyticsEngine:  s.analyticsModeForContext(r.Context()),
+		APISchemaVersion: APISchemaVersion,
 	})
 }
 

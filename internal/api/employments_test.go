@@ -36,7 +36,7 @@ func TestEmploymentHTTPLifecycleAndProjection(t *testing.T) {
 	assert.Equal(fmt.Sprintf(`"employment-%d-r1"`, created.ID),
 		createdResponse.Header().Get("ETag"))
 
-	personPath := fmt.Sprintf("/api/v1/persons/%d/employments", person.ID)
+	personPath := fmt.Sprintf("/api/v1/people/%d/employments", person.ID)
 	listResponse := organizationRequest(t, srv, http.MethodGet, personPath, nil, "")
 	require.Equal(http.StatusOK, listResponse.Code)
 	var listed EmploymentsResponse
@@ -117,7 +117,7 @@ func TestPersonEmploymentsProjectionIsAbsentWithoutAPrimaryCurrentRow(t *testing
 	person := mustAPIPerson(t, st, "bob@example.com", "bob")
 
 	response := organizationRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/employments", person.ID), nil, "")
+		fmt.Sprintf("/api/v1/people/%d/employments", person.ID), nil, "")
 	require.Equal(http.StatusOK, response.Code)
 	var listed EmploymentsResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &listed))
@@ -164,7 +164,7 @@ func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 	assert.Contains(missingPathOrganization.Body.String(), "organization_not_found")
 
 	missingPathPerson := organizationRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/employments", person.ID+9999), nil, "")
+		fmt.Sprintf("/api/v1/people/%d/employments", person.ID+9999), nil, "")
 	require.Equal(http.StatusNotFound, missingPathPerson.Code,
 		"a path-addressed person that does not exist is a missing resource")
 	assert.Contains(missingPathPerson.Body.String(), "person_profile_not_found")

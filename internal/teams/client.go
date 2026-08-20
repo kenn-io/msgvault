@@ -3,6 +3,7 @@ package teams
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
+
+// ErrMediaTooLarge classifies hosted media that exceeds its configured cap.
+var ErrMediaTooLarge = errors.New("teams hosted media exceeds the configured size cap")
 
 const (
 	maxRetries    = 8
@@ -48,6 +52,10 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 // get fetches rawURL, respecting the rate limiter and retrying on 429/5xx with
 // Retry-After or exponential back-off.
 func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
+	return c.getLimited(ctx, rawURL, 0)
+}
+
+func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
 	reqURL, err := c.resolveRequestURL(rawURL)
 	if err != nil {
 		return nil, err
@@ -70,7 +78,15 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		body, readErr := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusOK && maxBytes > 0 && resp.ContentLength > maxBytes {
+			_ = resp.Body.Close()
+			return nil, ErrMediaTooLarge
+		}
+		reader := io.Reader(resp.Body)
+		if maxBytes > 0 {
+			reader = io.LimitReader(resp.Body, maxBytes+1)
+		}
+		body, readErr := io.ReadAll(reader)
 		closeErr := resp.Body.Close()
 		if readErr != nil {
 			return nil, fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
@@ -78,9 +94,11 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph GET %s: close body: %w", reqURL, closeErr)
 		}
-
 		switch {
 		case resp.StatusCode == http.StatusOK:
+			if maxBytes > 0 && int64(len(body)) > maxBytes {
+				return nil, ErrMediaTooLarge
+			}
 			return body, nil
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
@@ -122,6 +140,11 @@ func (c *Client) resolveRequestURL(rawURL string) (string, error) {
 // prefixed with the client's baseURL automatically by the underlying get method.
 func (c *Client) GetRaw(ctx context.Context, url string) ([]byte, error) {
 	return c.get(ctx, url)
+}
+
+// GetRawLimited fetches raw hosted media while enforcing a response-byte cap.
+func (c *Client) GetRawLimited(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	return c.getLimited(ctx, url, maxBytes)
 }
 
 // BaseURL returns the client's configured base URL (scheme + host, no trailing slash).
@@ -250,5 +273,23 @@ func (c *Client) GetUser(ctx context.Context, id string) (*GraphUser, error) {
 func (c *Client) ListChatMembers(ctx context.Context, chatID string) ([]ChatMember, error) {
 	var out []ChatMember
 	_, err := pageThrough[ChatMember](ctx, c, "/chats/"+chatID+"/members", func(p []ChatMember) { out = append(out, p...) })
+	return out, err
+}
+
+// ListTeamMembers returns all members of the given team. Standard channels
+// inherit the team roster, which is the membership media policy evaluates them
+// against.
+func (c *Client) ListTeamMembers(ctx context.Context, teamID string) ([]ChatMember, error) {
+	var out []ChatMember
+	_, err := pageThrough[ChatMember](ctx, c, "/teams/"+teamID+"/members", func(p []ChatMember) { out = append(out, p...) })
+	return out, err
+}
+
+// ListChannelMembers returns all members of the given channel. Private and
+// shared channels are governed by this roster rather than the team's.
+func (c *Client) ListChannelMembers(ctx context.Context, teamID, channelID string) ([]ChatMember, error) {
+	var out []ChatMember
+	_, err := pageThrough[ChatMember](ctx, c, "/teams/"+teamID+"/channels/"+channelID+"/members",
+		func(p []ChatMember) { out = append(out, p...) })
 	return out, err
 }

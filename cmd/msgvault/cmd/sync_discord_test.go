@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -104,6 +105,32 @@ func TestSyncDiscordReportsSanitizedCatalogAndContainerAccessIssues(t *testing.T
 	assert.Contains(output.String(), testDiscordChannel)
 	assert.Contains(output.String(), "HTTP 403")
 	assert.NotContains(output.String(), "synthetic failure")
+	assert.NotContains(output.String(), testDiscordBotToken)
+}
+
+func TestSyncDiscordWarnsWhenGuildMembershipIsUnavailable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	_, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(err)
+	api := newDiscordCLIServer(t)
+	api.guildMemberCount = 0
+	deps := testDiscordCommandDeps(t, st, tokensDir, api.server.URL)
+	deps.providerConfig = func() config.DiscordConfig {
+		return config.DiscordConfig{MediaMaxParticipants: 8}
+	}
+
+	cmd := newSyncDiscordLocalCmd(deps)
+	var output bytes.Buffer
+	cmd.SetArgs([]string{testDiscordGuildA})
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	require.NoError(cmd.Execute(), "unreadable membership restricts media, it does not fail the sync")
+	assert.Contains(output.String(), "Guild membership unavailable")
+	assert.Contains(output.String(), testDiscordGuildA)
 	assert.NotContains(output.String(), testDiscordBotToken)
 }
 

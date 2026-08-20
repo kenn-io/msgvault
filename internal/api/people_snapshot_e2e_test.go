@@ -27,10 +27,10 @@ func TestPersonTimelineReusesBaseSemanticSnapshotBeforeIdentityNarrowing(t *test
 		{MessageID: 2, Score: .8, Rank: 2},
 	})
 
-	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/people/search", `{
+	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/participants/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic"},"limit":25
 	}`)
-	timeline := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	timeline := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{
 		"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`","limit":25
 	}`)
 
@@ -54,7 +54,7 @@ func TestIdentityRelatedFilesReuseBaseSemanticSnapshotBeforeIdentityNarrowing(t 
 		searchPath string
 		filesPath  string
 	}{
-		{name: "person", searchPath: "/api/v1/people/search", filesPath: "/api/v1/people/1/files/search"},
+		{name: "person", searchPath: "/api/v1/participants/search", filesPath: "/api/v1/participants/1/files/search"},
 		{name: "domain", searchPath: "/api/v1/domains/search", filesPath: "/api/v1/domains/example.com/files/search"},
 	}
 	for _, test := range tests {
@@ -100,7 +100,7 @@ func TestIdentityScopeIntersectsSemanticCandidatesWithoutExpansion(t *testing.T)
 	for _, test := range []struct {
 		name, searchPath, timelinePath, filesPath string
 	}{
-		{name: "person", searchPath: "/api/v1/people/search", timelinePath: "/api/v1/people/1/timeline", filesPath: "/api/v1/people/1/files/search"},
+		{name: "person", searchPath: "/api/v1/participants/search", timelinePath: "/api/v1/participants/1/timeline", filesPath: "/api/v1/participants/1/files/search"},
 		{name: "domain", searchPath: "/api/v1/domains/search", timelinePath: "/api/v1/domains/example.com/timeline", filesPath: "/api/v1/domains/example.com/files/search"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestIdentitySemanticSnapshotRejectsWrongPredicateAndExpiry(t *testing.T) {
 		11: {ID: 11, MessageID: 1, ConversationID: 101, Filename: "older.txt"},
 	}}
 	srv.exploreState = newExploreServerState(func() time.Time { return now })
-	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/people/search", `{
+	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/participants/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic"},"limit":25
 	}`)
 
@@ -153,10 +153,10 @@ func TestIdentitySemanticSnapshotRejectsWrongPredicateAndExpiry(t *testing.T) {
 		path string
 		body string
 	}{
-		{name: "timeline wrong query", path: "/api/v1/people/1/timeline", body: `{"query":"beta","search_mode":"semantic","candidate_snapshot_id":"` + snapshot + `"}`},
-		{name: "timeline wrong mode", path: "/api/v1/people/1/timeline", body: `{"query":"alpha","search_mode":"hybrid","candidate_snapshot_id":"` + snapshot + `"}`},
-		{name: "files wrong query", path: "/api/v1/people/1/files/search", body: `{"predicate":{"query":"beta","search_mode":"semantic","candidate_snapshot_id":"` + snapshot + `"},"sort":{"field":"occurred_at","direction":"desc"}}`},
-		{name: "files wrong mode", path: "/api/v1/people/1/files/search", body: `{"predicate":{"query":"alpha","search_mode":"hybrid","candidate_snapshot_id":"` + snapshot + `"},"sort":{"field":"occurred_at","direction":"desc"}}`},
+		{name: "timeline wrong query", path: "/api/v1/participants/1/timeline", body: `{"query":"beta","search_mode":"semantic","candidate_snapshot_id":"` + snapshot + `"}`},
+		{name: "timeline wrong mode", path: "/api/v1/participants/1/timeline", body: `{"query":"alpha","search_mode":"hybrid","candidate_snapshot_id":"` + snapshot + `"}`},
+		{name: "files wrong query", path: "/api/v1/participants/1/files/search", body: `{"predicate":{"query":"beta","search_mode":"semantic","candidate_snapshot_id":"` + snapshot + `"},"sort":{"field":"occurred_at","direction":"desc"}}`},
+		{name: "files wrong mode", path: "/api/v1/participants/1/files/search", body: `{"predicate":{"query":"alpha","search_mode":"hybrid","candidate_snapshot_id":"` + snapshot + `"},"sort":{"field":"occurred_at","direction":"desc"}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := postExploreJSON(t, srv, test.path, test.body)
@@ -165,11 +165,11 @@ func TestIdentitySemanticSnapshotRejectsWrongPredicateAndExpiry(t *testing.T) {
 	}
 
 	now = now.Add(exploreCandidateSnapshotTTL + time.Second)
-	expired := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	expired := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{
 		"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`"
 	}`)
 	assertExploreError(t, expired, http.StatusConflict, "candidate_snapshot_expired")
-	expiredFiles := postExploreJSON(t, srv, "/api/v1/people/1/files/search", `{
+	expiredFiles := postExploreJSON(t, srv, "/api/v1/participants/1/files/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`"},
 		"sort":{"field":"occurred_at","direction":"desc"}
 	}`)
@@ -192,7 +192,7 @@ func TestIdentityScopeIntersectsBasePredicateAndRejectsCrossIdentityCursor(t *te
 	// the endpoint's identity scope: person 1's timeline restricted to entries
 	// also involving participant 2 — in this fixture only message 3 — instead
 	// of an identity_scope_conflict error.
-	intersection := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	intersection := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{
 		"filters":[{"dimension":"participant","values":["2"]}]
 	}`)
 	requirements.Equal(http.StatusOK, intersection.Code, intersection.Body.String())
@@ -202,22 +202,22 @@ func TestIdentityScopeIntersectsBasePredicateAndRejectsCrossIdentityCursor(t *te
 	requirements.NotNil(intersectionBody.Rows[0].AnchorMessageID)
 	requirements.Equal(int64(3), *intersectionBody.Rows[0].AnchorMessageID)
 
-	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/people/search", `{
+	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/participants/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic"},"limit":25
 	}`)
-	first := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	first := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{
 		"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`","limit":1
 	}`)
 	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
 	var page ExploreHTTPResponse
 	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
 	requirements.NotEmpty(page.NextCursor)
-	crossIdentity := postExploreJSON(t, srv, "/api/v1/people/2/timeline", `{
+	crossIdentity := postExploreJSON(t, srv, "/api/v1/participants/2/timeline", `{
 		"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`","cursor":"`+page.NextCursor+`","limit":1
 	}`)
 	assertExploreError(t, crossIdentity, http.StatusBadRequest, "invalid_cursor")
 
-	firstFiles := postExploreJSON(t, srv, "/api/v1/people/1/files/search", `{
+	firstFiles := postExploreJSON(t, srv, "/api/v1/participants/1/files/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`"},
 		"sort":{"field":"occurred_at","direction":"desc"},"limit":1
 	}`)
@@ -225,7 +225,7 @@ func TestIdentityScopeIntersectsBasePredicateAndRejectsCrossIdentityCursor(t *te
 	var filePage FileSearchHTTPResponse
 	requirements.NoError(json.Unmarshal(firstFiles.Body.Bytes(), &filePage))
 	requirements.NotEmpty(filePage.NextCursor)
-	crossIdentityFiles := postExploreJSON(t, srv, "/api/v1/people/2/files/search", `{
+	crossIdentityFiles := postExploreJSON(t, srv, "/api/v1/participants/2/files/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic","candidate_snapshot_id":"`+snapshot+`"},
 		"sort":{"field":"occurred_at","direction":"desc"},"cursor":"`+filePage.NextCursor+`","limit":1
 	}`)
@@ -238,7 +238,7 @@ func TestIdentityScopeIntersectsCompatibleMultiValueBaseFilter(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newIdentityScopeSemanticServer(t)
-	timeline := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	timeline := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{
 		"filters":[{"dimension":"participant","values":["1","2"]}]
 	}`)
 	requirements.Equal(http.StatusOK, timeline.Code, timeline.Body.String())

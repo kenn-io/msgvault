@@ -28,21 +28,25 @@ type discordCLIServer struct {
 	testing *testing.T
 	server  *httptest.Server
 
-	mu       sync.Mutex
-	requests []string
-	guilds   []discord.Guild
-	fail     map[string]int
-	failCode map[string]int
-	messages map[string][]discord.Message
+	mu               sync.Mutex
+	requests         []string
+	guilds           []discord.Guild
+	guildMemberCount int
+	fail             map[string]int
+	failCode         map[string]int
+	messages         map[string][]discord.Message
 }
 
 func newDiscordCLIServer(t *testing.T, guilds ...discord.Guild) *discordCLIServer {
 	t.Helper()
 	fake := &discordCLIServer{
-		testing:  t,
-		guilds:   guilds,
-		fail:     make(map[string]int),
-		failCode: make(map[string]int),
+		testing: t,
+		guilds:  guilds,
+		// A guild holding only the archiving bot keeps the guild-wide floor out
+		// of the way of tests that exercise archived membership.
+		guildMemberCount: 1,
+		fail:             make(map[string]int),
+		failCode:         make(map[string]int),
 		messages: map[string][]discord.Message{
 			testDiscordChannel: {},
 		},
@@ -78,9 +82,9 @@ func (f *discordCLIServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/users/@me/guilds":
 		writeDiscordCLIJSON(f.testing, w, f.guilds)
 	case "/guilds/" + testDiscordGuildA:
-		writeDiscordCLIJSON(f.testing, w, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
+		writeDiscordCLIJSON(f.testing, w, f.guildDetail(r, testDiscordGuildA, "Alpha Guild"))
 	case "/guilds/" + testDiscordGuildB:
-		writeDiscordCLIJSON(f.testing, w, discord.Guild{ID: testDiscordGuildB, Name: "Beta Guild"})
+		writeDiscordCLIJSON(f.testing, w, f.guildDetail(r, testDiscordGuildB, "Beta Guild"))
 	case "/guilds/" + testDiscordGuildA + "/channels", "/guilds/" + testDiscordGuildB + "/channels":
 		writeDiscordCLIJSON(f.testing, w, []discord.Channel{{ID: testDiscordChannel, Type: 0, Name: "general"}})
 	case "/guilds/" + testDiscordGuildA + "/threads/active", "/guilds/" + testDiscordGuildB + "/threads/active":
@@ -100,6 +104,18 @@ func (f *discordCLIServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// guildDetail mirrors Discord's guild endpoint, which reports an approximate
+// member count only for requests that ask for counts.
+func (f *discordCLIServer) guildDetail(request *http.Request, guildID, name string) discord.Guild {
+	guild := discord.Guild{ID: guildID, Name: name}
+	if request.URL.Query().Get("with_counts") == "true" {
+		f.mu.Lock()
+		guild.ApproximateMemberCount = f.guildMemberCount
+		f.mu.Unlock()
+	}
+	return guild
 }
 
 func filterDiscordCLIMessages(messages []discord.Message, request *http.Request) []discord.Message {

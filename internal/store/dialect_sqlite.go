@@ -1262,6 +1262,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE embedding_changes ADD COLUMN old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
+		{`ALTER TABLE attribute_definitions ADD COLUMN is_sensitive BOOLEAN NOT NULL DEFAULT FALSE`, "attribute_definitions.is_sensitive"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and
@@ -1298,6 +1299,29 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN provider_latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_index_state ADD COLUMN target_profile_id TEXT`, "document_index_state.target_profile_id"},
+		{`ALTER TABLE attachments ADD COLUMN attachment_state TEXT`, "attachments.attachment_state"},
+		{`ALTER TABLE attachments ADD COLUMN attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
+		// vcard_projection_revision: the lock and change token native vCard
+		// envelope commits serialize on. Existing rows start at 1 like fresh
+		// ones; the absolute value never matters, only that a projection
+		// write moves it, so no backfill is needed.
+		{`ALTER TABLE persons ADD COLUMN vcard_projection_revision INTEGER NOT NULL DEFAULT 1`,
+			"persons.vcard_projection_revision"},
+		{`ALTER TABLE person_names ADD COLUMN source_resource_uid TEXT`, "person_names.source_resource_uid"},
+		{`ALTER TABLE person_contact_points ADD COLUMN source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
+		{`ALTER TABLE person_addresses ADD COLUMN source_resource_uid TEXT`, "person_addresses.source_resource_uid"},
+		{`ALTER TABLE person_dates ADD COLUMN source_resource_uid TEXT`, "person_dates.source_resource_uid"},
+		{`ALTER TABLE person_categories ADD COLUMN source_resource_uid TEXT`, "person_categories.source_resource_uid"},
+		{`ALTER TABLE person_media ADD COLUMN source_resource_uid TEXT`, "person_media.source_resource_uid"},
+		{`ALTER TABLE participant_contact_observations ADD COLUMN source_resource_uid TEXT`, "participant_contact_observations.source_resource_uid"},
+		{`ALTER TABLE organization_names ADD COLUMN source_resource_uid TEXT`, "organization_names.source_resource_uid"},
+		{`ALTER TABLE organization_identifiers ADD COLUMN source_resource_uid TEXT`, "organization_identifiers.source_resource_uid"},
+		{`ALTER TABLE organization_addresses ADD COLUMN source_resource_uid TEXT`, "organization_addresses.source_resource_uid"},
+		{`ALTER TABLE organization_contact_points ADD COLUMN source_resource_uid TEXT`, "organization_contact_points.source_resource_uid"},
+		{`ALTER TABLE organization_categories ADD COLUMN source_resource_uid TEXT`, "organization_categories.source_resource_uid"},
+		{`ALTER TABLE organization_media ADD COLUMN source_resource_uid TEXT`, "organization_media.source_resource_uid"},
+		{`ALTER TABLE person_relationships ADD COLUMN source_resource_uid TEXT`, "person_relationships.source_resource_uid"},
+		{`ALTER TABLE person_relationship_reviews ADD COLUMN source_resource_uid TEXT`, "person_relationship_reviews.source_resource_uid"},
 	}
 }
 
@@ -1398,6 +1422,12 @@ func (d *SQLiteDialect) BeginWriteSQL() string { return "BEGIN IMMEDIATE" }
 // comes from BEGIN IMMEDIATE.
 func (d *SQLiteDialect) SelectForUpdate() string { return "" }
 
+// RowWriterLockSQL returns a self-assign UPDATE on the row, which is how a
+// deferred SQLite transaction reserves the writer lock before it reads.
+func (d *SQLiteDialect) RowWriterLockSQL(table, column string) string {
+	return "UPDATE " + table + " SET " + column + " = " + column + " WHERE id = ?"
+}
+
 // MaintenanceTimeoutResetSQL returns "" — SQLite has no statement_timeout,
 // so Store.runMaintenance issues no reset statement and SQLite's
 // transactional behavior is unchanged.
@@ -1421,6 +1451,12 @@ func (d *SQLiteDialect) IsBusyError(err error) bool {
 	}
 	return false
 }
+
+// IsSerializationFailureError always returns false for SQLite. Only one write
+// transaction runs at a time, so a locked row can never have been changed and
+// committed by another transaction while this one held its snapshot — the
+// condition PostgreSQL reports as SQLSTATE 40001 does not arise.
+func (d *SQLiteDialect) IsSerializationFailureError(err error) bool { return false }
 
 // IsFTSValueTooLargeError always returns false for SQLite: FTS5 has no
 // per-value size limit analogous to PostgreSQL's tsvector "string is too long"

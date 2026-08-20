@@ -50,7 +50,7 @@ type PersonCluster struct {
 	Edges       []PersonClusterEdge `json:"edges"`
 }
 
-// PersonProfile references the durable curated person (see /api/v1/persons)
+// PersonProfile references the durable curated person (see /api/v1/people)
 // covering this detail's identity cluster, when one has been promoted.
 // Revision is the person's optimistic-concurrency counter, so clients can
 // PATCH or DELETE the profile straight from a detail view. Populated at the

@@ -26,7 +26,7 @@ type IdentitySearchHTTPRequest struct {
 	Limit         int                `json:"limit,omitempty" minimum:"0" maximum:"500"`
 }
 
-type PersonSearchHTTPResponse struct {
+type ParticipantSearchHTTPResponse struct {
 	Rows                []query.PersonSummary  `json:"rows"`
 	TotalCount          int64                  `json:"total_count"`
 	CacheRevision       string                 `json:"cache_revision"`
@@ -44,7 +44,7 @@ type DomainSearchHTTPResponse struct {
 	CandidateSnapshotID string                 `json:"candidate_snapshot_id,omitempty"`
 }
 
-type PersonContextSummaryHTTPResponse struct {
+type ParticipantContextSummaryHTTPResponse struct {
 	Summary             query.PersonSummary    `json:"summary"`
 	CacheRevision       string                 `json:"cache_revision"`
 	SearchProvenance    query.SearchProvenance `json:"search_provenance"`
@@ -70,18 +70,18 @@ type identitySearchPrepared struct {
 
 var domainFactPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
-func (s *Server) registerPeopleRoutes(api huma.API) {
-	registerExploreRoute[IdentitySearchHTTPRequest, PersonSearchHTTPResponse](
-		api, "searchPeople", "/people/search", "Search analytical people", s.handleSearchPeople,
+func (s *Server) registerParticipantRoutes(api huma.API) {
+	registerExploreRoute[IdentitySearchHTTPRequest, ParticipantSearchHTTPResponse](
+		api, "searchParticipants", "/participants/search", "Search observed participant clusters", s.handleSearchParticipants,
 	)
 	registerAnalyticalDetailRoute[query.PersonSummary](
-		api, "getPerson", http.MethodGet, "/people/{id}", "Get one analytical person", s.handleGetPerson,
+		api, "getParticipant", http.MethodGet, "/participants/{id}", "Get one observed participant cluster", s.handleGetParticipant,
 	)
-	registerExploreRoute[ExploreHTTPRequest, PersonContextSummaryHTTPResponse](
-		api, "getPersonContextSummary", "/people/{id}/summary", "Get one person's contextual analytical summary", s.handlePersonContextSummary,
+	registerExploreRoute[ExploreHTTPRequest, ParticipantContextSummaryHTTPResponse](
+		api, "getParticipantContextSummary", "/participants/{id}/summary", "Get one participant cluster's contextual analytical summary", s.handleParticipantContextSummary,
 	)
 	registerExploreRoute[ExploreHTTPRequest, ExploreHTTPResponse](
-		api, "getPersonTimeline", "/people/{id}/timeline", "Get one person's canonical activity timeline", s.handlePersonTimeline,
+		api, "getParticipantTimeline", "/participants/{id}/timeline", "Get one participant cluster's canonical activity timeline", s.handleParticipantTimeline,
 	)
 	registerExploreRoute[IdentitySearchHTTPRequest, DomainSearchHTTPResponse](
 		api, "searchDomains", "/domains/search", "Search analytical domains", s.handleSearchDomains,
@@ -108,7 +108,7 @@ func registerAnalyticalDetailRoute[Resp any](
 	registerRawHumaRoute(api, op, handler)
 }
 
-func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSearchParticipants(w http.ResponseWriter, r *http.Request) {
 	var request IdentitySearchHTTPRequest
 	prepared, ok := s.prepareIdentitySearch(w, r, &request)
 	if !ok {
@@ -132,7 +132,7 @@ func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
 		return
 	}
-	response := PersonSearchHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision,
+	response := ParticipantSearchHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: prepared.snapshotID}
 	if next := prepared.offset + len(result.Rows); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{Offset: next, Request: prepared.requestHash, Revision: result.CacheRevision,
@@ -238,8 +238,8 @@ func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, r
 		offset: offset, requestHash: requestHash, cursor: cursor, search: searchSpec, snapshotID: snapshotID}, true
 }
 
-func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleGetParticipant(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
 		return
 	}
@@ -255,7 +255,7 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if person == nil {
-		writeError(w, http.StatusNotFound, "person_not_found", "Person not found")
+		writeError(w, http.StatusNotFound, "participant_not_found", "Participant cluster not found")
 		return
 	}
 	s.attachPersonCluster(person, id, members)
@@ -335,8 +335,8 @@ func (s *Server) attachPersonCluster(person *query.PersonSummary, id int64, memb
 	person.Cluster = &query.PersonCluster{CanonicalID: members[0], MemberIDs: members, Edges: clusterEdges}
 }
 
-func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleParticipantContextSummary(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
 		return
 	}
@@ -358,10 +358,10 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if result == nil || len(result.Rows) == 0 {
-		writeError(w, http.StatusNotFound, "person_not_found", "Person not found in the active analytical context")
+		writeError(w, http.StatusNotFound, "participant_not_found", "Participant cluster not found in the active analytical context")
 		return
 	}
-	writeJSON(w, http.StatusOK, PersonContextSummaryHTTPResponse{Summary: result.Rows[0], CacheRevision: result.CacheRevision,
+	writeJSON(w, http.StatusOK, ParticipantContextSummaryHTTPResponse{Summary: result.Rows[0], CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID})
 }
 
@@ -435,8 +435,8 @@ func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request) 
 	return query.ExploreRequest{Context: prepared.query.Context, Search: searchSpec}, snapshotID, true
 }
 
-func (s *Server) handlePersonTimeline(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleParticipantTimeline(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
 		return
 	}
@@ -465,12 +465,12 @@ func (s *Server) forwardIdentityTimeline(w http.ResponseWriter, r *http.Request,
 	s.handleExploreWithScope(w, r, &exact)
 }
 
-func positivePersonPathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	raw := strings.TrimPrefix(r.URL.Path, "/api/v1/people/")
+func positiveParticipantPathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := strings.TrimPrefix(r.URL.Path, "/api/v1/participants/")
 	raw = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(raw, "/files/search"), "/timeline"), "/summary")
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_person_id", "person ID must be a positive integer")
+		writeError(w, http.StatusBadRequest, "invalid_participant_id", "participant ID must be a positive integer")
 		return 0, false
 	}
 	return id, true

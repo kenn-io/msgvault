@@ -865,13 +865,13 @@ func listCurrentContactFrequencyTx(
 		FROM person_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
 		WHERE v.person_id = ?
-		  AND d.slug = ?
+		  AND d.universal_id = ?
 		  AND d.object_type = ?
 		  AND v.active_until IS NULL
 		  AND v.superseded_at IS NULL
 		ORDER BY v.ordinal, v.id
 	`,
-		personID, AttributeSlugContactFrequency, string(AttributeObjectPerson))
+		personID, AttributeUniversalIDContactFrequency, string(AttributeObjectPerson))
 	if err != nil {
 		return nil, fmt.Errorf("read contact frequency: %w", err)
 	}

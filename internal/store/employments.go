@@ -73,10 +73,10 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 	if err != nil {
 		return nil, err
 	}
-	return retryContendedWrite(s, "add employment", func() (*Employment, error) {
+	return retryContendedWrite(ctx, s, "add employment", func() (*Employment, error) {
 		var employment *Employment
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
-			if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+			if err := s.claimEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
 				return err
 			}
 			if err := s.verifyEmploymentReferencesTx(ctx, tx, input); err != nil {
@@ -113,7 +113,7 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 	if err != nil {
 		return nil, err
 	}
-	return retryContendedWrite(s, "update employment", func() (*Employment, error) {
+	return retryContendedWrite(ctx, s, "update employment", func() (*Employment, error) {
 		var employment *Employment
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
 			snapshot, err := getEmploymentTx(ctx, tx, id)
@@ -123,7 +123,7 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 			if snapshot.Revision != expectedRevision {
 				return ErrEmploymentRevisionConflict
 			}
-			if err := s.lockEmploymentPeopleTx(
+			if err := s.claimEmploymentPeopleTx(
 				ctx, tx, snapshot.PersonID, input.PersonID); err != nil {
 				return err
 			}
@@ -190,7 +190,7 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 	if err := validateEmploymentDate(endDate, "end"); err != nil {
 		return nil, err
 	}
-	return retryContendedWrite(s, "end employment", func() (*Employment, error) {
+	return retryContendedWrite(ctx, s, "end employment", func() (*Employment, error) {
 		var employment *Employment
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
 			snapshot, err := getEmploymentTx(ctx, tx, id)
@@ -200,7 +200,7 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 			if snapshot.Revision != expectedRevision {
 				return ErrEmploymentRevisionConflict
 			}
-			if err := s.lockEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
+			if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 				return err
 			}
 			current, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
@@ -233,7 +233,7 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 }
 
 func (s *Store) SetPrimaryEmploymentContext(ctx context.Context, id, expectedRevision int64) (*Employment, error) {
-	return retryContendedWrite(s, "set primary employment", func() (*Employment, error) {
+	return retryContendedWrite(ctx, s, "set primary employment", func() (*Employment, error) {
 		return s.setPrimaryEmploymentOnce(ctx, id, expectedRevision)
 	})
 }
@@ -248,7 +248,7 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if snapshot.Revision != expectedRevision {
 			return ErrEmploymentRevisionConflict
 		}
-		if err := s.lockEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
+		if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 			return err
 		}
 		current, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
@@ -280,10 +280,9 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 }
 
 func (s *Store) DeleteEmploymentContext(ctx context.Context, id, expectedRevision int64) error {
-	_, err := retryContendedWrite(s, "delete employment", func() (*struct{}, error) {
-		return nil, s.deleteEmploymentOnce(ctx, id, expectedRevision)
+	return retryContendedWriteErr(ctx, s, "delete employment", func() error {
+		return s.deleteEmploymentOnce(ctx, id, expectedRevision)
 	})
-	return err
 }
 
 func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision int64) error {
@@ -295,7 +294,7 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 		if snapshot.Revision != expectedRevision {
 			return ErrEmploymentRevisionConflict
 		}
-		if err := s.lockEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
+		if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 			return err
 		}
 		var deletedID int64
@@ -313,6 +312,31 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 }
 
 func (s *Store) ListEmploymentsContext(ctx context.Context, filter EmploymentFilter) ([]Employment, error) {
+	return s.listEmploymentsContext(ctx, s.db, filter)
+}
+
+func (s *Store) listEmploymentsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	filter EmploymentFilter,
+) ([]Employment, error) {
+	return s.queryEmploymentsContext(ctx, queryer, filter, true)
+}
+
+// listAllEmploymentsContext returns every match in one query, ignoring the
+// filter's page bounds. Callers whose result doubles as a retention set — the
+// vCard projection snapshot, where an omitted row means a deleted property —
+// must not read a page.
+func (s *Store) listAllEmploymentsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	filter EmploymentFilter,
+) ([]Employment, error) {
+	return s.queryEmploymentsContext(ctx, queryer, filter, false)
+}
+
+func (s *Store) queryEmploymentsContext(
+	ctx context.Context, queryer contextRowsQuerier,
+	filter EmploymentFilter, paginated bool,
+) ([]Employment, error) {
 	if filter.PersonID <= 0 && filter.OrganizationID <= 0 {
 		return nil, fmt.Errorf("%w: person id or organization id is required", ErrEmploymentInvalid)
 	}
@@ -327,18 +351,21 @@ func (s *Store) ListEmploymentsContext(ctx context.Context, filter EmploymentFil
 	if filter.CurrentOnly {
 		conditions = append(conditions, current)
 	}
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = DefaultEmploymentPageSize
-	} else if limit > MaxEmploymentPageSize {
-		limit = MaxEmploymentPageSize
-	}
-	args = append(args, limit, max(filter.Offset, 0))
 	query := `SELECT ` + employmentColumns + ` FROM employments WHERE ` + strings.Join(conditions, " AND ") + fmt.Sprintf(` ORDER BY
 		CASE WHEN %s THEN 0 ELSE 1 END, CASE WHEN %s THEN 0 ELSE 1 END,
 		COALESCE(end_year, 9999) DESC, COALESCE(end_month, 12) DESC, COALESCE(end_day, 31) DESC,
-		COALESCE(start_year, 0) DESC, COALESCE(start_month, 1) DESC, COALESCE(start_day, 1) DESC, id LIMIT ? OFFSET ?`, current, s.dialect.BoolTrueExpr("is_primary"))
-	rows, err := s.db.QueryContext(ctx, query, args...)
+		COALESCE(start_year, 0) DESC, COALESCE(start_month, 1) DESC, COALESCE(start_day, 1) DESC, id`, current, s.dialect.BoolTrueExpr("is_primary"))
+	if paginated {
+		limit := filter.Limit
+		if limit <= 0 {
+			limit = DefaultEmploymentPageSize
+		} else if limit > MaxEmploymentPageSize {
+			limit = MaxEmploymentPageSize
+		}
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, max(filter.Offset, 0))
+	}
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list employments: %w", err)
 	}
@@ -456,7 +483,15 @@ func (s *Store) verifyEmploymentReferencesTx(ctx context.Context, tx *loggedTx, 
 	return nil
 }
 
-func (s *Store) lockEmploymentPeopleTx(
+// claimEmploymentPeopleTx is the single gate every employment mutation passes
+// through before touching a row. It locks each affected person in ascending ID
+// order so two writes over the same pair cannot deadlock, and bumps their
+// vCard projection revision: a person's snapshot carries their employments and
+// each employer's full profile, so any employment write changes their
+// projection and must be visible to a concurrent envelope commit. Doing both
+// here rather than at the five call sites means a sixth employment mutation
+// cannot acquire the lock and forget the bump.
+func (s *Store) claimEmploymentPeopleTx(
 	ctx context.Context, tx *loggedTx, personIDs ...int64,
 ) error {
 	ids := append([]int64(nil), personIDs...)
@@ -478,7 +513,7 @@ func (s *Store) lockEmploymentPeopleTx(
 		}
 		previous = personID
 	}
-	return nil
+	return s.bumpPersonVCardProjectionsTx(ctx, tx, ids...)
 }
 
 func (s *Store) resolveEmploymentPrimaryTx(ctx context.Context, tx *loggedTx, input EmploymentInput, current bool, excludeID int64) (bool, error) {

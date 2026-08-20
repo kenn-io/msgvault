@@ -42,6 +42,18 @@ type FileSearchHTTPRequest struct {
 	Limit         int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
 }
 
+// PersonFileSearchHTTPRequest keeps the normal Files filters while making
+// the person-relative direction set an explicit, generated-client contract.
+type PersonFileSearchHTTPRequest struct {
+	Predicate     ExploreHTTPRequest          `json:"predicate"`
+	FilenameQuery string                      `json:"filename_query,omitempty"`
+	MIMEFamilies  []query.FileMIMEFamily      `json:"mime_families,omitempty"`
+	Directions    []query.PersonFileDirection `json:"directions,omitempty" enum:"from_person,to_person,group"`
+	Sort          FileSearchSort              `json:"sort"`
+	Cursor        string                      `json:"cursor,omitempty"`
+	Limit         int                         `json:"limit,omitempty" minimum:"0" maximum:"500"`
+}
+
 type FileSearchRow struct {
 	ID                 int64                `json:"id"`
 	Key                string               `json:"key"`
@@ -66,6 +78,21 @@ type FileSearchRow struct {
 
 type FileSearchHTTPResponse struct {
 	Files               []FileSearchRow        `json:"files"`
+	TotalCount          int64                  `json:"total_count"`
+	CacheRevision       string                 `json:"cache_revision"`
+	SearchProvenance    query.SearchProvenance `json:"search_provenance"`
+	NextCursor          string                 `json:"next_cursor,omitempty"`
+	CandidateSnapshotID string                 `json:"candidate_snapshot_id,omitempty"`
+}
+
+type PersonFileSearchRow struct {
+	FileSearchRow
+
+	PersonProvenance query.PersonFileProvenance `json:"person_provenance"`
+}
+
+type PersonFileSearchHTTPResponse struct {
+	Files               []PersonFileSearchRow  `json:"files"`
 	TotalCount          int64                  `json:"total_count"`
 	CacheRevision       string                 `json:"cache_revision"`
 	SearchProvenance    query.SearchProvenance `json:"search_provenance"`
@@ -115,8 +142,8 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchFiles", "/files/search", "Search analytical files", s.handleSearchFiles,
 	)
-	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
-		api, "searchPersonFiles", "/people/{id}/files/search", "Search one person's analytical files", s.handleSearchPersonFiles,
+	registerExploreRoute[PersonFileSearchHTTPRequest, PersonFileSearchHTTPResponse](
+		api, "searchParticipantFiles", "/participants/{id}/files/search", "Search one participant cluster's analytical files", s.handleSearchParticipantFiles,
 	)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchDomainFiles", "/domains/{domain}/files/search", "Search one domain's analytical files", s.handleSearchDomainFiles,
@@ -243,9 +270,18 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 	s.handleSearchFilesWithScope(w, r, nil)
 }
 
-func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleSearchParticipantFiles(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
+		return
+	}
+	var personRequest PersonFileSearchHTTPRequest
+	if !decodeExploreJSON(w, r, &personRequest) {
+		return
+	}
+	directions, err := normalizePersonFileDirections(personRequest.Directions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_person_file_directions", err.Error())
 		return
 	}
 	// Widen the scope to the person's whole identity cluster so files owned
@@ -256,12 +292,15 @@ func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request)
 	if len(members) < 2 {
 		members = []int64{id}
 	}
-	values := make([]string, len(members))
-	for i, member := range members {
-		values[i] = strconv.FormatInt(member, 10)
+	personScope := &query.PersonFileScope{
+		ParticipantIDs: members, Directions: directions,
+		IncludeUnclassifiedRosterRows: len(personRequest.Directions) == 0,
 	}
-	scope := ExploreFilter{Dimension: exploreFilterParticipant, Values: values}
-	s.handleSearchFilesWithScope(w, r, &scope)
+	s.handleSearchFilesRequest(w, r, FileSearchHTTPRequest{
+		Predicate: personRequest.Predicate, FilenameQuery: personRequest.FilenameQuery,
+		MIMEFamilies: personRequest.MIMEFamilies, Sort: personRequest.Sort,
+		Cursor: personRequest.Cursor, Limit: personRequest.Limit,
+	}, nil, personScope)
 }
 
 func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +317,16 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 	if !decodeExploreJSON(w, r, &request) {
 		return
 	}
+	s.handleSearchFilesRequest(w, r, request, scope, nil)
+}
+
+func (s *Server) handleSearchFilesRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	request FileSearchHTTPRequest,
+	scope *ExploreFilter,
+	person *query.PersonFileScope,
+) {
 	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_files_predicate")
@@ -294,7 +343,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		request.Sort = FileSearchSort{Field: "occurred_at", Direction: apiSortDirectionDesc}
 	}
 	request.Predicate = predicate.request
-	requestHash := canonicalScopedFileSearchHash(request, scope)
+	requestHash := canonicalScopedFileSearchHash(request, scope, person)
 	offset, ok := s.parseExploreCursor(w, request.Cursor, requestHash)
 	if !ok {
 		return
@@ -335,6 +384,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		MIMEFamilies: request.MIMEFamilies,
 		Sort:         query.SortSpec{Field: request.Sort.Field, Direction: request.Sort.Direction},
 		Page:         query.PageSpec{Limit: request.Limit, Offset: offset},
+		Person:       person,
 	})
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
@@ -391,18 +441,71 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 			SearchRevision: exploreResolvedSearchRevision(searchSpec), Snapshot: snapshotID,
 		})
 	}
-	writeJSON(w, http.StatusOK, response)
+	if person == nil {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	personResponse := PersonFileSearchHTTPResponse{
+		Files: make([]PersonFileSearchRow, 0, len(result.Files)), TotalCount: response.TotalCount,
+		CacheRevision: response.CacheRevision, SearchProvenance: response.SearchProvenance,
+		NextCursor: response.NextCursor, CandidateSnapshotID: response.CandidateSnapshotID,
+	}
+	for i, file := range result.Files {
+		if file.PersonProvenance == nil {
+			writeError(w, http.StatusInternalServerError, "person_file_provenance_unavailable",
+				"Person file provenance is unavailable")
+			return
+		}
+		personResponse.Files = append(personResponse.Files, PersonFileSearchRow{
+			FileSearchRow: response.Files[i], PersonProvenance: *file.PersonProvenance,
+		})
+	}
+	writeJSON(w, http.StatusOK, personResponse)
 }
 
-func canonicalScopedFileSearchHash(request FileSearchHTTPRequest, scope *ExploreFilter) string {
+func canonicalScopedFileSearchHash(
+	request FileSearchHTTPRequest,
+	scope *ExploreFilter,
+	person *query.PersonFileScope,
+) string {
 	request.Cursor = ""
-	if scope == nil {
+	if scope == nil && person == nil {
 		return hashCanonicalValue(request, false)
 	}
 	return hashCanonicalValue(struct {
-		Request FileSearchHTTPRequest `json:"request"`
-		Scope   ExploreFilter         `json:"identity_scope"`
-	}{Request: request, Scope: *scope}, false)
+		Request FileSearchHTTPRequest  `json:"request"`
+		Scope   *ExploreFilter         `json:"identity_scope,omitempty"`
+		Person  *query.PersonFileScope `json:"person_scope,omitempty"`
+	}{Request: request, Scope: scope, Person: person}, false)
+}
+
+func normalizePersonFileDirections(
+	directions []query.PersonFileDirection,
+) ([]query.PersonFileDirection, error) {
+	if len(directions) == 0 {
+		return []query.PersonFileDirection{
+			query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+		}, nil
+	}
+	selected := make(map[query.PersonFileDirection]struct{}, len(directions))
+	for _, raw := range directions {
+		direction := query.PersonFileDirection(strings.ToLower(strings.TrimSpace(string(raw))))
+		switch direction {
+		case query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup:
+			selected[direction] = struct{}{}
+		default:
+			return nil, fmt.Errorf("unknown person file direction %q", raw)
+		}
+	}
+	result := make([]query.PersonFileDirection, 0, len(selected))
+	for _, direction := range []query.PersonFileDirection{
+		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+	} {
+		if _, ok := selected[direction]; ok {
+			result = append(result, direction)
+		}
+	}
+	return result, nil
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {

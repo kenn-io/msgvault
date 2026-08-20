@@ -16,6 +16,7 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - fts5: enable the SQLite FTS5 full-text search extension
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
+TEST_TIMEOUT := 60m
 
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
 # pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
@@ -35,7 +36,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/mcp ./internal/scheduler ./internal/vector/chunkmatch ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -89,11 +90,11 @@ clean:
 # coverage, and its per-package wall clock can exceed 40m on contended CI
 # runners even when no individual test is stalled.
 test:
-	go test -timeout 60m -tags "$(BUILD_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
 
 # Run tests with verbose output
 test-v:
-	go test -timeout 60m -tags "$(BUILD_TAGS)" -v ./...
+	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -v ./...
 
 # Run tests against PostgreSQL with the pgvector tag (set MSGVAULT_TEST_DB
 # first). Needs a server with the vector extension available.
@@ -104,7 +105,7 @@ test-v:
 # test-postgres (stock image, test-pg-shipped below).
 # See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg: require-test-db
-	go test -timeout 20m -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -116,7 +117,7 @@ test-pg: require-test-db
 # never reads MSGVAULT_TEST_DB — the SQLite-only ones — is served from `make
 # test`'s cache instead of being re-run here.
 test-pg-shipped: require-test-db
-	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -132,8 +133,8 @@ test-pg-shipped: require-test-db
 # equivalence argument depends on the full pgvector lane having run on the same
 # tree. pg-shipped-only-check re-derives the package set and fails if it drifts.
 test-pg-both: require-test-db pg-shipped-only-check
-	go test -timeout 20m -tags "$(PG_TEST_TAGS)" ./...
-	go test -timeout 20m -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
+	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
 
 # Fail if the set of packages whose test binary changes when the pgvector tag is
 # dropped no longer matches PG_SHIPPED_ONLY_PKGS. This is the assumption

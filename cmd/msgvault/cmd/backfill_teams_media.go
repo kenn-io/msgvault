@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -94,6 +95,7 @@ Examples:
 		sum, err := imp.BackfillInlineMedia(ctx, teams.ImportOptions{
 			Email:          email,
 			AttachmentsDir: cfg.AttachmentsDir(),
+			MediaPolicy:    cfg.Teams.MediaPolicy(email),
 			OnlyIncomplete: backfillTeamsMediaOnlyIncomplete,
 			Progress:       func(s string) { fmt.Println(s) },
 		})
@@ -105,15 +107,20 @@ Examples:
 			return fmt.Errorf("teams inline-media backfill failed: %w", err)
 		}
 
-		_, _ = fmt.Fprintln(cmd.OutOrStdout())
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Teams inline-media backfill complete!")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Duration:            %s\n", sum.Duration.Round(time.Second))
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages processed:  %d\n", sum.MessagesProcessed)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Inline images copied:%d\n", sum.InlineImagesCopied)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:              %d\n", sum.Errors)
+		writeTeamsMediaBackfillSummary(cmd.OutOrStdout(), sum)
 
 		return rebuildCacheAfterWrite(dbPath)
 	},
+}
+
+func writeTeamsMediaBackfillSummary(out io.Writer, sum *teams.ImportSummary) {
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Teams inline-media backfill complete!")
+	_, _ = fmt.Fprintf(out, "  Duration:             %s\n", sum.Duration.Round(time.Second))
+	_, _ = fmt.Fprintf(out, "  Messages processed:   %d\n", sum.MessagesProcessed)
+	_, _ = fmt.Fprintf(out, "  Inline images copied: %d\n", sum.InlineImagesCopied)
+	_, _ = fmt.Fprintf(out, "  Skipped by policy:    %d\n", sum.InlineImagesSkipped)
+	_, _ = fmt.Fprintf(out, "  Errors:               %d\n", sum.Errors)
 }
 
 func init() {

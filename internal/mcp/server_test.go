@@ -78,6 +78,10 @@ type attachmentMeta struct {
 	Size     int64  `json:"size"`
 }
 
+type dataResponse[T any] struct {
+	Data []T `json:"data"`
+}
+
 type paginatedSearchMessages struct {
 	Data     []searchMessageRow `json:"data"`
 	Total    int64              `json:"total"`
@@ -2209,8 +2213,8 @@ func TestAggregate(t *testing.T) {
 
 	for _, groupBy := range []string{"sender", "recipient", "domain", "label", "time"} {
 		t.Run(groupBy, func(t *testing.T) {
-			rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
-			assert.Len(t, rows, 2, "rows")
+			response := runTool[dataResponse[query.AggregateRow]](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
+			assert.Len(t, response.Data, 2, "rows")
 		})
 	}
 
@@ -2780,11 +2784,11 @@ func TestAccountFilter(t *testing.T) {
 	})
 
 	t.Run("aggregate with valid account", func(t *testing.T) {
-		rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{
+		response := runTool[dataResponse[query.AggregateRow]](t, "aggregate", h.aggregate, map[string]any{
 			"group_by": "sender",
 			"account":  "alice@gmail.com",
 		})
-		assert.Len(t, rows, 1, "rows")
+		assert.Len(t, response.Data, 1, "rows")
 	})
 
 	t.Run("aggregate with invalid account", func(t *testing.T) {
@@ -3729,15 +3733,15 @@ func TestSearchByDomains(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("valid domains", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com,example.com"})
-		assert.Len(t, msgs, 2, "msgs")
+		assert.Len(t, response.Data, 2, "msgs")
 	})
 
 	t.Run("domains with whitespace", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": " acme.com , example.com "})
-		assert.Len(t, msgs, 2, "msgs")
+		assert.Len(t, response.Data, 2, "msgs")
 	})
 
 	t.Run("missing domains", func(t *testing.T) {
@@ -3772,7 +3776,7 @@ func TestSearchByDomains(t *testing.T) {
 		}
 		h := newTestHandlers(eng)
 
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{
 				"domains": "acme.com,globex.com",
 				"limit":   float64(50),
@@ -3780,7 +3784,7 @@ func TestSearchByDomains(t *testing.T) {
 				"after":   "2024-01-01",
 				"before":  "2024-12-31",
 			})
-		assert.Len(msgs, 1, "msgs")
+		assert.Len(response.Data, 1, "msgs")
 		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
 		assert.Equal(50, capturedLimit, "limit")
 		assert.Equal(10, capturedOffset, "offset")
@@ -3797,7 +3801,7 @@ func TestSearchByDomains(t *testing.T) {
 		}
 		h := newTestHandlers(eng)
 
-		runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
 		assert.Equal(t, 100, capturedLimit, "default limit")
 		assert.Equal(t, 0, capturedOffset, "default offset")

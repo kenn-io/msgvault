@@ -38,7 +38,7 @@ function renderDialog(overrides: Partial<{
   onClose: () => void;
 }> = {}, fetchOverrides: Record<string, (request: Request) => Promise<Response> | Response> = {}) {
   const { fetchFn, requests } = fetchHandler({
-    '/api/v1/people/search': async () => Response.json({ rows: [person(2, 'Bob'), person(3, 'Cara')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {} }),
+    '/api/v1/participants/search': async () => Response.json({ rows: [person(2, 'Bob'), person(3, 'Cara')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {} }),
     ...fetchOverrides
   });
   const onClose = overrides.onClose ?? vi.fn();
@@ -54,7 +54,7 @@ function renderDialog(overrides: Partial<{
 }
 
 describe('LinkIdentityDialog', () => {
-  it('debounces search input into one people/search call carrying identity_query', async () => {
+  it('debounces search input into one participants/search call carrying identity_query', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests } = renderDialog();
@@ -78,7 +78,7 @@ describe('LinkIdentityDialog', () => {
 
   it('excludes the currently open cluster member from search results', async () => {
     const { fetchFn } = fetchHandler({
-      '/api/v1/people/search': async () => Response.json({
+      '/api/v1/participants/search': async () => Response.json({
         rows: [person(1, 'Self'), person(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
       })
     });
@@ -242,7 +242,7 @@ describe('LinkIdentityDialog', () => {
     try {
       let capturedSignal: AbortSignal | undefined;
       const { unmount } = renderDialog({}, {
-        '/api/v1/people/search': (request) => {
+        '/api/v1/participants/search': (request) => {
           capturedSignal = request.signal;
           return new Promise<Response>(() => {
             /* never resolves: the assertion is on abort, not on a response */

@@ -71,6 +71,30 @@ type fileCatalogStore struct {
 	batchIDs   []int64
 }
 
+type clusterFileCatalogStore struct {
+	*store.Store
+
+	files map[int64]store.FileMetadata
+}
+
+func (s *clusterFileCatalogStore) GetFileMetadata(_ context.Context, id int64) (*store.FileMetadata, error) {
+	file, ok := s.files[id]
+	if !ok {
+		return nil, nil //nolint:nilnil // not-found is the expected catalog contract
+	}
+	return &file, nil
+}
+
+func (s *clusterFileCatalogStore) GetFileMetadataBatch(_ context.Context, ids []int64) (map[int64]store.FileMetadata, error) {
+	result := make(map[int64]store.FileMetadata, len(ids))
+	for _, id := range ids {
+		if file, ok := s.files[id]; ok {
+			result[id] = file
+		}
+	}
+	return result, nil
+}
+
 func (s *fileCatalogStore) GetFileMetadata(_ context.Context, id int64) (*store.FileMetadata, error) {
 	file, ok := s.files[id]
 	if !ok {
@@ -249,7 +273,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	})
 	search := func(participantID int64) {
 		request := httptest.NewRequest(http.MethodPost,
-			fmt.Sprintf("/api/v1/people/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
+			fmt.Sprintf("/api/v1/participants/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
@@ -257,16 +281,140 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	search(primary)
-	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"a linked participant's files search must scope to every cluster member")
+	assertions.Equal([]query.PersonFileDirection{
+		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+	}, engine.request.Person.Directions)
+	assertions.True(engine.request.Person.IncludeUnclassifiedRosterRows,
+		"an omitted direction preserves roster-only rows from unclassified conversations")
+	assertions.Empty(engine.request.Explore.Context.ParticipantIDs,
+		"the exact person scope must not degrade into the broad participant filter")
 
 	search(secondary)
-	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"any cluster member resolves the same scope")
 
+	_, err = st.UnlinkParticipants(primary, secondary)
+	requirements.NoError(err)
+	search(primary)
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]int64{primary}, engine.request.Person.ParticipantIDs,
+		"splitting identities updates gallery membership without moving files")
+
 	search(solo)
-	assertions.Equal([]int64{solo}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]int64{solo}, engine.request.Person.ParticipantIDs,
 		"an unlinked participant stays scoped to its own ID")
+}
+
+func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	requirements.NoError(err)
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	provenance := &query.PersonFileProvenance{
+		ParticipantIDs: []int64{person},
+		Roles: []query.PersonFileRole{
+			query.PersonFileRoleFrom, query.PersonFileRoleConversationMember,
+		},
+		Directions: []query.PersonFileDirection{query.PersonFileFromPerson, query.PersonFileGroup},
+	}
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{{
+			ID: 17, Key: "file:17", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
+			OccurredAt: now, Filename: "photo.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
+			PersonProvenance: provenance,
+		}},
+		TotalCount: 1, CacheRevision: "cache-person-files",
+	}}
+	catalog := &clusterFileCatalogStore{Store: st, files: map[int64]store.FileMetadata{
+		17: {ID: 17, MessageID: 11, ConversationID: 21, Filename: "photo.png", MimeType: "image/png"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  catalog, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person), `{
+			"predicate":{},"directions":["group","from_person","group","to_person"]
+		}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]query.PersonFileDirection{
+		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+	}, engine.request.Person.Directions)
+	assertions.False(engine.request.Person.IncludeUnclassifiedRosterRows,
+		"explicit directions retain their exact typed scope")
+
+	var body PersonFileSearchHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Files, 1)
+	assertions.Equal(*provenance, body.Files[0].PersonProvenance)
+	assertions.Equal(int64(17), body.Files[0].ID)
+
+	generic := postExploreJSON(t, srv, "/api/v1/files/search", `{"predicate":{}}`)
+	requirements.Equal(http.StatusOK, generic.Code, generic.Body.String())
+	assertions.NotContains(generic.Body.String(), "person_provenance",
+		"archive-wide files keep their existing response contract")
+}
+
+func TestPersonFilesSearchRejectsInvalidDirections(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st,
+		Engine: &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{}},
+		Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person),
+		`{"predicate":{},"directions":["sideways"]}`)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "invalid_person_file_directions")
+}
+
+func TestPersonFilesCursorBindsDirectionsAndResolvedCluster(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	requirements.NoError(err)
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files:      []query.FileRow{{ID: 1, PersonProvenance: &query.PersonFileProvenance{}}},
+		TotalCount: 2, CacheRevision: "cache-person-files",
+	}}
+	catalog := &clusterFileCatalogStore{Store: st, files: map[int64]store.FileMetadata{
+		1: {ID: 1},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  catalog, Engine: engine, Logger: testLogger(),
+	})
+	path := fmt.Sprintf("/api/v1/participants/%d/files/search", person)
+
+	firstResponse := postExploreJSON(t, srv, path,
+		`{"predicate":{},"directions":["from_person"],"limit":1}`)
+	requirements.Equal(http.StatusOK, firstResponse.Code, firstResponse.Body.String())
+	var first PersonFileSearchHTTPResponse
+	requirements.NoError(json.Unmarshal(firstResponse.Body.Bytes(), &first))
+	requirements.NotEmpty(first.NextCursor)
+
+	sameResponse := postExploreJSON(t, srv, path, fmt.Sprintf(
+		`{"predicate":{},"directions":["from_person"],"limit":1,"cursor":%q}`, first.NextCursor))
+	requirements.Equal(http.StatusOK, sameResponse.Code, sameResponse.Body.String())
+	assert.Equal(t, query.PageSpec{Limit: 1, Offset: 1}, engine.request.Page)
+
+	changedResponse := postExploreJSON(t, srv, path, fmt.Sprintf(
+		`{"predicate":{},"directions":["to_person"],"limit":1,"cursor":%q}`, first.NextCursor))
+	assert.Equal(t, http.StatusBadRequest, changedResponse.Code, changedResponse.Body.String())
+	assert.Contains(t, changedResponse.Body.String(), "invalid_cursor")
 }
 
 func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T) {

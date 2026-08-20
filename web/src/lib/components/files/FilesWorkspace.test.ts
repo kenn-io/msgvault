@@ -18,6 +18,34 @@ function response() {
   };
 }
 
+function personResponse() {
+  const result = response();
+  return {
+    ...result,
+    files: result.files.map((file) => ({
+      ...file,
+      person_provenance: {
+        participant_ids: [42],
+        roles: ['from', 'conversation_member'],
+        directions: ['from_person', 'group']
+      }
+    }))
+  };
+}
+
+function installResizeObservers() {
+  const records: Array<{ observed: Element[]; disconnected: boolean }> = [];
+  class ResizeObserverStub {
+    private record = { observed: [] as Element[], disconnected: false };
+    constructor(_callback: ResizeObserverCallback) { records.push(this.record); }
+    observe(target: Element): void { this.record.observed.push(target); }
+    unobserve(): void {}
+    disconnect(): void { this.record.disconnected = true; }
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  return records;
+}
+
 describe('FilesWorkspace', () => {
   it.each([
     {
@@ -202,6 +230,196 @@ describe('FilesWorkspace', () => {
     expect(onSortChange).toHaveBeenCalledWith({ field: 'filename', direction: 'asc' });
     await fireEvent.click(screen.getByRole('button', { name: 'Sort by size' }));
     expect(onSortChange).toHaveBeenCalledWith({ field: 'size', direction: 'asc' });
+  });
+
+  it('defaults a person Files view to incoming non-visual files and renders exact provenance', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json(personResponse());
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    expect(await screen.findByText('fixture.pdf')).toBeDefined();
+    await expect(requests[0]!.clone().json()).resolves.toMatchObject({
+      directions: ['from_person'],
+      mime_families: ['pdf', 'audio', 'text', 'document', 'archive', 'other']
+    });
+    expect(screen.getByRole('button', { name: 'Files view' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('From them · Group conversation')).toBeDefined();
+  });
+
+  it('updates the person direction union without exposing controls outside person scope', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json(personResponse());
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    await screen.findByText('fixture.pdf');
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'To them' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await expect(requests[1]!.clone().json()).resolves.toMatchObject({
+      directions: ['from_person', 'to_person']
+    });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Group conversations' }));
+    await waitFor(() => expect(requests).toHaveLength(3));
+    await expect(requests[2]!.clone().json()).resolves.toMatchObject({
+      directions: ['from_person', 'to_person', 'group']
+    });
+
+    await view.rerender({ identityScope: { kind: 'domain', domain: 'example.com' } });
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'To them' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Files view' })).toBeNull();
+  });
+
+  it('switches a person to bounded image/video media cards and reuses the file viewer', async () => {
+    const searchRequests: Request[] = [];
+    const mediaResult = personResponse();
+    mediaResult.files[0] = {
+      ...mediaResult.files[0]!, id: 8, key: 'file:8', filename: 'photo.png',
+      mime_type: 'image/png', mime_family: 'image', content_state: 'metadata_only',
+      content_available: false
+    };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/files/8') return Response.json({
+        id: 8, message_id: 11, conversation_id: 21, entry_key: 'message:11',
+        filename: 'photo.png', mime_type: 'image/png', size_bytes: 8,
+        content_state: 'metadata_only', content_available: false
+      });
+      searchRequests.push(request);
+      const body = await request.clone().json() as { mime_families?: string[] };
+      return Response.json(body.mime_families?.includes('image') ? mediaResult : personResponse());
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    await screen.findByText('fixture.pdf');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Media view' }));
+    expect(await screen.findByRole('button', { name: 'Open photo.png' })).toBeDefined();
+    await expect(searchRequests[1]!.clone().json()).resolves.toMatchObject({
+      directions: ['from_person'], mime_families: ['image', 'video']
+    });
+    expect(screen.getByText('archive@example.com')).toBeDefined();
+    expect(screen.getByText('From them · Group conversation')).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open photo.png' }));
+    expect(await screen.findByRole('dialog', { name: 'View photo.png' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Open containing item' })).toBeDefined();
+  });
+
+  it('observes the grid and header when a Media view becomes Files', async () => {
+    const records = installResizeObservers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    await screen.findByText('fixture.pdf');
+    expect(records).toHaveLength(0);
+
+    await view.rerender({ personPresentation: 'files' });
+
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    const header = grid.querySelector('.table-header');
+    expect(header).not.toBeNull();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.observed).toEqual([grid, header]);
+  });
+
+  it('disconnects the old observer and observes replacement elements across a Files transition', async () => {
+    const records = installResizeObservers();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 }, personPresentation: 'files',
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    const initialGrid = await screen.findByRole('grid', { name: 'Files results' });
+    const initialHeader = initialGrid.querySelector('.table-header');
+    expect(initialHeader).not.toBeNull();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.observed).toEqual([initialGrid, initialHeader]);
+
+    await view.rerender({ personPresentation: 'media' });
+    await screen.findByRole('button', { name: 'Media view' });
+    expect(screen.queryByRole('grid', { name: 'Files results' })).toBeNull();
+    expect(records[0]!.disconnected).toBe(true);
+
+    await view.rerender({ personPresentation: 'files' });
+
+    const replacementGrid = await screen.findByRole('grid', { name: 'Files results' });
+    const replacementHeader = replacementGrid.querySelector('.table-header');
+    expect(replacementHeader).not.toBeNull();
+    expect(replacementGrid).not.toBe(initialGrid);
+    expect(replacementHeader).not.toBe(initialHeader);
+    expect(records).toHaveLength(2);
+    expect(records[1]!.observed).toEqual([replacementGrid, replacementHeader]);
+  });
+
+  it('restarts a media gallery after a terminal cursor failure', async () => {
+    const first = personResponse();
+    first.files[0] = {
+      ...first.files[0]!, filename: 'first.png', mime_type: 'image/png', mime_family: 'image',
+      content_state: 'metadata_only', content_available: false
+    };
+    Object.assign(first, { total_count: 2, next_cursor: 'dead-page' });
+    const reloaded = personResponse();
+    reloaded.files = [
+      first.files[0]!,
+      { ...first.files[0]!, id: 8, key: 'file:8', filename: 'recovered.png' }
+    ];
+    reloaded.total_count = 2;
+    let initialCalls = 0;
+    let cursorCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = await request.clone().json() as { cursor?: string };
+      if (body.cursor) {
+        cursorCalls += 1;
+        return Response.json(
+          { error: 'archive_revision_changed', message: 'Results changed under this cursor.' },
+          { status: 409 }
+        );
+      }
+      initialCalls += 1;
+      return Response.json(initialCalls === 1 ? first : reloaded);
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      identityScope: { kind: 'person', id: 1 }, personPresentation: 'media',
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    expect(await screen.findByRole('button', { name: 'Open first.png' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Load more media' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Results changed under this cursor.');
+    expect(screen.queryByRole('button', { name: 'Load more media' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload media' }));
+    expect(await screen.findByRole('button', { name: 'Open recovered.png' })).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(initialCalls).toBe(2);
+    expect(cursorCalls).toBe(1);
   });
 
   it('does not open the active file when Enter activates a focused sort control', async () => {

@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const personsPath = "/api/v1/persons"
+const peoplePath = "/api/v1/people"
 
 // PersonProfileStore is the feature-local capability for durable curated
 // people. The daemon adapter passes these calls directly to *store.Store.
@@ -38,19 +38,19 @@ type PatchPersonRequest struct {
 	DisplayName *string `json:"display_name" nullable:"true"`
 }
 
-type PersonsResponse struct {
-	Persons []store.Person `json:"persons"`
+type PeopleResponse struct {
+	People []store.Person `json:"people"`
 }
 
 func (s *Server) registerPersonProfileRoutes(api huma.API) {
-	list := rawAPIV1Operation("listPersons", http.MethodGet, "/persons", "List durable person profiles")
-	list.Description = "Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. " +
+	list := rawAPIV1Operation("listPeople", http.MethodGet, "/people", "List durable person profiles")
+	list.Description = "Durable people are curated profiles; /api/v1/participants exposes observed analytical groupings. " +
 		"The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
-	list.Responses = jsonResponsesFor[PersonsResponse](api)
+	list.Responses = jsonResponsesFor[PeopleResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusServiceUnavailable)
-	registerRawHumaRoute(api, list, s.handleListPersons)
+	registerRawHumaRoute(api, list, s.handleListPeople)
 
-	create := rawAPIV1Operation("createPerson", http.MethodPost, "/persons", "Promote a participant cluster to a durable person")
+	create := rawAPIV1Operation("createPerson", http.MethodPost, "/people", "Promote a participant cluster to a durable person")
 	create.Description = "Returns 201 when a new person is created, or 200 when the cluster is already " +
 		"represented by a person (idempotent re-promotion, which also binds any unbound cluster members)."
 	create.RequestBody = jsonRequestBodyFor[CreatePersonRequest](api)
@@ -60,14 +60,14 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	addErrorResponses(api, create.Responses, http.StatusConflict, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, create, s.handleCreatePerson)
 
-	get := rawAPIV1Operation("getPersonProfile", http.MethodGet, "/persons/{id}", "Get a durable person profile")
+	get := rawAPIV1Operation("getPersonProfile", http.MethodGet, "/people/{id}", "Get a durable person profile")
 	addPersonIDParameter(&get)
 	get.Responses = jsonResponsesFor[store.Person](api)
 	addPersonETagHeader(get.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, get.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, get, s.handleGetPersonProfile)
 
-	patch := rawAPIV1Operation("patchPerson", http.MethodPatch, "/persons/{id}", "Update a durable person's display name")
+	patch := rawAPIV1Operation("patchPerson", http.MethodPatch, "/people/{id}", "Update a durable person's display name")
 	addPersonIDParameter(&patch)
 	addPersonIfMatchParameter(&patch)
 	patch.RequestBody = jsonRequestBodyFor[PatchPersonRequest](api)
@@ -77,7 +77,7 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 		http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, patch, s.handlePatchPerson)
 
-	remove := rawAPIV1Operation("deletePerson", http.MethodDelete, "/persons/{id}", "Delete a durable person profile")
+	remove := rawAPIV1Operation("deletePerson", http.MethodDelete, "/people/{id}", "Delete a durable person profile")
 	remove.Description = "Deletion is permanent: the person's participant bindings are removed and its vCard UID " +
 		"is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID."
 	addPersonIDParameter(&remove)
@@ -152,7 +152,7 @@ func (s *Server) handleGetPersonProfile(w http.ResponseWriter, r *http.Request) 
 	writePerson(w, http.StatusOK, person)
 }
 
-func (s *Server) handleListPersons(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	profiles, ok := s.personProfileStore(w)
 	if !ok {
 		return
@@ -163,7 +163,7 @@ func (s *Server) handleListPersons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, PersonsResponse{Persons: persons})
+	writeJSON(w, http.StatusOK, PeopleResponse{People: persons})
 }
 
 func (s *Server) handlePatchPerson(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +235,7 @@ func writePerson(w http.ResponseWriter, status int, person *store.Person) {
 	w.Header().Set(etagHeaderName, personETag(*person))
 	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusCreated {
-		w.Header().Set("Location", personsPath+"/"+strconv.FormatInt(person.ID, 10))
+		w.Header().Set("Location", peoplePath+"/"+strconv.FormatInt(person.ID, 10))
 	}
 	writeJSON(w, status, person)
 }

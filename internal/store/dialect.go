@@ -338,6 +338,17 @@ type Dialect interface {
 	// commands that need exclusive access.
 	IsBusyError(err error) bool
 
+	// IsSerializationFailureError reports whether err is the backend's refusal
+	// to serialize a lock or write against a row that a concurrent
+	// transaction changed and committed after this transaction took its
+	// snapshot (PostgreSQL: SQLSTATE 40001 serialization_failure, raised by
+	// SELECT ... FOR UPDATE under REPEATABLE READ). It is not "retry later"
+	// like IsBusyError: nothing was lost to contention, the read set simply
+	// went stale, and the caller is expected to translate it into whatever
+	// stale-input error it already reports. SQLite serializes writers, so its
+	// implementation always returns false.
+	IsSerializationFailureError(err error) bool
+
 	// IsFTSValueTooLargeError returns true if err indicates an FTS value
 	// exceeded a hard backend limit (PostgreSQL: SQLSTATE 54000
 	// program_limit_exceeded, "string is too long for tsvector"). This is the
@@ -406,6 +417,22 @@ type Dialect interface {
 	// to lock the matched row; SQLite already serializes writers under
 	// BEGIN IMMEDIATE and returns "".
 	SelectForUpdate() string
+
+	// RowWriterLockSQL returns a statement that takes the database writer
+	// lock on one row of table, keyed by id through a single ? placeholder,
+	// or "" when SelectForUpdate is the right tool. A read-then-write
+	// transaction runs it before its first read.
+	// SQLite: a self-assign UPDATE (`UPDATE t SET col = col WHERE id = ?`).
+	// A deferred transaction that reads first and asks for the writer lock
+	// later loses SQLITE_BUSY_SNAPSHOT outright to any writer that committed
+	// meanwhile, without the busy handler being consulted; taking the lock
+	// up front makes it wait for its turn instead. The self-assign changes
+	// no value.
+	// PostgreSQL: "" — the row lock comes from SelectForUpdate. A self-assign
+	// UPDATE there would write a new row version, so two REPEATABLE READ
+	// transactions locking the same row would fail each other with a
+	// serialization error even though neither changed anything.
+	RowWriterLockSQL(table, column string) string
 
 	// MaintenanceTimeoutResetSQL returns a statement that disables any
 	// per-statement execution timeout for the remainder of the current

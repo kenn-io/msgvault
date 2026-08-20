@@ -64,6 +64,53 @@ func TestClientRejectsOffOriginAbsoluteURLBeforeAuth(t *testing.T) {
 	assert.Nil(attackerAuth.Load(), "attacker server must not receive Authorization")
 }
 
+func TestClientGetRawLimitedRejectsDeclaredAndStreamedOversizeBodies(t *testing.T) {
+	tests := []struct {
+		name  string
+		serve func(http.ResponseWriter)
+	}{
+		{name: "content length", serve: func(w http.ResponseWriter) {
+			w.Header().Set("Content-Length", "11")
+			_, _ = w.Write([]byte("12345678901"))
+		}},
+		{name: "chunked", serve: func(w http.ResponseWriter) {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("12345678901"))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { tt.serve(w) }))
+			defer srv.Close()
+			client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
+			_, err := client.GetRawLimited(context.Background(), "/hostedContents/1/$value", 10)
+			assert.ErrorIs(t, err, ErrMediaTooLarge)
+		})
+	}
+}
+
+func TestClientGetRawLimitedRetriesOversizedErrorResponse(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte("oversized error response"))
+			return
+		}
+		_, _ = w.Write([]byte("media"))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
+	body, err := client.GetRawLimited(context.Background(), "/hostedContents/1/$value", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("media"), body)
+	assert.EqualValues(t, 2, calls.Load())
+}
+
 func TestClientRetryAfter(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
