@@ -108,17 +108,52 @@ func TestRunEval_ReportsTopicsWithNoMatchingJudgments(t *testing.T) {
 
 	// The same fact has to reach the table output, which renders notes() and
 	// never sees the JSON block.
-	note := findEvalNote(t, report.Diagnostics.UnjudgedTopics)
+	note := findEvalNote(t, report.Diagnostics.UnjudgedTopics, report.TopicsEvaluated, 4)
 	assert.Contains(note, "3 of 4 topics had no matching qrels entry")
 	assert.Contains(note, "q2, q3, q4")
+	assert.Contains(note, "cover 1 of the topics file")
+}
+
+// TestRunEval_UnjudgedCoverageNoteCountsWhatWasActuallyScored is the
+// regression for conflating "judged" with "scored". A judged topic that
+// parses to no search criteria is skipped, same as an unjudged one, so
+// subtracting only the unjudged count from the topics-file total overstates
+// what the headline numbers cover. Here q1 scores, q2 is judged but
+// criteria-less, q3 is unjudged: TopicsEvaluated is 1, not
+// Parsed-len(unjudged) = 3, and the note has to say 1, matching the same
+// number the JSON report's own topics_evaluated is built from.
+func TestRunEval_UnjudgedCoverageNoteCountsWhatWasActuallyScored(t *testing.T) {
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	seedRankingDivergenceArchiveIn(t, dir)
+	configureEvalRun(t, dir,
+		"q1 0 <m1@example.com> 1\n"+
+			"q2 0 <m1@example.com> 1\n",
+		"q1\trenewal\nq2\tsubject:\"\"\nq3\trenewal\n")
+
+	var report evalTopicReport
+	runEvalForReport(t, &report)
+
+	assert.Equal(1, report.TopicsEvaluated, "only q1 scores; q2 is judged but criteria-less")
+	assert.Equal([]string{"q3"}, report.Diagnostics.UnjudgedTopics)
+
+	note := findEvalNote(t, report.Diagnostics.UnjudgedTopics, report.TopicsEvaluated, 3)
+	assert.Contains(note, "1 of 3 topics had no matching qrels entry")
+	assert.Contains(note, "cover 1 of the topics file",
+		"not 2 (Parsed-unjudged): q2 was judged but never scored")
 }
 
 // findEvalNote re-renders the diagnostics the table output would print and
-// returns the line covering the given unjudged topics.
-func findEvalNote(t *testing.T, unjudged []string) string {
+// returns the line covering the given unjudged topics. scored is the number
+// of topics the run actually scored and parsed is the topics file's total,
+// both matching runEval's own diag.scored assignment and TopicsLoad.Parsed —
+// a caller passing report.TopicsEvaluated and the real topics count keeps
+// the synthetic diagnostics consistent with the run it is standing in for.
+func findEvalNote(t *testing.T, unjudged []string, scored, parsed int) string {
 	t.Helper()
-	diag := &runDiagnostics{UnjudgedTopics: unjudged}
-	diag.TopicsLoad = eval.LoadStats{Path: "topics.tsv", Lines: 4, Parsed: 4}
+	diag := &runDiagnostics{UnjudgedTopics: unjudged, scored: scored}
+	diag.TopicsLoad = eval.LoadStats{Path: "topics.tsv", Lines: parsed, Parsed: parsed}
 	for _, n := range diag.notes() {
 		if strings.Contains(n, "no matching qrels entry") {
 			return n

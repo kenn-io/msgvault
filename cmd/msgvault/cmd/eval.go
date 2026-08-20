@@ -255,6 +255,16 @@ type runDiagnostics struct {
 	// make the PoolShortfalls note actionable. Unexported so it stays out of
 	// the JSON diagnostics block, where it would duplicate run_config.
 	kPerSignal int
+
+	// scored is how many topics actually contributed a score, set once after
+	// the scoring loop finishes. It is not len(TopicsLoad)-len(UnjudgedTopics):
+	// a judged topic can still fail to score (an empty parsed query, or every
+	// mode skipping it), so the unjudged-topics note must read this field
+	// rather than recompute a count the loop already produced correctly —
+	// the same number the report's own topics_evaluated is built from.
+	// Unexported for the same reason as kPerSignal: it would duplicate
+	// topics_evaluated in the JSON diagnostics block.
+	scored int
 }
 
 // skip records that one topic/mode combination could not be scored.
@@ -294,12 +304,16 @@ func (d *runDiagnostics) notes() []string {
 	// the judgments gathered for it so far — but it changes what the headline
 	// numbers mean, so it is stated rather than inferred from the topic count.
 	if n := len(d.UnjudgedTopics); n > 0 {
+		// d.scored, not d.TopicsLoad.Parsed-n: a judged topic can still fail
+		// to score (an empty parsed query, every mode skipping it), so the
+		// remainder after subtracting only the unjudged ones overstates what
+		// the run actually covers — see the scored field's own doc comment.
 		out = append(out, fmt.Sprintf(
 			"%d of %d topics had no matching qrels entry and were not scored (%s); "+
-				"the reported metrics cover the other %d, so they describe a subset of %s — "+
+				"the reported metrics cover %d of the topics file, so they describe a subset of %s — "+
 				"check that the qids in both files refer to the same queries",
 			n, d.TopicsLoad.Parsed, eval.FormatIDList(d.UnjudgedTopics, 10),
-			d.TopicsLoad.Parsed-n, d.TopicsLoad.Path))
+			d.scored, d.TopicsLoad.Path))
 	}
 	if d.UnhydratedHits > 0 {
 		out = append(out, fmt.Sprintf(
@@ -760,6 +774,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		}
 		scored++
 	}
+	diag.scored = scored
 	if scored == 0 {
 		// Distinguish the two ways a run can end up with nothing: no topic
 		// matched a judgment, or every topic was skipped by every mode.
