@@ -10,13 +10,14 @@ import (
 
 // TestTruncateKeys pins the second half of the collapse-then-truncate rule.
 func TestTruncateKeys(t *testing.T) {
+	assert := assert.New(t)
 	keys := []string{"a", "b", "c"}
-	assert.Equal(t, []string{"a", "b"}, TruncateKeys(keys, 2))
-	assert.Equal(t, keys, TruncateKeys(keys, 3))
-	assert.Equal(t, keys, TruncateKeys(keys, 10), "a short list is not padded")
-	assert.Empty(t, TruncateKeys(keys, 0))
-	assert.Empty(t, TruncateKeys(keys, -1))
-	assert.Empty(t, TruncateKeys(nil, 5))
+	assert.Equal([]string{"a", "b"}, TruncateKeys(keys, 2))
+	assert.Equal(keys, TruncateKeys(keys, 3))
+	assert.Equal(keys, TruncateKeys(keys, 10), "a short list is not padded")
+	assert.Empty(TruncateKeys(keys, 0))
+	assert.Empty(TruncateKeys(keys, -1))
+	assert.Empty(TruncateKeys(nil, 5))
 }
 
 // TestDedupeThenTruncate_Order is the ordering regression. Retrieving n
@@ -56,15 +57,16 @@ func TestOverFetchPlan_NonCollapsingKey(t *testing.T) {
 // the documented ceiling, so a query that cannot fill the depth costs a
 // bounded amount of work.
 func TestOverFetchPlan_CollapsingKey(t *testing.T) {
-	assert.Equal(t, []int{400, 1600, 6400}, OverFetchPlan(100, true))
-	assert.Equal(t, []int{4, 16, 64}, OverFetchPlan(1, true))
+	assert := assert.New(t)
+	assert.Equal([]int{400, 1600, 6400}, OverFetchPlan(100, true))
+	assert.Equal([]int{4, 16, 64}, OverFetchPlan(1, true))
 
 	plan := OverFetchPlan(10, true)
 	require.NotEmpty(t, plan)
-	assert.Equal(t, 10*OverFetchFactor, plan[0], "the first attempt already over-fetches")
-	assert.Equal(t, 10*MaxOverFetchFactor, plan[len(plan)-1], "the last attempt is the documented ceiling")
+	assert.Equal(10*OverFetchFactor, plan[0], "the first attempt already over-fetches")
+	assert.Equal(10*MaxOverFetchFactor, plan[len(plan)-1], "the last attempt is the documented ceiling")
 	for i := 1; i < len(plan); i++ {
-		assert.Greater(t, plan[i], plan[i-1], "each attempt must ask for strictly more")
+		assert.Greater(plan[i], plan[i-1], "each attempt must ask for strictly more")
 	}
 }
 

@@ -10,29 +10,31 @@ import (
 )
 
 func TestLatencyTracker_Summary(t *testing.T) {
+	assert := assert.New(t)
 	var l LatencyTracker
 	// Odd count -> median is the middle sample.
 	for _, ms := range []int{30, 10, 20} {
 		l.Add(time.Duration(ms) * time.Millisecond)
 	}
 	s := l.Summary()
-	assert.Equal(t, 3, s.Queries)
-	assert.InDelta(t, 20.0, s.MedianMS, 1e-6)
-	assert.InDelta(t, 60.0, s.TotalMS, 1e-6)
+	assert.Equal(3, s.Queries)
+	assert.InDelta(20.0, s.MedianMS, 1e-6)
+	assert.InDelta(60.0, s.TotalMS, 1e-6)
 	// Nearest-rank p95 on 3 samples is the slowest one.
-	assert.InDelta(t, 30.0, s.P95MS, 1e-6)
+	assert.InDelta(30.0, s.P95MS, 1e-6)
 }
 
 func TestLatencyTracker_EvenCountMedian(t *testing.T) {
+	assert := assert.New(t)
 	var l LatencyTracker
 	for _, ms := range []int{40, 10, 30, 20} {
 		l.Add(time.Duration(ms) * time.Millisecond)
 	}
 	s := l.Summary()
-	assert.Equal(t, 4, s.Queries)
-	assert.InDelta(t, 25.0, s.MedianMS, 1e-6) // (20+30)/2
-	assert.InDelta(t, 100.0, s.TotalMS, 1e-6)
-	assert.InDelta(t, 40.0, s.P95MS, 1e-6)
+	assert.Equal(4, s.Queries)
+	assert.InDelta(25.0, s.MedianMS, 1e-6) // (20+30)/2
+	assert.InDelta(100.0, s.TotalMS, 1e-6)
+	assert.InDelta(40.0, s.P95MS, 1e-6)
 }
 
 func TestLatencyTracker_Empty(t *testing.T) {
@@ -54,6 +56,8 @@ func TestLatencyTracker_P95NearestRank(t *testing.T) {
 // A result must never be readable without knowing what produced it, so the
 // provenance block has to survive serialisation.
 func TestRunConfig_JSONCarriesProvenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	p := RunConfig{
 		Messages: 18401, Conversations: 18401,
 		VectorEnabled: true, EmbeddingModel: "bge-m3", Dimension: 1024,
@@ -62,29 +66,31 @@ func TestRunConfig_JSONCarriesProvenance(t *testing.T) {
 		IndexedVectors: 18401, IndexSizeBytes: 81_500_000, IndexPath: "/tmp/vectors.db",
 	}
 	raw, err := json.Marshal(p)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var back map[string]any
-	require.NoError(t, json.Unmarshal(raw, &back))
+	require.NoError(json.Unmarshal(raw, &back))
 	for _, k := range []string{
 		"messages", "conversations", "embedding_model", "embedding_dimension",
 		"vector_backend", "generation_fingerprint", "rrf_k", "k_per_signal",
 		"subject_boost", "indexed_vectors", "index_size_bytes",
 	} {
-		assert.Contains(t, back, k, "provenance field %q must be serialised", k)
+		assert.Contains(back, k, "provenance field %q must be serialised", k)
 	}
-	assert.Equal(t, "bge-m3", back["embedding_model"])
+	assert.Equal("bge-m3", back["embedding_model"])
 }
 
 // An fts-only run has no vector config; the block must degrade cleanly rather
 // than reporting a zero-dimension model that never ran.
 func TestRunConfig_FTSOnlyOmitsVectorFields(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	raw, err := json.Marshal(RunConfig{Messages: 10, Conversations: 4})
-	require.NoError(t, err)
+	require.NoError(err)
 	var back map[string]any
-	require.NoError(t, json.Unmarshal(raw, &back))
-	assert.Equal(t, false, back["vector_enabled"])
-	assert.NotContains(t, back, "embedding_model")
-	assert.NotContains(t, back, "index_size_bytes")
-	assert.Contains(t, back, "messages")
+	require.NoError(json.Unmarshal(raw, &back))
+	assert.Equal(false, back["vector_enabled"])
+	assert.NotContains(back, "embedding_model")
+	assert.NotContains(back, "index_size_bytes")
+	assert.Contains(back, "messages")
 }
