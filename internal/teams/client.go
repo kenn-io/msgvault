@@ -228,7 +228,12 @@ func (c *Client) ListChannels(ctx context.Context, teamID string) ([]Channel, er
 func (c *Client) ListChatMessages(ctx context.Context, chatID, sinceISO string, limit int) ([]ChatMessage, bool, error) {
 	url := "/me/chats/" + chatID + "/messages?$top=50"
 	if sinceISO != "" {
-		url += "&$filter=lastModifiedDateTime%20ge%20" + sinceISO + "&$orderby=lastModifiedDateTime%20desc"
+		// Graph rejects "ge" on lastModifiedDateTime for /chats/{id}/messages
+		// with BadRequest ("operationKind 'GreaterThanOrEqual' is not allowed
+		// in $filter"); only gt/lt are accepted. The cursor is the newest
+		// lastModifiedDateTime already ingested, so gt is also the correct
+		// boundary.
+		url += "&$filter=lastModifiedDateTime%20gt%20" + sinceISO + "&$orderby=lastModifiedDateTime%20desc"
 	}
 	var out []ChatMessage
 	_, truncated, err := pageThroughLimit[ChatMessage](ctx, c, url, limit, func(p []ChatMessage) { out = append(out, p...) })

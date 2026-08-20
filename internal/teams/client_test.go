@@ -170,7 +170,11 @@ func TestListChatsAndMessages(t *testing.T) {
 	assert.Equal("m1", msgs[0].ID)
 }
 
-func TestListChatMessagesUsesInclusiveCursor(t *testing.T) {
+// Graph rejects "ge" on lastModifiedDateTime for /chats/{id}/messages with
+// BadRequest, so the cursor is necessarily exclusive. A message whose
+// lastModifiedDateTime exactly equals the stored cursor is therefore skipped;
+// the cursor carries nanosecond precision, so exact ties are vanishingly rare.
+func TestListChatMessagesUsesExclusiveCursor(t *testing.T) {
 	assert := assert.New(t)
 	var filter string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,5 +187,5 @@ func TestListChatMessagesUsesInclusiveCursor(t *testing.T) {
 	_, _, err := c.ListChatMessages(context.Background(), "19:x@thread.v2", "2025-01-01T00:00:00Z", 0)
 	require.NoError(t, err)
 
-	assert.Equal("lastModifiedDateTime ge 2025-01-01T00:00:00Z", filter)
+	assert.Equal("lastModifiedDateTime gt 2025-01-01T00:00:00Z", filter)
 }
