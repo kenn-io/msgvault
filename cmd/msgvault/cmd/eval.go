@@ -79,7 +79,8 @@ Every run reports the embedding model, index settings and index size that
 produced it, plus per-query latency, because a quality number is not
 comparable — or even interpretable — without them. Anything that went wrong
 without being fatal — unparseable judgment lines, hits that could not be
-hydrated from the archive, topics no mode could score — is reported under
+hydrated from the archive, rankings cut short by the fusion pool, topics no
+mode could score — is reported under
 "Diagnostics" rather than silently folded into the scores.
 
 Note on topic phrasing: it is an experimental variable, not a constant. FTS5
@@ -211,9 +212,20 @@ type runDiagnostics struct {
 	TopicsLoad     eval.LoadStats `json:"topics_load"`
 	UnhydratedHits int            `json:"unhydrated_hits,omitempty"`
 	// DepthShortfalls counts runs that ran out of over-fetch budget with the
-	// engine still willing to give more.
+	// engine still willing to give more. PoolShortfalls counts runs that hit
+	// the hybrid engine's candidate-pool ceiling instead — the engine came
+	// back short, but more matching messages exist beyond the pool. The two
+	// are kept apart because only one of them is fixable by configuration,
+	// and neither may be confused with "the corpus genuinely ran out", which
+	// is not a shortfall at all.
 	DepthShortfalls int      `json:"depth_shortfalls,omitempty"`
+	PoolShortfalls  int      `json:"pool_shortfalls,omitempty"`
 	SkippedCells    []string `json:"skipped_cells,omitempty"`
+
+	// kPerSignal is the fusion pool size in force for this run, used only to
+	// make the PoolShortfalls note actionable. Unexported so it stays out of
+	// the JSON diagnostics block, where it would duplicate run_config.
+	kPerSignal int
 }
 
 // skip records that one topic/mode combination could not be scored.
@@ -246,8 +258,27 @@ func (d *runDiagnostics) notes() []string {
 				"their metrics are computed over a shallower list than requested",
 			d.DepthShortfalls, evalLimit, evalDocKey, eval.MaxOverFetchFactor))
 	}
+	if d.PoolShortfalls > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d topic/mode runs stopped short of %d distinct %s keys because the fusion candidate pool "+
+				"saturated%s: the engine returned fewer hits than asked for, but more matching messages "+
+				"exist beyond the pool — this is a reachability limit, not an exhausted corpus. "+
+				"Raise [vector.search].k_per_signal to rank deeper, and note that doing so changes the "+
+				"fusion, so only compare runs at the same setting",
+			d.PoolShortfalls, evalLimit, evalDocKey, kPerSignalSuffix(d.kPerSignal)))
+	}
 	out = append(out, d.SkippedCells...)
 	return out
+}
+
+// kPerSignalSuffix renders the fusion pool size for a diagnostic line, or
+// nothing when the run never opened the vector path (so the number is unknown
+// rather than zero).
+func kPerSignalSuffix(k int) string {
+	if k <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" at k_per_signal=%d", k)
 }
 
 // ftsSearcher is the production relevance-ranked full-text path.
@@ -298,6 +329,14 @@ type fetchResult struct {
 	raw int
 	// dropped is how many hits could not be hydrated back to a message row.
 	dropped int
+	// saturated reports that the engine filled its own candidate pool: it
+	// had at least one more candidate than it was willing to consider. It is
+	// what separates "the corpus ran out" from "the engine stopped looking",
+	// which look identical from the hit count alone. The hybrid engine's
+	// fused query caps each signal at k_per_signal, so it can hand back fewer
+	// hits than requested while the corpus still holds plenty more — see
+	// hybrid.ResultMeta.PoolSaturated.
+	saturated bool
 }
 
 // rankedKeys turns a search engine into up to limit *distinct* doc keys, in
@@ -318,12 +357,31 @@ func (e *evaluator) rankedKeys(fetch func(n int) (fetchResult, error)) ([]string
 		}
 		deduped := eval.DedupeKeys(res.keys)
 		filled := len(deduped) >= e.limit
-		// The engine returned less than we asked for, so it has nothing left
-		// to give and a deeper fetch would return the same list.
-		exhausted := res.raw < n
-		if filled || exhausted || i == len(plan)-1 {
+		// The engine came back short. Why it came back short decides both
+		// whether to retry and what to report, and the hit count alone cannot
+		// tell the two apart:
+		//
+		//   - not saturated: it gave everything it had. The corpus is
+		//     exhausted, a deeper fetch returns the same list, and a short
+		//     ranking is the honest answer — not a shortfall.
+		//   - saturated: it filled its own candidate pool and stopped. More
+		//     matching messages exist, but no value of n reaches them,
+		//     because the ceiling is k_per_signal, not the page size. Retrying
+		//     deeper would only burn queries, so stop — and say so, because
+		//     scoring this as an exhausted corpus reports a shallow ranking
+		//     as if it were the whole of what retrieval could find.
+		short := res.raw < n
+		exhausted := short && !res.saturated
+		poolCapped := short && res.saturated
+		if filled || exhausted || poolCapped || i == len(plan)-1 {
 			e.diag.UnhydratedHits += res.dropped
-			if !filled && !exhausted {
+			switch {
+			case filled || exhausted:
+				// Nothing to report: the depth was met, or there was
+				// genuinely nothing more to retrieve.
+			case poolCapped:
+				e.diag.PoolShortfalls++
+			default:
 				e.diag.DepthShortfalls++
 			}
 			return eval.TruncateKeys(deduped, e.limit), nil
@@ -373,7 +431,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 	freeText := strings.Join(q.TextTerms, " ")
 
 	return e.rankedKeys(func(n int) (fetchResult, error) {
-		hits, _, err := e.heng.Search(e.ctx, hybrid.SearchRequest{
+		hits, meta, err := e.heng.Search(e.ctx, hybrid.SearchRequest{
 			Mode:         hybrid.Mode(mode),
 			FreeText:     freeText,
 			Filter:       filter,
@@ -384,7 +442,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 			return fetchResult{}, err
 		}
 		if len(hits) == 0 {
-			return fetchResult{}, nil
+			return fetchResult{saturated: meta.PoolSaturated}, nil
 		}
 		ids := make([]int64, len(hits))
 		for i, h := range hits {
@@ -402,7 +460,15 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 		// is dropped — but counted, because a vector index pointing at rows
 		// the archive no longer has is exactly the staleness this command
 		// exists to surface.
-		out := fetchResult{keys: make([]string, 0, len(hits)), raw: len(hits)}
+		out := fetchResult{
+			keys: make([]string, 0, len(hits)),
+			raw:  len(hits),
+			// Carry the engine's own account of why it stopped. Without
+			// it, a fused query that ran out of candidate pool is
+			// indistinguishable from one that ran out of corpus, and
+			// rankedKeys would report a pool-capped ranking as complete.
+			saturated: meta.PoolSaturated,
+		}
 		for _, h := range hits {
 			m, ok := byID[h.MessageID]
 			if !ok {
@@ -736,6 +802,9 @@ func (e *evaluator) collectVectorStats(vecCfg vector.Config, backend *sqlitevec.
 	e.prov.KPerSignal = vecCfg.Search.KPerSignal
 	e.prov.SubjectBoost = vecCfg.Search.SubjectBoost
 	e.prov.IndexPath = vecDBPath
+	// The pool ceiling is what a saturation diagnostic has to name to be
+	// actionable, so the diagnostics carry it too.
+	e.diag.kPerSignal = vecCfg.Search.KPerSignal
 
 	if fi, err := os.Stat(vecDBPath); err == nil {
 		e.prov.IndexSizeBytes = fi.Size()

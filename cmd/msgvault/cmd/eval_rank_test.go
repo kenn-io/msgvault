@@ -11,10 +11,54 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/eval"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
+
+// vectorTestGeneration is the active generation the fake backend serves; the
+// hybrid engine refuses to search unless the fingerprint matches its config.
+var vectorTestGeneration = vector.Generation{
+	ID: 1, Model: "test-model", Dimension: 4,
+	Fingerprint: "test-model:4", State: vector.GenerationActive,
+}
+
+// saturatingFusingBackend is a vector.FusingBackend that returns a fixed hit
+// list together with a caller-chosen saturation flag, so a test can pin what
+// the eval path does with the flag the real engine computes. Only the two
+// methods the hybrid search path calls are implemented; the embedded interface
+// panics on anything else, which is the point — a widened call is a test bug,
+// not something to silently stub.
+type saturatingFusingBackend struct {
+	vector.Backend
+
+	generation vector.Generation
+	hits       []vector.FusedHit
+	saturated  bool
+	fusedCalls int
+}
+
+func (b *saturatingFusingBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+	return b.generation, nil
+}
+
+func (b *saturatingFusingBackend) FusedSearch(
+	context.Context, vector.FusedRequest,
+) ([]vector.FusedHit, bool, error) {
+	b.fusedCalls++
+	return b.hits, b.saturated, nil
+}
+
+// stubEmbedder returns a fixed query vector; the fake backend never looks at
+// it, but the engine insists on embedding before it will search.
+type stubEmbedder struct{}
+
+func (stubEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+	return []float32{1, 0, 0, 0}, nil
+}
 
 // threadedCorpus builds a ranked corpus of threads*perThread messages, ordered
 // thread by thread: the first perThread hits all belong to one conversation.
@@ -152,6 +196,7 @@ func TestRankedFTS_StopsWhenTheEngineIsExhausted(t *testing.T) {
 	assert.Len(t, ranked, 6, "six threads exist; six threads come back")
 	assert.Equal(t, []int{400}, eng.depths, "the engine came back short, so stop")
 	assert.Zero(t, diag.DepthShortfalls)
+	assert.Zero(t, diag.PoolShortfalls, "an unsaturated short page is an exhausted corpus, not a shortfall")
 }
 
 // TestRankedFTS_ReportsADepthShortfall: when even the largest pool cannot fill
@@ -169,6 +214,120 @@ func TestRankedFTS_ReportsADepthShortfall(t *testing.T) {
 	assert.Equal(t, []int{400, 1600, 6400}, eng.depths, "the pool grows to the documented ceiling and stops")
 	assert.Equal(t, 1, diag.DepthShortfalls)
 	assert.Contains(t, diag.notes()[0], "could not fill")
+}
+
+// TestRankedKeys_SaturatedShortFetchIsNotCorpusExhaustion is the regression for
+// the discarded PoolSaturated flag. A fused query caps each signal at
+// k_per_signal, so it can return fewer hits than asked for while the corpus
+// still holds plenty more. Reading that short page as "the corpus ran out"
+// reported a pool-capped ranking as if it were everything retrieval could
+// find — the one reading that makes the resulting metric silently wrong.
+func TestRankedKeys_SaturatedShortFetchIsNotCorpusExhaustion(t *testing.T) {
+	ev, diag := newTestEvaluator(t, nil, "conversation")
+	diag.kPerSignal = 250
+
+	var asked []int
+	ranked, err := ev.rankedKeys(func(n int) (fetchResult, error) {
+		asked = append(asked, n)
+		// 40 hits back for a request of 400, spread over 10 threads, with
+		// the engine reporting that its candidate pool was full.
+		keys := make([]string, 0, 40)
+		for i := range 40 {
+			keys = append(keys, fmt.Sprintf("thread-%03d", i%10))
+		}
+		return fetchResult{keys: keys, raw: len(keys), saturated: true}, nil
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, ranked, 10, "the ten reachable threads are still scored")
+	assert.Equal(t, []int{400}, asked,
+		"a bigger page cannot get past k_per_signal, so do not burn another query on it")
+	assert.Equal(t, 1, diag.PoolShortfalls)
+	assert.Zero(t, diag.DepthShortfalls, "this is a pool ceiling, not an exhausted over-fetch budget")
+
+	notes := diag.notes()
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "candidate pool")
+	assert.Contains(t, notes[0], "k_per_signal=250", "the note names the setting that caused it")
+	assert.Contains(t, notes[0], "not an exhausted corpus",
+		"the whole point of the flag is to keep the two apart")
+}
+
+// TestRankedKeys_UnsaturatedShortFetchIsExhaustion pins the other half of the
+// pair: the same short page, with the engine reporting it had nothing left,
+// is not a shortfall at all and must stay silent.
+func TestRankedKeys_UnsaturatedShortFetchIsExhaustion(t *testing.T) {
+	ev, diag := newTestEvaluator(t, nil, "conversation")
+
+	ranked, err := ev.rankedKeys(func(int) (fetchResult, error) {
+		return fetchResult{keys: []string{"thread-000", "thread-001"}, raw: 2}, nil
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"thread-000", "thread-001"}, ranked)
+	assert.Zero(t, diag.PoolShortfalls)
+	assert.Zero(t, diag.DepthShortfalls)
+	assert.Empty(t, diag.notes(), "an exhausted corpus is an answer, not an anomaly")
+}
+
+// TestRankedKeys_SaturatedFullDepthIsNotAShortfall: saturation only matters
+// when the depth went unfilled. A run that got everything it asked for has
+// nothing to warn about, however full the engine's pool was.
+func TestRankedKeys_SaturatedFullDepthIsNotAShortfall(t *testing.T) {
+	ev, diag := newTestEvaluator(t, nil, "conversation")
+
+	keys := make([]string, 0, evalTestLimit)
+	for i := range evalTestLimit {
+		keys = append(keys, fmt.Sprintf("thread-%03d", i))
+	}
+	ranked, err := ev.rankedKeys(func(int) (fetchResult, error) {
+		return fetchResult{keys: keys, raw: len(keys), saturated: true}, nil
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, ranked, evalTestLimit)
+	assert.Zero(t, diag.PoolShortfalls)
+	assert.Zero(t, diag.DepthShortfalls)
+}
+
+// TestRankedVector_CarriesPoolSaturationFromTheEngine checks the wiring the
+// classification above depends on: hybrid.ResultMeta.PoolSaturated has to
+// survive the trip from the engine into fetchResult. It used to be dropped on
+// the floor at the call site, which no amount of correct classification
+// downstream could recover from.
+func TestRankedVector_CarriesPoolSaturationFromTheEngine(t *testing.T) {
+	// One hit for a request of 400, with the backend reporting a full pool.
+	backend := &saturatingFusingBackend{
+		generation: vectorTestGeneration,
+		hits:       []vector.FusedHit{{MessageID: 1, RRFScore: 0.9}},
+		saturated:  true,
+	}
+	qeng := &querytest.MockEngine{
+		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+			out := make([]query.MessageSummary, 0, len(ids))
+			for _, id := range ids {
+				out = append(out, query.MessageSummary{
+					ID:                   id,
+					SourceMessageID:      fmt.Sprintf("<m%d@example.com>", id),
+					SourceConversationID: "thread-000",
+				})
+			}
+			return out, nil
+		},
+	}
+	ev, diag := newTestEvaluator(t, nil, "conversation")
+	ev.qeng = qeng
+	ev.heng = hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{
+		ExpectedFingerprint: vectorTestGeneration.Fingerprint,
+	})
+
+	ranked, err := ev.rankedVector("hybrid", "lease renewal", evalTestQuery(t, "lease renewal"))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"thread-000"}, ranked)
+	assert.Equal(t, 1, backend.fusedCalls, "a saturated pool must not be retried at a deeper page")
+	assert.Equal(t, 1, diag.PoolShortfalls, "the engine's own saturation flag has to reach the diagnostics")
+	assert.Zero(t, diag.DepthShortfalls)
 }
 
 // TestRankedVector_FilterOnlyTopicIsRecoverable: a topic that parses to filters
@@ -204,4 +363,11 @@ func TestRunDiagnostics_Notes(t *testing.T) {
 	d.skip("q3", "hybrid", "no free-text terms to embed (filter-only topic)")
 	require.Len(t, d.notes(), 1)
 	assert.Contains(t, d.notes()[0], "topic q3 / hybrid")
+
+	// The pool note stays readable when the run never opened the vector
+	// path, so an unknown k_per_signal is never rendered as "k_per_signal=0".
+	d = &runDiagnostics{PoolShortfalls: 2}
+	require.Len(t, d.notes(), 1)
+	assert.Contains(t, d.notes()[0], "candidate pool")
+	assert.NotContains(t, d.notes()[0], "k_per_signal=0")
 }
