@@ -23,7 +23,12 @@ type RunConfig struct {
 	QrelsPath  string `json:"qrels_path,omitempty"`
 	TopicsPath string `json:"topics_path,omitempty"`
 
-	// Corpus
+	// Corpus. These are the live population — dedup-hidden duplicates and
+	// messages deleted from their source account are excluded, because no
+	// search the run performed could return them, and Conversations counts
+	// only threads that still hold such a message. A recall figure is read
+	// against the haystack that was actually searched, so counting rows the
+	// query path filters out would make the run look harder than it was.
 	Messages      int64 `json:"messages"`
 	Conversations int64 `json:"conversations"`
 
@@ -36,17 +41,21 @@ type RunConfig struct {
 	// through the contextual endpoint is a different retrieval system from
 	// the same model over the OpenAI-compatible one, so the format belongs
 	// beside the model name.
-	APIFormat      string  `json:"embedding_api_format,omitempty"`
-	Dimension      int     `json:"embedding_dimension,omitempty"`
-	Endpoint       string  `json:"embedding_endpoint,omitempty"`
-	Backend        string  `json:"vector_backend,omitempty"`
-	Fingerprint    string  `json:"generation_fingerprint,omitempty"`
-	RRFK           int     `json:"rrf_k,omitempty"`
-	KPerSignal     int     `json:"k_per_signal,omitempty"`
-	SubjectBoost   float64 `json:"subject_boost,omitempty"`
-	IndexedVectors int64   `json:"indexed_vectors,omitempty"`
-	IndexSizeBytes int64   `json:"index_size_bytes,omitempty"`
-	IndexPath      string  `json:"index_path,omitempty"`
+	APIFormat    string  `json:"embedding_api_format,omitempty"`
+	Dimension    int     `json:"embedding_dimension,omitempty"`
+	Endpoint     string  `json:"embedding_endpoint,omitempty"`
+	Backend      string  `json:"vector_backend,omitempty"`
+	Fingerprint  string  `json:"generation_fingerprint,omitempty"`
+	RRFK         int     `json:"rrf_k,omitempty"`
+	KPerSignal   int     `json:"k_per_signal,omitempty"`
+	SubjectBoost float64 `json:"subject_boost,omitempty"`
+	// IndexedVectors counts the rows in the active generation alone — the one
+	// search resolved and queried. A vectors.db retains retired generations
+	// and may hold a rebuild in progress, so a whole-table count describes
+	// the file on disk, which is what IndexSizeBytes is for.
+	IndexedVectors int64  `json:"indexed_vectors,omitempty"`
+	IndexSizeBytes int64  `json:"index_size_bytes,omitempty"`
+	IndexPath      string `json:"index_path,omitempty"`
 }
 
 // Latency summarises per-query wall-clock cost for one search mode. Quality

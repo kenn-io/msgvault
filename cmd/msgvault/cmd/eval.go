@@ -79,7 +79,12 @@ pointing the command at each config in turn.
 
 Every run reports the embedding model, api format, index settings and index
 size that produced it, plus per-query latency, because a quality number is not
-comparable — or even interpretable — without them. Anything that went wrong
+comparable — or even interpretable — without them. Those numbers describe what
+was searched, not what merely exists: the corpus count covers live messages
+only (dedup-hidden duplicates and messages deleted from their source account
+are excluded, as they are from every search here), and the vector count covers
+the active generation only, not the retired ones vectors.db still holds.
+Anything that went wrong
 without being fatal — unparseable judgment lines, topics whose query string
 did not parse, hits that could not be hydrated from the archive, rankings cut
 short by the fusion pool, topics no mode could score — is reported under
@@ -806,7 +811,11 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	if err != nil {
 		return nil, fmt.Errorf("open vectors.db: %w", err)
 	}
-	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, vecCfg.GenerationFingerprint()); err != nil {
+	// Keep the resolved generation: it is the one the hybrid engine will
+	// search, and therefore the only one whose vector count describes this
+	// run's index.
+	active, err := vector.ResolveActiveForFingerprint(ctx, backend, vecCfg.GenerationFingerprint())
+	if err != nil {
 		_ = backend.Close()
 		return nil, fmt.Errorf("resolve active generation: %w", err)
 	}
@@ -822,7 +831,7 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 		// as genuinely poor retrieval instead of erroring.
 		BuildScope: vecCfg.Embed.Scope.BuildScope(),
 	})
-	e.collectVectorStats(vecCfg, backend, vecDBPath)
+	e.collectVectorStats(vecCfg, backend, vecDBPath, active.ID)
 
 	return func() { _ = backend.Close() }, nil
 }
@@ -831,18 +840,37 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 // store's own handle so it also works for --modes fts, which never opens the
 // vector path. Failures are non-fatal: missing provenance should degrade the
 // report, never abort a run.
+//
+// "How big" means how big the haystack retrieval actually searched, not how
+// many rows the tables hold. A long-lived archive accumulates dedup-hidden
+// duplicates and messages deleted from their source account, and no search
+// this command runs returns either: the fts path resolves the default active
+// deletion scope to store.LiveMessagesWhere, and the vector path drops
+// source-deleted hits after the fact. Counting them would overstate the
+// haystack and make recall look harder-won than it was. The predicate is
+// borrowed from the store rather than restated here so the two cannot drift.
+//
+// Conversations are derived from those same live messages for the same
+// reason: an emptied conversation row is not a thread retrieval can return,
+// and with --doc-key=conversation the thread count is the denominator a
+// reader will reach for.
 func (e *evaluator) collectCorpusStats(db *sql.DB) {
 	if db == nil {
 		return
 	}
-	_ = db.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM messages").Scan(&e.prov.Messages)
-	_ = db.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM conversations").Scan(&e.prov.Conversations)
+	live := store.LiveMessagesWhere("", true)
+	_ = db.QueryRowContext(e.ctx,
+		"SELECT COUNT(*) FROM messages WHERE "+live).Scan(&e.prov.Messages)
+	_ = db.QueryRowContext(e.ctx,
+		"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE "+live).Scan(&e.prov.Conversations)
 }
 
 // collectVectorStats records the embedding model, fusion parameters and index
 // size in force for this run, so a score can never be read without knowing
 // what produced it.
-func (e *evaluator) collectVectorStats(vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string) {
+func (e *evaluator) collectVectorStats(
+	vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string, activeGen vector.GenerationID,
+) {
 	e.prov.VectorEnabled = true
 	e.prov.EmbeddingModel = vecCfg.Embeddings.Model
 	e.prov.APIFormat = string(vecCfg.Embeddings.EffectiveAPIFormat())
@@ -864,8 +892,17 @@ func (e *evaluator) collectVectorStats(vecCfg vector.Config, backend *sqlitevec.
 	// Backend.DB() is the backend's own accessor for exactly this kind of
 	// read-only query, so the row count goes through it rather than opening a
 	// second connection to the same file.
+	//
+	// Scope the count to the generation search reads. vectors.db keeps a
+	// retired generation's rows — vec0 partition-key isolation means retiring
+	// does not delete them — and a half-finished rebuild sits in the same
+	// table, so COUNT(*) over the whole table describes the file on disk, not
+	// the index this run queried. IndexSizeBytes already reports the file;
+	// this number has to report the index.
 	if vdb := backend.DB(); vdb != nil {
-		_ = vdb.QueryRowContext(e.ctx, "SELECT COUNT(*) FROM embeddings").Scan(&e.prov.IndexedVectors)
+		_ = vdb.QueryRowContext(e.ctx,
+			"SELECT COUNT(*) FROM embeddings WHERE generation_id = ?", int64(activeGen)).
+			Scan(&e.prov.IndexedVectors)
 	}
 }
 
@@ -914,7 +951,8 @@ func (r evalReport) table() {
 	pw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(pw, "  topics\t%s\n", r.prov.TopicsPath)
 	_, _ = fmt.Fprintf(pw, "  qrels\t%s\n", r.prov.QrelsPath)
-	_, _ = fmt.Fprintf(pw, "  corpus\t%d messages, %d conversations\n", r.prov.Messages, r.prov.Conversations)
+	_, _ = fmt.Fprintf(pw, "  corpus\t%d live messages, %d conversations\n",
+		r.prov.Messages, r.prov.Conversations)
 	if r.prov.VectorEnabled {
 		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", r.prov.EmbeddingModel, r.prov.Dimension)
 		_, _ = fmt.Fprintf(pw, "  embedding api format\t%s\n", r.prov.APIFormat)
@@ -923,7 +961,7 @@ func (r evalReport) table() {
 		_, _ = fmt.Fprintf(pw, "  generation fingerprint\t%s\n", r.prov.Fingerprint)
 		_, _ = fmt.Fprintf(pw, "  fusion\trrf_k=%d k_per_signal=%d subject_boost=%.2f\n",
 			r.prov.RRFK, r.prov.KPerSignal, r.prov.SubjectBoost)
-		_, _ = fmt.Fprintf(pw, "  vector index\t%d vectors, %s (%s)\n",
+		_, _ = fmt.Fprintf(pw, "  vector index\t%d vectors in the active generation, %s on disk (%s)\n",
 			r.prov.IndexedVectors, formatSize(r.prov.IndexSizeBytes), r.prov.IndexPath)
 	} else {
 		_, _ = fmt.Fprintf(pw, "  vector index\t(not used; --modes fts only)\n")
