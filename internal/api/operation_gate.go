@@ -399,6 +399,7 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/participants/{id}/summary",
 	"/api/v1/participants/{id}/timeline",
 	"/api/v1/participants/{id}/files/search",
+	"/api/v1/people/{id}/files/search",
 	"/api/v1/domains/search",
 	"/api/v1/domains/{domain}/summary",
 	"/api/v1/domains/{domain}/timeline",

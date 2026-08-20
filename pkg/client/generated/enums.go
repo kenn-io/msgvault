@@ -851,6 +851,44 @@ func (p PersonFileSearchRowContentState) Validate() error {
 	}
 }
 
+type ProvenanceDirections string
+
+const (
+	ProvenanceDirectionsFromPerson ProvenanceDirections = "from_person"
+	ProvenanceDirectionsGroup      ProvenanceDirections = "group"
+	ProvenanceDirectionsToPerson   ProvenanceDirections = "to_person"
+)
+
+// Validate checks if the ProvenanceDirections value is valid
+func (p ProvenanceDirections) Validate() error {
+	switch p {
+	case ProvenanceDirectionsFromPerson, ProvenanceDirectionsGroup, ProvenanceDirectionsToPerson:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ProvenanceDirections value, got: %v", p))
+	}
+}
+
+type ProvenanceRoles string
+
+const (
+	ProvenanceRolesBcc                ProvenanceRoles = "bcc"
+	ProvenanceRolesCc                 ProvenanceRoles = "cc"
+	ProvenanceRolesConversationMember ProvenanceRoles = "conversation_member"
+	ProvenanceRolesFrom               ProvenanceRoles = "from"
+	ProvenanceRolesTo                 ProvenanceRoles = "to"
+)
+
+// Validate checks if the ProvenanceRoles value is valid
+func (p ProvenanceRoles) Validate() error {
+	switch p {
+	case ProvenanceRolesBcc, ProvenanceRolesCc, ProvenanceRolesConversationMember, ProvenanceRolesFrom, ProvenanceRolesTo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ProvenanceRoles value, got: %v", p))
+	}
+}
+
 type RemoveResultCacheState string
 
 const (

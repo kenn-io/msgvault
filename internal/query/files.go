@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 const maxFileSearchLimit = 500
@@ -34,40 +35,35 @@ var fileMIMEFamilies = map[FileMIMEFamily]struct{}{
 // PersonFileDirection selects how an attachment's owning message relates to
 // the requested person. A person search may select several directions; the
 // resulting population is their union.
-type PersonFileDirection string
+type PersonFileDirection = personscope.Direction
 
 const (
-	PersonFileFromPerson PersonFileDirection = "from_person"
-	PersonFileToPerson   PersonFileDirection = "to_person"
-	PersonFileGroup      PersonFileDirection = "group"
+	PersonFileFromPerson = personscope.FromPerson
+	PersonFileToPerson   = personscope.ToPerson
+	PersonFileGroup      = personscope.Group
 )
 
 // PersonFileRole is the exact message edge that matched a member of the
 // requested person's identity cluster.
-type PersonFileRole string
+type PersonFileRole = personscope.Role
 
 const (
-	PersonFileRoleFrom               PersonFileRole = "from"
-	PersonFileRoleTo                 PersonFileRole = "to"
-	PersonFileRoleCC                 PersonFileRole = "cc"
-	PersonFileRoleBCC                PersonFileRole = "bcc"
-	PersonFileRoleConversationMember PersonFileRole = "conversation_member"
+	PersonFileRoleFrom               = personscope.RoleFrom
+	PersonFileRoleTo                 = personscope.RoleTo
+	PersonFileRoleCC                 = personscope.RoleCC
+	PersonFileRoleBCC                = personscope.RoleBCC
+	PersonFileRoleConversationMember = personscope.RoleConversationMember
 )
 
 // PersonFileScope is an internal, already-resolved person constraint. The API
 // supplies every current member of the identity cluster so linking or
 // splitting identities changes membership without moving attachment rows.
-type PersonFileScope struct {
-	ParticipantIDs []int64
-	Directions     []PersonFileDirection
-	// IncludeUnclassifiedRosterRows preserves the historical default scope for
-	// conversation types that do not have a dedicated direction selector.
-	IncludeUnclassifiedRosterRows bool
-}
+type PersonFileScope = personscope.Scope
 
 // PersonFileProvenance retains all matched cluster members and exact roles on
-// an attachment's owning message. Arrays use stable enum order and never
-// collapse a multi-role match to one inferred label.
+// an attachment's owning message. Keep this as a named public shape so the
+// generated client contract remains stable while the shared resolver types
+// stay internal to the retrieval lanes.
 type PersonFileProvenance struct {
 	ParticipantIDs []int64               `json:"participant_ids"`
 	Roles          []PersonFileRole      `json:"roles" enum:"from,to,cc,bcc,conversation_member"`
@@ -361,9 +357,6 @@ func validatePersonFileScope(scope *PersonFileScope) error {
 	if scope == nil {
 		return nil
 	}
-	if len(scope.ParticipantIDs) == 0 {
-		return fmt.Errorf("%w: person file participant IDs are required", ErrInvalidExploreRequest)
-	}
 	for _, participantID := range scope.ParticipantIDs {
 		if participantID <= 0 {
 			return fmt.Errorf("%w: person file participant IDs must be positive", ErrInvalidExploreRequest)
@@ -404,6 +397,10 @@ func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 		participantRows[i] = "(CAST(? AS BIGINT))"
 		args[i] = participantID
 	}
+	personIDRows := "VALUES " + strings.Join(participantRows, ",")
+	if len(participantRows) == 0 {
+		personIDRows = "SELECT CAST(NULL AS BIGINT) WHERE FALSE"
+	}
 	selectedDirections := make([]string, 0, len(scope.Directions))
 	for _, direction := range scope.Directions {
 		switch direction {
@@ -430,7 +427,7 @@ func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 	return `attachment_message_ids AS MATERIALIZED (
 	SELECT message_id FROM attachments GROUP BY message_id
 ), person_ids(participant_id) AS (
-	VALUES ` + strings.Join(participantRows, ",") + `
+	` + personIDRows + `
 ), person_edges AS (
 	SELECT mr.message_id, mr.participant_id, lower(mr.recipient_type) AS role
 	FROM attachment_message_ids ami

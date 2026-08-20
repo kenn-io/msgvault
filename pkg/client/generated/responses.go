@@ -455,6 +455,8 @@ type SearchDocumentsErrorResponse = ErrorResponse
 
 type SearchDocumentsErrorResponseJSON = ErrorResponse
 
+type SearchDocumentsErrorResponseJSON404 = ErrorResponse
+
 type SearchDocumentsErrorResponseJSON409 = ErrorResponse
 
 type SearchDocumentsErrorResponseJSON429 = ErrorResponse
@@ -1417,6 +1419,10 @@ type SearchParticipantFilesErrorResponse = ErrorResponse
 
 type SearchParticipantFilesErrorResponseJSON = ErrorResponse
 
+type SearchParticipantFilesErrorResponseJSON409 = ErrorResponse
+
+type SearchParticipantFilesErrorResponseJSON422 = ErrorResponse
+
 type SearchParticipantFilesErrorResponseJSON503 struct {
 	SearchParticipantFiles_ErrorResponse_503_AnyOf *SearchParticipantFiles_ErrorResponse_503_AnyOf `json:"-"`
 }
@@ -1660,6 +1666,54 @@ type ListPersonEmploymentsErrorResponse = ErrorResponse
 type ListPersonEmploymentsErrorResponseJSON = ErrorResponse
 
 type ListPersonEmploymentsErrorResponseJSON503 = ErrorResponse
+
+type SearchPersonFilesResponse = PersonFileSearchHTTPResponse
+
+type SearchPersonFilesErrorResponse = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON409 = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON422 = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON503 struct {
+	SearchPersonFiles_ErrorResponse_503_AnyOf *SearchPersonFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchPersonFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchPersonFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchPersonFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchPersonFiles_ErrorResponse_503_AnyOf == nil {
+		s.SearchPersonFiles_ErrorResponse_503_AnyOf = &SearchPersonFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchPersonFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchPersonFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type GetPersonStructuredProfileResponse = StructuredPersonProfile
 
@@ -1992,6 +2046,10 @@ type SearchVisualAttachmentsResponse = SearchResponse
 type SearchVisualAttachmentsErrorResponse = ErrorResponse
 
 type SearchVisualAttachmentsErrorResponseJSON = ErrorResponse
+
+type SearchVisualAttachmentsErrorResponseJSON409 = ErrorResponse
+
+type SearchVisualAttachmentsErrorResponseJSON503 = ErrorResponse
 
 type GetSearchCoverageResponse = SearchCoverageResponse
 
@@ -2688,6 +2746,7 @@ type SearchDocumentsResp struct {
 	JSON200      *SearchDocumentsResponse
 	JSON400      *SearchDocumentsErrorResponse
 	JSON403      *SearchDocumentsErrorResponseJSON
+	JSON404      *SearchDocumentsErrorResponseJSON404
 	JSON409      *SearchDocumentsErrorResponseJSON409
 	JSON429      *SearchDocumentsErrorResponseJSON429
 	JSON503      *SearchDocumentsErrorResponseJSON503
@@ -3313,7 +3372,9 @@ type SearchParticipantFilesResp struct {
 	StatusCode   int
 	JSON200      *SearchParticipantFilesResponse
 	JSON400      *SearchParticipantFilesErrorResponse
-	JSON409      *SearchParticipantFilesErrorResponseJSON
+	JSON404      *SearchParticipantFilesErrorResponseJSON
+	JSON409      *SearchParticipantFilesErrorResponseJSON409
+	JSON422      *SearchParticipantFilesErrorResponseJSON422
 	JSON503      *SearchParticipantFilesErrorResponseJSON503
 }
 
@@ -3486,6 +3547,18 @@ type ListPersonEmploymentsResp struct {
 	JSON400      *ListPersonEmploymentsErrorResponse
 	JSON404      *ListPersonEmploymentsErrorResponseJSON
 	JSON503      *ListPersonEmploymentsErrorResponseJSON503
+}
+
+type SearchPersonFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchPersonFilesResponse
+	JSON400      *SearchPersonFilesErrorResponse
+	JSON404      *SearchPersonFilesErrorResponseJSON
+	JSON409      *SearchPersonFilesErrorResponseJSON409
+	JSON422      *SearchPersonFilesErrorResponseJSON422
+	JSON503      *SearchPersonFilesErrorResponseJSON503
 }
 
 type GetPersonStructuredProfileResp200Headers struct {
@@ -3817,7 +3890,9 @@ type SearchVisualAttachmentsResp struct {
 	StatusCode   int
 	JSON200      *SearchVisualAttachmentsResponse
 	JSON400      *SearchVisualAttachmentsErrorResponse
-	JSON503      *SearchVisualAttachmentsErrorResponseJSON
+	JSON404      *SearchVisualAttachmentsErrorResponseJSON
+	JSON409      *SearchVisualAttachmentsErrorResponseJSON409
+	JSON503      *SearchVisualAttachmentsErrorResponseJSON503
 }
 
 type GetSearchCoverageResp struct {

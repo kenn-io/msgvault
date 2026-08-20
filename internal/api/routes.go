@@ -257,6 +257,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 			Properties: map[string]*huma.Schema{
 				"image":    {Type: huma.TypeString, Format: "binary", Description: "Query image (JPEG, PNG, WebP, or still GIF)"},
 				limitParam: {Type: huma.TypeString}, "sender_person_id": {Type: huma.TypeString},
+				"person_id": {Type: huma.TypeString}, "participant_id": {Type: huma.TypeString},
+				"direction": {Type: huma.TypeArray, Items: &huma.Schema{Type: huma.TypeString, Enum: []any{"from_person", "to_person", "group"}}},
 				"source_id": {Type: huma.TypeString}, "message_id": {Type: huma.TypeString},
 				"filename": {Type: huma.TypeString}, "mime_prefix": {Type: huma.TypeString},
 				"cursor": {Type: huma.TypeString}, "after": {Type: huma.TypeString}, "before": {Type: huma.TypeString},
@@ -265,7 +267,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		},
 	}
 	visualSearchOp.Responses = jsonResponsesFor[visual.SearchResponse](apiV1)
-	addErrorResponses(apiV1, visualSearchOp.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	addErrorResponses(apiV1, visualSearchOp.Responses, http.StatusBadRequest, http.StatusConflict,
+		http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(apiV1, visualSearchOp, s.handleVisualSearch)
 	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[visualBuildRequest, visual.Status](apiV1, "startVisualAttachmentBuild", http.MethodPost, "/multimodal/build", "Consent and run one bounded visual attachment embedding pass", s.handleVisualBuild)
@@ -617,6 +620,11 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRefArrayParam("message_type", "Message types to include; repeat or comma-separate values"),
 			queryIntegerParam("attachment_id", "Exact attachment occurrence ID"),
 			queryIntegerParam("message_id", "Exact containing message ID"),
+			queryIntegerParam("person_id", "Durable person ID"),
+			queryIntegerParam("participant_id", "Observed participant ID; translated through its durable person when bound"),
+			queryRefArrayParam("direction", "Person relation; repeat or comma-separate from_person, to_person, or group"),
+			queryStringParam("after", "Only messages on or after an RFC3339 or YYYY-MM-DD date", false),
+			queryStringParam("before", "Only messages before an RFC3339 or YYYY-MM-DD date", false),
 			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
 			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
 		}

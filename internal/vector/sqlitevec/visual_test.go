@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -48,6 +49,24 @@ func TestVisualBackendPublishesOnlyCurrentLiveTokens(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, visual.VectorToken(token), hits[0].Token)
 	assert.Equal(t, 1, hits[0].Rank)
+	matchingParticipant := f.EnsureParticipant("matching-visual@example.test", "Matching", "example.test")
+	otherParticipant := f.EnsureParticipant("other-visual@example.test", "Other", "example.test")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), matchingParticipant, owner.MessageID)
+	require.NoError(t, err)
+	personRequest := visual.SearchRequest{
+		GenerationID: visual.GenerationID(generation.ID), Vector: query, Limit: 10,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{matchingParticipant},
+			Directions:     []personscope.Direction{personscope.FromPerson},
+		},
+	}
+	hits, err = visualBackend.Search(t.Context(), personRequest)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	personRequest.Person.ParticipantIDs = []int64{otherParticipant}
+	hits, err = visualBackend.Search(t.Context(), personRequest)
+	require.NoError(t, err)
+	assert.Empty(t, hits, "person scope must filter before the nearest-neighbor result window")
 
 	loaded, err := visualBackend.LoadOwnerVector(t.Context(), visual.GenerationID(generation.ID), visual.Owner{
 		MessageID: owner.MessageID, BlobHash: owner.BlobHash, MediaInputKey: owner.MediaInputKey,

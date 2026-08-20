@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -34,6 +35,8 @@ type catalogCapabilities struct {
 }
 
 func searchVisualAttachmentsDefinition() toolDefinition {
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
 	return readDefinition(
 		ToolSearchVisualAttachments,
 		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance.",
@@ -41,14 +44,20 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 			"text":             stringSchema("Natural-language visual query"),
 			"image_base64":     stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
 			"limit":            nonNegativeIntegerSchema("Maximum results (1-100, default 20)", 20),
-			"sender_person_id": safeIDSchema("Only attachments sent by this person ID"),
-			"source_id":        safeIDSchema("Only attachments from this source ID"),
-			"message_id":       safeIDSchema("Only attachments owned by this message ID"),
-			"filename":         stringSchema("Case-insensitive filename substring filter"),
-			"mime_prefix":      stringSchema("Case-insensitive MIME prefix filter, such as image/"),
-			"cursor":           stringSchema("Opaque next_cursor from the previous response"),
-			"after":            stringSchema("Only messages on or after YYYY-MM-DD"),
-			"before":           stringSchema("Only messages before YYYY-MM-DD"),
+			"sender_person_id": safeIDSchema("Legacy alias for person_id with from_person direction"),
+			"person_id":        safeIDSchema("Only attachments related to this durable person ID"),
+			"participant_id":   safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Items: direction,
+			},
+			"source_id":   safeIDSchema("Only attachments from this source ID"),
+			"message_id":  safeIDSchema("Only attachments owned by this message ID"),
+			"filename":    stringSchema("Case-insensitive filename substring filter"),
+			"mime_prefix": stringSchema("Case-insensitive MIME prefix filter, such as image/"),
+			"cursor":      stringSchema("Opaque next_cursor from the previous response"),
+			"after":       stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before":      stringSchema("Only messages before YYYY-MM-DD"),
 		}),
 		outputSchemaFor[visual.SearchResponse](),
 		(*handlers).searchVisualAttachments,
@@ -133,6 +142,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),
 		searchMetadataDefinition(nil),
+		searchPersonFilesDefinition(nil),
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 	}
@@ -637,6 +647,8 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
 	limit.Default = json.RawMessage("20")
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
 	definition := readDefinition(
 		ToolSearchDocuments,
 		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
@@ -650,16 +662,55 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 				Type: "array", Description: "Optional containing message type scope",
 				Items: stringSchema("Containing message type"),
 			},
-			"attachment_id": safeIDSchema("Optional exact attachment occurrence ID"),
-			"message_id":    safeIDSchema("Optional exact containing message ID"),
-			"limit":         limit,
-			"cursor":        stringSchema("Opaque cursor from the previous page"),
+			"attachment_id":  safeIDSchema("Optional exact attachment occurrence ID"),
+			"message_id":     safeIDSchema("Optional exact containing message ID"),
+			"person_id":      safeIDSchema("Optional durable person ID"),
+			"participant_id": safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Items: direction,
+			},
+			"after":  stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before": stringSchema("Only messages before YYYY-MM-DD"),
+			"limit":  limit,
+			"cursor": stringSchema("Opaque cursor from the previous page"),
 		}, "query"),
 		outputSchemaFor[store.DocumentSearchResponse](),
 		(*handlers).searchDocuments,
 	)
 	definition.availability = documentSearchAvailable
 	return definition
+}
+
+func searchPersonFilesDefinition(_ *handlers) toolDefinition {
+	limit := boundedIntegerSchema("Maximum metadata results to return (default 100, max 100)", 1, 100)
+	limit.Default = json.RawMessage("100")
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
+	mimeFamily := stringSchema("Stable MIME family",
+		"image", "pdf", "audio", "video", "text", "document", "archive", "other")
+	return readDefinition(
+		ToolSearchPersonFiles,
+		"Search authoritative attachment metadata for one durable person. Results preserve exact attachment occurrence, owning message, conversation, source, matched participant, role, and direction provenance.",
+		closedObject(map[string]*jsonschema.Schema{
+			"person_id": safeIDSchema("Durable person ID"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group",
+				Items: direction,
+			},
+			"after":    stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before":   stringSchema("Only messages before YYYY-MM-DD"),
+			"filename": stringSchema("Case-insensitive filename substring filter"),
+			"mime_families": {
+				Type: "array", Description: "Optional stable MIME-family filter",
+				Items: mimeFamily,
+			},
+			"limit":  limit,
+			"cursor": stringSchema("Opaque cursor from the previous metadata page"),
+		}, "person_id"),
+		outputSchemaFor[generated.PersonFileSearchHTTPResponse](),
+		(*handlers).searchPersonFiles,
+	)
 }
 
 // The following named response types make every catalog output schema visible

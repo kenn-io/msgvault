@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	internalmime "go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -415,6 +416,10 @@ func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {
 			request store.DocumentSearchRequest,
 		) (store.DocumentSearchResponse, error) {
 			assert.Equal("damage report", request.Query)
+			assert.Equal(int64(40), request.PersonID)
+			assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, request.Directions)
+			require.NotNil(t, request.After)
+			require.NotNil(t, request.Before)
 			return store.DocumentSearchResponse{Results: []store.DocumentSearchResult{{
 				AttachmentID: 3, MessageID: 4, Filename: "report.pdf", Rank: 1,
 			}}}, nil
@@ -432,11 +437,45 @@ func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"search", "damage report", "--json"})
+	command.SetArgs([]string{"search", "damage report", "--person", "40",
+		"--direction", "from_person,group", "--after", "2026-08-01", "--before", "2026-08-20", "--json"})
 	require.NoError(t, command.ExecuteContext(t.Context()))
 	assert.False(openStoreCalled)
 	assert.True(cleanupCalled)
 	assert.Contains(output.String(), "report.pdf")
+}
+
+func TestDocumentsSearchRejectsNonPositivePersonScopeBeforeDispatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		flag  string
+		value string
+	}{
+		{name: "zero person", flag: "--person", value: "0"},
+		{name: "negative person", flag: "--person", value: "-1"},
+		{name: "zero participant", flag: "--participant", value: "0"},
+		{name: "negative participant", flag: "--participant", value: "-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dispatched := false
+			command := newDocumentsCmd(documentsCommandDeps{
+				openReadClient: func(context.Context) (documentReadClient, func(), error) {
+					dispatched = true
+					return nil, func() {}, errors.New("unexpected read client dispatch")
+				},
+			})
+			command.SetOut(&bytes.Buffer{})
+			command.SetErr(&bytes.Buffer{})
+			command.SetArgs([]string{"search", "damage report", test.flag, test.value})
+
+			err := command.ExecuteContext(t.Context())
+
+			require.Error(t, err)
+			require.ErrorContains(t, err, "must be a positive")
+			assert.False(t, dispatched)
+		})
+	}
 }
 
 func TestDocumentsStatusUsesConfiguredReadClient(t *testing.T) {

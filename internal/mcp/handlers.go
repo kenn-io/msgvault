@@ -15,6 +15,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/personscope"
+	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -23,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -101,14 +104,15 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	engine           query.Engine
-	attachmentsDir   string
-	attachmentReader AttachmentReader
-	manifestSaver    DeletionManifestSaver
-	hybridSearcher   HybridSearcher
-	similarSearcher  SimilarSearcher
-	dataDir          string
-	documentSearcher DocumentSearcher
+	engine             query.Engine
+	attachmentsDir     string
+	attachmentReader   AttachmentReader
+	manifestSaver      DeletionManifestSaver
+	hybridSearcher     HybridSearcher
+	similarSearcher    SimilarSearcher
+	dataDir            string
+	documentSearcher   DocumentSearcher
+	personFileSearcher PersonFileSearcher
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -131,6 +135,9 @@ type VisualSearchRequest struct {
 	Limit          int
 	Cursor         string
 	SenderPersonID int64
+	PersonID       int64
+	ParticipantID  int64
+	Directions     []personscope.Direction
 	SourceID       int64
 	MessageID      int64
 	Filename       string
@@ -180,6 +187,37 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 	if toolErr != nil {
 		return toolErr, nil
 	}
+	personID, toolErr := parsePositiveID("person_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	participantID, toolErr := parsePositiveID("participant_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+		for i, raw := range rawDirections {
+			directions[i] = personscope.Direction(raw)
+		}
+		if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+	}
+	if senderPersonID > 0 && (personID > 0 || participantID > 0 || len(directions) > 0) {
+		return toolErrorResult("sender_person_id cannot be combined with person_id, participant_id, or directions"), nil
+	}
+	if personID > 0 && participantID > 0 {
+		return toolErrorResult("person_id and participant_id are mutually exclusive"), nil
+	}
+	if len(directions) > 0 && personID == 0 && participantID == 0 {
+		return toolErrorResult("directions require person_id or participant_id"), nil
+	}
 	cursor, _ := args["cursor"].(string)
 	filename, _ := args["filename"].(string)
 	mimePrefix, _ := args["mime_prefix"].(string)
@@ -204,6 +242,7 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 	}
 	response, err := h.visualSearcher.SearchVisualAttachments(ctx, VisualSearchRequest{
 		Text: text, Image: image, Limit: limit, Cursor: cursor, SenderPersonID: senderPersonID,
+		PersonID: personID, ParticipantID: participantID, Directions: directions,
 		SourceID: sourceID, MessageID: messageID, Filename: filename, MIMEPrefix: mimePrefix,
 		After: after, Before: before,
 	})
@@ -218,6 +257,94 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 // process out of the archive database.
 type DocumentSearcher interface {
 	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
+}
+
+type PersonFileSearcher interface {
+	SearchPersonFiles(ctx context.Context, request PersonFileSearchRequest) (generated.PersonFileSearchHTTPResponse, error)
+}
+
+type PersonFileSearchRequest struct {
+	PersonID     int64
+	Directions   []personscope.Direction
+	After        *time.Time
+	Before       *time.Time
+	Filename     string
+	MIMEFamilies []query.FileMIMEFamily
+	Limit        int
+	Cursor       string
+}
+
+func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if h.personFileSearcher == nil {
+		return toolErrorResult("person_file_search_unavailable: person file search is not configured"), nil
+	}
+	args := req.GetArguments()
+	personID, err := getIDArg(args, "person_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+	}
+	for i, raw := range rawDirections {
+		directions[i] = personscope.Direction(raw)
+	}
+	normalizedDirections, _, err := personresolver.NormalizeDirections(directions)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if len(directions) > 0 {
+		directions = normalizedDirections
+	}
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
+	rawFamilies, err := stringArrayArg(args, "mime_families")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	families := make([]query.FileMIMEFamily, len(rawFamilies))
+	for i, raw := range rawFamilies {
+		family := query.FileMIMEFamily(strings.ToLower(strings.TrimSpace(raw)))
+		switch family {
+		case query.FileMIMEImage, query.FileMIMEPDF, query.FileMIMEAudio, query.FileMIMEVideo,
+			query.FileMIMEText, query.FileMIMEDocument, query.FileMIMEArchive, query.FileMIMEOther:
+			families[i] = family
+		default:
+			return toolErrorResult(fmt.Sprintf("unknown file MIME family %q", raw)), nil
+		}
+	}
+	limit := 100
+	if _, found := args["limit"]; found {
+		parsed, parseErr := positiveInt64Arg(args, "limit")
+		if parseErr != nil || parsed > 100 {
+			return toolErrorResult("limit must be an integer between 1 and 100"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		}
+		limit = int(parsed)
+	}
+	filename, _ := args["filename"].(string)
+	cursor, _ := args["cursor"].(string)
+	response, err := h.personFileSearcher.SearchPersonFiles(ctx, PersonFileSearchRequest{
+		PersonID: personID, Directions: directions, After: after, Before: before,
+		Filename: strings.TrimSpace(filename), MIMEFamilies: families, Limit: limit, Cursor: cursor,
+	})
+	if err != nil {
+		return toolErrorResult("person file search failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	}
+	return jsonResult(response)
 }
 
 // AttachmentReader fetches content-addressed attachment bytes. It is optional:
@@ -555,6 +682,45 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	personID, err := positiveInt64Arg(args, "person_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	participantID, err := positiveInt64Arg(args, "participant_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if personID > 0 && participantID > 0 {
+		return toolErrorResult("person_id and participant_id are mutually exclusive"), nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if len(rawDirections) > 0 && personID == 0 && participantID == 0 {
+		return toolErrorResult("directions require person_id or participant_id"), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+		for i, raw := range rawDirections {
+			directions[i] = personscope.Direction(raw)
+		}
+		if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+	}
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
 	limit := 20
 	if _, found := args["limit"]; found {
 		parsedLimit, parseErr := positiveInt64Arg(args, "limit")
@@ -569,7 +735,9 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	cursor, _ := args["cursor"].(string)
 	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
 		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
-		AttachmentID: attachmentID, MessageID: messageID, PageSize: limit, Cursor: cursor,
+		AttachmentID: attachmentID, MessageID: messageID,
+		PersonID: personID, ParticipantID: participantID, Directions: directions,
+		After: after, Before: before, PageSize: limit, Cursor: cursor,
 	})
 	if err != nil {
 		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil

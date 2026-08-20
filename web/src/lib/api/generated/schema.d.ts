@@ -2027,6 +2027,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{id}/files/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search one durable person's analytical files */
+        post: operations["searchPersonFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}/profile": {
         parameters: {
             query?: never;
@@ -2780,6 +2797,7 @@ export interface components {
             /** Format: int64 */
             message_id: number;
             mime_type: string;
+            person_provenance?: components["schemas"]["Provenance"];
             /** Format: int64 */
             rank: number;
             /** Format: double */
@@ -3724,6 +3742,8 @@ export interface components {
             /** Format: int64 */
             chunk_ordinal: number;
             containing_title?: string;
+            /** Format: int64 */
+            conversation_id: number;
             excerpt: string;
             extraction_id: string;
             filename?: string;
@@ -3741,15 +3761,19 @@ export interface components {
             message_id: number;
             mime_type?: string;
             model: string;
+            /** Format: date-time */
+            occurred_at?: string;
             occurrence_key: string;
             /** Format: int64 */
             other_live_copies: number;
+            person_provenance?: components["schemas"]["Provenance"];
             profile_id: string;
             provider: string;
             /** Format: int64 */
             rank: number;
             /** Format: int64 */
             source_id: number;
+            source_message_id?: string;
             source_part_key?: string;
             truncated: boolean;
         } & {
@@ -5597,6 +5621,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Provenance: {
+            directions: ("from_person" | "to_person" | "group")[] | null;
+            participant_ids: number[] | null;
+            roles: ("from" | "to" | "cc" | "bcc" | "conversation_member")[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         ProviderUsage: {
             /** Format: double */
             billed_units: number;
@@ -6517,12 +6548,17 @@ export interface components {
             after?: string;
             before?: string;
             cursor?: string;
+            directions?: string[] | null;
             filename?: string;
             /** Format: int64 */
             limit?: number;
             /** Format: int64 */
             message_id?: number;
             mime_prefix?: string;
+            /** Format: int64 */
+            participant_id?: number;
+            /** Format: int64 */
+            person_id?: number;
             /** Format: int64 */
             sender_person_id?: number;
             /** Format: int64 */
@@ -9734,6 +9770,16 @@ export interface operations {
                 attachment_id?: number;
                 /** @description Exact containing message ID */
                 message_id?: number;
+                /** @description Durable person ID */
+                person_id?: number;
+                /** @description Observed participant ID; translated through its durable person when bound */
+                participant_id?: number;
+                /** @description Person relation; repeat or comma-separate from_person, to_person, or group */
+                direction?: string[];
+                /** @description Only messages on or after an RFC3339 or YYYY-MM-DD date */
+                after?: string;
+                /** @description Only messages before an RFC3339 or YYYY-MM-DD date */
+                before?: string;
                 /** @description Maximum results to return (default 20, max 100) */
                 limit?: number;
                 /** @description Opaque cursor from the previous document search page */
@@ -9765,6 +9811,15 @@ export interface operations {
             };
             /** @description Error */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13271,7 +13326,25 @@ export interface operations {
                 };
             };
             /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14292,6 +14365,87 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchPersonFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonFileSearchHTTPRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFileSearchHTTPResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -15997,6 +16151,7 @@ export interface operations {
                     after?: string;
                     before?: string;
                     cursor?: string;
+                    direction?: ("from_person" | "to_person" | "group")[];
                     filename?: string;
                     /**
                      * Format: binary
@@ -16006,6 +16161,8 @@ export interface operations {
                     limit?: string;
                     message_id?: string;
                     mime_prefix?: string;
+                    participant_id?: string;
+                    person_id?: string;
                     sender_person_id?: string;
                     source_id?: string;
                 };
@@ -16023,6 +16180,24 @@ export interface operations {
             };
             /** @description Error */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

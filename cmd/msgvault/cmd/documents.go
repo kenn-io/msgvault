@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/personscope"
+	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -139,12 +141,45 @@ func newDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	var request store.DocumentSearchRequest
 	var jsonOutput bool
+	var rawDirections []string
+	var afterValue, beforeValue string
 	command := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search extracted document attachments",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			request.Query = strings.Join(args, " ")
+			if command.Flags().Changed("person") && request.PersonID <= 0 {
+				return errors.New("--person must be a positive person ID")
+			}
+			if command.Flags().Changed("participant") && request.ParticipantID <= 0 {
+				return errors.New("--participant must be a positive participant ID")
+			}
+			if request.PersonID > 0 && request.ParticipantID > 0 {
+				return errors.New("--person and --participant are mutually exclusive")
+			}
+			if len(rawDirections) > 0 && request.PersonID == 0 && request.ParticipantID == 0 {
+				return errors.New("--direction requires --person or --participant")
+			}
+			request.Directions = make([]personscope.Direction, len(rawDirections))
+			for i, direction := range rawDirections {
+				request.Directions[i] = personscope.Direction(direction)
+			}
+			if len(request.Directions) > 0 {
+				if _, _, err := personresolver.NormalizeDirections(request.Directions); err != nil {
+					return err
+				}
+			}
+			var err error
+			if request.After, err = parseDocumentSearchDate(afterValue); err != nil {
+				return fmt.Errorf("invalid --after: %w", err)
+			}
+			if request.Before, err = parseDocumentSearchDate(beforeValue); err != nil {
+				return fmt.Errorf("invalid --before: %w", err)
+			}
+			if request.After != nil && request.Before != nil && !request.After.Before(*request.Before) {
+				return errors.New("--after must be before --before")
+			}
 			return runSearchDocuments(command, request, jsonOutput, deps)
 		},
 	}
@@ -152,10 +187,30 @@ func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	command.Flags().StringSliceVar(&request.MessageTypes, "message-type", nil, "Limit results to message types")
 	command.Flags().Int64Var(&request.AttachmentID, "attachment-id", 0, "Limit results to one attachment occurrence")
 	command.Flags().Int64Var(&request.MessageID, "message-id", 0, "Limit results to one containing message")
+	command.Flags().Int64Var(&request.PersonID, "person", 0, "Limit results to one durable person")
+	command.Flags().Int64Var(&request.ParticipantID, "participant", 0, "Limit results to one observed participant, translated through its durable person when bound")
+	command.Flags().StringSliceVar(&rawDirections, "direction", nil, "Person relation: from_person, to_person, or group")
+	command.Flags().StringVar(&afterValue, "after", "", "Only messages on or after YYYY-MM-DD or RFC3339")
+	command.Flags().StringVar(&beforeValue, "before", "", "Only messages before YYYY-MM-DD or RFC3339")
 	command.Flags().IntVarP(&request.PageSize, "limit", "n", 20, "Maximum results to return")
 	command.Flags().StringVar(&request.Cursor, "cursor", "", "Opaque cursor from the previous page")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
+}
+
+func parseDocumentSearchDate(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil //nolint:nilnil // An omitted optional date has no value and no error.
+	}
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			parsed = parsed.UTC()
+			return &parsed, nil
+		}
+	}
+	return nil, errors.New("must be YYYY-MM-DD or RFC3339")
 }
 
 func newProbeMistralCmd(deps documentsCommandDeps) *cobra.Command {
@@ -1009,6 +1064,23 @@ func (c localDocumentReadClient) SearchDocuments(
 	ctx context.Context,
 	request store.DocumentSearchRequest,
 ) (store.DocumentSearchResponse, error) {
+	if request.PersonID > 0 || request.ParticipantID > 0 {
+		reference := personresolver.Reference{Kind: personresolver.ReferencePerson, ID: request.PersonID}
+		if request.ParticipantID > 0 {
+			reference = personresolver.Reference{Kind: personresolver.ReferenceParticipant, ID: request.ParticipantID}
+		}
+		resolved, err := personresolver.Resolve(ctx, c.store, reference, request.Directions)
+		if err != nil {
+			if errors.Is(err, personresolver.ErrEmptyPopulation) {
+				return store.DocumentSearchResponse{}, fmt.Errorf(
+					"person %d has no linked identities; link participants first: %w",
+					reference.ID, err,
+				)
+			}
+			return store.DocumentSearchResponse{}, err
+		}
+		request.Person = &resolved.Scope
+	}
 	if err := reconcileDocumentOccurrencesForSearch(ctx, c.store); err != nil {
 		return store.DocumentSearchResponse{}, err
 	}

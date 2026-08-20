@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -17,9 +18,14 @@ func (c *Client) SearchDocuments(
 		return client.SearchDocumentsWithResponse(ctx, &generated.SearchDocumentsRequestOptions{
 			Query: &generated.SearchDocumentsQuery{
 				Q: request.Query, SourceID: request.SourceIDs, MessageType: request.MessageTypes,
-				AttachmentID: optionalPositiveInt64Value(request.AttachmentID),
-				MessageID:    optionalPositiveInt64Value(request.MessageID),
-				Limit:        optionalPositiveInt64(request.PageSize), Cursor: optionalString(request.Cursor),
+				AttachmentID:  optionalPositiveInt64Value(request.AttachmentID),
+				MessageID:     optionalPositiveInt64Value(request.MessageID),
+				PersonID:      optionalPositiveInt64Value(request.PersonID),
+				ParticipantID: optionalPositiveInt64Value(request.ParticipantID),
+				Direction:     documentDirectionStrings(request.Directions),
+				After:         optionalTimeRFC3339(request.After),
+				Before:        optionalTimeRFC3339(request.Before),
+				Limit:         optionalPositiveInt64(request.PageSize), Cursor: optionalString(request.Cursor),
 			},
 		})
 	})
@@ -71,7 +77,9 @@ func documentSearchFromGenerated(response *generated.DocumentSearchResponse) sto
 	}
 	for index, row := range response.Results {
 		result.Results[index] = store.DocumentSearchResult{
-			AttachmentID: row.AttachmentID, MessageID: row.MessageID, SourceID: row.SourceID,
+			AttachmentID: row.AttachmentID, MessageID: row.MessageID,
+			ConversationID: row.ConversationID, SourceID: row.SourceID,
+			SourceMessageID: stringValue(row.SourceMessageID), OccurredAt: row.OccurredAt,
 			OccurrenceKey: row.OccurrenceKey, SourcePartKey: stringValue(row.SourcePartKey),
 			Filename: stringValue(row.Filename), ContainingTitle: stringValue(row.ContainingTitle),
 			MIMEType: stringValue(row.MimeType), CanonicalBlobHash: row.CanonicalBlobHash,
@@ -83,6 +91,30 @@ func documentSearchFromGenerated(response *generated.DocumentSearchResponse) sto
 			Provider: row.Provider, Model: row.Model, MatchedSignals: row.MatchedSignals,
 			Truncated: row.Truncated, Rank: int(row.Rank),
 		}
+		if row.PersonProvenance != nil {
+			result.Results[index].PersonProvenance = &personscope.Provenance{
+				ParticipantIDs: row.PersonProvenance.ParticipantIds,
+				Roles:          make([]personscope.Role, len(row.PersonProvenance.Roles)),
+				Directions:     make([]personscope.Direction, len(row.PersonProvenance.Directions)),
+			}
+			for i, role := range row.PersonProvenance.Roles {
+				result.Results[index].PersonProvenance.Roles[i] = personscope.Role(role)
+			}
+			for i, direction := range row.PersonProvenance.Directions {
+				result.Results[index].PersonProvenance.Directions[i] = personscope.Direction(direction)
+			}
+		}
+	}
+	return result
+}
+
+func documentDirectionStrings(directions []personscope.Direction) []string {
+	if len(directions) == 0 {
+		return nil
+	}
+	result := make([]string, len(directions))
+	for i, direction := range directions {
+		result[i] = string(direction)
 	}
 	return result
 }

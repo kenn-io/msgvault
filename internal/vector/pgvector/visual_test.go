@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -18,6 +19,15 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 	statements := []string{
 		`ALTER TABLE messages ADD COLUMN received_at TIMESTAMPTZ`,
 		`ALTER TABLE messages ADD COLUMN internal_date TIMESTAMPTZ`,
+		`ALTER TABLE messages ADD COLUMN conversation_id BIGINT`,
+		`ALTER TABLE messages ADD COLUMN is_from_me BOOLEAN NOT NULL DEFAULT FALSE`,
+		`CREATE TABLE conversations (
+			id BIGINT PRIMARY KEY, conversation_type TEXT NOT NULL
+		)`,
+		`CREATE TABLE conversation_participants (
+			conversation_id BIGINT NOT NULL, participant_id BIGINT NOT NULL,
+			PRIMARY KEY (conversation_id, participant_id)
+		)`,
 		`CREATE TABLE attachments (
 			id BIGINT PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id),
 			filename TEXT, mime_type TEXT, size BIGINT, attachment_role TEXT NOT NULL
@@ -32,7 +42,10 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 			current_vector_token TEXT, state TEXT NOT NULL
 		)`,
 		`INSERT INTO visual_generations (id, state) VALUES (7, 'active')`,
-		`UPDATE messages SET source_id = 3, sent_at = CURRENT_TIMESTAMP WHERE id = 1`,
+		`INSERT INTO conversations (id, conversation_type) VALUES (9, 'direct_chat')`,
+		`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (9, 50)`,
+		`UPDATE messages SET source_id = 3, conversation_id = 9, sender_id = 40,
+			sent_at = CURRENT_TIMESTAMP WHERE id = 1`,
 		`INSERT INTO attachments (id, message_id, filename, mime_type, size, attachment_role)
 		VALUES (11, 1, 'diagram.png', 'image/png', 128, 'standalone')`,
 	}
@@ -57,6 +70,28 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 	requirements.Len(hits, 1)
 	assertions.Equal(visual.VectorToken("visual-token-1"), hits[0].Token)
 	assertions.InDelta(1, hits[0].Score, 1e-6)
+
+	personRequest := visual.SearchRequest{
+		GenerationID: 7, Vector: vector, Limit: 10,
+		Person: &personscope.Scope{
+			ParticipantIDs: []int64{50},
+			Directions:     []personscope.Direction{personscope.ToPerson},
+		},
+	}
+	hits, err = visualBackend.Search(ctx, personRequest)
+	requirements.NoError(err)
+	requirements.Len(hits, 1, "the direct-chat roster member is the inferred recipient")
+	personRequest.Person.ParticipantIDs = []int64{40}
+	hits, err = visualBackend.Search(ctx, personRequest)
+	requirements.NoError(err)
+	assertions.Empty(hits, "the direct sender is not also the inferred recipient")
+	_, err = db.Exec(`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 9`)
+	requirements.NoError(err)
+	personRequest.Person.ParticipantIDs = []int64{50}
+	personRequest.Person.Directions = []personscope.Direction{personscope.Group}
+	hits, err = visualBackend.Search(ctx, personRequest)
+	requirements.NoError(err)
+	requirements.Len(hits, 1, "a group roster member must match the group direction")
 
 	loaded, err := visualBackend.LoadOwnerVector(ctx, 7, visual.Owner{
 		MessageID: 1, BlobHash: strings.Repeat("a", 64), MediaInputKey: "original",

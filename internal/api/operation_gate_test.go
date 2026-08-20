@@ -675,6 +675,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/participants/7/summary",
 		"/api/v1/participants/7/timeline",
 		"/api/v1/participants/7/files/search",
+		"/api/v1/people/7/files/search",
 		"/api/v1/domains/search",
 		"/api/v1/domains/example.com/summary",
 		"/api/v1/domains/example.com/timeline",

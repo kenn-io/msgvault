@@ -560,6 +560,24 @@ func (g *GetParticipantTimeline_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
+type SearchPersonFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchPersonFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type ListRelationships_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }

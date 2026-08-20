@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 type GenerationID int64
@@ -27,18 +29,18 @@ type Provider interface {
 }
 
 type SearchRequest struct {
-	GenerationID   GenerationID
-	Vector         []float32
-	Limit          int
-	AfterScore     *float64
-	AfterToken     VectorToken
-	SenderPersonID int64
-	SourceID       int64
-	MessageID      int64
-	Filename       string
-	MIMEPrefix     string
-	After          *time.Time
-	Before         *time.Time
+	GenerationID GenerationID
+	Vector       []float32
+	Limit        int
+	AfterScore   *float64
+	AfterToken   VectorToken
+	Person       *personscope.Scope
+	SourceID     int64
+	MessageID    int64
+	Filename     string
+	MIMEPrefix   string
+	After        *time.Time
+	Before       *time.Time
 }
 
 type Hit struct {

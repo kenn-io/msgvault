@@ -252,7 +252,8 @@ func init() {
 	rootCmd.AddCommand(personCmd)
 	personCmd.AddCommand(newPersonProviderCommand(defaultPersonProviderCommandDeps()))
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
-		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd)
+		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd,
+		newPersonFilesCommand(defaultPersonFilesCommandDeps()))
 	for _, command := range []*cobra.Command{
 		personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd,
 		personTrackCmd, personUntrackCmd,

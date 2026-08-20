@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -26,32 +27,33 @@ var (
 )
 
 type SearchQuery struct {
-	Text           string
-	Image          *MediaInput
-	Limit          int
-	Cursor         string
-	SenderPersonID int64
-	SourceID       int64
-	MessageID      int64
-	Filename       string
-	MIMEPrefix     string
-	After          *time.Time
-	Before         *time.Time
+	Text       string
+	Image      *MediaInput
+	Limit      int
+	Cursor     string
+	Person     *personscope.Scope
+	SourceID   int64
+	MessageID  int64
+	Filename   string
+	MIMEPrefix string
+	After      *time.Time
+	Before     *time.Time
 }
 
 type AttachmentSearchResult struct {
-	AttachmentID    int64     `json:"attachment_id"`
-	MessageID       int64     `json:"message_id"`
-	ConversationID  int64     `json:"conversation_id"`
-	SourceID        int64     `json:"source_id"`
-	SourceMessageID string    `json:"source_message_id"`
-	BlobHash        string    `json:"blob_hash"`
-	Filename        string    `json:"filename"`
-	MIMEType        string    `json:"mime_type"`
-	Size            int64     `json:"size"`
-	SentAt          time.Time `json:"sent_at"`
-	Score           float64   `json:"score"`
-	Rank            int       `json:"rank"`
+	AttachmentID     int64                   `json:"attachment_id"`
+	MessageID        int64                   `json:"message_id"`
+	ConversationID   int64                   `json:"conversation_id"`
+	SourceID         int64                   `json:"source_id"`
+	SourceMessageID  string                  `json:"source_message_id"`
+	BlobHash         string                  `json:"blob_hash"`
+	Filename         string                  `json:"filename"`
+	MIMEType         string                  `json:"mime_type"`
+	Size             int64                   `json:"size"`
+	SentAt           time.Time               `json:"sent_at"`
+	Score            float64                 `json:"score"`
+	Rank             int                     `json:"rank"`
+	PersonProvenance *personscope.Provenance `json:"person_provenance,omitempty"`
 }
 
 type SearchResponse struct {
@@ -68,6 +70,18 @@ type searchCursor struct {
 	QueryHash    string  `json:"query_hash"`
 	Score        float64 `json:"score"`
 	Token        string  `json:"token"`
+}
+
+type searchQueryHashPayload struct {
+	Text       string             `json:"text"`
+	ImageHash  string             `json:"image_hash"`
+	Filename   string             `json:"filename"`
+	MIMEPrefix string             `json:"mime_prefix"`
+	Person     *personscope.Scope `json:"person"`
+	SourceID   int64              `json:"source_id"`
+	MessageID  int64              `json:"message_id"`
+	After      *time.Time         `json:"after"`
+	Before     *time.Time         `json:"before"`
 }
 
 type SearchService struct {
@@ -123,9 +137,14 @@ func (s *SearchService) Search(ctx context.Context, query SearchQuery) (SearchRe
 	if query.Limit < 1 || query.Limit > 100 {
 		return SearchResponse{}, errors.New("visual search limit must be between 1 and 100")
 	}
-	if query.SenderPersonID < 0 || query.SourceID < 0 || query.MessageID < 0 ||
+	if query.SourceID < 0 || query.MessageID < 0 ||
 		(query.After != nil && query.Before != nil && !query.After.Before(*query.Before)) {
 		return SearchResponse{}, errors.New("invalid visual search filters")
+	}
+	if query.Person != nil {
+		if err := personscope.Validate(*query.Person); err != nil {
+			return SearchResponse{}, fmt.Errorf("invalid visual person scope: %w", err)
+		}
 	}
 	generation, err := s.archive.ActiveVisualGeneration(ctx)
 	if err != nil {
@@ -150,7 +169,8 @@ func (s *SearchService) Search(ctx context.Context, query SearchQuery) (SearchRe
 		return SearchResponse{}, fmt.Errorf("embed visual query: %w", err)
 	}
 	request := SearchRequest{GenerationID: GenerationID(generation.ID), Vector: vector, Limit: query.Limit + 1,
-		SenderPersonID: query.SenderPersonID, SourceID: query.SourceID, MessageID: query.MessageID,
+		SourceID: query.SourceID, MessageID: query.MessageID,
+		Person:   query.Person,
 		Filename: strings.TrimSpace(query.Filename), MIMEPrefix: strings.ToLower(strings.TrimSpace(query.MIMEPrefix)),
 		After: query.After, Before: query.Before}
 	if query.Cursor != "" {
@@ -182,6 +202,22 @@ func (s *SearchService) Search(ctx context.Context, query SearchQuery) (SearchRe
 			SentAt: occurrence.SentAt, Score: hit.Score, Rank: len(response.Results) + 1,
 		})
 	}
+	if query.Person != nil && len(response.Results) > 0 {
+		messageIDs := make([]int64, len(response.Results))
+		for i := range response.Results {
+			messageIDs[i] = response.Results[i].MessageID
+		}
+		provenance, provenanceErr := s.archive.PersonProvenanceForMessages(ctx, messageIDs, *query.Person)
+		if provenanceErr != nil {
+			return SearchResponse{}, provenanceErr
+		}
+		for i := range response.Results {
+			response.Results[i].PersonProvenance = provenance[response.Results[i].MessageID]
+			if response.Results[i].PersonProvenance == nil {
+				return SearchResponse{}, fmt.Errorf("visual person provenance missing for message %d", response.Results[i].MessageID)
+			}
+		}
+	}
 	if len(hits) > query.Limit {
 		last := hits[query.Limit-1]
 		response.NextCursor, err = encodeSearchCursor(searchCursor{
@@ -200,19 +236,13 @@ func visualSearchQueryHash(query SearchQuery) (string, error) {
 		digest := sha256.Sum256(query.Image.Bytes)
 		imageHash = hex.EncodeToString(digest[:])
 	}
-	payload, err := json.Marshal(struct {
-		Text           string     `json:"text"`
-		ImageHash      string     `json:"image_hash"`
-		Filename       string     `json:"filename"`
-		MIMEPrefix     string     `json:"mime_prefix"`
-		SenderPersonID int64      `json:"sender_person_id"`
-		SourceID       int64      `json:"source_id"`
-		MessageID      int64      `json:"message_id"`
-		After          *time.Time `json:"after"`
-		Before         *time.Time `json:"before"`
-	}{strings.TrimSpace(query.Text), imageHash, strings.TrimSpace(query.Filename),
-		strings.ToLower(strings.TrimSpace(query.MIMEPrefix)), query.SenderPersonID, query.SourceID,
-		query.MessageID, query.After, query.Before})
+	payload, err := json.Marshal(searchQueryHashPayload{
+		Text: strings.TrimSpace(query.Text), ImageHash: imageHash,
+		Filename:   strings.TrimSpace(query.Filename),
+		MIMEPrefix: strings.ToLower(strings.TrimSpace(query.MIMEPrefix)),
+		Person:     query.Person, SourceID: query.SourceID, MessageID: query.MessageID,
+		After: query.After, Before: query.Before,
+	})
 	if err != nil {
 		return "", fmt.Errorf("marshal visual search query: %w", err)
 	}

@@ -13,8 +13,11 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 const (
@@ -36,13 +39,19 @@ var (
 )
 
 type DocumentSearchRequest struct {
-	Query        string
-	SourceIDs    []int64
-	MessageTypes []string
-	AttachmentID int64
-	MessageID    int64
-	PageSize     int
-	Cursor       string
+	Query         string
+	SourceIDs     []int64
+	MessageTypes  []string
+	AttachmentID  int64
+	MessageID     int64
+	PageSize      int
+	Cursor        string
+	After         *time.Time
+	Before        *time.Time
+	PersonID      int64
+	ParticipantID int64
+	Directions    []personscope.Direction
+	Person        *personscope.Scope
 }
 
 type DocumentSearchResponse struct {
@@ -53,31 +62,35 @@ type DocumentSearchResponse struct {
 }
 
 type DocumentSearchResult struct {
-	AttachmentID      int64    `json:"attachment_id"`
-	MessageID         int64    `json:"message_id"`
-	SourceID          int64    `json:"source_id"`
-	OccurrenceKey     string   `json:"occurrence_key"`
-	SourcePartKey     string   `json:"source_part_key,omitempty"`
-	Filename          string   `json:"filename,omitempty"`
-	ContainingTitle   string   `json:"containing_title,omitempty"`
-	MIMEType          string   `json:"mime_type,omitempty"`
-	CanonicalBlobHash string   `json:"canonical_blob_hash"`
-	OtherLiveCopies   int      `json:"other_live_copies"`
-	ChunkKey          string   `json:"chunk_key"`
-	ChunkOrdinal      int      `json:"chunk_ordinal"`
-	HeadingPath       []string `json:"heading_path,omitempty"`
-	FirstUnitIndex    int      `json:"first_unit_index"`
-	LastUnitIndex     int      `json:"last_unit_index"`
-	Excerpt           string   `json:"excerpt"`
-	HighlightStart    int      `json:"highlight_start"`
-	HighlightEnd      int      `json:"highlight_end"`
-	ProfileID         string   `json:"profile_id"`
-	ExtractionID      string   `json:"extraction_id"`
-	Provider          string   `json:"provider"`
-	Model             string   `json:"model"`
-	MatchedSignals    []string `json:"matched_signals"`
-	Truncated         bool     `json:"truncated"`
-	Rank              int      `json:"rank"`
+	AttachmentID      int64                   `json:"attachment_id"`
+	MessageID         int64                   `json:"message_id"`
+	ConversationID    int64                   `json:"conversation_id"`
+	SourceID          int64                   `json:"source_id"`
+	SourceMessageID   string                  `json:"source_message_id,omitempty"`
+	OccurredAt        *time.Time              `json:"occurred_at,omitempty"`
+	OccurrenceKey     string                  `json:"occurrence_key"`
+	SourcePartKey     string                  `json:"source_part_key,omitempty"`
+	Filename          string                  `json:"filename,omitempty"`
+	ContainingTitle   string                  `json:"containing_title,omitempty"`
+	MIMEType          string                  `json:"mime_type,omitempty"`
+	CanonicalBlobHash string                  `json:"canonical_blob_hash"`
+	OtherLiveCopies   int                     `json:"other_live_copies"`
+	ChunkKey          string                  `json:"chunk_key"`
+	ChunkOrdinal      int                     `json:"chunk_ordinal"`
+	HeadingPath       []string                `json:"heading_path,omitempty"`
+	FirstUnitIndex    int                     `json:"first_unit_index"`
+	LastUnitIndex     int                     `json:"last_unit_index"`
+	Excerpt           string                  `json:"excerpt"`
+	HighlightStart    int                     `json:"highlight_start"`
+	HighlightEnd      int                     `json:"highlight_end"`
+	ProfileID         string                  `json:"profile_id"`
+	ExtractionID      string                  `json:"extraction_id"`
+	Provider          string                  `json:"provider"`
+	Model             string                  `json:"model"`
+	MatchedSignals    []string                `json:"matched_signals"`
+	Truncated         bool                    `json:"truncated"`
+	Rank              int                     `json:"rank"`
+	PersonProvenance  *personscope.Provenance `json:"person_provenance,omitempty"`
 }
 
 type documentSearchCursor struct {
@@ -86,6 +99,18 @@ type documentSearchCursor struct {
 	RequestHash    string `json:"request_hash"`
 	Offset         int    `json:"offset"`
 	CandidateLimit int    `json:"candidate_limit"`
+}
+
+type documentSearchHashPayload struct {
+	Query        string             `json:"query"`
+	SourceIDs    []int64            `json:"source_ids"`
+	MessageTypes []string           `json:"message_types"`
+	AttachmentID int64              `json:"attachment_id"`
+	MessageID    int64              `json:"message_id"`
+	PageSize     int                `json:"page_size"`
+	After        *time.Time         `json:"after"`
+	Before       *time.Time         `json:"before"`
+	Person       *personscope.Scope `json:"person"`
 }
 
 type documentSearchRow struct {
@@ -135,6 +160,11 @@ func (s *Store) SearchDocuments(
 	if err := s.populateDocumentLiveCopyCounts(ctx, response.Results); err != nil {
 		return DocumentSearchResponse{}, err
 	}
+	if prepared.Person != nil {
+		if err := s.populateDocumentPersonProvenance(ctx, response.Results, *prepared.Person); err != nil {
+			return DocumentSearchResponse{}, err
+		}
+	}
 	if end < len(rows) {
 		response.NextCursor, err = encodeDocumentSearchCursor(documentSearchCursor{
 			Version: documentSearchCursorVersion, Revision: revision,
@@ -166,7 +196,9 @@ func (s *Store) prepareDocumentSearch(
 		request.PageSize = 20
 	}
 	if request.PageSize < 1 || request.PageSize > maxDocumentSearchPageSize ||
-		request.AttachmentID < 0 || request.MessageID < 0 {
+		request.AttachmentID < 0 || request.MessageID < 0 || request.PersonID < 0 || request.ParticipantID < 0 ||
+		(request.PersonID > 0 && request.ParticipantID > 0) ||
+		((request.PersonID > 0 || request.ParticipantID > 0) && request.Person == nil) {
 		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: request has invalid bounds", ErrDocumentSearchInvalidRequest)
 	}
 	var err error
@@ -178,6 +210,13 @@ func (s *Store) prepareDocumentSearch(
 	request.MessageTypes, err = sortedUniqueNonempty(request.MessageTypes)
 	if err != nil {
 		return request, nil, "", 0, 0, 0, err
+	}
+	request.Person, err = normalizeDocumentPersonScope(request.Person)
+	if err != nil {
+		return request, nil, "", 0, 0, 0, err
+	}
+	if request.After != nil && request.Before != nil && !request.After.Before(*request.Before) {
+		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: after must be before before", ErrDocumentSearchInvalidRequest)
 	}
 	requestHash, err := hashDocumentSearchRequest(request)
 	if err != nil {
@@ -218,7 +257,7 @@ func (s *Store) searchDocumentContent(
 	limit int,
 ) ([]documentSearchRow, bool, error) {
 	ftsArg := s.dialect.BuildFTSArg(terms)
-	conditions, scopeArgs := documentSearchScope(request, "m", "a")
+	conditions, scopeArgs := documentSearchScope(request, "m", "a", "cv")
 	validity := documentSearchValidity("p", "c", "h", "o", "a", "m", "ds")
 	var query string
 	args := make([]any, 0, len(scopeArgs)+2)
@@ -298,7 +337,7 @@ func (s *Store) searchDocumentFilenames(
 	terms []string,
 	limit int,
 ) ([]documentSearchRow, bool, error) {
-	conditions, args := documentSearchScope(request, "m", "a")
+	conditions, args := documentSearchScope(request, "m", "a", "cv")
 	var filenameConditions strings.Builder
 	for _, term := range terms {
 		filenameConditions.WriteString(` AND LOWER(COALESCE(o.filename, '')) LIKE ? ESCAPE '!'`)
@@ -324,7 +363,10 @@ func (s *Store) searchDocumentFilenames(
 }
 
 const documentSearchSelectColumns = `
-		a.id, m.id, m.source_id, o.occurrence_key,
+		a.id, m.id, m.conversation_id, m.source_id,
+		COALESCE(m.source_message_id, ''),
+		COALESCE(m.sent_at, m.received_at, m.internal_date),
+		o.occurrence_key,
 		COALESCE(o.source_part_key, ''), COALESCE(o.filename, ''),
 		COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), ''),
 		COALESCE(o.mime_type, ''), h.canonical_blob_hash,
@@ -334,7 +376,10 @@ const documentSearchSelectColumns = `
 		dc.truncated`
 
 const documentSearchRankedSelectColumns = `
-		a.id AS attachment_id, m.id AS message_id, m.source_id AS source_id,
+		a.id AS attachment_id, m.id AS message_id,
+		m.conversation_id AS conversation_id, m.source_id AS source_id,
+		COALESCE(m.source_message_id, '') AS source_message_id,
+		COALESCE(m.sent_at, m.received_at, m.internal_date) AS occurred_at,
 		o.occurrence_key AS occurrence_key,
 		COALESCE(o.source_part_key, '') AS source_part_key,
 		COALESCE(o.filename, '') AS filename,
@@ -349,7 +394,8 @@ const documentSearchRankedSelectColumns = `
 		p.provider AS provider, p.model AS model, dc.truncated AS truncated`
 
 const documentSearchOuterColumns = `
-		attachment_id, message_id, source_id, occurrence_key,
+		attachment_id, message_id, conversation_id, source_id,
+		source_message_id, occurred_at, occurrence_key,
 		source_part_key, filename, containing_title, mime_type,
 		canonical_blob_hash, chunk_key, chunk_ordinal, heading_path,
 		first_unit_index, last_unit_index, chunk_text,
@@ -419,7 +465,7 @@ func documentSearchValidity(profile, consent, head, occurrence, attachment, mess
 	)`
 }
 
-func documentSearchScope(request DocumentSearchRequest, message, attachment string) (string, []any) {
+func documentSearchScope(request DocumentSearchRequest, message, attachment, conversation string) (string, []any) {
 	var conditions strings.Builder
 	var args []any
 	if len(request.SourceIDs) > 0 {
@@ -446,6 +492,19 @@ func documentSearchScope(request DocumentSearchRequest, message, attachment stri
 		conditions.WriteString(` AND ` + message + `.id = ?`)
 		args = append(args, request.MessageID)
 	}
+	if request.After != nil {
+		conditions.WriteString(` AND COALESCE(` + message + `.sent_at, ` + message + `.received_at, ` + message + `.internal_date) >= ?`)
+		args = append(args, *request.After)
+	}
+	if request.Before != nil {
+		conditions.WriteString(` AND COALESCE(` + message + `.sent_at, ` + message + `.received_at, ` + message + `.internal_date) < ?`)
+		args = append(args, *request.Before)
+	}
+	if request.Person != nil {
+		personCondition, personArgs := personscope.MessagePredicate(*request.Person, message, conversation)
+		conditions.WriteString(" AND (" + personCondition + ")")
+		args = append(args, personArgs...)
+	}
 	return conditions.String(), args
 }
 
@@ -466,8 +525,10 @@ func (s *Store) scanDocumentSearchRows(
 	for rows.Next() {
 		var row documentSearchRow
 		var headingJSON string
+		var occurredAt nullableTimestamp
 		if err := rows.Scan(
-			&row.AttachmentID, &row.MessageID, &row.SourceID, &row.OccurrenceKey,
+			&row.AttachmentID, &row.MessageID, &row.ConversationID, &row.SourceID,
+			&row.SourceMessageID, &occurredAt, &row.OccurrenceKey,
 			&row.SourcePartKey, &row.Filename, &row.ContainingTitle, &row.MIMEType,
 			&row.CanonicalBlobHash, &row.ChunkKey, &row.ChunkOrdinal, &headingJSON,
 			&row.FirstUnitIndex, &row.LastUnitIndex, &row.Text,
@@ -475,6 +536,9 @@ func (s *Store) scanDocumentSearchRows(
 			&row.Truncated,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan document search result: %w", err)
+		}
+		if occurredAt.Valid {
+			row.OccurredAt = &occurredAt.Time
 		}
 		if err := json.Unmarshal([]byte(headingJSON), &row.HeadingPath); err != nil {
 			return nil, false, fmt.Errorf("decode document search heading path: %w", err)
@@ -644,16 +708,10 @@ func documentSearchExcerpt(text string, terms []string) (string, int, int) {
 }
 
 func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {
-	payload := struct {
-		Query        string   `json:"query"`
-		SourceIDs    []int64  `json:"source_ids"`
-		MessageTypes []string `json:"message_types"`
-		AttachmentID int64    `json:"attachment_id"`
-		MessageID    int64    `json:"message_id"`
-		PageSize     int      `json:"page_size"`
-	}{
+	payload := documentSearchHashPayload{
 		Query: request.Query, SourceIDs: request.SourceIDs, MessageTypes: request.MessageTypes,
 		AttachmentID: request.AttachmentID, MessageID: request.MessageID, PageSize: request.PageSize,
+		After: request.After, Before: request.Before, Person: request.Person,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
