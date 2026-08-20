@@ -713,3 +713,66 @@ func TestObsoleteTokenLedgerHoldsMultipleTokens(t *testing.T) {
 	require.NoError(err)
 	assert.ElementsMatch([]string{firstToken, "orphaned-pending-token"}, obsolete)
 }
+
+func TestRestoreRefusesConcurrentContextEdit(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	generation := createVisualGeneration(t, f)
+	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-restore-stamp")
+	claim := claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
+	token, err := f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.NoError(err)
+	require.NoError(f.Store.CommitVisualPublication(t.Context(), claim, token))
+
+	// Restore path: a new claim for the same published revision, with a
+	// context edit racing it. Restoring would erase the only stale signal
+	// left after the edit's trigger already ran.
+	claim = claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET subject = ? WHERE id = ?`), "edited during restore", owner.MessageID)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
+		time.Now().UTC().Add(time.Hour), owner.MessageID)
+	require.NoError(err)
+	err = f.Store.RestoreVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}, token)
+	require.ErrorIs(err, store.ErrVisualSourceChanged)
+}
+
+func TestHardDeletedMessagesLedgerTheirVectorTokens(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	generation := createVisualGeneration(t, f)
+	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-hard-delete")
+	claim := claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
+	token, err := f.Store.PrepareVisualPublication(t.Context(), store.PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role:       store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	})
+	require.NoError(err)
+	require.NoError(f.Store.CommitVisualPublication(t.Context(), claim, token))
+
+	// Account removal hard-deletes messages through the source cascade; the
+	// publication row dies with it and its backend vector would be
+	// permanently unreachable without the delete-ledger trigger.
+	require.NoError(f.Store.RemoveSource(f.Source.ID))
+	var remaining int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT COUNT(*) FROM visual_publications WHERE generation_id = ?`), generation.ID).Scan(&remaining))
+	require.Zero(remaining, "the cascade must have removed the publication row")
+
+	obsolete, err := f.Store.ListObsoleteVisualTokens(t.Context(), generation.ID, 100)
+	require.NoError(err)
+	assert.Equal([]string{token}, obsolete,
+		"cascade deletion must ledger the token for the backend sweep")
+}

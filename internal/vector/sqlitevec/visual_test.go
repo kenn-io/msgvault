@@ -3,6 +3,7 @@
 package sqlitevec
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,6 +136,51 @@ func TestOpenWithoutTextDimensionSupportsMultimodalOnly(t *testing.T) {
 	require.NoError(t, activateErr)
 	hits, err := visualBackend.Search(t.Context(), visual.SearchRequest{
 		GenerationID: visual.GenerationID(generation.ID), Vector: query, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, visual.VectorToken(token), hits[0].Token)
+}
+
+func TestVisualSearchWidensPastDeadVectorClusters(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversation(source.ID, "visual-widen", "Visual widen")
+	require.NoError(t, err)
+	f := &storetest.Fixture{T: t, Store: st, Source: source, ConvID: conversationID}
+	generation, _, token := publishVisualVectorOwner(t, f)
+	backend, err := Open(t.Context(), Options{
+		Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 0,
+		MainDB: f.Store.DB(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Close() })
+	visualBackend := backend.Visual()
+
+	// 70 unpublished (dead) vectors sit exactly on the query point, filling
+	// the first bounded nearest-neighbor batch entirely; the one live vector
+	// is farther away. The search must widen k progressively instead of
+	// returning empty or streaming the whole store up front.
+	query := unitVec(visualDimension, 0)
+	for i := range 70 {
+		dead := make([]float32, visualDimension)
+		copy(dead, query)
+		require.NoError(t, visualBackend.PutUnpublished(t.Context(),
+			visual.VectorToken(fmt.Sprintf("dead-token-%02d", i)), dead))
+	}
+	liveVector := make([]float32, visualDimension)
+	liveVector[0], liveVector[1] = 0.8, 0.6
+	require.NoError(t, visualBackend.PutUnpublished(t.Context(), visual.VectorToken(token), liveVector))
+	require.NoError(t, f.Store.ConsentVisualGeneration(t.Context(), generation.ID, "synthetic-policy-fingerprint"))
+	highWater, err := f.Store.AttachmentChangeHighWater(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, f.Store.AdvanceVisualGenerationSourceFence(t.Context(), generation.ID, highWater))
+	_, activateErr := f.Store.ActivateVisualGeneration(t.Context(), generation.ID, highWater)
+	require.NoError(t, activateErr)
+
+	hits, err := visualBackend.Search(t.Context(), visual.SearchRequest{
+		GenerationID: visual.GenerationID(generation.ID), Vector: query, Limit: 1,
 	})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)

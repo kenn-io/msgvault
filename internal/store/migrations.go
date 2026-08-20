@@ -28,10 +28,11 @@ const (
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
 	// v4: the visual invalidation triggers record a cleared pending vector
 	// token in the visual_obsolete_tokens ledger, clear durable outcomes on
-	// message context changes, and cover message_bodies deletion. Archives
-	// that installed v3 must reinstall to keep backend cleanup references
-	// and re-evaluate rejected owners whose context later changed.
-	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v4"
+	// message context changes, and cover message_bodies deletion.
+	// v5: hard-deleting a publication row (message or source cascade)
+	// ledgers its current and pending tokens first, so backend vectors of
+	// hard-deleted messages stay sweepable.
+	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v5"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	migrationIdentityMatchSourceSupport     = "identity_match_source_support_v1"
 	migrationVCardSourceResourceIdentity    = "vcard_source_resource_identity_v1"

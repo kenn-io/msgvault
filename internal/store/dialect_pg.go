@@ -1359,6 +1359,25 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_visual_publication_attachment_delete
 		     AFTER DELETE ON attachments FOR EACH ROW
 		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`CREATE OR REPLACE FUNCTION ledger_visual_publication_tokens() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.current_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.current_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     IF OLD.pending_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.pending_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_delete_ledger ON visual_publications`,
+		`CREATE TRIGGER trg_visual_publication_delete_ledger
+		     BEFORE DELETE ON visual_publications FOR EACH ROW
+		     EXECUTE FUNCTION ledger_visual_publication_tokens()`,
 		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_live() RETURNS trigger AS $$
 		 BEGIN
 		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)

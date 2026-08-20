@@ -687,6 +687,15 @@ func (s *Store) RestoreVisualPublication(
 		if err != nil {
 			return err
 		}
+		if !changed {
+			// A concurrent subject/body edit already ran its invalidation
+			// trigger; restoring the old vector to current afterwards would
+			// erase the only stale signal left to repair it.
+			changed, err = visualOwnerContextChanged(q, prepared.Claim)
+			if err != nil {
+				return err
+			}
+		}
 		if changed {
 			return ErrVisualSourceChanged
 		}

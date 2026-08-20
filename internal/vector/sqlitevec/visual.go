@@ -136,34 +136,21 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 	if count == 0 {
 		return nil, nil
 	}
-	rows, err := b.backend.db.QueryContext(ctx, `
-		SELECT vv.vector_token, v.distance
-		FROM visual_vectors_vec v JOIN visual_vectors vv ON vv.vector_id = v.rowid
-		WHERE v.embedding MATCH ? AND k = ?
-		ORDER BY v.distance, vv.vector_token`, float32SliceBlob(request.Vector), count)
-	if err != nil {
-		return nil, fmt.Errorf("scan visual vectors: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
+	// The vec0 store also holds obsolete and retired vectors awaiting
+	// cleanup, so eligible results are filtered against the live token set.
+	// k grows progressively instead of streaming the whole store: most
+	// searches finish in the first bounded batch, and only a query landing
+	// in a cluster of dead vectors pays for a deeper pass.
 	hits := make([]visual.Hit, 0, min(request.Limit, len(live)))
-	for rows.Next() {
-		var token string
-		var distance float64
-		if err := rows.Scan(&token, &distance); err != nil {
-			return nil, fmt.Errorf("scan visual vector: %w", err)
+	for k := max(request.Limit*4, 64); ; k *= 4 {
+		k = min(k, count)
+		hits = hits[:0]
+		if err := b.collectLiveHits(ctx, request, live, k, &hits); err != nil {
+			return nil, err
 		}
-		if _, ok := live[token]; !ok {
-			continue
+		if len(hits) >= request.Limit || k == count {
+			break
 		}
-		score := 1 - distance
-		if request.AfterScore != nil && (score > *request.AfterScore ||
-			(score == *request.AfterScore && visual.VectorToken(token) <= request.AfterToken)) {
-			continue
-		}
-		hits = append(hits, visual.Hit{Token: visual.VectorToken(token), Score: score})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visual vectors: %w", err)
 	}
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Score == hits[j].Score {
@@ -178,6 +165,46 @@ func (b *VisualBackend) Search(ctx context.Context, request visual.SearchRequest
 		hits[i].Rank = i + 1
 	}
 	return hits, nil
+}
+
+// collectLiveHits appends the eligible hits among the k nearest stored
+// vectors, filtering obsolete tokens and applying score-cursor pagination.
+func (b *VisualBackend) collectLiveHits(
+	ctx context.Context,
+	request visual.SearchRequest,
+	live map[string]struct{},
+	k int,
+	hits *[]visual.Hit,
+) error {
+	rows, err := b.backend.db.QueryContext(ctx, `
+		SELECT vv.vector_token, v.distance
+		FROM visual_vectors_vec v JOIN visual_vectors vv ON vv.vector_id = v.rowid
+		WHERE v.embedding MATCH ? AND k = ?
+		ORDER BY v.distance, vv.vector_token`, float32SliceBlob(request.Vector), k)
+	if err != nil {
+		return fmt.Errorf("scan visual vectors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var token string
+		var distance float64
+		if err := rows.Scan(&token, &distance); err != nil {
+			return fmt.Errorf("scan visual vector: %w", err)
+		}
+		if _, ok := live[token]; !ok {
+			continue
+		}
+		score := 1 - distance
+		if request.AfterScore != nil && (score > *request.AfterScore ||
+			(score == *request.AfterScore && visual.VectorToken(token) <= request.AfterToken)) {
+			continue
+		}
+		*hits = append(*hits, visual.Hit{Token: visual.VectorToken(token), Score: score})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate visual vectors: %w", err)
+	}
+	return nil
 }
 
 func (b *VisualBackend) LoadOwnerVector(ctx context.Context, generationID visual.GenerationID, owner visual.Owner) ([]float32, error) {

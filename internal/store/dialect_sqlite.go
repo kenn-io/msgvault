@@ -1206,6 +1206,20 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                   AND LOWER(OLD.storage_path) =
 		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
 		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_delete_ledger`,
+		`CREATE TRIGGER trg_visual_publication_delete_ledger
+		    BEFORE DELETE ON visual_publications FOR EACH ROW
+		    WHEN OLD.current_vector_token IS NOT NULL OR OLD.pending_vector_token IS NOT NULL
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT OLD.generation_id, OLD.current_vector_token
+		        WHERE OLD.current_vector_token IS NOT NULL
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT OLD.generation_id, OLD.pending_vector_token
+		        WHERE OLD.pending_vector_token IS NOT NULL
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		    END`,
 		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change`,
 		`CREATE TRIGGER trg_visual_publication_message_live_change
 		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW

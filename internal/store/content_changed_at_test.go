@@ -474,7 +474,7 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 // contentChangedBackfillMigration is the ledger name InitSchema records once the
 // content_changed_at backfill has run.
 const contentChangedBackfillMigration = "messages_content_changed_at_backfill"
-const messageWatermarkTriggersMigration = "message_and_attachment_triggers_v4"
+const messageWatermarkTriggersMigration = "message_and_attachment_triggers_v5"
 
 // clearContentChangedBackfillLedger deletes that row from applied_migrations so
 // InitSchema treats the migration as never having run -- the ledger state of
