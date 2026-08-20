@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -272,4 +273,66 @@ func TestEvaluate_HonoursCutoffs(t *testing.T) {
 func TestLoadQrels_MissingFile(t *testing.T) {
 	_, _, err := LoadQrels(filepath.Join(t.TempDir(), "nope.txt"))
 	require.Error(t, err)
+}
+
+// TestLoadTopics_RejectsDuplicateIDs pins the duplicate-qid policy. A repeated
+// qid is not a malformed line to be dropped and counted: it loads fine and
+// contributes twice, so every judgment for that qid is applied once per
+// occurrence and the query is weighted several times over in a macro average
+// that is meant to be per-query. Worse, when the repeated lines ask different
+// questions, any dedupe policy scores one of them and reports it against the
+// other. The qid is the join key to the qrels file, so the file is rejected
+// with every offending id named.
+func TestLoadTopics_RejectsDuplicateIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := filepath.Join(t.TempDir(), "topics.tsv")
+	require.NoError(os.WriteFile(p, []byte(
+		"301\toil and gas drilling\n"+
+			"302\tspill response\n"+
+			"301\tsomething else entirely\n"+
+			"302\tspill response\n"), 0o644))
+
+	topics, _, err := LoadTopics(p)
+	require.Error(err, "a repeated qid must not load as two independent topics")
+	assert.Nil(topics, "nothing is returned: a partial load would score a biased subset")
+	assert.Contains(err.Error(), "repeats query id 301, 302",
+		"every offending id is named once, in file order")
+	assert.Contains(err.Error(), "unique id")
+}
+
+// TestLoadTopics_ManyDuplicateIDsAreSummarised keeps the rejection readable: a
+// file whose ids are wholesale duplicated must not print a wall of them over
+// the sentence that explains the problem.
+func TestLoadTopics_ManyDuplicateIDsAreSummarised(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var b strings.Builder
+	for pass := range 2 {
+		for i := range 12 {
+			fmt.Fprintf(&b, "q%02d\tquery %d pass %d\n", i, i, pass)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "topics.tsv")
+	require.NoError(os.WriteFile(p, []byte(b.String()), 0o644))
+
+	_, _, err := LoadTopics(p)
+	require.Error(err)
+	assert.Contains(err.Error(), "q00, q01, q02, q03, q04, q05, q06, q07, q08, q09, and 2 more")
+}
+
+// TestLoadTopics_DistinctIDsStillLoad guards the other side: uniqueness is
+// checked on the id alone, so two topics that happen to ask the same question
+// under different ids are perfectly valid.
+func TestLoadTopics_DistinctIDsStillLoad(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := filepath.Join(t.TempDir(), "topics.tsv")
+	require.NoError(os.WriteFile(p, []byte("301\tsame question\n302\tsame question\n"), 0o644))
+
+	topics, stats, err := LoadTopics(p)
+	require.NoError(err)
+	require.Len(topics, 2)
+	assert.Equal("301", topics[0].ID)
+	assert.Equal(LoadStats{Path: p, Lines: 2, Parsed: 2}, stats)
 }

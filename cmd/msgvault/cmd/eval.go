@@ -48,6 +48,9 @@ Inputs (TREC-style):
   --qrels   judgments file, one per line: "<qid> <iter> <docid> <rel>"
             (rel >= 1 means relevant; the iter column is ignored)
   --topics  queries file, tab-separated: "<qid>\t<query text>[\t<category>]"
+            Each qid must appear once — it is the join key to --qrels, so a
+            repeat would score the same judgments twice and weight that query
+            twice over in every average; the file is rejected instead.
             The optional third column labels the question's shape (e.g.
             "pointed" for answerable-from-one-message, "spanning" for
             requires-synthesizing-across-messages); when present, results

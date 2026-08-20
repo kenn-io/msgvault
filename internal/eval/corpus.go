@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -131,6 +132,17 @@ type Topic struct {
 // Blank lines are ignored; lines without a tab (or with an empty id or query)
 // are skipped and counted in the returned LoadStats, so a space-separated file
 // that would otherwise load as zero topics is diagnosable.
+//
+// A repeated query id is rejected outright, unlike a malformed line. The two
+// are not the same kind of problem: a malformed line contributes nothing, so
+// dropping and counting it leaves the run intact, whereas a repeated qid
+// contributes twice. Every judgment for that qid would be applied once per
+// occurrence, weighting the query two or more times in a macro average that is
+// meant to be per-query — and when the repeated lines carry different query
+// text, whichever policy picked a winner would silently answer one question
+// and report it against the other. The qid is the join key to the qrels file,
+// so it has to identify exactly one query; a caller cannot repair that
+// ambiguity, only the file can.
 func LoadTopics(path string) ([]Topic, LoadStats, error) {
 	stats := LoadStats{Path: path}
 	f, err := os.Open(path)
@@ -140,6 +152,8 @@ func LoadTopics(path string) ([]Topic, LoadStats, error) {
 	defer func() { _ = f.Close() }()
 
 	var topics []Topic
+	seen := make(map[string]struct{})
+	var duplicates []string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -163,11 +177,26 @@ func LoadTopics(path string) ([]Topic, LoadStats, error) {
 		if len(parts) == 3 {
 			category = strings.TrimSpace(parts[2])
 		}
+		// Read the whole file before complaining, so one message names every
+		// offending qid instead of sending the user round the loop once per
+		// duplicate. Each is named once however many times it repeats.
+		if _, repeat := seen[id]; repeat {
+			if !slices.Contains(duplicates, id) {
+				duplicates = append(duplicates, id)
+			}
+		}
+		seen[id] = struct{}{}
 		topics = append(topics, Topic{ID: id, Query: query, Category: category})
 		stats.Parsed++
 	}
 	if err := sc.Err(); err != nil {
 		return nil, stats, fmt.Errorf("read topics: %w", err)
+	}
+	if len(duplicates) > 0 {
+		return nil, stats, fmt.Errorf("topics file %s repeats query id %s: a qid is the join key to "+
+			"the qrels file, so a repeat scores the same judgments more than once and weights that "+
+			"query several times over in every macro average — give each topic a unique id",
+			path, FormatIDList(duplicates, 10))
 	}
 	return topics, stats, nil
 }
