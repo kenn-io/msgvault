@@ -162,7 +162,7 @@ for the identity and profile model.
 
 ## Vector Search
 
-msgvault can search your archive semantically using vector embeddings in addition to the default FTS5 keyword search. Point it at a self-hosted OpenAI-compatible embedding endpoint (Ollama, llama.cpp, LM Studio) and three surfaces accept either pure semantic search or BM25+vector fused via Reciprocal Rank Fusion:
+msgvault can search your archive semantically using vector embeddings in addition to the default FTS5 keyword search. Point it at a self-hosted OpenAI-compatible embedding endpoint (Ollama, llama.cpp, LM Studio) or a hosted gateway such as [OrcaRouter](https://www.orcarouter.ai), and three surfaces accept either pure semantic search or BM25+vector fused via Reciprocal Rank Fusion:
 
 - **CLI:** `msgvault search "..." --mode vector` or `--mode hybrid`
 - **HTTP:** `GET /api/v1/search?q=...&mode=vector` or `mode=hybrid`

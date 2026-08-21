@@ -19,10 +19,26 @@ type EmbeddingAPIFormat string
 const (
 	// APIFormatOpenAI uses the OpenAI-compatible embeddings contract.
 	APIFormatOpenAI EmbeddingAPIFormat = "openai"
+	// APIFormatOrcaRouter uses the OrcaRouter OpenAI-compatible embeddings
+	// gateway. It shares the plain OpenAI-compatible wire contract; the
+	// named format only changes the configuration defaults so an operator
+	// can select the gateway by name.
+	APIFormatOrcaRouter EmbeddingAPIFormat = "orcarouter"
 	// APIFormatVoyageContextual uses Voyage contextualized embeddings.
 	APIFormatVoyageContextual EmbeddingAPIFormat = "voyage-contextual"
 	// contextPolicyVersion identifies the contextual document assembly policy.
 	contextPolicyVersion = 2
+)
+
+// OrcaRouter defaults for the named embeddings format. The gateway serves
+// OpenAI-compatible /v1/embeddings and mirrors the text-embedding-3-small
+// contract (1536-dim).
+const (
+	OrcaRouterDefaultEndpoint  = "https://api.orcarouter.ai/v1"
+	OrcaRouterDefaultModel     = "openai/text-embedding-3-small"
+	OrcaRouterDefaultDimension = 1536
+	OrcaRouterDefaultAPIKeyEnv = "ORCAROUTER_API_KEY"
+	OrcaRouterSignupURL        = "https://www.orcarouter.ai"
 )
 
 // preprocessVersion identifies the embed/preprocess.go implementation
@@ -327,10 +343,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("vector.backend: unknown backend %q (supported: \"sqlite-vec\", \"pgvector\")", c.Backend)
 	}
 	switch c.Embeddings.EffectiveAPIFormat() {
-	case APIFormatOpenAI, APIFormatVoyageContextual:
+	case APIFormatOpenAI, APIFormatOrcaRouter, APIFormatVoyageContextual:
 	default:
-		return fmt.Errorf("vector.embeddings.api_format: unknown format %q (supported: %q, %q)",
-			c.Embeddings.APIFormat, APIFormatOpenAI, APIFormatVoyageContextual)
+		return fmt.Errorf("vector.embeddings.api_format: unknown format %q (supported: %q, %q, %q)",
+			c.Embeddings.APIFormat, APIFormatOpenAI, APIFormatOrcaRouter, APIFormatVoyageContextual)
 	}
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual &&
 		c.Embeddings.Model != "voyage-context-4" {
@@ -361,6 +377,25 @@ func (c *Config) Validate() error {
 func (c *Config) ApplyDefaults() {
 	if c.Backend == "" {
 		c.Backend = "sqlite-vec"
+	}
+	if c.Embeddings.APIFormat == APIFormatOrcaRouter {
+		// Selecting the gateway by name fills in its defaults so an
+		// operator can enable vector search with a three-line block:
+		//   [vector.embeddings]
+		//   api_format = "orcarouter"
+		// An explicit endpoint/model/dimension/api_key_env always wins.
+		if c.Embeddings.Endpoint == "" {
+			c.Embeddings.Endpoint = OrcaRouterDefaultEndpoint
+		}
+		if c.Embeddings.Model == "" {
+			c.Embeddings.Model = OrcaRouterDefaultModel
+		}
+		if c.Embeddings.Dimension == 0 {
+			c.Embeddings.Dimension = OrcaRouterDefaultDimension
+		}
+		if c.Embeddings.APIKeyEnv == "" {
+			c.Embeddings.APIKeyEnv = OrcaRouterDefaultAPIKeyEnv
+		}
 	}
 	if c.Embeddings.BatchSize == 0 {
 		c.Embeddings.BatchSize = 32

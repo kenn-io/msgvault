@@ -682,10 +682,11 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 
 | Key | Default | Description |
 |---|---|---|
-| `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
-| `model` | (required) | Model name to pass in each request (e.g., `nomic-embed-text`). |
-| `dimension` | (required) | Vector dimension. Must match the model's output dimension. |
-| `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
+| `api_format` | `openai` | Request contract: `openai` (any OpenAI-compatible endpoint), `orcarouter` ([OrcaRouter](https://www.orcarouter.ai) gateway), or `voyage-contextual` (Voyage contextualized embeddings). Selecting `orcarouter` fills in the gateway defaults below for any omitted endpoint/model/dimension/api_key_env. |
+| `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). With `api_format = "orcarouter"` defaults to `https://api.orcarouter.ai/v1`. |
+| `model` | (required) | Model name to pass in each request (e.g., `nomic-embed-text`). With `api_format = "orcarouter"` defaults to `openai/text-embedding-3-small`. |
+| `dimension` | (required) | Vector dimension. Must match the model's output dimension. With `api_format = "orcarouter"` defaults to `1536`. |
+| `api_key_env` | — | Name of an environment variable containing the API key. With `api_format = "orcarouter"` defaults to `ORCAROUTER_API_KEY`. Omit for anonymous endpoints. |
 | `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
 | `timeout` | `30s` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
@@ -757,6 +758,25 @@ Optional background scheduling for the embed worker inside `msgvault serve`. Emp
 |---|---|---|
 | `cron` | — | 5-field cron expression. Empty string disables the standalone cron. |
 | `run_after_sync` | `false` | When `true`, an embed pass runs after every successful scheduled sync. |
+
+### `[people.sweep]`
+
+Consent-gated, model-backed maintenance of durable person profiles. Disabled by default. When enabled, every outbound request requires an exact, previously granted consent for the effective policy fingerprint, and the provider boundary is disclosed by `msgvault person provider`. The provider speaks the OpenAI-compatible Chat Completions protocol.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable the people-sweep inference provider. Safe default: disabled. |
+| `provider.kind` | `openai_compatible` | Provider contract. `openai_compatible` (any OpenAI-compatible endpoint) or `orcarouter` ([OrcaRouter](https://www.orcarouter.ai) gateway). Selecting `orcarouter` fills in the gateway defaults below for any omitted endpoint/model/api_key_env. |
+| `provider.endpoint` | `https://api.openai.com/v1` | HTTP(S) base URL. With `provider.kind = "orcarouter"` defaults to `https://api.orcarouter.ai/v1`. |
+| `provider.model` | (required) | Model name. With `provider.kind = "orcarouter"` defaults to `orcarouter/auto`. |
+| `provider.api_key_env` | `OPENAI_API_KEY` | Name of an environment variable containing the API key. With `provider.kind = "orcarouter"` defaults to `ORCAROUTER_API_KEY`. Anonymous loopback mode omits it. |
+| `provider.allow_anonymous` | `false` | Permit anonymous inference to a loopback endpoint only. |
+| `provider.retention_posture` | (required) | Confirmed provider retention posture. |
+| `provider.training_posture` | (required) | Confirmed provider training posture. |
+| `provider.allowed_sources` | (required) | Source classes the provider may receive, e.g. `conversation_text`, `meeting_text`. |
+| `provider.source_since` / `provider.source_until` | — | Date range for consented source material. |
+| `provider.allow_sensitive` | `false` | Allow sensitive source material. |
+| `provider.request_timeout` | `1m` | Per-request timeout. |
 
 ## Overriding the Home Directory
 

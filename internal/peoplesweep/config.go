@@ -19,6 +19,15 @@ import (
 
 const (
 	ProviderOpenAICompatible = "openai_compatible"
+	ProviderOrcaRouter       = "orcarouter"
+
+	// OrcaRouter defaults for the [people.sweep.provider] block. The
+	// gateway serves the OpenAI-compatible Chat Completions contract, so
+	// the named provider shares the OpenAI-compatible transport.
+	OrcaRouterDefaultEndpoint  = "https://api.orcarouter.ai/v1"
+	OrcaRouterDefaultModel     = "orcarouter/auto"
+	OrcaRouterDefaultAPIKeyEnv = "ORCAROUTER_API_KEY"
+	OrcaRouterSignupURL        = "https://www.orcarouter.ai"
 
 	SourceConversationText  SourceClass = "conversation_text"
 	SourceMeetingText       SourceClass = "meeting_text"
@@ -101,6 +110,20 @@ func (c *Config) ApplyDefaults() {
 	if c.Provider.Kind == "" {
 		c.Provider.Kind = ProviderOpenAICompatible
 	}
+	if c.Provider.Kind == ProviderOrcaRouter {
+		// Selecting the gateway by name fills in its defaults so an
+		// operator can point people-sweep at OrcaRouter with a minimal
+		// block. Explicit settings always win.
+		if c.Provider.Endpoint == "" {
+			c.Provider.Endpoint = OrcaRouterDefaultEndpoint
+		}
+		if c.Provider.Model == "" {
+			c.Provider.Model = OrcaRouterDefaultModel
+		}
+		if c.Provider.APIKeyEnv == "" && !c.Provider.AllowAnonymous {
+			c.Provider.APIKeyEnv = OrcaRouterDefaultAPIKeyEnv
+		}
+	}
 	if c.Provider.Endpoint == "" {
 		c.Provider.Endpoint = "https://api.openai.com/v1"
 	}
@@ -116,7 +139,9 @@ func (c *Config) ApplyDefaults() {
 // disabled policy is permitted, but any configured structural value must be
 // well formed.
 func (c Config) Validate() error {
-	if c.Provider.Kind != ProviderOpenAICompatible {
+	switch c.Provider.Kind {
+	case ProviderOpenAICompatible, ProviderOrcaRouter:
+	default:
 		return fmt.Errorf("invalid [people.sweep.provider] kind %q", c.Provider.Kind)
 	}
 	if c.Provider.RequestTimeout <= 0 {

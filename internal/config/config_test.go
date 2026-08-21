@@ -1680,6 +1680,31 @@ strip_signatures = false
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
 }
 
+func TestLoadVectorOrcaRouterEmbeddingFormatFillsDefaults(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+[vector]
+enabled = true
+
+[vector.embeddings]
+api_format = "orcarouter"
+`
+	require.NoError(os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile")
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err, "Load")
+
+	assert.Equal("orcarouter", string(cfg.Vector.Embeddings.EffectiveAPIFormat()))
+	assert.Equal("https://api.orcarouter.ai/v1", cfg.Vector.Embeddings.Endpoint)
+	assert.Equal("openai/text-embedding-3-small", cfg.Vector.Embeddings.Model)
+	assert.Equal(1536, cfg.Vector.Embeddings.Dimension)
+	assert.Equal("ORCAROUTER_API_KEY", cfg.Vector.Embeddings.APIKeyEnv)
+}
+
 func TestLoadWithNamedOAuthApps_RelativePaths(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
