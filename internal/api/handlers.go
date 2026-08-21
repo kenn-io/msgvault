@@ -57,6 +57,16 @@ type StatsResponse struct {
 	DatabaseSize          int64             `json:"database_size_bytes"`
 	VectorSearch          *vector.StatsView `json:"vector_search,omitempty"`
 	VectorStatus          string            `json:"vector_status,omitempty"`
+	// VectorTextStatus reports the TEXT vector lane specifically. A
+	// multimodal-only daemon is vector-"ready" without serving semantic
+	// message search, so text-tool registration must consult this field,
+	// not the shared subsystem status.
+	VectorTextStatus string `json:"vector_text_status,omitempty"`
+	// VectorVisualStatus reports the multimodal lane the same way, so a
+	// one-time capability probe during asynchronous init can distinguish
+	// "still initializing" from "not configured" instead of permanently
+	// omitting the visual tool after a transient 503.
+	VectorVisualStatus string `json:"vector_visual_status,omitempty"`
 }
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
@@ -558,6 +568,30 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
+		// Per-lane statuses mirror the shared status only for lanes the
+		// configuration actually enables (the daemon passes cfg.Vector at
+		// construction, so this holds during initialization too). Blanket
+		// mirroring advertised visual tools on text-only deployments and
+		// vice versa.
+		_, _, vectorCfg := s.vectorComponents()
+		resp.VectorTextStatus = string(VectorStatusDisabled)
+		if vectorCfg.Enabled {
+			resp.VectorTextStatus = string(status)
+		}
+		resp.VectorVisualStatus = string(VectorStatusDisabled)
+		if vectorCfg.Multimodal.Enabled {
+			resp.VectorVisualStatus = string(status)
+			// Visual init can fail while text search stays healthy: the
+			// shared status settles ready with no visual runtime installed.
+			// Report the lane's own failure instead of mirroring ready.
+			s.vectorMu.RLock()
+			visualInstalled := s.visualSearch != nil
+			s.vectorMu.RUnlock()
+			if !visualInstalled &&
+				(status == VectorStatusReady || status == VectorStatusStale) {
+				resp.VectorVisualStatus = string(VectorStatusError)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

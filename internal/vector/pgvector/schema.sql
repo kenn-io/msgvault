@@ -128,3 +128,18 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor   TEXT NOT NULL DEFAULT ''
 );
+
+-- Visual vectors share the PostgreSQL database with their authoritative
+-- publication rows but remain independently keyed by an opaque publication
+-- token. A prepared vector cannot be searched until visual_publications points
+-- current_vector_token at it.
+CREATE TABLE IF NOT EXISTS visual_vectors (
+    vector_token TEXT PRIMARY KEY,
+    dimension    INTEGER NOT NULL CHECK (dimension = 1024),
+    embedding    vector NOT NULL,
+    created_at   BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visual_vectors_hnsw_d1024
+    ON visual_vectors
+    USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+    WHERE dimension = 1024;

@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // VectorStatus describes the daemon's vector-search subsystem state. The
@@ -42,6 +43,32 @@ func (s *Server) SetVectorFeatures(engine *hybrid.Engine, backend vector.Backend
 	s.vectorErr = ""
 	s.vectorStaleLatch = false
 	s.vectorFreshNextCheck = time.Time{}
+}
+
+func (s *Server) SetVisualSearch(service *visual.SearchService) {
+	s.vectorMu.Lock()
+	s.visualSearch = service
+	if !s.vectorCfg.Enabled && service != nil {
+		s.vectorStatus = VectorStatusReady
+		s.vectorErr = ""
+	}
+	s.vectorMu.Unlock()
+}
+
+func (s *Server) SetVisualOperations(
+	build func(context.Context) error,
+	run func(context.Context) error,
+	retry func(context.Context, int64, string) error,
+	status func(context.Context, bool) (visual.Status, error),
+	retire func(context.Context) error,
+) {
+	s.vectorMu.Lock()
+	s.visualBuild = build
+	s.visualRun = run
+	s.visualRetry = retry
+	s.visualStatus = status
+	s.visualRetire = retire
+	s.vectorMu.Unlock()
 }
 
 // SetVectorInitError marks the vector subsystem as failed. The daemon keeps

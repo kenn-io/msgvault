@@ -646,16 +646,17 @@ func validateEditableCandidate(cfg *Config) error {
 	if err := cfg.Server.ValidateSecure(); err != nil {
 		return err
 	}
-	if cfg.Vector.Enabled {
+	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return fmt.Errorf("vector config: %w", err)
 		}
 	}
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	schedules := map[string]string{
-		"vector.embed.schedule.cron": cfg.Vector.Embed.Schedule.Cron,
-		"beeper.schedule":            cfg.Beeper.Schedule,
-		"slack.schedule":             cfg.Slack.Schedule,
+		"vector.embed.schedule.cron":      cfg.Vector.Embed.Schedule.Cron,
+		"vector.multimodal.schedule.cron": cfg.Vector.Multimodal.Schedule.Cron,
+		"beeper.schedule":                 cfg.Beeper.Schedule,
+		"slack.schedule":                  cfg.Slack.Schedule,
 	}
 	for index, account := range cfg.Accounts {
 		schedules[fmt.Sprintf("accounts[%d].schedule", index)] = account.Schedule

@@ -111,6 +111,23 @@
   let requestSignature = '';
   let previousRowHeight = untrack(() => rowHeight);
   let pendingRestoration = $state<PendingRestoration>();
+	let hostedVisualSearch = $state(false);
+	let visualQuery = $state('');
+	let visualQueryDraft = $state('');
+	let visualQueryDebounce: ReturnType<typeof setTimeout> | undefined;
+	// Each committed visual query is a billable hosted embedding request, so
+	// keystrokes edit a local draft and commit only after a typing pause.
+	function commitVisualQuery(value: string) {
+		visualQueryDraft = value;
+		if (value) removeVisualImage();
+		clearTimeout(visualQueryDebounce);
+		visualQueryDebounce = setTimeout(() => {
+			visualQuery = visualQueryDraft.trim();
+		}, 600);
+	}
+	let visualImageBase64 = $state('');
+	let visualImageName = $state('');
+	let visualImageRevision = $state(0);
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -140,7 +157,7 @@
       mimeFamilies: effectiveMIMEFamilies,
       directions: personScoped ? personDirections : undefined,
       personPresentation: personScoped ? personPresentation : undefined,
-      restorationEpoch
+      restorationEpoch, hostedVisualSearch, visualQuery, visualImageName, visualImageRevision
     });
     signature;
     if (signature === requestSignature) return;
@@ -309,6 +326,8 @@
     const body = {
       predicate: requestPredicate, sort, limit: 500,
       ...(filenameQuery ? { filename_query: filenameQuery } : {}),
+      ...(hostedVisualSearch && visualQuery.trim() ? { visual_query: visualQuery.trim() } : {}),
+      ...(hostedVisualSearch && visualImageBase64 ? { visual_image_base64: visualImageBase64 } : {}),
       ...(effectiveMIMEFamilies.length ? { mime_families: effectiveMIMEFamilies } : {}),
       ...(cursor ? { cursor } : {})
     };
@@ -601,6 +620,36 @@
     if (!slice) return;
     if (nextCursor && !loadingMore && slice.end >= rows.length - OVERSCAN) void loadMore();
   }
+
+	async function chooseVisualImage(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		if (file.size > 20 * 1024 * 1024) {
+			error = 'Visual query images must be 20 MiB or smaller.';
+			input.value = '';
+			return;
+		}
+		const dataURL = await new Promise<string>((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onerror = () => reject(reader.error ?? new Error('Could not read the query image.'));
+			reader.onload = () => resolve(String(reader.result));
+			reader.readAsDataURL(file);
+		});
+		visualQuery = '';
+		visualImageName = file.name;
+		visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
+		visualImageRevision += 1;
+		clearTimeout(visualQueryDebounce);
+		visualQueryDraft = '';
+	}
+
+	function removeVisualImage(): void {
+		if (!visualImageBase64 && !visualImageName) return;
+		visualImageBase64 = '';
+		visualImageName = '';
+		visualImageRevision += 1;
+	}
 </script>
 
 <svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
@@ -661,6 +710,30 @@
         oninput={(value) => onFilenameQueryChange?.(value)}
       />
     </label>
+		<label>
+			<input type="checkbox" bind:checked={hostedVisualSearch} />
+			Hosted visual search
+		</label>
+		{#if hostedVisualSearch}
+			<label>
+				Visual query
+				<SearchInput
+					value={visualQueryDraft}
+					ariaLabel="Search attachment pixels"
+					placeholder="Describe what is visible"
+					oninput={commitVisualQuery}
+				/>
+			</label>
+			<label>
+				Query image
+				<input type="file" accept="image/jpeg,image/png,image/webp" onchange={(event) => void chooseVisualImage(event)} />
+			</label>
+			{#if visualImageName}
+				<span>{visualImageName}</span>
+				<Button size="sm" surface="outline" label="Remove query image" onclick={removeVisualImage} />
+			{/if}
+			<span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
+		{/if}
     <div class="mime-controls" aria-label="MIME families">
       {#each visibleMIMEFamilies as family}
         <label>
@@ -750,7 +823,10 @@
                 }}
               >
                 <span role="gridcell"><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span>
-                <span role="gridcell"><strong>{row.filename || '(unnamed)'}</strong></span>
+				<span role="gridcell">
+					<strong>{row.filename || '(unnamed)'}</strong>
+					{#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
+				</span>
                 <span role="gridcell">{row.mime_type || row.mime_family}</span>
                 <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                 {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
@@ -849,6 +925,8 @@
   .presentation-controls { padding: 2px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
   .presentation-controls button { padding: var(--space-1) var(--space-2); border: 0; border-radius: calc(var(--radius-sm) - 2px); background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--font-size-xs); }
   .presentation-controls button[aria-pressed='true'] { background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-primary); }
+  .hosted-disclosure { color: var(--text-muted); font-size: var(--font-size-2xs); }
+  .data-row small { display: block; color: var(--text-muted); font-size: var(--font-size-2xs); }
   .files-table { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .table-header, .data-row { display: grid; grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(160px, 1.3fr) 105px; align-items: center; }
   .table-header.person-columns, .data-row.person-columns { grid-template-columns: 112px minmax(150px, 1.5fr) minmax(110px, 1fr) 82px minmax(150px, 1.2fr) minmax(130px, 1.1fr) minmax(120px, 1fr) minmax(150px, 1.2fr) 105px; }

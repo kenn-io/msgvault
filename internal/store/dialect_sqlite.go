@@ -627,6 +627,15 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    BEGIN
 		        UPDATE messages SET content_changed_at = %s WHERE id = NEW.message_id;
 		    END`, now),
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_del`,
+		// Deletion is a content change: without the bump, a body deleted
+		// between a visual context snapshot and its claim passes the
+		// content-stamp CAS and publishes an embedding of the deleted text.
+		fmt.Sprintf(`CREATE TRIGGER trg_message_bodies_content_changed_del
+		    AFTER DELETE ON message_bodies FOR EACH ROW
+		    BEGIN
+		        UPDATE messages SET content_changed_at = %s WHERE id = OLD.message_id;
+		    END`, now),
 		`DROP TRIGGER IF EXISTS trg_messages_last_modified`,
 		// Identical to schema.sql's definition except for the UPDATE OF scope,
 		// which is what keeps the stamp above from re-entering it.
@@ -1057,6 +1066,305 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
 		                 THEN a.attachment_role END
 		        FROM attachments a WHERE a.message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		    AFTER INSERT ON attachments FOR EACH ROW
+		    WHEN NEW.attachment_role = 'standalone'
+		      AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                              'importer_semantics', 'raw_mime_repair')
+		      AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		    AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		        storage_path, media_type, width, height, duration_ms,
+		        source_attachment_id, attachment_metadata, attachment_role,
+		        role_source, source_part_key, content_id, encryption_version
+		    ON attachments FOR EACH ROW
+		    WHEN OLD.message_id IS NOT NEW.message_id
+		      OR OLD.filename IS NOT NEW.filename
+		      OR OLD.mime_type IS NOT NEW.mime_type
+		      OR OLD.size IS NOT NEW.size
+		      OR OLD.content_hash IS NOT NEW.content_hash
+		      OR OLD.storage_path IS NOT NEW.storage_path
+		      OR OLD.media_type IS NOT NEW.media_type
+		      OR OLD.width IS NOT NEW.width
+		      OR OLD.height IS NOT NEW.height
+		      OR OLD.duration_ms IS NOT NEW.duration_ms
+		      OR OLD.source_attachment_id IS NOT NEW.source_attachment_id
+		      OR OLD.attachment_metadata IS NOT NEW.attachment_metadata
+		      OR OLD.attachment_role IS NOT NEW.attachment_role
+		      OR OLD.role_source IS NOT NEW.role_source
+		      OR OLD.source_part_key IS NOT NEW.source_part_key
+		      OR OLD.content_id IS NOT NEW.content_id
+		      OR OLD.encryption_version IS NOT NEW.encryption_version
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL
+		          AND message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND NEW.attachment_role = 'standalone'
+		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                  'importer_semantics', 'raw_mime_repair')
+		          AND message_id = NEW.message_id
+		          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                      AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		        WHERE NEW.attachment_role = 'standalone'
+		          AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                  'importer_semantics', 'raw_mime_repair')
+		          AND message_id = NEW.message_id
+		          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                      AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		          AND (blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		               OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                   AND LOWER(NEW.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		    AFTER DELETE ON attachments FOR EACH ROW
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL
+		          AND message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash))
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN EXISTS (
+		                SELECT 1 FROM attachments a
+		                JOIN messages m ON m.id = a.message_id
+		                WHERE a.message_id = visual_publications.message_id
+		                  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                  AND a.attachment_role = 'standalone'
+		                  AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                        'importer_semantics', 'raw_mime_repair')
+		                  AND (LOWER(COALESCE(a.content_hash, '')) = visual_publications.blob_hash
+		                       OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                           AND LOWER(a.storage_path) =
+		                               SUBSTR(visual_publications.blob_hash, 1, 2) || '/' ||
+		                               visual_publications.blob_hash))
+		            ) THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id
+		          AND (blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		               OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                   AND LOWER(OLD.storage_path) =
+		                       SUBSTR(blob_hash, 1, 2) || '/' || blob_hash));
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_delete_ledger`,
+		`CREATE TRIGGER trg_visual_publication_delete_ledger
+		    BEFORE DELETE ON visual_publications FOR EACH ROW
+		    WHEN OLD.current_vector_token IS NOT NULL OR OLD.pending_vector_token IS NOT NULL
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT OLD.generation_id, OLD.current_vector_token
+		        WHERE OLD.current_vector_token IS NOT NULL
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT OLD.generation_id, OLD.pending_vector_token
+		        WHERE OLD.pending_vector_token IS NOT NULL
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		    WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		          IS NOT
+		          (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN NEW.deleted_at IS NULL
+		                              AND NEW.deleted_from_source_at IS NULL
+		                         THEN 'stale' ELSE 'tombstoned' END,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		    AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		    WHEN OLD.subject IS NOT NEW.subject OR OLD.message_type IS NOT NEW.message_type
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_type_scope`,
+		// Seed only canonical owners, mirroring canonicalVisualBlobHash: a
+		// 64-hex content hash, or (when the hash is absent) a strict CAS
+		// storage path. Hashless URLs or malformed legacy values would
+		// otherwise create owners validateVisualOwner rejects, wedging every
+		// tombstone sweep.
+		fmt.Sprintf(`CREATE TRIGGER trg_visual_publication_message_type_scope
+		    AFTER UPDATE OF message_type ON messages FOR EACH ROW
+		    WHEN OLD.message_type IS NOT NEW.message_type
+		    BEGIN
+		        INSERT INTO visual_publications
+		            (generation_id, message_id, blob_hash, media_input_key,
+		             source_fence, attachment_role, role_source, state)
+		        SELECT vg.id, a.message_id,
+		               CASE WHEN LOWER(COALESCE(a.content_hash, '')) GLOB '%[1]s'
+		                    THEN LOWER(a.content_hash)
+		                    ELSE SUBSTR(a.storage_path, 4) END,
+		               'original', 0, 'unknown', 'unknown', 'stale'
+		        FROM attachments a JOIN visual_generations vg
+		             ON vg.state IN ('building', 'active')
+		        WHERE a.message_id = NEW.id
+		          AND a.attachment_role = 'standalone'
+		          AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                'importer_semantics', 'raw_mime_repair')
+		          AND (LOWER(COALESCE(a.content_hash, '')) GLOB '%[1]s'
+		               OR (COALESCE(a.content_hash, '') = ''
+		                   AND COALESCE(a.storage_path, '') GLOB '[0-9a-f][0-9a-f]/%[1]s'
+		                   AND SUBSTR(a.storage_path, 1, 2) = SUBSTR(a.storage_path, 4, 2)))
+		        ON CONFLICT (generation_id, message_id, blob_hash, media_input_key) DO UPDATE SET
+		            state = 'stale',
+		            outcome_kind = NULL, outcome_reason = NULL,
+		            prepared_revision = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE visual_publications.state = 'tombstoned';
+		    END`, strings.Repeat("[0-9a-f]", 64)),
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		    AFTER INSERT ON message_bodies FOR EACH ROW
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_delete`,
+		`CREATE TRIGGER trg_visual_publication_message_body_delete
+		    AFTER DELETE ON message_bodies FOR EACH ROW
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = OLD.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = OLD.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		    AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		    WHEN OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html
+		    BEGIN
+		        INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		        SELECT generation_id, pending_vector_token FROM visual_publications
+		        WHERE pending_vector_token IS NOT NULL AND message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL)
+		        ON CONFLICT (generation_id, vector_token) DO NOTHING;
+
+		        UPDATE visual_publications
+		        SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		            prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		            pending_vector_token = NULL,
+		            updated_at = CURRENT_TIMESTAMP
+		        WHERE message_id = NEW.message_id AND state <> 'tombstoned'
+		          AND (state = 'current' OR prepared_revision IS NOT NULL
+		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
 		    END`,
 	)
 	for _, stmt := range stmts {

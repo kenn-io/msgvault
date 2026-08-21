@@ -1889,6 +1889,41 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 	assert.Equal(t, 0, run, "RunOnce calls when sync failed")
 }
 
+func TestScheduler_VisualRunAfterSyncDoesNotExtendSync(t *testing.T) {
+	requirements := require.New(t)
+	visualStarted := make(chan struct{})
+	releaseVisual := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	s.SetVisualPostSyncJob(func(context.Context) error {
+		close(visualStarted)
+		<-releaseVisual
+		return nil
+	})
+	requirements.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"))
+	s.Start()
+	t.Cleanup(func() {
+		select {
+		case <-releaseVisual:
+		default:
+			close(releaseVisual)
+		}
+		ctx := s.Stop()
+		<-ctx.Done()
+	})
+
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	select {
+	case <-visualStarted:
+	case <-time.After(time.Second):
+		requirements.Fail("visual post-sync pass did not start")
+	}
+	requirements.Eventually(func() bool {
+		statuses := s.Status()
+		return len(statuses) == 1 && !statuses[0].Running
+	}, time.Second, 5*time.Millisecond, "sync should finish while hosted visual work remains blocked")
+	close(releaseVisual)
+}
+
 func TestValidateCronExpr(t *testing.T) {
 	tests := []struct {
 		expr    string
@@ -2069,4 +2104,52 @@ func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 	for _, status := range s.Status() {
 		assert.Empty(status.LastError, "yield must not be recorded as a sync error")
 	}
+}
+
+func TestScheduler_VisualPostSyncQueuesPendingRunWhileActive(t *testing.T) {
+	requirements := require.New(t)
+	var mu sync.Mutex
+	runs := 0
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	s.SetVisualPostSyncJob(func(context.Context) error {
+		mu.Lock()
+		runs++
+		count := runs
+		mu.Unlock()
+		if count == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		return nil
+	})
+	requirements.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"))
+	s.Start()
+	t.Cleanup(func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+		ctx := s.Stop()
+		<-ctx.Done()
+	})
+
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		requirements.Fail("first visual pass did not start")
+	}
+	// A second sync completes while the first pass is still running; its
+	// changes must be processed by a queued follow-up pass, not dropped.
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	time.Sleep(50 * time.Millisecond)
+	close(releaseFirst)
+	requirements.Eventually(func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return runs == 2
+	}, 2*time.Second, 10*time.Millisecond, "the pending pass must run after the active one finishes")
 }

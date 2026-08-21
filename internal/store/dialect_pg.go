@@ -828,6 +828,19 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
 		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
 		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		// Deletion is a content change: without the bump, a body deleted
+		// between a visual context snapshot and its claim passes the
+		// content-stamp CAS and publishes an embedding of the deleted text.
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION bump_message_content_changed_at_del() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE messages SET content_changed_at = %s WHERE id = OLD.message_id;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`, now),
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_del ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_content_changed_del
+		     AFTER DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_content_changed_at_del()`,
 		// Source mutations share this transaction-level advisory lock. Contextual
 		// activation takes its exclusive form before reading the journal clock, so
 		// neither side can hold a source row while waiting for the other side.
@@ -1266,6 +1279,235 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		           IS DISTINCT FROM
 		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
 		     EXECUTE FUNCTION capture_attachment_message_live_change()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_attachment() RETURNS trigger AS $$
+		 BEGIN
+		     IF TG_OP <> 'INSERT' THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         SELECT vp.generation_id, vp.pending_vector_token FROM visual_publications vp
+		         WHERE vp.pending_vector_token IS NOT NULL
+		           AND vp.message_id = OLD.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		                OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                    AND LOWER(OLD.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		         UPDATE visual_publications vp
+		         SET state = CASE WHEN EXISTS (
+		                 SELECT 1 FROM attachments a
+		                 JOIN messages m ON m.id = a.message_id
+		                 WHERE a.message_id = vp.message_id
+		                   AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                   AND a.attachment_role = 'standalone'
+		                   AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                         'importer_semantics', 'raw_mime_repair')
+		                   AND (LOWER(COALESCE(a.content_hash, '')) = vp.blob_hash
+		                        OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                            AND LOWER(a.storage_path) =
+		                                SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		             ) THEN 'stale' ELSE 'tombstoned' END,
+		             pending_vector_token = NULL,
+		             updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = OLD.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		                OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                    AND LOWER(OLD.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP <> 'DELETE'
+		        AND NEW.attachment_role = 'standalone'
+		        AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                'importer_semantics', 'raw_mime_repair')
+		        AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                    AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL) THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         SELECT vp.generation_id, vp.pending_vector_token FROM visual_publications vp
+		         WHERE vp.pending_vector_token IS NOT NULL
+		           AND vp.message_id = NEW.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		                OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                    AND LOWER(NEW.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		         UPDATE visual_publications vp
+		         SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = NEW.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		                OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                    AND LOWER(NEW.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		     AFTER INSERT ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		         storage_path, media_type, width, height, duration_ms,
+		         source_attachment_id, attachment_metadata, attachment_role,
+		         role_source, source_part_key, content_id, encryption_version
+		     ON attachments FOR EACH ROW
+		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.filename IS DISTINCT FROM NEW.filename
+		        OR OLD.mime_type IS DISTINCT FROM NEW.mime_type
+		        OR OLD.size IS DISTINCT FROM NEW.size
+		        OR OLD.content_hash IS DISTINCT FROM NEW.content_hash
+		        OR OLD.storage_path IS DISTINCT FROM NEW.storage_path
+		        OR OLD.media_type IS DISTINCT FROM NEW.media_type
+		        OR OLD.width IS DISTINCT FROM NEW.width
+		        OR OLD.height IS DISTINCT FROM NEW.height
+		        OR OLD.duration_ms IS DISTINCT FROM NEW.duration_ms
+		        OR OLD.source_attachment_id IS DISTINCT FROM NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS DISTINCT FROM NEW.attachment_metadata
+		        OR OLD.attachment_role IS DISTINCT FROM NEW.attachment_role
+		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
+		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
+		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		     AFTER DELETE ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`CREATE OR REPLACE FUNCTION ledger_visual_publication_tokens() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.current_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.current_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     IF OLD.pending_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.pending_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_delete_ledger ON visual_publications`,
+		`CREATE TRIGGER trg_visual_publication_delete_ledger
+		     BEFORE DELETE ON visual_publications FOR EACH ROW
+		     EXECUTE FUNCTION ledger_visual_publication_tokens()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_live() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN NEW.deleted_at IS NULL
+		                               AND NEW.deleted_from_source_at IS NULL
+		                          THEN 'stale' ELSE 'tombstoned' END,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS DISTINCT FROM
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     EXECUTE FUNCTION invalidate_visual_publication_message_live()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_content() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		         prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id AND state <> 'tombstoned'
+		       AND (state = 'current' OR prepared_revision IS NOT NULL
+		            OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		     AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		     WHEN (OLD.subject IS DISTINCT FROM NEW.subject
+		           OR OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_content()`,
+		`CREATE OR REPLACE FUNCTION seed_visual_publication_scope_entry() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_publications
+		         (generation_id, message_id, blob_hash, media_input_key,
+		          source_fence, attachment_role, role_source, state)
+     SELECT vg.id, a.message_id,
+		            CASE WHEN LOWER(COALESCE(a.content_hash, '')) ~ '^[0-9a-f]{64}$'
+		                 THEN LOWER(a.content_hash)
+		                 ELSE SUBSTRING(a.storage_path FROM 4) END,
+		            'original', 0, 'unknown', 'unknown', 'stale'
+		     FROM attachments a JOIN visual_generations vg
+		          ON vg.state IN ('building', 'active')
+		     WHERE a.message_id = NEW.id
+		       AND a.attachment_role = 'standalone'
+		       AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                             'importer_semantics', 'raw_mime_repair')
+		       AND (LOWER(COALESCE(a.content_hash, '')) ~ '^[0-9a-f]{64}$'
+		            OR (COALESCE(a.content_hash, '') = ''
+		                AND COALESCE(a.storage_path, '') ~ '^[0-9a-f]{2}/[0-9a-f]{64}$'
+		                AND SUBSTRING(a.storage_path FROM 1 FOR 2) = SUBSTRING(a.storage_path FROM 4 FOR 2)))
+		     ON CONFLICT (generation_id, message_id, blob_hash, media_input_key) DO UPDATE SET
+		         state = 'stale',
+		         outcome_kind = NULL, outcome_reason = NULL,
+		         prepared_revision = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE visual_publications.state = 'tombstoned';
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_type_scope ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_type_scope
+		     AFTER UPDATE OF message_type ON messages FOR EACH ROW
+		     WHEN (OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION seed_visual_publication_scope_entry()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_body() RETURNS trigger AS $$
+		 DECLARE target_message_id BIGINT;
+		 BEGIN
+		     IF TG_OP = 'DELETE' THEN
+		         target_message_id := OLD.message_id;
+		     ELSE
+		         target_message_id := NEW.message_id;
+		     END IF;
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = target_message_id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		         prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = target_message_id AND state <> 'tombstoned'
+		       AND (state = 'current' OR prepared_revision IS NOT NULL
+		            OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		     AFTER INSERT ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_delete ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_delete
+		     AFTER DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		     AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
+		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {

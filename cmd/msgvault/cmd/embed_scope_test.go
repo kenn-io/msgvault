@@ -142,6 +142,8 @@ func TestResolvedVectorConfigLeavesGlobalUntouched(t *testing.T) {
 	assert := assert.New(t)
 	f, accountID, _ := setupScopeFixture(t)
 	withEmbedScopeGlobals(t, []string{accountID})
+	// Scope resolution is gated on the lane being enabled.
+	cfg.Vector.Enabled = true
 
 	vecCfg, err := resolvedVectorConfig(f.Store)
 	require.NoError(err)

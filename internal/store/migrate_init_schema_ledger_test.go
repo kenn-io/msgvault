@@ -35,6 +35,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 		migrationAttachmentsContentHashUnique,
 		migrationAttachmentOccurrenceUnique,
 		migrationIdentityMatchSourceSupport,
+		migrationAttachmentOccurrenceUnique,
 		migrationMessageAttributionProvenance,
 		migrationMessagesLastModifiedBackfill,
 		migrationMessagesContentChangedAtBackfill,

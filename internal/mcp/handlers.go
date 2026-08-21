@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const (
@@ -114,9 +115,102 @@ type handlers struct {
 	// a vector_not_enabled error. backend is additionally required by
 	// the find_similar_messages handler to load seed vectors and
 	// resolve the active generation.
-	hybridEngine *hybrid.Engine
-	vectorCfg    vector.Config
-	backend      vector.Backend
+	hybridEngine   *hybrid.Engine
+	vectorCfg      vector.Config
+	backend        vector.Backend
+	visualSearcher VisualSearcher
+}
+
+type VisualSearcher interface {
+	SearchVisualAttachments(ctx context.Context, request VisualSearchRequest) (*visual.SearchResponse, error)
+}
+
+type VisualSearchRequest struct {
+	Text           string
+	Image          []byte
+	Limit          int
+	Cursor         string
+	SenderPersonID int64
+	SourceID       int64
+	MessageID      int64
+	Filename       string
+	MIMEPrefix     string
+	After, Before  *time.Time
+}
+
+func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if h.visualSearcher == nil {
+		return toolErrorResult("visual_search_not_ready: visual attachment search is unavailable"), nil
+	}
+	args := req.GetArguments()
+	text, _ := args["text"].(string)
+	imageBase64, _ := args["image_base64"].(string)
+	if (strings.TrimSpace(text) == "") == (imageBase64 == "") {
+		return toolErrorResult("invalid_visual_query: provide exactly one of text or image_base64"), nil
+	}
+	limit := 20
+	if raw, ok := args["limit"].(float64); ok {
+		if raw < 1 || raw > 100 || raw != math.Trunc(raw) {
+			return toolErrorResult("invalid_limit: limit must be between 1 and 100"), nil
+		}
+		limit = int(raw)
+	}
+	senderPersonID := int64(0)
+	if raw, ok := args["sender_person_id"].(float64); ok {
+		if raw < 1 || raw > math.MaxInt64 || raw != math.Trunc(raw) {
+			return toolErrorResult("invalid_sender_person_id: sender_person_id must be positive"), nil
+		}
+		senderPersonID = int64(raw)
+	}
+	parsePositiveID := func(name string) (int64, *toolResult) {
+		raw, exists := args[name].(float64)
+		if !exists {
+			return 0, nil
+		}
+		if raw < 1 || raw > math.MaxInt64 || raw != math.Trunc(raw) {
+			return 0, toolErrorResult("invalid_" + name + ": " + name + " must be positive")
+		}
+		return int64(raw), nil
+	}
+	sourceID, toolErr := parsePositiveID("source_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	messageID, toolErr := parsePositiveID("message_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	cursor, _ := args["cursor"].(string)
+	filename, _ := args["filename"].(string)
+	mimePrefix, _ := args["mime_prefix"].(string)
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
+	var image []byte
+	if imageBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(imageBase64)
+		if err != nil || int64(len(decoded)) > visual.MaxQueryImageBytes {
+			return toolErrorResult("invalid_visual_query: image_base64 is invalid or too large"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		}
+		image = decoded
+	}
+	response, err := h.visualSearcher.SearchVisualAttachments(ctx, VisualSearchRequest{
+		Text: text, Image: image, Limit: limit, Cursor: cursor, SenderPersonID: senderPersonID,
+		SourceID: sourceID, MessageID: messageID, Filename: filename, MIMEPrefix: mimePrefix,
+		After: after, Before: before,
+	})
+	if err != nil {
+		return toolErrorResult("visual_search_failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	}
+	return jsonResult(response)
 }
 
 // DocumentSearcher runs the dedicated extracted-document retrieval contract.

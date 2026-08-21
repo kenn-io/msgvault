@@ -7,10 +7,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/document/voyage"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -19,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const contextualDocumentUTF8Limit = 100_000
@@ -187,7 +192,7 @@ func newConvergenceChecker(vectorCfg vector.Config, mainStore *store.Store, back
 // setupVectorFeatures would only discover the gap later inside the
 // background init goroutine.
 func precheckVectorFeatures(mainPath string) error {
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil
 	}
 	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
@@ -203,9 +208,14 @@ func precheckVectorFeatures(mainPath string) error {
 	if err := cfg.Vector.Validate(); err != nil {
 		return fmt.Errorf("vector config: %w", err)
 	}
-	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cronExpr != "" {
+	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cfg.Vector.Enabled && cronExpr != "" {
 		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
 			return fmt.Errorf("invalid embed cron expression %q: %w", cronExpr, err)
+		}
+	}
+	if cronExpr := cfg.Vector.Multimodal.Schedule.Cron; cfg.Vector.Multimodal.Enabled && cronExpr != "" {
+		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
+			return fmt.Errorf("invalid multimodal cron expression %q: %w", cronExpr, err)
 		}
 	}
 	return nil
@@ -236,8 +246,8 @@ func precheckVectorFeatures(mainPath string) error {
 // through the main handle — is skipped (the query-only handle would reject
 // those writes); Migrate still runs there because it only touches the
 // separate vectors.db, which is read-write regardless.
-func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool) (*vectorFeatures, error) {
-	if !cfg.Vector.Enabled {
+func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool, openers ...visual.StreamOpener) (*vectorFeatures, error) {
+	if !cfg.Vector.AnyLaneEnabled() {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	if err := cfg.Vector.Validate(); err != nil {
@@ -330,37 +340,272 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		closeFn = sb.Close
 	}
 
-	runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
-		Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
-		Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
+	features := &vectorFeatures{Backend: backend, Cfg: vecCfg, Close: closeFn}
+	if vecCfg.Enabled {
+		runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
+			Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
+			Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
+		})
+		if err != nil {
+			_ = closeFn()
+			return nil, fmt.Errorf("configure embedding runtime: %w", err)
+		}
+		features.Runner = runtime.Runner
+		features.Convergence = runtime.Convergence
+		features.HybridEngine = hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
+			ExpectedFingerprint: vecCfg.GenerationFingerprint(),
+			RRFK:                vecCfg.Search.RRFK,
+			KPerSignal:          vecCfg.Search.KPerSignal,
+			SubjectBoost:        vecCfg.Search.SubjectBoost,
+			// BuildFilter's participant/label lookups run against mainDB with ?
+			// placeholders. On PG those must become $N or pgx rejects them, so
+			// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
+			// carries the dialect's Rebind. SQLite's Rebind is identity.
+			Rebind:     dialect.Rebind,
+			BuildScope: vecCfg.Embed.Scope.BuildScope(),
+		})
+	}
+	if vecCfg.Multimodal.Enabled && !readOnly {
+		if len(openers) == 0 || openers[0] == nil {
+			_ = closeFn()
+			return nil, errors.New("configure multimodal runtime: attachment content store is unavailable")
+		}
+		visualRuntime, err := newVisualRuntime(ctx, vecCfg, mainStore, backend, openers[0])
+		switch {
+		case err != nil && !vecCfg.Enabled:
+			// Multimodal is the only configured lane: swallowing its
+			// initialization failure would leave vector status disabled with
+			// nothing to report. There is no text search to preserve.
+			_ = closeFn()
+			return nil, fmt.Errorf("configure multimodal runtime: %w", err)
+		case err != nil:
+			// The visual lane fails closed without probed authority, but its
+			// misconfiguration must not take message vector search down.
+			logger.Error("multimodal lane unavailable", "error", err)
+		default:
+			features.Visual = visualRuntime
+		}
+	}
+	return features, nil
+}
+
+func newVisualRuntime(ctx context.Context, vecCfg vector.Config, mainStore *store.Store, backend vector.Backend, opener visual.StreamOpener) (*visualFeatures, error) {
+	fingerprint := vecCfg.MultimodalGenerationFingerprint()
+	var visualBackend visual.Backend
+	switch typed := backend.(type) {
+	case *sqlitevec.Backend:
+		visualBackend = typed.Visual()
+	case *pgvector.Backend:
+		visualBackend = typed.Visual()
+	default:
+		return nil, errors.New("selected vector backend has no visual lane")
+	}
+	if building, err := mainStore.BuildingVisualGeneration(ctx); err == nil && building.Fingerprint != fingerprint {
+		tokens, tokenErr := mainStore.ListVisualGenerationTokens(ctx, building.ID)
+		if tokenErr != nil {
+			return nil, tokenErr
+		}
+		vectorTokens := make([]visual.VectorToken, len(tokens))
+		for i, token := range tokens {
+			vectorTokens[i] = visual.VectorToken(token)
+		}
+		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
+			return nil, err
+		}
+		if err := mainStore.RetireVisualGeneration(ctx, building.ID); err != nil {
+			return nil, err
+		}
+		// The abandoned generation is never revisited; a consumer left
+		// registered under its fingerprint would pin journal pruning forever.
+		if err := mainStore.UnregisterAttachmentChangeConsumer(ctx, "visual/"+building.Fingerprint); err != nil {
+			return nil, err
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	// A retired generation for this fingerprint may still reference backend
+	// vectors if its retirement cleanup crashed or failed; Ensure refuses to
+	// restart over live references, so delete those vectors and purge the
+	// ledger first.
+	retired, err := mainStore.ListRetiredVisualGenerations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, retiredGeneration := range retired {
+		if retiredGeneration.Fingerprint != fingerprint {
+			continue
+		}
+		tokens, err := mainStore.ListVisualGenerationTokens(ctx, retiredGeneration.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(tokens) == 0 {
+			continue
+		}
+		vectorTokens := make([]visual.VectorToken, len(tokens))
+		for index, token := range tokens {
+			vectorTokens[index] = visual.VectorToken(token)
+		}
+		if err := visualBackend.DeleteTokens(ctx, vectorTokens); err != nil {
+			return nil, err
+		}
+		if err := mainStore.PurgeRetiredVisualGeneration(ctx, retiredGeneration.ID); err != nil {
+			return nil, err
+		}
+	}
+	generation, err := mainStore.EnsureVisualGeneration(ctx, store.VisualGenerationSpec{
+		Fingerprint: fingerprint, Model: vecCfg.Multimodal.Model,
+		Dimension: vecCfg.Multimodal.Dimension,
 	})
 	if err != nil {
-		_ = closeFn()
-		return nil, fmt.Errorf("configure embedding runtime: %w", err)
+		return nil, err
 	}
-
-	engine := hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
-		ExpectedFingerprint: vecCfg.GenerationFingerprint(),
-		RRFK:                vecCfg.Search.RRFK,
-		KPerSignal:          vecCfg.Search.KPerSignal,
-		SubjectBoost:        vecCfg.Search.SubjectBoost,
-		// BuildFilter's participant/label lookups run against mainDB with ?
-		// placeholders. On PG those must become $N or pgx rejects them, so
-		// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
-		// carries the dialect's Rebind. SQLite's Rebind is identity.
-		Rebind:     dialect.Rebind,
-		BuildScope: vecCfg.Embed.Scope.BuildScope(),
+	manifest, err := loadVisualCapabilityManifest(vecCfg.Multimodal.CapabilitiesFile)
+	if err != nil {
+		return nil, err
+	}
+	mediaPolicy := visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
+		IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
+		AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()}
+	// The provider validates EVERYTHING that leaves the machine, including
+	// consented still-image QUERIES: with include_images=false and
+	// allow_image_queries=true the document policy alone would reject query
+	// input the search layer permits. Document eligibility (the reconciler's
+	// mediaPolicy) stays unchanged. Configs with images already enabled are
+	// identical, so no existing consent fingerprint moves.
+	providerMedia := mediaPolicy
+	if vecCfg.Multimodal.ImageQueriesEnabled() {
+		providerMedia.IncludeImages = true
+	}
+	provider, err := visual.NewVoyageProvider(visual.VoyageConfig{
+		APIKey: vecCfg.Multimodal.APIKey(), Model: vecCfg.Multimodal.Model,
+		Dimension: vecCfg.Multimodal.Dimension, Manifest: manifest, Media: providerMedia,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// A format is only eligible when the probe authorized the exact request
+	// shapes this archive sends: the document capability always, and its
+	// interleaved twin because owning-message context accompanies media
+	// whenever the message has any.
+	// Every visual search embeds its text query through the same client;
+	// without probed text-query authority the lane would index (and bill)
+	// while rejecting every search. Fail initialization with the remedy.
+	if !slices.Contains(provider.AuthorizedCapabilities(), voyage.CapabilityQueryText) {
+		return nil, errors.New("the capability manifest does not authorize text queries; re-run `msgvault multimodal probe` and configure the new manifest")
+	}
+	mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(
+		provider.AuthorizedCapabilities(), vecCfg.Multimodal.MaxContextChars > 0)
+	consumerKey := "visual/" + fingerprint
+	if provider.PolicyFingerprint() != "" {
+		// A changed capability manifest re-opens reconciliation so every
+		// candidate is re-evaluated under the new upload authority.
+		if _, err := mainStore.SyncVisualGenerationCapabilityFingerprint(
+			ctx, generation.ID, consumerKey, provider.PolicyFingerprint()); err != nil {
+			return nil, err
+		}
+	}
+	buildScope := vecCfg.Multimodal.Scope.BuildScope()
+	scopeCheck := visualScopeCheck(mainStore, vecCfg.Multimodal.Scope.Accounts, buildScope.SourceIDs)
+	reconciler, err := visual.NewReconciler(mainStore, opener, visual.ReconcileConfig{
+		GenerationID: generation.ID, ConsumerKey: consumerKey,
+		MessageTypes: buildScope.MessageTypes, SourceIDs: buildScope.SourceIDs,
+		// Two maximum-size media items remain below the provider's 64 MiB
+		// encoded-request ceiling. The reconciler enforces this as a per-pass
+		// OWNER cap (not just a message page size), so each scheduled pass is
+		// bounded by two paid owners and roughly 40 MiB of decoded media even
+		// when one message carries many standalone attachments.
+		PageSize: 2, LeaseOwner: consumerKey, LeaseDuration: 2 * time.Minute,
+		MediaPolicy: mediaPolicy,
+		ContextPolicy: visual.ContextPolicy{MaxChars: vecCfg.Multimodal.MaxContextChars,
+			InputVersion: fingerprint, EligibilityVersion: fingerprint},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Batches beyond one item need the probed batch capability.
+	maxBatch := 1
+	if slices.Contains(provider.AuthorizedCapabilities(), voyage.CapabilityBatchLimits) {
+		maxBatch = 2
+	}
+	worker, err := visual.NewWorker(mainStore, provider, visualBackend, visual.WorkerConfig{
+		Dimension: vecCfg.Multimodal.Dimension, ProviderTimeout: 45 * time.Second,
+		LeaseDuration: 2 * time.Minute, MaxBatchItems: maxBatch,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &visualFeatures{Archive: mainStore, Backend: visualBackend, Provider: provider, Reconciler: reconciler, Worker: worker, Generation: generation, PolicyFingerprint: provider.PolicyFingerprint(), ScopeCheck: scopeCheck}, nil
+}
 
-	// No sync-time enqueue: newly-persisted messages get embed_gen = NULL
-	// by column default and the scan-and-fill worker picks them up.
+// visualScopeCheck re-resolves the configured multimodal account scope and
+// refuses to proceed when the mapping to source IDs drifted — a deleted or
+// re-created account changes it while SQLite may reuse the old numeric ID.
+// The daemon must be reinitialized so the fingerprint, generation, and
+// consent are re-derived for the new scope.
+func visualScopeCheck(s *store.Store, accounts []string, expected []int64) func(context.Context) error {
+	if len(accounts) == 0 {
+		return func(context.Context) error { return nil }
+	}
+	want := slices.Clone(expected)
+	slices.Sort(want)
+	return func(context.Context) error {
+		ids, err := resolveEmbedAccountList(s, accounts, true)
+		if err != nil {
+			return fmt.Errorf("[vector.multimodal.scope] accounts: %w", err)
+		}
+		got := vector.NewBuildScope(nil, ids).SourceIDs
+		slices.Sort(got)
+		if !slices.Equal(want, got) {
+			return errors.New("the multimodal account scope no longer resolves to the same sources; restart the daemon to re-derive the visual generation and re-record consent")
+		}
+		return nil
+	}
+}
 
-	return &vectorFeatures{
-		Backend:      backend,
-		HybridEngine: engine,
-		Runner:       runtime.Runner,
-		Convergence:  runtime.Convergence,
-		Cfg:          vecCfg,
-		Close:        closeFn,
-	}, nil
+// loadVisualCapabilityManifest reads and strictly validates the operator's
+// probed Voyage capability manifest. The multimodal lane cannot run without
+// one: nothing has upload authority until a probe recorded it.
+func loadVisualCapabilityManifest(path string) (voyage.CapabilityManifest, error) {
+	if strings.TrimSpace(path) == "" {
+		return voyage.CapabilityManifest{}, errors.New(
+			"vector.multimodal.capabilities_file is not set; run `msgvault multimodal probe` and configure the manifest path")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return voyage.CapabilityManifest{}, fmt.Errorf("open Voyage capability manifest: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	manifest, err := voyage.DecodeCapabilityManifest(file)
+	if err != nil {
+		return voyage.CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest %s: %w", path, err)
+	}
+	return manifest, nil
+}
+
+// eligibleVisualCapabilities filters probed document capabilities to those
+// whose interleaved twin is also probed when message context is enabled, so
+// no eligible owner can produce a request shape the manifest does not cover.
+func eligibleVisualCapabilities(authorized []string, contextEnabled bool) []string {
+	interleavedTwin := map[string]string{
+		voyage.CapabilityImageJPEG:        voyage.CapabilityInterleavedJPEG,
+		voyage.CapabilityImagePNG:         voyage.CapabilityInterleavedPNG,
+		voyage.CapabilityImageWebP:        voyage.CapabilityInterleavedWebP,
+		voyage.CapabilityImageGIFStill:    voyage.CapabilityInterleavedGIFStill,
+		voyage.CapabilityImageGIFAnimated: voyage.CapabilityInterleavedGIFAnimated,
+		voyage.CapabilityVideoMP4:         voyage.CapabilityInterleavedMP4,
+	}
+	eligible := make([]string, 0, len(authorized))
+	for _, capability := range authorized {
+		twin, isDocument := interleavedTwin[capability]
+		if !isDocument {
+			continue
+		}
+		if contextEnabled && !slices.Contains(authorized, twin) {
+			continue
+		}
+		eligible = append(eligible, capability)
+	}
+	slices.Sort(eligible)
+	return eligible
 }

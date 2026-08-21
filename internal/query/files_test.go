@@ -87,6 +87,26 @@ func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestSearchFilesRestrictsVisualCandidateAttachmentIDsAfterHardFilters(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "Visual candidates"})
+	b.AddAttachmentWithMIME(71, message, 10, "first.png", "image/png")
+	b.AddAttachmentWithMIME(72, message, 20, "second.pdf", "application/pdf")
+	b.AddAttachmentWithMIME(73, message, 30, "third.png", "image/png")
+
+	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+		AttachmentIDs: []int64{72, 73}, MIMEFamilies: []FileMIMEFamily{FileMIMEImage},
+		Sort: SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Files, 1)
+	assertions.Equal(int64(73), result.Files[0].ID)
+	assertions.Equal(int64(1), result.TotalCount)
+}
+
 func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

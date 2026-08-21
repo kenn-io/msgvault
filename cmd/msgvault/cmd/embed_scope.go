@@ -173,21 +173,29 @@ func ensureEmbedScopeResolved() error {
 // background vector init would otherwise race on the global scope field.
 func resolvedVectorConfig(s *store.Store) (vector.Config, error) {
 	vecCfg := cfg.Vector
-	if len(vecCfg.Embed.Scope.Accounts) == 0 {
-		return vecCfg, nil
+	// Each scope resolves only for its enabled lane: a stale account in a
+	// disabled lane's scope must not block the enabled lane from starting.
+	if vecCfg.Enabled && len(vecCfg.Embed.Scope.Accounts) > 0 {
+		ids, err := resolveEmbedAccountList(s, vecCfg.Embed.Scope.Accounts, true)
+		if err != nil {
+			return vector.Config{}, fmt.Errorf("[vector.embed.scope] accounts: %w", err)
+		}
+		vecCfg.Embed.Scope.SourceIDs = vector.NewBuildScope(nil, ids).SourceIDs
 	}
-	ids, err := resolveEmbedAccountList(s, vecCfg.Embed.Scope.Accounts, true)
-	if err != nil {
-		return vector.Config{}, fmt.Errorf("[vector.embed.scope] accounts: %w", err)
+	if vecCfg.Multimodal.Enabled && len(vecCfg.Multimodal.Scope.Accounts) > 0 {
+		ids, err := resolveEmbedAccountList(s, vecCfg.Multimodal.Scope.Accounts, true)
+		if err != nil {
+			return vector.Config{}, fmt.Errorf("[vector.multimodal.scope] accounts: %w", err)
+		}
+		vecCfg.Multimodal.Scope.SourceIDs = vector.NewBuildScope(nil, ids).SourceIDs
 	}
-	vecCfg.Embed.Scope.SourceIDs = vector.NewBuildScope(nil, ids).SourceIDs
 	return vecCfg, nil
 }
 
 // openResolvedVectorConfig is resolvedVectorConfig for callers without an
 // open store, such as the daemon's CLI-plan HTTP handlers.
 func openResolvedVectorConfig() (vector.Config, error) {
-	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
+	if len(cfg.Vector.Embed.Scope.Accounts) == 0 && len(cfg.Vector.Multimodal.Scope.Accounts) == 0 {
 		return cfg.Vector, nil
 	}
 	s, err := store.Open(cfg.DatabaseDSN())

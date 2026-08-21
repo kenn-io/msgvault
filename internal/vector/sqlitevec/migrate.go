@@ -14,8 +14,10 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// Migrate runs the baseline schema and ensures a vec0 virtual table
-// for `defaultDim` exists. Safe to run on every startup.
+// Migrate runs the baseline schema and, when defaultDim > 0, ensures a vec0
+// virtual table for that dimension exists. defaultDim <= 0 skips the table:
+// a multimodal-only open has no text embedding dimension. Safe to run on
+// every startup.
 //
 // PRAGMA foreign_keys is applied per-connection by the ConnectHook
 // registered in RegisterExtension; it is intentionally not run here.
@@ -70,6 +72,12 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	}
 	if err := migrateVecTablesToChunked(ctx, db); err != nil {
 		return fmt.Errorf("migrate vec tables to chunked layout: %w", err)
+	}
+	// defaultDim is informational, mirroring pgvector: a multimodal-only
+	// configuration has no text embedding dimension, and text generations
+	// create their dimension-specific table in CreateGeneration anyway.
+	if defaultDim <= 0 {
+		return nil
 	}
 	return EnsureVectorTable(ctx, db, defaultDim)
 }

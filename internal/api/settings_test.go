@@ -48,7 +48,10 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assert.NotContains(byKey, "unsupported.private_value")
 	for _, setting := range body.Settings {
 		assert.True(setting.RestartRequired, setting.Key)
-		assert.Equal(setting.Key == "vector.embeddings.api_key_env", setting.ReadOnly, setting.Key)
+		wantReadOnly := setting.Key == "vector.embeddings.api_key_env" ||
+			setting.Key == "vector.multimodal.api_key_env" ||
+			setting.Key == "vector.multimodal.capabilities_file"
+		assert.Equal(wantReadOnly, setting.ReadOnly, setting.Key)
 	}
 	assert.NotContains(resp.Body.String(), "test-api-key")
 	assert.NotContains(resp.Body.String(), "task-secret")
@@ -71,6 +74,32 @@ func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(got), `api_format = "voyage-contextual"`)
 	assert.Contains(string(got), `model = "voyage-context-4"`)
+}
+
+func TestGetSettingsExposesMultimodalPolicyWithoutCredentialState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("SYNTHETIC_VOYAGE_KEY", "synthetic-key-value")
+	srv, _ := newSettingsTestServer(t, `[vector.multimodal]
+enabled = true
+api_key_env = "SYNTHETIC_VOYAGE_KEY"
+include_images = false
+include_video = true
+`)
+	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	byKey := settingsByKey(body.Settings)
+	require.NotNil(byKey["vector.multimodal.enabled"].Value.Boolean)
+	assert.True(*byKey["vector.multimodal.enabled"].Value.Boolean)
+	require.NotNil(byKey["vector.multimodal.include_images"].Value.Boolean)
+	assert.False(*byKey["vector.multimodal.include_images"].Value.Boolean)
+	require.NotNil(byKey["vector.multimodal.include_video"].Value.Boolean)
+	assert.True(*byKey["vector.multimodal.include_video"].Value.Boolean)
+	assert.True(byKey["vector.multimodal.api_key_env"].ReadOnly)
+	assert.NotContains(resp.Body.String(), "synthetic-key-value")
 }
 
 func TestPatchSettingsRequiresMatchingETag(t *testing.T) {
@@ -326,6 +355,31 @@ func TestPatchSettingsClearsEmbeddingsAPIKeyEnvWhenEndpointOriginChanges(t *test
 	require.NotNil(byKey["vector.embeddings.api_key_env"].Value)
 	require.NotNil(byKey["vector.embeddings.api_key_env"].Value.String)
 	assert.Empty(*byKey["vector.embeddings.api_key_env"].Value.String)
+}
+
+func TestPatchSettingsClearsMultimodalAPIKeyEnvWhenEndpointOriginChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, path := newSettingsTestServer(t,
+		"[vector.multimodal]\nendpoint = \"https://api.voyageai.com/v1\"\n"+
+			"api_key_env = \"SYNTHETIC_VOYAGE_KEY\"\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"vector.multimodal.endpoint","value":{"string":"https://voyage.example.test/v1"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), `endpoint = "https://voyage.example.test/v1"`)
+	assert.Contains(string(got), `api_key_env = ""`)
+	assert.NotContains(string(got), "SYNTHETIC_VOYAGE_KEY")
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	keySetting := settingsByKey(body.Settings)["vector.multimodal.api_key_env"]
+	require.NotNil(keySetting.Value)
+	require.NotNil(keySetting.Value.String)
+	assert.Empty(*keySetting.Value.String)
 }
 
 func TestPatchSettingsEditableChangeSucceedsWhileReadOnlySettingIsConfigured(t *testing.T) {

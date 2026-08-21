@@ -129,3 +129,16 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor TEXT NOT NULL DEFAULT ''
 );
+
+-- Visual vectors remain opaque in vectors.db. Ownership, source evidence,
+-- publication state, and model inputs stay in the authoritative archive.
+-- The fixed 1,024 dimension is the voyage-multimodal-3.5 contract.
+CREATE TABLE IF NOT EXISTS visual_vectors (
+    vector_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    vector_token TEXT NOT NULL UNIQUE,
+    dimension    INTEGER NOT NULL CHECK (dimension = 1024),
+    created_at   INTEGER NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS visual_vectors_vec USING vec0(
+    embedding float[1024] distance_metric=cosine
+);

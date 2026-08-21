@@ -274,7 +274,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := precheckVectorFeatures(dbPath); err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
 	}
 
@@ -557,7 +557,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BlobStore:                     blobStore,
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
-	if cfg.Vector.Enabled {
+	if cfg.Vector.AnyLaneEnabled() {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
@@ -616,7 +616,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		vectorInit = startVectorInit(
 			ctx, s, dbPath,
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
-			apiServer, sched,
+			apiServer, sched, blobStore,
 		)
 
 		fmt.Printf("msgvault daemon started\n")

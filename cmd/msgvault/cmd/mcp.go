@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 var mcpForceSQL bool
@@ -95,7 +96,32 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
 		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 	}
+	// The daemon owns the multimodal lane; a remote-only MCP client's local
+	// config says nothing about it, so availability is probed, not assumed.
+	// The stats lane field distinguishes configured (including still
+	// initializing) from disabled, so a transient 503 during asynchronous
+	// vector init cannot permanently omit the tool — per-request errors
+	// report readiness instead. Older daemons lack the field; fall back to
+	// the visual status endpoint answering at all.
+	visualAvailable, laneReported, visualErr := st.VisualSearchAvailable(ctx)
+	if visualErr == nil && !laneReported {
+		_, statusErr := st.VisualStatus(ctx)
+		visualAvailable = statusErr == nil
+	}
+	if visualErr == nil && visualAvailable {
+		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
+	}
 	return opts, nil
+}
+
+type daemonMCPVisualSearcher struct{ client *daemonclient.Client }
+
+func (s daemonMCPVisualSearcher) SearchVisualAttachments(ctx context.Context, request mcpserver.VisualSearchRequest) (*visual.SearchResponse, error) {
+	return s.client.SearchVisualAttachmentsFiltered(ctx, daemonclient.VisualSearchOptions{
+		Text: request.Text, Image: request.Image, Limit: request.Limit, Cursor: request.Cursor,
+		SenderPersonID: request.SenderPersonID, SourceID: request.SourceID, MessageID: request.MessageID,
+		Filename: request.Filename, MIMEPrefix: request.MIMEPrefix, After: request.After, Before: request.Before,
+	})
 }
 
 type daemonMCPHybridSearcher struct {

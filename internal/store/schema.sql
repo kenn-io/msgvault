@@ -645,6 +645,84 @@ CREATE TABLE IF NOT EXISTS attachment_change_consumers (
     CHECK (last_sequence >= baseline_sequence)
 );
 
+-- Provider-independent visual indexing lifecycle. Dense vectors live in the
+-- selected vector backend; only opaque publication tokens are authoritative
+-- here, which keeps SQLite cross-database publication crash-safe.
+CREATE TABLE IF NOT EXISTS visual_generations (
+    id INTEGER PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    model TEXT NOT NULL,
+    dimension INTEGER NOT NULL CHECK (dimension = 1024),
+    state TEXT NOT NULL DEFAULT 'building'
+        CHECK (state IN ('building', 'active', 'retired')),
+    source_fence INTEGER NOT NULL DEFAULT 0,
+    consented_at DATETIME,
+    -- Docbank Voyage policy fingerprint the consent was recorded against. A
+    -- re-probed manifest changes the fingerprint and requires new consent.
+    consent_policy_fingerprint TEXT,
+    -- Policy fingerprint the archive was last reconciled under. A change
+    -- forces a full re-evaluation of every candidate without discarding the
+    -- generation's published vectors.
+    capability_fingerprint TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    activated_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_active
+    ON visual_generations(state) WHERE state = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_building
+    ON visual_generations(state) WHERE state = 'building';
+
+CREATE TABLE IF NOT EXISTS visual_publications (
+    generation_id INTEGER NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    published_revision TEXT,
+    prepared_revision TEXT,
+    source_fence INTEGER NOT NULL DEFAULT 0,
+    representative_attachment_id INTEGER,
+    attachment_role TEXT NOT NULL,
+    role_source TEXT NOT NULL,
+    current_vector_token TEXT,
+    pending_vector_token TEXT,
+    state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'tombstoned')),
+    outcome_kind TEXT,
+    outcome_reason TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key)
+);
+
+-- Backend vector tokens the archive no longer references but whose backend
+-- rows still need deleting. Every statement that drops a token from
+-- current_vector_token or pending_vector_token records it here in the same
+-- transaction, so a crashed or failed inline backend delete is retried by
+-- the obsolete-token sweep instead of orphaning the vector. Multi-row: any
+-- number of tokens can be pending cleanup for one owner.
+CREATE TABLE IF NOT EXISTS visual_obsolete_tokens (
+    generation_id INTEGER NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    vector_token TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, vector_token)
+);
+
+CREATE TABLE IF NOT EXISTS visual_work_claims (
+    generation_id INTEGER NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    proposed_revision TEXT NOT NULL,
+    lease_owner TEXT NOT NULL,
+    lease_expires_at DATETIME NOT NULL,
+    fencing_token INTEGER NOT NULL,
+    source_fence INTEGER NOT NULL,
+    -- CAS stamp of the owning message's context at claim time. Commit
+    -- refuses when the live stamp differs, so a subject or body edit during
+    -- a provider request can never publish a vector of the old context.
+    claimed_content_stamp TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key, proposed_revision)
+);
+
 -- ============================================================================
 -- SYNC STATE
 -- ============================================================================

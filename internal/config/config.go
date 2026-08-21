@@ -748,6 +748,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
+	// Multimodal defaults depend on the decoded credential destination. Reset
+	// the pre-filled section so changing endpoint cannot silently carry the
+	// default Voyage key environment name to another origin.
+	cfg.Vector.Multimodal = vector.MultimodalConfig{}
 	metadata, err := toml.Decode(string(content), cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
@@ -774,6 +778,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
+	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
@@ -789,6 +794,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
+		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
@@ -805,6 +811,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Attachments.Documents.ApplyDefaults()
 	if err := cfg.Attachments.Documents.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Vector.AnyLaneEnabled() {
+		if err := cfg.Vector.Validate(); err != nil {
+			return nil, fmt.Errorf("vector config: %w", err)
+		}
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()

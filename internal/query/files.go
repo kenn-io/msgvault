@@ -78,6 +78,7 @@ type FileSearchRequest struct {
 	Explore       ExploreRequest   `json:"explore"`
 	FilenameQuery string           `json:"filename_query,omitempty"`
 	MIMEFamilies  []FileMIMEFamily `json:"mime_families,omitempty"`
+	AttachmentIDs []int64          `json:"attachment_ids,omitempty"`
 	Sort          SortSpec         `json:"sort"`
 	Page          PageSpec         `json:"page"`
 	Person        *PersonFileScope `json:"-"`
@@ -157,6 +158,20 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	}
 	exploreConditions, exploreArgs := buildExploreConditions(explore)
 	fileConditions, fileArgs := buildFileConditions(request.FilenameQuery, request.MIMEFamilies)
+	if len(request.AttachmentIDs) > 0 {
+		if len(request.AttachmentIDs) > maxFileSearchLimit {
+			return nil, fmt.Errorf("%w: too many attachment IDs", ErrInvalidExploreRequest)
+		}
+		placeholders := make([]string, len(request.AttachmentIDs))
+		for i, id := range request.AttachmentIDs {
+			if id <= 0 {
+				return nil, fmt.Errorf("%w: attachment IDs must be positive", ErrInvalidExploreRequest)
+			}
+			placeholders[i] = "?"
+			fileArgs = append(fileArgs, id)
+		}
+		fileConditions += " AND attachment_id IN (" + strings.Join(placeholders, ",") + ")"
+	}
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = 100
@@ -767,7 +782,7 @@ func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) str
 	ORDER BY ` + order + ` LIMIT ? OFFSET ?
 ), total AS (
 	SELECT COUNT(*) AS total_count FROM (
-		SELECT COALESCE(a.filename, '') AS filename, ` + sqlFileMIMEFamilyExpr() + ` AS mime_family
+		SELECT a.attachment_id, COALESCE(a.filename, '') AS filename, ` + sqlFileMIMEFamilyExpr() + ` AS mime_family
 		FROM (SELECT message_id FROM entry_core AS analytical_entries WHERE ` + exploreConditions + `) s
 		JOIN attachments a ON a.message_id = s.message_id
 	) WHERE ` + fileConditions + `
