@@ -239,6 +239,7 @@ type StagedManifest struct {
 type remoteKey struct {
 	Account    string
 	SourceType string
+	SourceID   int64
 }
 
 // Scan finds all duplicate groups that dedup would prune.
@@ -825,6 +826,36 @@ func sourcePriority(sourceType string, priorityMap map[string]int) int {
 	return len(priorityMap)
 }
 
+func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][]string, error) {
+	bySource := make(map[remoteKey][]string)
+	for _, group := range report.Groups {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		survivor := group.Messages[group.Survivor]
+		for i, message := range group.Messages {
+			if i == group.Survivor || !remoteSourceTypes[message.SourceType] || message.SourceID != survivor.SourceID {
+				continue
+			}
+			switch {
+			case message.SourceID <= 0:
+				return nil, fmt.Errorf("message %d selected for remote deletion has no source ID", message.ID)
+			case strings.TrimSpace(message.SourceType) == "":
+				return nil, fmt.Errorf("message %d selected for remote deletion has no source type", message.ID)
+			case strings.TrimSpace(message.SourceIdentifier) == "":
+				return nil, fmt.Errorf("message %d selected for remote deletion has no source identifier", message.ID)
+			case strings.TrimSpace(message.SourceMessageID) == "":
+				return nil, fmt.Errorf("message %d selected for remote deletion has no source message ID", message.ID)
+			}
+			key := remoteKey{
+				Account: message.SourceIdentifier, SourceType: message.SourceType, SourceID: message.SourceID,
+			}
+			bySource[key] = append(bySource[key], message.SourceMessageID)
+		}
+	}
+	return bySource, nil
+}
+
 // Execute merges every duplicate group: unions labels onto the
 // survivor, soft-deletes the pruned duplicates, and — when
 // DeleteDupsFromSourceServer is enabled AND a pruned copy shares a
@@ -844,6 +875,13 @@ func (e *Engine) Execute(
 	)
 
 	remoteByKey := make(map[remoteKey][]string)
+	if e.config.DeleteDupsFromSourceServer {
+		var err error
+		remoteByKey, err = remoteDeletionTargets(ctx, report)
+		if err != nil {
+			return summary, err
+		}
+	}
 
 	for i, group := range report.Groups {
 		if ctx.Err() != nil {
@@ -858,24 +896,6 @@ func (e *Engine) Execute(
 				continue
 			}
 			dupIDs = append(dupIDs, m.ID)
-
-			if !e.config.DeleteDupsFromSourceServer {
-				continue
-			}
-			if !remoteSourceTypes[m.SourceType] {
-				continue
-			}
-			if m.SourceID != survivor.SourceID {
-				continue
-			}
-			acct := m.SourceIdentifier
-			if acct == "" {
-				acct = e.config.Account
-			}
-			key := remoteKey{Account: acct, SourceType: m.SourceType}
-			remoteByKey[key] = append(
-				remoteByKey[key], m.SourceMessageID,
-			)
 		}
 
 		mergeResult, err := e.store.MergeDuplicates(
@@ -936,7 +956,10 @@ func (e *Engine) stageDeletionManifests(
 		if keys[i].Account != keys[j].Account {
 			return keys[i].Account < keys[j].Account
 		}
-		return keys[i].SourceType < keys[j].SourceType
+		if keys[i].SourceType != keys[j].SourceType {
+			return keys[i].SourceType < keys[j].SourceType
+		}
+		return keys[i].SourceID < keys[j].SourceID
 	})
 
 	// Single-type accounts keep the original manifest ID (no source-type
@@ -956,9 +979,11 @@ func (e *Engine) stageDeletionManifests(
 		}
 
 		description := fmt.Sprintf("Dedup pruned duplicates (%s)", batchID)
-		manifest := deletion.NewManifest(description, ids)
+		manifest := deletion.NewManifestForSource(description, ids, deletion.SourceReference{
+			ID: k.SourceID, Type: k.SourceType, Identifier: k.Account,
+		})
 		if typesPerAccount[k.Account] > 1 {
-			manifest.ID = manifestIDFor(batchID, k.Account+"-"+k.SourceType)
+			manifest.ID = manifestIDFor(batchID, fmt.Sprintf("%s-%s-%d", k.Account, k.SourceType, k.SourceID))
 		} else {
 			manifest.ID = manifestIDFor(batchID, k.Account)
 		}

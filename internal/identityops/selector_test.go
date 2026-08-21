@@ -1,13 +1,29 @@
 package identityops_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestSourceSelectorJSONPreservesExplicitSourceIDPresence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var req identityops.AddRequest
+	require.NoError(json.Unmarshal([]byte(`{"source_id":0,"identifier":"me@example.test"}`), &req))
+
+	assert.True(req.SourceIDSet)
+	_, err := identityops.ResolveSource(testutil.NewTestStore(t), req.SourceSelector)
+	require.Error(err)
+	assert.Equal(opserr.KindInvalid, opserr.KindOf(err))
+	assert.ErrorContains(err, "source ID must be positive")
+}
 
 func TestResolveSourceRequiresExactlyOneSelector(t *testing.T) {
 	requirements := require.New(t)

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,31 +57,33 @@ func seedMessageWithAttachment(
 	email, threadKey, msgKey, storagePath, contentHash string,
 ) {
 	t.Helper()
+	require := require.New(t)
 	src, err := s.GetOrCreateSource("gmail", email)
-	require.NoError(t, err, "GetOrCreateSource(%s)", email)
+	require.NoError(err, "GetOrCreateSource(%s)", email)
 	convID, err := s.EnsureConversation(src.ID, threadKey, "Thread")
-	require.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: msgKey,
 		MessageType:     "email",
 	})
-	require.NoError(t, err, "UpsertMessage")
-	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	require.NoError(err, "UpsertMessage")
+	require.NoError(s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
 func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
 	t.Helper()
+	require := require.New(t)
 	const email = "test@example.com"
 	const storagePath = "aa/bb/a.pdf"
 	src, err := s.GetOrCreateSource(sourceTypeGmail, email)
-	require.NoError(t, err)
+	require.NoError(err)
 	convID, err := s.EnsureConversation(src.ID, "thread-1", "Thread")
-	require.NoError(t, err)
+	require.NoError(err)
 	senderID, err := s.EnsureParticipant(email, "Sender", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
@@ -89,9 +92,9 @@ func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
 		SentAt:          sql.NullTime{Time: time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC), Valid: true},
 		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
 	})
-	require.NoError(t, err)
-	require.NoError(t, s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
-	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
+	require.NoError(err)
+	require.NoError(s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
+	require.NoError(s.UpsertAttachment(msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
 }
 
 func executeRemoveAccount(t *testing.T) error {
@@ -163,6 +166,146 @@ func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
 	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
 	assert.Equal("Account removed\n", stdout.String(), "stdout")
 	assert.Equal("remove warning\n", stderr.String(), "stderr")
+}
+
+func TestRemoveAccountSourceIDUsesDaemonCLIRunner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	requests := &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req)) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal([]string{"remove-account", "--source-id=42", "--yes"}, req.Args)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		Remote: config.RemoteConfig{
+			URL:           server.URL,
+			AllowInsecure: true,
+		},
+	}
+	useLocal = false
+
+	cmd := newRemoveAccountCmd()
+	cmd.SetArgs([]string{"--source-id", "42", "--yes"})
+	require.NoError(cmd.Execute())
+	assert.Equal(int32(1), requests.Load())
+}
+
+func TestRemoveAccountSelectorValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "explicit zero", args: []string{"--source-id", "0", "--yes"}, want: "positive"},
+		{name: "token plus ID", args: []string{"alice@example.test", "--source-id", "42", "--yes"}, want: "mutually exclusive"},
+		{name: "ID plus type", args: []string{"--source-id", "42", "--type", "gmail", "--yes"}, want: "mutually exclusive"},
+		{name: "missing selector", args: []string{"--yes"}, want: "required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newRemoveAccountCmd()
+			cmd.RunE = runRemoveAccountHTTP
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestRemoveAccountTypeRejectsSameTypeDisplayCollision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	tmpDir := t.TempDir()
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	first, err := s.GetOrCreateSource("gmail", "first@example.test")
+	require.NoError(err)
+	second, err := s.GetOrCreateSource("gmail", "second@example.test")
+	require.NoError(err)
+	require.NoError(s.UpdateSourceDisplayName(first.ID, "Work"))
+	require.NoError(s.UpdateSourceDisplayName(second.ID, "Work"))
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "Work", "--yes", "--type", "gmail"})
+	err = root.Execute()
+	require.ErrorContains(err, "ambiguous")
+
+	s, err = store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	sources, err := s.ListSources("gmail")
+	require.NoError(err)
+	assert.Len(sources, 2)
+}
+
+func TestRemoveAccountSourceIDDeletesOnlyExactSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	gmail, err := s.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	imap, err := s.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "--source-id", strconv.FormatInt(imap.ID, 10), "--yes",
+	})
+	require.NoError(root.Execute())
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	remaining, err := s.GetSourceByID(gmail.ID)
+	require.NoError(err)
+	assert.Equal(gmail.ID, remaining.ID)
+	_, err = s.GetSourceByID(imap.ID)
+	assert.ErrorIs(err, store.ErrSourceNotFound)
 }
 
 func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
@@ -550,7 +693,7 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error for unknown email")
-	assert.ErrorContains(t, err, "not found")
+	assert.ErrorContains(t, err, "no account found")
 }
 
 func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
@@ -909,7 +1052,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	err = root.Execute()
 	require.Error(err, "expected error for ambiguous identifier")
-	require.ErrorContains(err, "multiple accounts")
+	require.ErrorContains(err, "ambiguous")
 
 	// With --type should succeed
 	root2 := newTestRootCmd()

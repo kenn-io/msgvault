@@ -454,6 +454,8 @@ type CLICacheBuildEvent struct {
 type CLISyncRequest struct {
 	Full        bool
 	Email       string
+	SourceID    int64
+	SourceIDSet bool
 	Query       string
 	NoResume    bool
 	Before      string
@@ -535,6 +537,7 @@ type CLIDeleteStagedPlanRequest struct {
 	DryRun              bool   `json:"dry_run,omitempty"`
 	List                bool   `json:"list,omitempty"`
 	Account             string `json:"account,omitempty"`
+	SourceID            *int64 `json:"source_id,omitempty"`
 	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitempty"`
 }
 
@@ -545,6 +548,7 @@ type CLIDeleteStagedPlanResponse struct {
 	ConfirmationMode          string   `json:"confirmation_mode,omitempty"`
 	PlannedBatchIDs           []string `json:"planned_batch_ids,omitempty"`
 	PlanFingerprint           string   `json:"plan_fingerprint,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
 	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitempty"`
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
@@ -1050,6 +1054,32 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		Before: values.Get("before"),
 		After:  values.Get("after"),
 	}
+	if rawSourceID, sourceIDSet := values["source_id"]; sourceIDSet {
+		if len(rawSourceID) != 1 {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_id",
+				"source_id must be specified exactly once",
+			)
+		}
+		sourceID, err := strconv.ParseInt(rawSourceID[0], 10, 64)
+		if err != nil || sourceID <= 0 {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_id",
+				"source_id must be a positive integer",
+			)
+		}
+		if req.Email != "" {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_selector",
+				"email and source_id are mutually exclusive",
+			)
+		}
+		req.SourceID = sourceID
+		req.SourceIDSet = true
+	}
 	for _, v := range values["folder"] {
 		if v != "" {
 			req.Folders = append(req.Folders, v)
@@ -1342,6 +1372,9 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 	}
 	if manifest.Version == 0 {
 		manifest.Version = 1
+	}
+	if err := manifest.ValidateVersion(); err != nil {
+		return newAPIHTTPError(http.StatusBadRequest, "invalid_manifest_version", err.Error())
 	}
 	if manifest.CreatedBy == "" {
 		manifest.CreatedBy = "cli"

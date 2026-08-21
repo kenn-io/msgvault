@@ -474,6 +474,7 @@ type CLIDeleteStagedPlanRequest struct {
 	List                *bool   `json:"list,omitempty"`
 	Permanent           *bool   `json:"permanent,omitempty"`
 	RemoteDeleteEnabled *bool   `json:"remote_delete_enabled,omitempty"`
+	SourceID            *int64  `json:"source_id,omitempty"`
 	Yes                 *bool   `json:"yes,omitempty"`
 }
 
@@ -486,6 +487,7 @@ type CLIDeleteStagedPlanResponse struct {
 	PlanFingerprint           *string  `json:"plan_fingerprint,omitempty"`
 	PlannedBatchIds           []string `json:"planned_batch_ids,omitempty"`
 	RemoteDeleteEnvVar        *string  `json:"remote_delete_env_var,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
 	ScopeEscalationAccount    *string  `json:"scope_escalation_account,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint *string  `json:"scope_escalation_cancel_hint,omitempty"`
@@ -1597,15 +1599,16 @@ func (d DeepSearchResponse) Validate() error {
 }
 
 type DeletionManifestDetail struct {
-	Account      *string    `json:"account,omitempty"`
-	CreatedAt    time.Time  `json:"created_at" validate:"required"`
-	CreatedBy    string     `json:"created_by" validate:"required"`
-	Description  string     `json:"description" validate:"required"`
-	Execution    *Execution `json:"execution,omitempty"`
-	ID           string     `json:"id" validate:"required"`
-	MessageCount int64      `json:"message_count"`
-	Status       string     `json:"status" validate:"required"`
-	Summary      *Summary   `json:"summary,omitempty"`
+	Account      *string          `json:"account,omitempty"`
+	CreatedAt    time.Time        `json:"created_at" validate:"required"`
+	CreatedBy    string           `json:"created_by" validate:"required"`
+	Description  string           `json:"description" validate:"required"`
+	Execution    *Execution       `json:"execution,omitempty"`
+	ID           string           `json:"id" validate:"required"`
+	MessageCount int64            `json:"message_count"`
+	Source       *SourceReference `json:"source,omitempty"`
+	Status       string           `json:"status" validate:"required"`
+	Summary      *Summary         `json:"summary,omitempty"`
 }
 
 func (d DeletionManifestDetail) Validate() error {
@@ -1628,6 +1631,13 @@ func (d DeletionManifestDetail) Validate() error {
 	}
 	if err := typesValidator.Var(d.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
+	}
+	if d.Source != nil {
+		if v, ok := any(d.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(d.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
@@ -1655,6 +1665,18 @@ type DeletionManifestSummary struct {
 }
 
 func (d DeletionManifestSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeletionTarget struct {
+	MessageID        int64  `json:"message_id"`
+	SourceID         int64  `json:"source_id"`
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+	SourceMessageID  string `json:"source_message_id" validate:"required"`
+	SourceType       string `json:"source_type" validate:"required"`
+}
+
+func (d DeletionTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -3075,11 +3097,26 @@ func (g GenerationSummary) Validate() error {
 }
 
 type GmailIDsResponse struct {
-	GmailIds []string `json:"gmail_ids,omitempty" validate:"required"`
+	GmailIds []string         `json:"gmail_ids,omitempty" validate:"required"`
+	Targets  []DeletionTarget `json:"targets,omitempty"`
 }
 
 func (g GmailIDsResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.GmailIds, "required"); err != nil {
+		errors = errors.Append("GmailIds", err)
+	}
+	for i, item := range g.Targets {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Targets[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type HealthResponse struct {
@@ -3559,17 +3596,18 @@ func (l ListDeletionsResponse) Validate() error {
 }
 
 type Manifest struct {
-	CreatedAt   time.Time  `json:"created_at" validate:"required"`
-	CreatedBy   string     `json:"created_by" validate:"required"`
-	Description string     `json:"description" validate:"required"`
-	Execution   *Execution `json:"execution,omitempty"`
-	Filters     Filters    `json:"filters"`
-	GmailIds    []string   `json:"gmail_ids,omitempty" validate:"required"`
-	ID          string     `json:"id" validate:"required"`
-	RawFilter   *struct{}  `json:"raw_filter,omitempty"`
-	Status      string     `json:"status" validate:"required"`
-	Summary     *Summary   `json:"summary,omitempty"`
-	Version     int64      `json:"version"`
+	CreatedAt   time.Time        `json:"created_at" validate:"required"`
+	CreatedBy   string           `json:"created_by" validate:"required"`
+	Description string           `json:"description" validate:"required"`
+	Execution   *Execution       `json:"execution,omitempty"`
+	Filters     Filters          `json:"filters"`
+	GmailIds    []string         `json:"gmail_ids,omitempty" validate:"required"`
+	ID          string           `json:"id" validate:"required"`
+	RawFilter   *struct{}        `json:"raw_filter,omitempty"`
+	Source      *SourceReference `json:"source,omitempty"`
+	Status      string           `json:"status" validate:"required"`
+	Summary     *Summary         `json:"summary,omitempty"`
+	Version     int64            `json:"version"`
 }
 
 func (m Manifest) Validate() error {
@@ -3600,6 +3638,13 @@ func (m Manifest) Validate() error {
 	}
 	if err := typesValidator.Var(m.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
+	}
+	if m.Source != nil {
+		if v, ok := any(m.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
@@ -7088,6 +7133,16 @@ func (s SourceIdentityResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type SourceReference struct {
+	ID         int64  `json:"id"`
+	Identifier string `json:"identifier" validate:"required"`
+	Type       string `json:"type" validate:"required"`
+}
+
+func (s SourceReference) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SourceStatus struct {
 	ActiveSync            *SyncRunStatus `json:"active_sync,omitempty"`
 	CanSync               bool           `json:"can_sync"`
@@ -7230,12 +7285,28 @@ func (s StageDeletionRequest) Validate() error {
 }
 
 type StageDeletionResponse struct {
-	Account        *string  `json:"account,omitempty"`
-	DryRun         bool     `json:"dry_run"`
-	ID             *string  `json:"id,omitempty"`
-	MessageCount   int64    `json:"message_count"`
-	SampleGmailIds []string `json:"sample_gmail_ids,omitempty"`
-	Status         *string  `json:"status,omitempty"`
+	Account        *string          `json:"account,omitempty"`
+	DryRun         bool             `json:"dry_run"`
+	ID             *string          `json:"id,omitempty"`
+	MessageCount   int64            `json:"message_count"`
+	SampleGmailIds []string         `json:"sample_gmail_ids,omitempty"`
+	Source         *SourceReference `json:"source,omitempty"`
+	Status         *string          `json:"status,omitempty"`
+}
+
+func (s StageDeletionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Source != nil {
+		if v, ok := any(s.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type StatsResponse struct {
@@ -7737,8 +7808,10 @@ func (t TranscriptSegment) Validate() error {
 }
 
 type UpdateRequest struct {
-	DisplayName string `json:"display_name" validate:"required"`
-	Email       string `json:"email" validate:"required"`
+	Account     *string `json:"account,omitempty"`
+	DisplayName string  `json:"display_name" validate:"required"`
+	Email       *string `json:"email,omitempty"`
+	SourceID    *int64  `json:"source_id,omitempty"`
 }
 
 func (u UpdateRequest) Validate() error {

@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -37,6 +39,8 @@ type CLICacheStats = cacheops.CacheStats
 type CLISyncRequest struct {
 	Full        bool
 	Email       string
+	SourceID    int64
+	SourceIDSet bool
 	Query       string
 	NoResume    bool
 	Before      string
@@ -94,6 +98,7 @@ type CLIDeleteStagedPlanRequest struct {
 	DryRun              bool   `json:"dry_run,omitempty"`
 	List                bool   `json:"list,omitempty"`
 	Account             string `json:"account,omitempty"`
+	SourceID            *int64 `json:"source_id,omitempty"`
 	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitempty"`
 }
 
@@ -104,6 +109,7 @@ type CLIDeleteStagedPlan struct {
 	ConfirmationMode          string   `json:"confirmation_mode,omitempty"`
 	PlannedBatchIDs           []string `json:"planned_batch_ids,omitempty"`
 	PlanFingerprint           string   `json:"plan_fingerprint,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
 	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitempty"`
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
@@ -396,12 +402,18 @@ func (c *Client) RunCLISync(
 	req CLISyncRequest,
 	output func(stream, data string) error,
 ) error {
+	if req.SourceIDSet {
+		if err := c.requireSourceIDSyncCapability(ctx); err != nil {
+			return err
+		}
+	}
 	path := "/api/v1/cli/sync"
 	if req.Full {
 		path = "/api/v1/cli/sync-full"
 		return c.runCLIStream(ctx, path, "sync", &generated.SyncFullCLIRequestOptions{
 			Query: &generated.SyncFullCLIQuery{
 				Email:      optionalString(req.Email),
+				SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
 				Query:      optionalString(req.Query),
 				Noresume:   optionalBool(req.NoResume),
 				Before:     optionalString(req.Before),
@@ -415,10 +427,70 @@ func (c *Client) RunCLISync(
 	return c.runCLIStream(ctx, path, "sync", &generated.SyncCLIRequestOptions{
 		Query: &generated.SyncCLIQuery{
 			Email:      optionalString(req.Email),
+			SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
 			Folder:     req.Folders,
 			SkipFolder: req.SkipFolders,
 		},
 	}, output)
+}
+
+const sourceIDSyncMinAPISchemaVersion = "2.4.0"
+
+func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
+	version, err := c.daemonAPISchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("check daemon source-ID sync capability: %w", err)
+	}
+	if !apiSchemaVersionAtLeast(version, sourceIDSyncMinAPISchemaVersion) {
+		return fmt.Errorf(
+			"source-ID sync requires daemon API schema %s or newer (daemon reports %q)",
+			sourceIDSyncMinAPISchemaVersion, version,
+		)
+	}
+	return nil
+}
+
+func (c *Client) daemonAPISchemaVersion(ctx context.Context) (string, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetHealthResp, error) {
+		return client.GetHealthWithResponse(ctx)
+	})
+	if err != nil {
+		return "", err
+	}
+	version := ""
+	if resp.JSON200 != nil && resp.JSON200.APISchemaVersion != nil {
+		version = *resp.JSON200.APISchemaVersion
+	}
+	return version, nil
+}
+
+func apiSchemaVersionAtLeast(version, minimum string) bool {
+	parse := func(raw string) ([3]int, bool) {
+		var parsed [3]int
+		parts := strings.Split(raw, ".")
+		if len(parts) != len(parsed) {
+			return parsed, false
+		}
+		for i, part := range parts {
+			value, err := strconv.Atoi(part)
+			if err != nil || value < 0 {
+				return parsed, false
+			}
+			parsed[i] = value
+		}
+		return parsed, true
+	}
+	got, gotOK := parse(version)
+	want, wantOK := parse(minimum)
+	if !gotOK || !wantOK {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return got[i] > want[i]
+		}
+	}
+	return true
 }
 
 func (c *Client) RunCLIVerify(
@@ -559,6 +631,7 @@ func (c *Client) PlanCLIDeleteStaged(
 ) (*CLIDeleteStagedPlan, error) {
 	body := generated.PlanCLIDeleteStagedBody{
 		Account:             optionalString(req.Account),
+		SourceID:            req.SourceID,
 		BatchID:             optionalString(req.BatchID),
 		DryRun:              optionalBool(req.DryRun),
 		List:                optionalBool(req.List),
@@ -581,6 +654,18 @@ func (c *Client) CreateCLIDeletionManifest(
 ) (*CLIDeletionManifestResult, error) {
 	if manifest == nil {
 		return nil, errors.New("missing deletion manifest")
+	}
+	if manifest.Version == 2 {
+		version, err := c.daemonAPISchemaVersion(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("check daemon deletion manifest capability: %w", err)
+		}
+		if !apiSchemaVersionAtLeast(version, sourceIDSyncMinAPISchemaVersion) {
+			return nil, fmt.Errorf(
+				"version-2 deletion manifests require daemon API schema %s or newer (daemon reports %q)",
+				sourceIDSyncMinAPISchemaVersion, version,
+			)
+		}
 	}
 	body := cliDeletionManifestToGenerated(manifest)
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.CreateCLIDeletionManifestResp, error) {
@@ -809,10 +894,23 @@ func (c *Client) UpdateCLIAccount(
 	ctx context.Context,
 	req CLIAccountUpdateRequest,
 ) (*CLIAccountUpdateResult, error) {
+	var account, email *string
+	if req.Account != "" {
+		account = &req.Account
+	}
+	if req.Email != "" {
+		email = &req.Email
+	}
+	var sourceID *int64
+	if req.SourceIDSet || req.SourceID != 0 {
+		sourceID = &req.SourceID
+	}
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.UpdateCLIAccountResp, error) {
 		return client.UpdateCLIAccountWithResponse(ctx, &generated.UpdateCLIAccountRequestOptions{
 			Body: &generated.UpdateCLIAccountBody{
-				Email:       req.Email,
+				Account:     account,
+				Email:       email,
+				SourceID:    sourceID,
 				DisplayName: req.DisplayName,
 			},
 		})

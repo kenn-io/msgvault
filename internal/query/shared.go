@@ -554,71 +554,61 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	return &msg, nil
 }
 
-// collectGmailIDs scans rows for source_message_id strings.
-func collectGmailIDs(rows *sql.Rows) ([]string, error) {
-	defer func() { _ = rows.Close() }()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan gmail id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate gmail ids: %w", err)
-	}
-	return ids, nil
+type deletionTargetRow struct {
+	target DeletionTarget
+	sentAt sql.NullTime
 }
 
-// gmailIDRow carries the ORDER BY keys (sent_at, message id) alongside a
-// source_message_id so chunked message-ID resolution can be merged back
-// into the single-query newest-first order.
-type gmailIDRow struct {
-	gmailID string
-	sentAt  sql.NullTime
-	id      int64
-}
-
-// collectGmailIDRows scans (source_message_id, sent_at, id) rows.
-func collectGmailIDRows(rows *sql.Rows) ([]gmailIDRow, error) {
+func collectDeletionTargets(rows *sql.Rows) ([]DeletionTarget, error) {
 	defer func() { _ = rows.Close() }()
-	var out []gmailIDRow
+	var targets []DeletionTarget
 	for rows.Next() {
-		var r gmailIDRow
-		if err := rows.Scan(&r.gmailID, &r.sentAt, &r.id); err != nil {
-			return nil, fmt.Errorf("scan gmail id row: %w", err)
+		var target DeletionTarget
+		if err := rows.Scan(&target.MessageID, &target.SourceID, &target.SourceType,
+			&target.SourceIdentifier, &target.SourceMessageID); err != nil {
+			return nil, fmt.Errorf("scan deletion target: %w", err)
 		}
-		out = append(out, r)
+		targets = append(targets, target)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate gmail id rows: %w", err)
+		return nil, fmt.Errorf("iterate deletion targets: %w", err)
+	}
+	return targets, nil
+}
+
+func collectDeletionTargetRows(rows *sql.Rows) ([]deletionTargetRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []deletionTargetRow
+	for rows.Next() {
+		var row deletionTargetRow
+		if err := rows.Scan(&row.target.MessageID, &row.target.SourceID,
+			&row.target.SourceType, &row.target.SourceIdentifier,
+			&row.target.SourceMessageID, &row.sentAt); err != nil {
+			return nil, fmt.Errorf("scan deletion target row: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deletion target rows: %w", err)
 	}
 	return out, nil
 }
 
-// gmailIDsByMessageIDsChunked resolves message IDs to Gmail IDs in
-// inListChunkSize batches so arbitrarily large explicit selections stay
-// under the backend's bind-parameter limit. Input IDs are deduplicated
-// (each message row surfaces from exactly one chunk) and the merged
-// result is re-sorted to the single-query contract: sent_at DESC,
-// id DESC, with NULL sent_at last.
-func gmailIDsByMessageIDsChunked(
+func deletionTargetsByMessageIDsChunked(
 	ctx context.Context,
 	ids []int64,
-	queryChunk func(ctx context.Context, chunk []int64) ([]gmailIDRow, error),
-) ([]string, error) {
+	queryChunk func(context.Context, []int64) ([]deletionTargetRow, error),
+) ([]DeletionTarget, error) {
 	seen := make(map[int64]struct{}, len(ids))
 	unique := make([]int64, 0, len(ids))
 	for _, id := range ids {
-		if _, dup := seen[id]; dup {
+		if _, duplicate := seen[id]; duplicate {
 			continue
 		}
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-
-	var merged []gmailIDRow
+	var merged []deletionTargetRow
 	for start := 0; start < len(unique); start += inListChunkSize {
 		end := min(start+inListChunkSize, len(unique))
 		rows, err := queryChunk(ctx, unique[start:end])
@@ -627,18 +617,17 @@ func gmailIDsByMessageIDsChunked(
 		}
 		merged = append(merged, rows...)
 	}
-
-	slices.SortFunc(merged, compareGmailIDRowsNewestFirst)
-	out := make([]string, len(merged))
-	for i, r := range merged {
-		out[i] = r.gmailID
+	slices.SortFunc(merged, compareDeletionTargetRowsNewestFirst)
+	targets := make([]DeletionTarget, len(merged))
+	for i := range merged {
+		targets[i] = merged[i].target
 	}
-	return out, nil
+	return targets, nil
 }
 
-// compareGmailIDRowsNewestFirst orders by sent_at DESC then id DESC,
+// compareDeletionTargetRowsNewestFirst orders by sent_at DESC then message ID DESC,
 // with NULL sent_at sorting last (matching SQLite DESC semantics).
-func compareGmailIDRowsNewestFirst(a, b gmailIDRow) int {
+func compareDeletionTargetRowsNewestFirst(a, b deletionTargetRow) int {
 	switch {
 	case a.sentAt.Valid && !b.sentAt.Valid:
 		return -1
@@ -650,6 +639,6 @@ func compareGmailIDRowsNewestFirst(a, b gmailIDRow) int {
 		}
 		return 1
 	default:
-		return cmp.Compare(b.id, a.id)
+		return cmp.Compare(b.target.MessageID, a.target.MessageID)
 	}
 }

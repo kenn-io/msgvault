@@ -193,10 +193,12 @@ rules.
 
 ## sync-full
 
-Download all messages from a Gmail or IMAP account. When called without an email argument, syncs all configured syncable accounts.
+Download all messages from a Gmail or IMAP account. The optional account can
+be an identifier or display name. When it is omitted, the command syncs all
+configured syncable accounts.
 
 ```bash
-msgvault sync-full [email] [flags]
+msgvault sync-full [account] [flags]
 ```
 
 | Flag | Description |
@@ -208,7 +210,11 @@ msgvault sync-full [email] [flags]
 | `--noresume` | Ignore checkpoints, start fresh |
 | `--folder NAME` | Scan this IMAP folder (repeatable) |
 | `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
+| `--source-id ID` | Sync exactly one source by numeric ID; mutually exclusive with the account argument |
 | `--verbose` | Detailed progress output |
+
+An account token can select more than one matching source. Use `--source-id`
+when Gmail and IMAP, or two other sources, share the same identifier.
 
 The CLI sends the sync request to the configured remote server or local daemon
 and streams the daemon's stdout/stderr back to the terminal. This keeps local
@@ -219,16 +225,17 @@ SQLite writer beside `msgvault serve`.
 
 ## sync
 
-Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. When called without an email argument, syncs all accounts that have completed an initial full sync.
+Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync.
 
 ```bash
-msgvault sync [email] [flags]
+msgvault sync [account] [flags]
 ```
 
 | Flag | Description |
 |---|---|
 | `--folder NAME` | Scan this IMAP folder (repeatable) |
 | `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
+| `--source-id ID` | Sync exactly one source by numeric ID; mutually exclusive with the account argument |
 
 The CLI sends the incremental sync request to the configured remote server or
 local daemon and streams the daemon's stdout/stderr back to the terminal. The
@@ -1753,12 +1760,16 @@ Update account settings through the configured remote server or local daemon.
 Use `--local` to force the local daemon when a remote is configured.
 
 ```bash
-msgvault update-account <email> [flags]
+msgvault update-account [account] [flags]
 ```
 
 | Flag | Description |
 |---|---|
 | `--display-name` | Set a display name for the account |
+| `--source-id ID` | Update exactly one source by numeric ID; mutually exclusive with the account argument |
+
+The account argument accepts an identifier or a unique display name. Supply
+either an account or `--source-id`.
 
 ---
 
@@ -1767,14 +1778,18 @@ msgvault update-account <email> [flags]
 Remove an account or source and all its archived data from the selected msgvault archive. Deletes messages, labels, sync state, credentials no longer shared by another source, and attachment files unique to this source. This is irreversible but does not touch the remote provider.
 
 ```bash
-msgvault remove-account <email> [flags]
+msgvault remove-account [account] [flags]
 msgvault remove-account 123456789012345678 --type discord
+msgvault remove-account --source-id 42
 ```
 
 | Flag | Description |
 |---|---|
 | `-y`, `--yes` | Skip the confirmation prompt (and allow removal when an active sync is in progress) |
 | `--type` | Source type to remove when the same identifier exists across source types (`gmail`, `imap`, `mbox`, `discord`, etc.) |
+| `--source-id ID` | Remove exactly one source by numeric ID; mutually exclusive with the account argument and `--type` |
+
+The account argument accepts an identifier or a unique display name.
 
 Attachment files are only deleted when no other account references the same
 content hash. A Discord bot token is preserved while another registered guild
@@ -1832,7 +1847,8 @@ msgvault delete-staged [batch-id] [flags]
 | `--permanent` | Permanently delete through the Gmail batch API instead of moving to trash |
 | `--dry-run` | Show what would be deleted without deleting |
 | `-l`, `--list` | List staged deletion batches |
-| `--account` | Filter to a specific account |
+| `--account` | Filter to one source by identifier or unique display name |
+| `--source-id ID` | Filter to exactly one source by numeric ID; mutually exclusive with `--account` |
 
 Execution requires `MSGVAULT_ENABLE_REMOTE_DELETE=1`. `--list` and `--dry-run` work without the gate. `--permanent` and `--yes` are mutually exclusive because permanent deletion always requires the destructive confirmation prompt.
 

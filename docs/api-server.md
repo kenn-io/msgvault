@@ -13,7 +13,7 @@ background sync scheduler to keep accounts up to date on a cron-based schedule.
 The complete UI is embedded in the release binary; see [Web UI](/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.4.0. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
@@ -1415,8 +1415,10 @@ command. The endpoint accepts three request shapes:
 
 In every shape, resolution is restricted to live Gmail-source messages, and a
 staged manifest executes against a single mailbox: the selection must resolve
-to exactly one Gmail account. The resolved account is stamped on the manifest
-(`delete-staged` uses it to pick the mailbox) and reported in the response;
+to exactly one Gmail source. The durable source tuple (`type` and `identifier`,
+plus the local numeric `id`) is stamped on the manifest and reported as
+`source` in dry-run and created responses; `delete-staged` resolves that tuple
+again before it claims the manifest. The account identifier is also reported;
 selections spanning multiple accounts are rejected with
 `400 multi_account_selection` — scope the request (for example with
 `filter.source_id` or a `source` filter dimension) or stage per account.
@@ -1449,6 +1451,7 @@ the request and returns `200` without writing anything:
   "dry_run": true,
   "message_count": 1234,
   "account": "you@gmail.com",
+  "source": {"id": 1, "type": "gmail", "identifier": "you@gmail.com"},
   "sample_gmail_ids": ["18c2f5a1b2c3d4e5", "..."]
 }
 ```
@@ -1472,6 +1475,7 @@ A pending manifest is written and `201` returned:
   "dry_run": false,
   "message_count": 2,
   "account": "you@gmail.com",
+  "source": {"id": 1, "type": "gmail", "identifier": "you@gmail.com"},
   "id": "20260706-153000-old-newsletters-a1b2",
   "status": "pending"
 }
@@ -1622,7 +1626,7 @@ monitor schedule state and `/api/v1/sync/{account}` to trigger supported
 account syncs outside the schedule. Discord's dedicated manual command is
 `msgvault sync-discord`.
 
-The same HTTP server backs configured remote CLI access and the local background daemon used by archive-access CLI commands.
+The same HTTP server backs configured remote CLI access and the local background daemon used by archive-access CLI commands. In API schema 2.4.0, the CLI sync transport accepts `source_id`, allowing `sync` and `sync-full` to select one source exactly even when several source types share an identifier.
 
 !!! note
     Gmail accounts must have completed an initial `msgvault sync-full` before

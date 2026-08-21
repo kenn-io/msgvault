@@ -28,6 +28,7 @@ type sourceScheduleClassification struct {
 // because it isn't exported, so the literal is duplicated here.
 const (
 	sourceTypeBeeper = "beeper"
+	sourceTypeGmail  = "gmail"
 	sourceTypeSlack  = "slack"
 )
 
@@ -45,7 +46,7 @@ const SlackJobName = sourceTypeSlack
 // types cannot borrow a scheduled account merely by sharing its identifier.
 func classifySourceScheduling(sourceType, identifier string) sourceScheduleClassification {
 	switch sourceType {
-	case "", "gmail", "imap", "teams", "discord":
+	case "", sourceTypeGmail, "imap", "teams", "discord":
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
 	case meetingimport.SourceType:
 		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}

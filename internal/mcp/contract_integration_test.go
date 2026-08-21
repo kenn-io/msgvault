@@ -137,8 +137,7 @@ func newTask5Fixture(t *testing.T, shape string) task5Fixture {
 		AggregateRows: []query.AggregateRow{{
 			Key: "example.com", Count: 2, TotalSize: 3072, AttachmentSize: int64(len(attachmentBytes)), AttachmentCount: 1, TotalUnique: 1,
 		}},
-		GmailIDs:      []string{"source-message-42"},
-		GmailAccounts: []string{"alice@example.com"},
+		GmailIDs: []string{"source-message-42"},
 		SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
 			return 1, nil
 		},

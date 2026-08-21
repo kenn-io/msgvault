@@ -1421,6 +1421,9 @@ func emitFolderArgs(args []string, flag string, values []string) []string {
 func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	if req.Full {
 		args := []string{"sync-full"}
+		if req.SourceIDSet {
+			args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+		}
 		if req.Query != "" {
 			args = append(args, "--query", req.Query)
 		}
@@ -1444,6 +1447,9 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		return args
 	}
 	args := []string{syncIncrementalCmd.Name()}
+	if req.SourceIDSet {
+		args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+	}
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {

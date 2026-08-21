@@ -40,7 +40,7 @@ func (r *ImportRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	decoded.sourceIDSet = set
+	decoded.SourceIDSet = set
 	*r = ImportRequest(decoded)
 	return nil
 }

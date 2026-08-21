@@ -212,6 +212,9 @@ type SyncCLIQuery struct {
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
 
+	// SourceID Exact source ID to sync
+	SourceID *int64 `json:"source_id,omitempty"`
+
 	// Folder IMAP folder names to include (repeatable)
 	Folder []string `json:"folder,omitempty"`
 
@@ -222,6 +225,9 @@ type SyncCLIQuery struct {
 type SyncFullCLIQuery struct {
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
+
+	// SourceID Exact source ID to sync
+	SourceID *int64 `json:"source_id,omitempty"`
 
 	// Query Gmail search query
 	Query *string `json:"query,omitempty"`

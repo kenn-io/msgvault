@@ -21,16 +21,7 @@ const stageDeletionSampleSize = 10
 // resolving internal message IDs to Gmail IDs. SQLite/DuckDB engines
 // implement it; the daemonclient HTTP engine does not need to.
 type deletionMessageIDResolver interface {
-	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
-}
-
-// deletionAccountResolver is the optional engine capability for mapping
-// staged Gmail IDs back to their owning account. Staging requires it:
-// delete-staged executes a manifest against a single mailbox chosen via
-// Manifest.Filters.Account, so every staged manifest must carry exactly
-// one account.
-type deletionAccountResolver interface {
-	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
+	GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]query.DeletionTarget, error)
 }
 
 // DeletionManifestLister lists staged deletion manifests. Implemented by
@@ -107,12 +98,13 @@ type StageDeletionRequest struct {
 
 // StageDeletionResponse covers both dry-run (200) and create (201).
 type StageDeletionResponse struct {
-	DryRun         bool     `json:"dry_run"`
-	MessageCount   int      `json:"message_count"`
-	Account        string   `json:"account,omitempty"`
-	SampleGmailIDs []string `json:"sample_gmail_ids,omitempty"`
-	ID             string   `json:"id,omitempty"`
-	Status         string   `json:"status,omitempty"`
+	DryRun         bool                      `json:"dry_run"`
+	MessageCount   int                       `json:"message_count"`
+	Account        string                    `json:"account,omitempty"`
+	SampleGmailIDs []string                  `json:"sample_gmail_ids,omitempty"`
+	ID             string                    `json:"id,omitempty"`
+	Status         string                    `json:"status,omitempty"`
+	Source         *deletion.SourceReference `json:"source,omitempty"`
 }
 
 // DeletionManifestSummary is one row of GET /api/v1/deletions.
@@ -131,15 +123,16 @@ type ListDeletionsResponse struct {
 }
 
 type DeletionManifestDetail struct {
-	ID           string              `json:"id"`
-	Status       string              `json:"status"`
-	CreatedAt    time.Time           `json:"created_at"`
-	CreatedBy    string              `json:"created_by"`
-	Description  string              `json:"description"`
-	Account      string              `json:"account,omitempty"`
-	MessageCount int                 `json:"message_count"`
-	Summary      *deletion.Summary   `json:"summary,omitempty"`
-	Execution    *deletion.Execution `json:"execution,omitempty"`
+	ID           string                    `json:"id"`
+	Status       string                    `json:"status"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	CreatedBy    string                    `json:"created_by"`
+	Description  string                    `json:"description"`
+	Account      string                    `json:"account,omitempty"`
+	MessageCount int                       `json:"message_count"`
+	Summary      *deletion.Summary         `json:"summary,omitempty"`
+	Execution    *deletion.Execution       `json:"execution,omitempty"`
+	Source       *deletion.SourceReference `json:"source,omitempty"`
 }
 
 // CancelDeletionResponse is the DELETE /api/v1/deletions/{id} body.
@@ -190,32 +183,34 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var gmailIDs []string
+	var targets []query.DeletionTarget
 	var claim *deletionOperationClaim
 	if req.Selection != nil {
 		var ok bool
-		gmailIDs, claim, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken)
+		targets, claim, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken)
 		if !ok {
 			return
 		}
 	} else {
 		var httpErr *apiHTTPError
-		gmailIDs, httpErr = s.resolveStageDeletionIDs(r.Context(), &req)
+		targets, httpErr = s.resolveStageDeletionTargets(r.Context(), &req)
 		if httpErr != nil {
 			writeAPIHTTPError(w, httpErr)
 			return
 		}
 	}
-	if len(gmailIDs) == 0 {
+	if len(targets) == 0 {
 		writeError(w, http.StatusBadRequest, "no_messages_matched", "No messages matched the given criteria")
 		return
 	}
 
-	account, httpErr := s.resolveStageDeletionAccount(r.Context(), gmailIDs)
+	source, httpErr := sourceReferenceForTargets(targets)
 	if httpErr != nil {
 		writeAPIHTTPError(w, httpErr)
 		return
 	}
+	account := source.Identifier
+	gmailIDs := deletion.SourceMessageIDs(targets)
 
 	if req.DryRun {
 		sample := gmailIDs
@@ -226,6 +221,7 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 			DryRun:         true,
 			MessageCount:   len(gmailIDs),
 			Account:        account,
+			Source:         source,
 			SampleGmailIDs: sample,
 		})
 		return
@@ -235,7 +231,7 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	if description == "" {
 		description = "staged via API"
 	}
-	manifest := deletion.NewManifest(description, gmailIDs)
+	manifest := deletion.NewManifestForSource(description, gmailIDs, *source)
 	manifest.CreatedBy = "api"
 	manifest.Filters = manifestFiltersFromRequest(req.Filter)
 	// delete-staged selects the mailbox to execute against from
@@ -277,7 +273,25 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		Account:      account,
 		ID:           manifest.ID,
 		Status:       string(manifest.Status),
+		Source:       source,
 	})
+}
+
+func sourceReferenceForTargets(targets []query.DeletionTarget) (*deletion.SourceReference, *apiHTTPError) {
+	source, err := deletion.SourceReferenceForTargets(targets)
+	switch {
+	case err == nil:
+		return &source, nil
+	case errors.Is(err, deletion.ErrNoDeletionTargets):
+		return nil, newAPIHTTPError(http.StatusConflict, "source_resolution_conflict", "selection has no deletion targets")
+	case errors.Is(err, deletion.ErrIncompleteDeletionSource):
+		return nil, newAPIHTTPError(http.StatusConflict, "source_resolution_conflict", "selected message has incomplete source provenance")
+	case errors.Is(err, deletion.ErrMultipleDeletionSources):
+		return nil, newAPIHTTPError(http.StatusBadRequest, "multi_account_selection",
+			"selection spans multiple sources; scope the request with filter.source_id or stage each source separately")
+	default:
+		return nil, newAPIHTTPError(http.StatusConflict, "source_resolution_conflict", err.Error())
+	}
 }
 
 // deletionOperationClaim defers one-shot consumption of a preflight
@@ -309,7 +323,7 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	r *http.Request,
 	selection ExploreSelection,
 	token string,
-) ([]string, *deletionOperationClaim, bool) {
+) ([]query.DeletionTarget, *deletionOperationClaim, bool) {
 	if token == "" {
 		writeError(w, http.StatusPreconditionRequired, "preflight_required",
 			"operation_token from deletion preflight is required")
@@ -396,64 +410,34 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 			"selection deletion staging is not supported by this query engine")
 		return nil, nil, false
 	}
-	gmailIDs, err := resolver.GetGmailIDsByMessageIDs(r.Context(), stats.DeletableMessageIDs)
+	targets, err := resolver.GetDeletionTargetsByMessageIDs(r.Context(), stats.DeletableMessageIDs)
 	if err != nil {
 		s.logger.Error("stage deletion selection resolution failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		return nil, nil, false
 	}
-	if int64(len(gmailIDs)) != stats.Count {
+	if int64(len(targets)) != stats.Count {
 		writeError(w, http.StatusConflict, "selection_changed",
 			"The reviewed selection changed before staging; run preflight again")
 		return nil, nil, false
 	}
 	claim := &deletionOperationClaim{state: state, token: token, selectionHash: selectionHash}
-	return gmailIDs, claim, true
+	return targets, claim, true
 }
 
-// resolveStageDeletionAccount maps the staged Gmail IDs to their owning
-// account and requires exactly one: deletion manifests execute against a
-// single mailbox, so selections spanning multiple Gmail accounts must be
-// split into per-account requests (e.g. scoped with filter.source_id).
-func (s *Server) resolveStageDeletionAccount(ctx context.Context, gmailIDs []string) (string, *apiHTTPError) {
-	resolver, ok := s.queryEngineForContext(ctx).(deletionAccountResolver)
-	if !ok {
-		return "", newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable",
-			"deletion staging is not supported by this query engine")
-	}
-	accounts, err := resolver.GetAccountsByGmailIDs(ctx, gmailIDs)
-	if err != nil {
-		s.logger.Error("stage deletion account resolution failed", "error", err)
-		return "", newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Account resolution failed")
-	}
-	switch len(accounts) {
-	case 1:
-		return accounts[0], nil
-	case 0:
-		// The IDs were just resolved from live Gmail messages, so an
-		// empty account set means the archive changed underneath us.
-		return "", newAPIHTTPError(http.StatusConflict, "account_resolution_conflict",
-			"Staged messages no longer resolve to a Gmail account; retry the request")
-	default:
-		return "", newAPIHTTPError(http.StatusBadRequest, "multi_account_selection",
-			fmt.Sprintf("selection spans multiple Gmail accounts (%s); deletion manifests execute against a single mailbox — scope the request with filter.source_id or stage per account",
-				strings.Join(accounts, ", ")))
-	}
-}
-
-// resolveStageDeletionIDs unions filter-resolved and explicitly listed
-// message IDs into a deduplicated, order-preserving Gmail-ID list.
-func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletionRequest) ([]string, *apiHTTPError) {
+// resolveStageDeletionTargets unions filter-resolved and explicitly selected
+// rows without flattening away source provenance.
+func (s *Server) resolveStageDeletionTargets(ctx context.Context, req *StageDeletionRequest) ([]query.DeletionTarget, *apiHTTPError) {
 	engine := s.queryEngineForContext(ctx)
-	var out []string
-	seen := make(map[string]struct{})
-	appendIDs := func(ids []string) {
-		for _, id := range ids {
-			if _, dup := seen[id]; dup {
+	var out []query.DeletionTarget
+	seen := make(map[int64]struct{})
+	appendTargets := func(targets []query.DeletionTarget) {
+		for _, target := range targets {
+			if _, dup := seen[target.MessageID]; dup {
 				continue
 			}
-			seen[id] = struct{}{}
-			out = append(out, id)
+			seen[target.MessageID] = struct{}{}
+			out = append(out, target)
 		}
 	}
 
@@ -462,12 +446,12 @@ func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletion
 		if httpErr != nil {
 			return nil, httpErr
 		}
-		ids, err := engine.GetGmailIDsByFilter(ctx, mf)
+		targets, err := engine.GetDeletionTargetsByFilter(ctx, mf)
 		if err != nil {
 			s.logger.Error("stage deletion filter query failed", "error", err)
 			return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		}
-		appendIDs(ids)
+		appendTargets(targets)
 	}
 	if len(req.MessageIDs) > 0 {
 		resolver, ok := engine.(deletionMessageIDResolver)
@@ -475,12 +459,12 @@ func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletion
 			return nil, newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable",
 				"message_ids staging is not supported by this query engine")
 		}
-		ids, err := resolver.GetGmailIDsByMessageIDs(ctx, req.MessageIDs)
+		targets, err := resolver.GetDeletionTargetsByMessageIDs(ctx, req.MessageIDs)
 		if err != nil {
 			s.logger.Error("stage deletion message-id query failed", "error", err)
 			return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		}
-		appendIDs(ids)
+		appendTargets(targets)
 	}
 	return out, nil
 }
@@ -548,7 +532,7 @@ func (s *Server) handleGetDeletion(w http.ResponseWriter, r *http.Request) {
 		ID: manifest.ID, Status: string(status), CreatedAt: manifest.CreatedAt,
 		CreatedBy: manifest.CreatedBy, Description: manifest.Description,
 		Account: manifest.Filters.Account, MessageCount: len(manifest.GmailIDs),
-		Summary: manifest.Summary, Execution: manifest.Execution,
+		Summary: manifest.Summary, Execution: manifest.Execution, Source: manifest.Source,
 	})
 }
 

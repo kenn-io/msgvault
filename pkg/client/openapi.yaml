@@ -557,6 +557,9 @@ components:
           type: boolean
         remote_delete_enabled:
           type: boolean
+        source_id:
+          format: int64
+          type: integer
         "yes":
           type: boolean
       type: object
@@ -581,6 +584,9 @@ components:
           type: array
         remote_delete_env_var:
           type: string
+        resolved_source_id:
+          format: int64
+          type: integer
         scope_escalation_account:
           type: string
         scope_escalation_body_lines:
@@ -1885,6 +1891,8 @@ components:
         message_count:
           format: int64
           type: integer
+        source:
+          $ref: "#/components/schemas/SourceReference"
         status:
           type: string
         summary:
@@ -1920,6 +1928,27 @@ components:
         - created_by
         - description
         - message_count
+      type: object
+    DeletionTarget:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - source_type
+        - source_identifier
+        - source_message_id
       type: object
     DiscoverError:
       properties:
@@ -3500,6 +3529,11 @@ components:
             type: string
           nullable: true
           type: array
+        targets:
+          items:
+            $ref: "#/components/schemas/DeletionTarget"
+          nullable: true
+          type: array
       required:
         - gmail_ids
       type: object
@@ -3986,6 +4020,8 @@ components:
         id:
           type: string
         raw_filter: {}
+        source:
+          $ref: "#/components/schemas/SourceReference"
         status:
           type: string
         summary:
@@ -7492,6 +7528,21 @@ components:
         - signals
         - confirmed_at
       type: object
+    SourceReference:
+      additionalProperties: false
+      properties:
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+        - identifier
+      type: object
     SourceStatus:
       properties:
         active_sync:
@@ -7625,6 +7676,8 @@ components:
             type: string
           nullable: true
           type: array
+        source:
+          $ref: "#/components/schemas/SourceReference"
         status:
           type: string
       required:
@@ -8205,12 +8258,16 @@ components:
     UpdateRequest:
       additionalProperties: false
       properties:
+        account:
+          type: string
         display_name:
           type: string
         email:
           type: string
+        source_id:
+          format: int64
+          type: integer
       required:
-        - email
         - display_name
       type: object
     UpdateResult:
@@ -8345,7 +8402,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.3.0
+  version: 2.4.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -10340,6 +10397,12 @@ paths:
           name: email
           schema:
             type: string
+        - description: Exact source ID to sync
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
         - description: IMAP folder names to include (repeatable)
           in: query
           name: folder
@@ -10381,6 +10444,12 @@ paths:
           name: email
           schema:
             type: string
+        - description: Exact source ID to sync
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
         - description: Gmail search query
           in: query
           name: query

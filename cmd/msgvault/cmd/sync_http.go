@@ -14,17 +14,27 @@ import (
 )
 
 func runSyncIncrementalHTTP(cmd *cobra.Command, args []string) error {
+	selector, _, err := syncSourceSelector(cmd, args)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 	req := daemonclient.CLISyncRequest{
 		Folders:     parseFolderFilter(syncFolders),
 		SkipFolders: parseFolderFilter(syncSkipFolders),
+		SourceID:    selector.SourceID,
+		SourceIDSet: selector.SourceIDSet,
 	}
 	if len(args) == 1 {
-		req.Email = args[0]
+		req.Email = selector.Account
 	}
 	return runSyncHTTP(cmd, req)
 }
 
 func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
+	selector, _, err := syncSourceSelector(cmd, args)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 	req := daemonclient.CLISyncRequest{
 		Full:        true,
 		Query:       syncQuery,
@@ -34,9 +44,11 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 		Limit:       syncLimit,
 		Folders:     parseFolderFilter(syncFolders),
 		SkipFolders: parseFolderFilter(syncSkipFolders),
+		SourceID:    selector.SourceID,
+		SourceIDSet: selector.SourceIDSet,
 	}
 	if len(args) == 1 {
-		req.Email = args[0]
+		req.Email = selector.Account
 	}
 	return runSyncHTTP(cmd, req)
 }
@@ -48,7 +60,7 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info), req.Email); err != nil {
+	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info), req.Email, req.SourceID); err != nil {
 		return err
 	}
 
@@ -77,6 +89,7 @@ type preflightReauthManager interface {
 
 // preflightAccount is a single Gmail account the preflight may re-authorize.
 type preflightAccount struct {
+	ID          int64
 	Email       string
 	DisplayName string
 	OAuthApp    string
@@ -124,6 +137,7 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo) preflightCo
 					continue
 				}
 				gmail = append(gmail, preflightAccount{
+					ID:          a.ID,
 					Email:       a.Email,
 					DisplayName: a.DisplayName,
 					OAuthApp:    a.OAuthApp,
@@ -147,7 +161,7 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo) preflightCo
 // which cannot open a browser itself. It is strictly best-effort: it only
 // re-authorizes tokens that already exist and have expired/been revoked, and
 // it never enrolls a new account (that is add-account's job).
-func preflightReauth(ctx context.Context, p preflightConfig, reqIdentifier string) error {
+func preflightReauth(ctx context.Context, p preflightConfig, reqIdentifier string, reqSourceID int64) error {
 	if !p.Local || !p.Interactive || !p.OAuthConfigured {
 		return nil
 	}
@@ -156,7 +170,9 @@ func preflightReauth(ctx context.Context, p preflightConfig, reqIdentifier strin
 	if err != nil {
 		return fmt.Errorf("list accounts for reauth preflight: %w", err)
 	}
-	if reqIdentifier != "" {
+	if reqSourceID > 0 {
+		targets = filterPreflightAccountsByID(targets, reqSourceID)
+	} else if reqIdentifier != "" {
 		targets = filterPreflightAccounts(targets, reqIdentifier)
 	}
 
@@ -166,6 +182,16 @@ func preflightReauth(ctx context.Context, p preflightConfig, reqIdentifier strin
 		}
 	}
 	return nil
+}
+
+func filterPreflightAccountsByID(accounts []preflightAccount, sourceID int64) []preflightAccount {
+	var matched []preflightAccount
+	for _, account := range accounts {
+		if account.ID == sourceID {
+			matched = append(matched, account)
+		}
+	}
+	return matched
 }
 
 // filterPreflightAccounts keeps the Gmail accounts whose email OR display name

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -12,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -176,6 +180,347 @@ func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 	assert.NotEqual(plan.PlanFingerprint, changed.PlanFingerprint, "fingerprint should change when confirmed manifest content changes")
 }
 
+func TestBuildDeleteStagedPlanFiltersVersionTwoBySourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	first := deletion.NewManifestForSource("first", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "first@example.invalid",
+	})
+	second := deletion.NewManifestForSource("second", []string{"gm-2"}, deletion.SourceReference{
+		ID: 22, Type: "gmail", Identifier: "second@example.invalid",
+	})
+	require.NoError(mgr.SaveManifest(first))
+	require.NoError(mgr.SaveManifest(second))
+
+	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		SourceID: 22, SourceIDSet: true, List: true,
+		ResolvedSourceType: "gmail", ResolvedSourceIdentifier: "second@example.invalid",
+	})
+	require.NoError(err)
+	assert.Equal([]string{second.ID}, plan.PlannedBatchIDs)
+	assert.NotContains(plan.Stdout, first.Description)
+	assert.Contains(plan.Stdout, second.Description)
+}
+
+func TestBuildDeleteStagedPlanDoesNotSelectVersionTwoByLegacyFilterAccount(t *testing.T) {
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(t, err)
+	manifest := deletion.NewManifestForSource("durable source", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "source@example.invalid",
+	})
+	manifest.Filters.Account = "other@example.invalid"
+	require.NoError(t, mgr.SaveManifest(manifest))
+
+	_, err = buildDeleteStagedPlan(deleteStagedPlanOptions{
+		BatchID: manifest.ID, Account: "other@example.invalid", List: true,
+	})
+	require.ErrorContains(t, err, "does not match the requested source")
+}
+
+func TestBuildDeleteStagedPlanAllowsExplicitSelectorForUnboundLegacyManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest, err := mgr.CreateManifest("legacy", []string{"gm-1"}, deletion.Filters{})
+	require.NoError(err)
+
+	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		Account: "source@example.invalid", List: true,
+	})
+	require.NoError(err)
+	assert.Equal([]string{manifest.ID}, plan.PlannedBatchIDs)
+}
+
+func TestBuildDeleteStagedPlanAllowsSourceIDForLegacyManifestWithMatchingAccount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest, err := mgr.CreateManifest("legacy", []string{"gm-1"}, deletion.Filters{
+		Account: "source@example.invalid",
+	})
+	require.NoError(err)
+	other, err := mgr.CreateManifest("other legacy", []string{"gm-2"}, deletion.Filters{
+		Account: "other@example.invalid",
+	})
+	require.NoError(err)
+
+	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		SourceID: 11, SourceIDSet: true, List: true,
+		ResolvedSourceType: "gmail", ResolvedSourceIdentifier: "source@example.invalid",
+	})
+	require.NoError(err)
+	assert.Equal([]string{manifest.ID}, plan.PlannedBatchIDs)
+	assert.NotContains(plan.Stdout, other.Description)
+}
+
+func TestBuildDeleteStagedPlanInspectsUnboundLegacyManifestMixedWithVersionTwo(t *testing.T) {
+	tests := []struct {
+		name string
+		opts deleteStagedPlanOptions
+		want string
+	}{
+		{name: "list", opts: deleteStagedPlanOptions{List: true}, want: "Staged deletions: 2 batch(es)"},
+		{name: "dry run", opts: deleteStagedPlanOptions{DryRun: true}, want: "Dry run - no messages will be deleted."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+			mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+			require.NoError(err)
+			legacy, err := mgr.CreateManifest("legacy", []string{"gm-1"}, deletion.Filters{})
+			require.NoError(err)
+			bound := deletion.NewManifestForSource("bound", []string{"gm-2"}, deletion.SourceReference{
+				ID: 11, Type: "gmail", Identifier: "source@example.invalid",
+			})
+			require.NoError(mgr.SaveManifest(bound))
+
+			plan, err := buildDeleteStagedPlan(tt.opts)
+			require.NoError(err)
+			assert.ElementsMatch([]string{legacy.ID, bound.ID}, plan.PlannedBatchIDs)
+			assert.Contains(plan.Stdout, tt.want)
+			assert.False(plan.NeedsExecution)
+		})
+	}
+}
+
+func TestBuildDeleteStagedPlanRejectsUnboundLegacyManifestMixedWithVersionTwoDuringExecution(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	_, err = mgr.CreateManifest("legacy", []string{"gm-1"}, deletion.Filters{})
+	require.NoError(err)
+	require.NoError(mgr.SaveManifest(deletion.NewManifestForSource("bound", []string{"gm-2"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "source@example.invalid",
+	})))
+
+	_, err = buildDeleteStagedPlan(deleteStagedPlanOptions{RemoteDeleteEnabled: true, Yes: true})
+	require.ErrorContains(err, "legacy deletion manifest")
+}
+
+func TestResolveDeleteStagedTargetUsesStableTupleAfterSourceIDChanges(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "source@example.invalid")
+	require.NoError(t, err)
+	manifest := deletion.NewManifestForSource("stale snapshot", []string{"gm-1"}, deletion.SourceReference{
+		ID: source.ID + 1000, Type: source.SourceType, Identifier: source.Identifier,
+	})
+
+	target, err := resolveDeleteStagedTargetWithSourceID(
+		st, []*deletion.Manifest{manifest}, "", source.ID, true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, source.ID, target.Source.ID)
+}
+
+func TestResolveDeleteStagedTargetRejectsSnapshotIDThatNowNamesAnotherSource(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	intended, err := st.GetOrCreateSource("gmail", "intended@example.invalid")
+	require.NoError(t, err)
+	other, err := st.GetOrCreateSource("imap", "other@example.invalid")
+	require.NoError(t, err)
+	manifest := deletion.NewManifestForSource("mismatched snapshot", []string{"gm-1"}, deletion.SourceReference{
+		ID: other.ID, Type: intended.SourceType, Identifier: intended.Identifier,
+	})
+
+	_, err = resolveDeleteStagedTargetWithSourceID(
+		st, []*deletion.Manifest{manifest}, "", other.ID, true,
+	)
+	require.ErrorContains(t, err, "does not match manifest source")
+}
+
+func TestResolveDeleteStagedTargetRejectsRequestedAccountOutsideDurableTuple(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "source@example.invalid")
+	require.NoError(t, err)
+	_, err = st.GetOrCreateSource("gmail", "other@example.invalid")
+	require.NoError(t, err)
+	manifest := deletion.NewManifestForSource("bound", []string{"gm-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})
+
+	_, err = resolveDeleteStagedTarget(st, []*deletion.Manifest{manifest}, "other@example.invalid")
+	require.ErrorContains(t, err, "does not match manifest source")
+}
+
+func TestDeleteStagedRejectsUnsupportedSourceBeforeClaim(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	t.Setenv(remoteDeleteEnvVar, "1")
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	resetDeleteStagedRoutingGlobals(t)
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("slack", "workspace.example.invalid")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("unsupported source", []string{"remote-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--yes", manifest.ID})
+	err = cmd.Execute()
+	require.ErrorContains(err, "not a gmail or imap source")
+	assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
+	assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
+}
+
+func TestDeleteStagedOAuthSetupFailureLeavesManifestPending(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	t.Setenv(remoteDeleteEnvVar, "1")
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	resetDeleteStagedRoutingGlobals(t)
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "account@example.invalid")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("missing OAuth setup", []string{"remote-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--yes", manifest.ID})
+	err = cmd.Execute()
+	require.ErrorContains(err, "OAuth client secrets not configured")
+	assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
+	assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
+}
+
+func TestRunDeleteStagedExecutionRefreshesAfterPartialRunFailure(t *testing.T) {
+	claimErr := errors.New("claim second batch")
+	refreshCalls := 0
+
+	err := runDeleteStagedExecution(func(markCacheDirty func()) error {
+		markCacheDirty()
+		return claimErr
+	}, func() error {
+		refreshCalls++
+		return nil
+	})
+
+	require.ErrorIs(t, err, claimErr)
+	assert.Equal(t, 1, refreshCalls)
+}
+
+func TestRunDeleteStagedExecutionSkipsRefreshBeforeExecution(t *testing.T) {
+	claimErr := errors.New("claim first batch")
+	refreshCalls := 0
+
+	err := runDeleteStagedExecution(func(func()) error {
+		return claimErr
+	}, func() error {
+		refreshCalls++
+		return nil
+	})
+
+	require.ErrorIs(t, err, claimErr)
+	assert.Zero(t, refreshCalls)
+}
+
+func TestBuildDeleteStagedPlanInspectsMultipleVersionTwoSources(t *testing.T) {
+	tests := []struct {
+		name string
+		opts deleteStagedPlanOptions
+		want string
+	}{
+		{name: "list", opts: deleteStagedPlanOptions{List: true}, want: "Staged deletions: 2 batch(es)"},
+		{name: "dry run", opts: deleteStagedPlanOptions{DryRun: true}, want: "Dry run - no messages will be deleted."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+			mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+			require.NoError(err)
+			first := deletion.NewManifestForSource("first", []string{"gm-1"}, deletion.SourceReference{
+				ID: 11, Type: "gmail", Identifier: "first@example.invalid",
+			})
+			second := deletion.NewManifestForSource("second", []string{"gm-2"}, deletion.SourceReference{
+				ID: 22, Type: "gmail", Identifier: "second@example.invalid",
+			})
+			require.NoError(mgr.SaveManifest(first))
+			require.NoError(mgr.SaveManifest(second))
+
+			plan, err := buildDeleteStagedPlan(tt.opts)
+			require.NoError(err)
+			assert.ElementsMatch([]string{first.ID, second.ID}, plan.PlannedBatchIDs)
+			assert.Contains(plan.Stdout, tt.want)
+			assert.False(plan.NeedsExecution)
+		})
+	}
+}
+
+func TestBuildDeleteStagedPlanRejectsMultipleVersionTwoSourcesDuringExecution(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	require.NoError(mgr.SaveManifest(deletion.NewManifestForSource("first", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "first@example.invalid",
+	})))
+	require.NoError(mgr.SaveManifest(deletion.NewManifestForSource("second", []string{"gm-2"}, deletion.SourceReference{
+		ID: 22, Type: "gmail", Identifier: "second@example.invalid",
+	})))
+
+	_, err = buildDeleteStagedPlan(deleteStagedPlanOptions{RemoteDeleteEnabled: true, Yes: true})
+	require.ErrorContains(err, "multiple sources")
+}
+
+func TestDeleteStagedFingerprintIncludesSourceReference(t *testing.T) {
+	manifest := deletion.NewManifestForSource("confirmed", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "first@example.invalid",
+	})
+	before := fingerprintDeleteStagedPlan([]*deletion.Manifest{manifest})
+	manifest.Source.Identifier = "changed@example.invalid"
+	after := fingerprintDeleteStagedPlan([]*deletion.Manifest{manifest})
+	assert.NotEqual(t, before, after)
+}
+
 // TestBuildDeleteStagedPlanRejectsMethodFlagMismatch verifies that resuming an
 // in-progress batch with a --permanent flag that disagrees with the method it
 // was started with is refused during planning. The summary, confirmation
@@ -244,6 +589,39 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 	assert.Equal(scopeEscalationAccount, got.ScopeEscalationAccount,
 		"plan names the account so the frontend can authorize client-side")
 	assert.Empty(got.ScopeEscalationOAuthApp, "default app binding")
+}
+
+func TestPlanCLIDeleteStagedResolvesDisplayNameBeforeFiltering(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	st := testutil.NewTestStore(t)
+	gmailSource, err := st.GetOrCreateSource(sourceTypeGmail, "source@example.invalid")
+	require.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeIMAP, "source@example.invalid")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceDisplayName(source.ID, "Work"))
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("display name target", []string{"remote-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+	gmailManifest := deletion.NewManifestForSource("other source type", []string{"remote-2"}, deletion.SourceReference{
+		ID: gmailSource.ID, Type: gmailSource.SourceType, Identifier: gmailSource.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(gmailManifest))
+
+	got, err := planCLIDeleteStaged(context.Background(), st, api.CLIDeleteStagedPlanRequest{
+		Account: "Work", Yes: true, RemoteDeleteEnabled: true,
+	})
+	require.NoError(err)
+	assert.Equal([]string{manifest.ID}, got.PlannedBatchIDs)
+	require.NotNil(got.ResolvedSourceID)
+	assert.Equal(source.ID, *got.ResolvedSourceID)
 }
 
 func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {

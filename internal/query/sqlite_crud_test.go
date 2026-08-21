@@ -694,7 +694,7 @@ func TestMatchEmptySenderName_CombinedWithDomain(t *testing.T) {
 	assert.Empty(t, messages, "expected 0 messages for MatchEmptySenderName+Domain")
 }
 
-func TestGetGmailIDsByFilter_Label(t *testing.T) {
+func TestGetDeletionTargetsByFilter_Label(t *testing.T) {
 	env := newTestEnv(t)
 
 	tests := []struct {
@@ -709,24 +709,24 @@ func TestGetGmailIDsByFilter_Label(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ids, err := env.Engine.GetGmailIDsByFilter(
-				env.Ctx, MessageFilter{Label: tt.label},
-			)
-			require.NoError(t, err, "GetGmailIDsByFilter")
+			ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(
+				env.Ctx, MessageFilter{Label: tt.label}))
+
+			require.NoError(t, err, "GetDeletionTargetsByFilter")
 			assert.Len(t, ids, tt.wantLen)
 		})
 	}
 }
 
-func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
+func TestGetDeletionTargetsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 
-	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"})
-	require.NoError(t, err, "GetGmailIDsByFilter")
+	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"}))
+	require.NoError(t, err, "GetDeletionTargetsByFilter")
 	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice")
 }
 
-func TestGetGmailIDsByFilter_AfterBefore(t *testing.T) {
+func TestGetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -734,19 +734,19 @@ func TestGetGmailIDsByFilter_AfterBefore(t *testing.T) {
 	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	afterIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1})
+	afterIDs, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{After: &feb1}))
 	require.NoError(err, "after-only")
 	assert.ElementsMatch([]string{"msg3", "msg4", "msg5"}, afterIDs, "after >= Feb 1 (boundary inclusive)")
 
-	beforeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Before: &feb1})
+	beforeIDs, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{Before: &feb1}))
 	require.NoError(err, "before-only")
 	assert.ElementsMatch([]string{"msg1", "msg2"}, beforeIDs, "before < Feb 1 (boundary exclusive)")
 
-	rangeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1, Before: &mar1})
+	rangeIDs, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{After: &feb1, Before: &mar1}))
 	require.NoError(err, "range")
 	assert.ElementsMatch([]string{"msg3", "msg4"}, rangeIDs, "Feb window")
 
-	combined, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Sender: "alice@example.com", After: &feb1})
+	combined, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{Sender: "alice@example.com", After: &feb1}))
 	require.NoError(err, "combined with sender")
 	assert.ElementsMatch([]string{"msg3"}, combined, "sender+after")
 }
@@ -809,10 +809,10 @@ func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
 		"same-row sender email+name must still match")
 }
 
-// TestGetGmailIDsByFilter_SenderEmailAndName_SameFromRow mirrors
-// TestListMessages_SenderEmailAndName_SameFromRow for the GetGmailIDsByFilter
+// TestGetDeletionTargetsByFilter_SenderEmailAndName_SameFromRow mirrors
+// TestListMessages_SenderEmailAndName_SameFromRow for the GetDeletionTargetsByFilter
 // builder site (deletion/staging path).
-func TestGetGmailIDsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
+func TestGetDeletionTargetsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -821,19 +821,21 @@ func TestGetGmailIDsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
 	crossRowMsgID := env.LastMessageID()
 	crossRowGmailID := fmt.Sprintf("msg%d", crossRowMsgID)
 
-	crossRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+	crossRow, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{
 		Sender:     "author-a@example.com",
 		SenderName: "Author B",
-	})
-	require.NoError(err, "GetGmailIDsByFilter cross-row")
+	}))
+
+	require.NoError(err, "GetDeletionTargetsByFilter cross-row")
 	assert.NotContains(crossRow, crossRowGmailID,
 		"cross-row sender email+name must not match a multi-author message")
 
-	sameRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+	sameRow, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{
 		Sender:     "author-a@example.com",
 		SenderName: "Author A",
-	})
-	require.NoError(err, "GetGmailIDsByFilter same-row")
+	}))
+
+	require.NoError(err, "GetDeletionTargetsByFilter same-row")
 	assert.Contains(sameRow, crossRowGmailID,
 		"same-row sender email+name must still match")
 }
@@ -890,10 +892,10 @@ func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
 		"same-row recipient email+name must still match")
 }
 
-// TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow mirrors
-// TestListMessages_RecipientEmailAndName_SameToRow for the GetGmailIDsByFilter
+// TestGetDeletionTargetsByFilter_RecipientEmailAndName_SameToRow mirrors
+// TestListMessages_RecipientEmailAndName_SameToRow for the GetDeletionTargetsByFilter
 // builder site (deletion/staging path).
-func TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
+func TestGetDeletionTargetsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -902,40 +904,42 @@ func TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
 	crossRowMsgID := env.LastMessageID()
 	crossRowGmailID := fmt.Sprintf("msg%d", crossRowMsgID)
 
-	crossRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+	crossRow, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{
 		Recipient:     "recip-a@example.com",
 		RecipientName: "Recip B",
-	})
-	require.NoError(err, "GetGmailIDsByFilter cross-row")
+	}))
+
+	require.NoError(err, "GetDeletionTargetsByFilter cross-row")
 	assert.NotContains(crossRow, crossRowGmailID,
 		"cross-row recipient email+name must not match a multi-recipient message")
 
-	sameRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+	sameRow, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{
 		Recipient:     "recip-a@example.com",
 		RecipientName: "Recip A",
-	})
-	require.NoError(err, "GetGmailIDsByFilter same-row")
+	}))
+
+	require.NoError(err, "GetDeletionTargetsByFilter same-row")
 	assert.Contains(sameRow, crossRowGmailID,
 		"same-row recipient email+name must still match")
 }
 
-func TestGetGmailIDsByFilter_RecipientName(t *testing.T) {
+func TestGetDeletionTargetsByFilter_RecipientName(t *testing.T) {
 	env := newTestEnv(t)
 
-	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob"})
-	require.NoError(t, err, "GetGmailIDsByFilter")
+	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob"}))
+	require.NoError(t, err, "GetDeletionTargetsByFilter")
 	assert.Len(t, ids, 3, "expected 3 gmail IDs for Bob")
 }
 
-func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
+func TestGetDeletionTargetsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
 	env := newTestEnv(t)
 
 	filter := MessageFilter{
 		RecipientName:     "Bob",
 		EmptyValueTargets: emptyTargets(ViewRecipients),
 	}
-	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, filter)
-	require.NoError(t, err, "GetGmailIDsByFilter")
+	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, filter))
+	require.NoError(t, err, "GetDeletionTargetsByFilter")
 	assert.Len(t, ids, 3, "expected 3 gmail IDs")
 }
 
@@ -1149,9 +1153,9 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 		assert.Equal(t, "alice-bcc@example.com", rows[0].Key)
 	})
 
-	t.Run("GetGmailIDsByFilter", func(t *testing.T) {
-		ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Secret Bob"})
-		require.NoError(t, err, "GetGmailIDsByFilter")
+	t.Run("GetDeletionTargetsByFilter", func(t *testing.T) {
+		ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{RecipientName: "Secret Bob"}))
+		require.NoError(t, err, "GetDeletionTargetsByFilter")
 		assert.Len(t, ids, 1)
 	})
 
@@ -1757,29 +1761,76 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 	assert.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
 }
 
-func TestGetGmailIDsByMessageIDs(t *testing.T) {
+func TestGetDeletionTargetsByMessageIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	env := newTestEnv(t)
 
 	// Happy path: two known fixture messages (msg1=id 1, msg2=id 2).
-	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 2})
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 2})
 	require.NoError(err, "resolve fixture ids")
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(err)
 	assert.ElementsMatch([]string{"msg1", "msg2"}, ids)
 
 	// Unknown IDs are silently dropped.
-	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 999999})
+	targets, err = env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 999999})
 	require.NoError(err, "unknown id")
+	ids, err = deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(err)
 	assert.ElementsMatch([]string{"msg1"}, ids)
 
 	// Empty input: no query, no results.
-	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, nil)
+	targets, err = env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, nil)
 	require.NoError(err, "empty input")
-	assert.Empty(ids)
+	assert.Empty(targets)
 }
 
-func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
+func TestGetDeletionTargetsByMessageIDsPreservesDuplicateGmailIDSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	sourceID := env.AddSource(dbtest.SourceOpts{Type: "gmail", Identifier: "other@example.invalid", DisplayName: "Other"})
+	conversationID := env.AddConversation(dbtest.ConversationOpts{SourceID: sourceID, Title: "Other thread"})
+	messageID := env.AddMessage(dbtest.MessageOpts{
+		SourceID: sourceID, ConversationID: conversationID,
+		Subject: "Same remote ID", SentAt: "2024-06-01 12:00:00",
+	})
+	_, err := env.DB.Exec(`UPDATE messages SET source_message_id = 'msg1' WHERE id = ?`, messageID)
+	require.NoError(err)
+
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{messageID})
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(DeletionTarget{
+		MessageID: messageID, SourceID: sourceID, SourceType: "gmail",
+		SourceIdentifier: "other@example.invalid", SourceMessageID: "msg1",
+	}, targets[0])
+}
+
+func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+	sourceID := int64(1)
+
+	targets, err := env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{SourceID: &sourceID})
+	require.NoError(err)
+	require.NotEmpty(targets)
+	for _, target := range targets {
+		assert.Equal(sourceID, target.SourceID)
+		assert.Equal("gmail", target.SourceType)
+		assert.Equal("test@gmail.com", target.SourceIdentifier)
+		assert.NotZero(target.MessageID)
+		assert.NotEmpty(target.SourceMessageID)
+	}
+}
+
+func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1797,12 +1848,14 @@ func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
 	require.NoError(err, "insert dedup-deleted message")
 
-	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
 	require.NoError(err, "resolve mixed ids")
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(err)
 	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
 }
 
-func TestGetGmailIDsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1820,89 +1873,10 @@ func TestGetGmailIDsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testin
 	}
 	ids = append(ids, 5, 1)
 
-	gmailIDs, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, ids)
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, ids)
 	require.NoError(err, "large selection must stay under bind-parameter limits")
+	gmailIDs, err := deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(err)
 	assert.Equal([]string{"msg5", "msg1"}, gmailIDs,
 		"newest-first order restored across chunks; duplicate input deduped")
-}
-
-func TestGetAccountsByGmailIDs(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	env := newTestEnv(t)
-
-	// Fixture messages all belong to the single Gmail source.
-	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "msg2"})
-	require.NoError(err, "resolve fixture accounts")
-	assert.Equal([]string{"test@gmail.com"}, accounts)
-
-	// Unknown IDs resolve to no account.
-	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"does-not-exist"})
-	require.NoError(err, "unknown id")
-	assert.Empty(accounts)
-
-	// Empty input: no query, no results.
-	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, nil)
-	require.NoError(err, "empty input")
-	assert.Empty(accounts)
-}
-
-func TestGetAccountsByGmailIDs_MultipleAndNonQualifying(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	env := newTestEnv(t)
-
-	// Second Gmail source with a live message.
-	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
-	require.NoError(err, "insert second gmail source")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
-	require.NoError(err, "insert second-account message")
-
-	// Non-Gmail source and a source-deleted Gmail message must not
-	// contribute accounts.
-	_, err = env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
-	require.NoError(err, "insert whatsapp source")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (912, 1, 99, 'wa-1', 'whatsapp', '2024-01-06')`)
-	require.NoError(err, "insert whatsapp message")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (913, 1, 98, 'gone-1', 'email', '2024-01-07', '2024-06-01')`)
-	require.NoError(err, "insert source-deleted message")
-
-	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "other-1", "wa-1"})
-	require.NoError(err, "resolve mixed accounts")
-	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
-		"both gmail accounts, sorted; whatsapp excluded")
-
-	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"gone-1", "wa-1"})
-	require.NoError(err, "resolve non-qualifying")
-	assert.Empty(accounts, "deleted and non-Gmail messages contribute no account")
-}
-
-func TestGetAccountsByGmailIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	env := newTestEnv(t)
-
-	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
-	require.NoError(err, "insert second gmail source")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
-	require.NoError(err, "insert second-account message")
-
-	// 33k IDs exceed SQLITE_MAX_VARIABLE_NUMBER (32766) as a single IN
-	// list, so an unchunked lookup fails with "too many SQL variables".
-	// The two real IDs sit in the first and last chunk to exercise the
-	// cross-chunk account union.
-	ids := make([]string, 0, 33000)
-	ids = append(ids, "msg1")
-	for len(ids) < 32999 {
-		ids = append(ids, fmt.Sprintf("missing-%d", len(ids)))
-	}
-	ids = append(ids, "other-1")
-
-	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, ids)
-	require.NoError(err, "large selection must stay under bind-parameter limits")
-	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
-		"accounts from different chunks must be unioned and sorted")
 }

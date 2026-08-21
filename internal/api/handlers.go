@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/query"
@@ -217,7 +218,8 @@ type FilteredMessagesResponse struct {
 }
 
 type GmailIDsResponse struct {
-	GmailIDs []string `json:"gmail_ids"`
+	GmailIDs []string               `json:"gmail_ids"`
+	Targets  []query.DeletionTarget `json:"targets,omitempty"`
 }
 
 type DeepSearchResponse struct {
@@ -3024,17 +3026,18 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		s.rejectBadParam(w, err)
 		return
 	}
-	ids, err := engine.GetGmailIDsByFilter(r.Context(), filter)
+	targets, err := engine.GetDeletionTargetsByFilter(r.Context(), filter)
 	if err != nil {
 		s.logger.Error("gmail id filter query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		return
 	}
-	if ids == nil {
-		ids = []string{}
+	if targets == nil {
+		targets = []query.DeletionTarget{}
 	}
-
-	writeJSON(w, http.StatusOK, GmailIDsResponse{GmailIDs: ids})
+	writeJSON(w, http.StatusOK, GmailIDsResponse{
+		GmailIDs: deletion.SourceMessageIDs(targets), Targets: targets,
+	})
 }
 
 func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {

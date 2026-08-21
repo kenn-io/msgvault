@@ -2829,6 +2829,8 @@ export interface components {
             list?: boolean;
             permanent?: boolean;
             remote_delete_enabled?: boolean;
+            /** Format: int64 */
+            source_id?: number;
             yes?: boolean;
         };
         CLIDeleteStagedPlanResponse: {
@@ -2840,6 +2842,8 @@ export interface components {
             plan_fingerprint?: string;
             planned_batch_ids?: string[] | null;
             remote_delete_env_var?: string;
+            /** Format: int64 */
+            resolved_source_id?: number;
             scope_escalation_account?: string;
             scope_escalation_body_lines?: string[] | null;
             scope_escalation_cancel_hint?: string;
@@ -3454,6 +3458,7 @@ export interface components {
             id: string;
             /** Format: int64 */
             message_count: number;
+            source?: components["schemas"]["SourceReference"];
             status: string;
             summary?: components["schemas"]["Summary"];
         } & {
@@ -3468,6 +3473,17 @@ export interface components {
             /** Format: int64 */
             message_count: number;
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DeletionTarget: {
+            /** Format: int64 */
+            message_id: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_message_id: string;
+            source_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -4131,6 +4147,7 @@ export interface components {
         };
         GmailIDsResponse: {
             gmail_ids: string[] | null;
+            targets?: components["schemas"]["DeletionTarget"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -4356,6 +4373,7 @@ export interface components {
             gmail_ids: string[] | null;
             id: string;
             raw_filter?: unknown;
+            source?: components["schemas"]["SourceReference"];
             status: string;
             summary?: components["schemas"]["Summary"];
             /** Format: int64 */
@@ -5862,6 +5880,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        SourceReference: {
+            /** Format: int64 */
+            id: number;
+            identifier: string;
+            type: string;
+        };
         SourceStatus: {
             active_sync: components["schemas"]["SyncRunStatus"] | null;
             can_sync: boolean;
@@ -5917,6 +5941,7 @@ export interface components {
             /** Format: int64 */
             message_count: number;
             sample_gmail_ids?: string[] | null;
+            source?: components["schemas"]["SourceReference"];
             status?: string;
         } & {
             [key: string]: unknown;
@@ -6187,8 +6212,11 @@ export interface components {
             text: string;
         };
         UpdateRequest: {
+            account?: string;
             display_name: string;
-            email: string;
+            email?: string;
+            /** Format: int64 */
+            source_id?: number;
         };
         UpdateResult: {
             display_name: string;
@@ -8603,6 +8631,8 @@ export interface operations {
             query?: {
                 /** @description Account email or display name to sync */
                 email?: string;
+                /** @description Exact source ID to sync */
+                source_id?: number;
                 /** @description IMAP folder names to include (repeatable) */
                 folder?: string[];
                 /** @description IMAP folder names to exclude (repeatable) */
@@ -8639,6 +8669,8 @@ export interface operations {
             query?: {
                 /** @description Account email or display name to sync */
                 email?: string;
+                /** @description Exact source ID to sync */
+                source_id?: number;
                 /** @description Gmail search query */
                 query?: string;
                 /** @description Only messages on or after this YYYY-MM-DD date */

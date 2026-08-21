@@ -3,6 +3,7 @@ package deletion
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,20 @@ import (
 	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
+
+// Digest returns the canonical SHA-256 fingerprint of the complete serialized
+// manifest state used for execution confirmation.
+func (m *Manifest) Digest() (string, error) {
+	if err := m.ValidateVersion(); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("marshal manifest digest: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
 
 // Status represents the state of a deletion batch.
 type Status string
@@ -79,23 +94,59 @@ type Execution struct {
 	LastProcessedIndex int        `json:"last_processed_index"` // For resumability
 }
 
+// SourceReference is the durable identity of the one source a deletion batch
+// targets. Type and Identifier are portable across archives; ID is a local
+// snapshot used for diagnostics and fast-path validation.
+type SourceReference struct {
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Identifier string `json:"identifier"`
+}
+
 // Manifest represents a deletion batch.
 type Manifest struct {
-	Version     int        `json:"version"`
-	ID          string     `json:"id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CreatedBy   string     `json:"created_by"` // "tui", "cli", "api"
-	Description string     `json:"description"`
-	Filters     Filters    `json:"filters"`
-	Summary     *Summary   `json:"summary,omitempty"`
-	GmailIDs    []string   `json:"gmail_ids"`
-	Status      Status     `json:"status"`
-	Execution   *Execution `json:"execution,omitempty"`
+	Version     int              `json:"version"`
+	ID          string           `json:"id"`
+	CreatedAt   time.Time        `json:"created_at"`
+	CreatedBy   string           `json:"created_by"` // "tui", "cli", "api"
+	Description string           `json:"description"`
+	Filters     Filters          `json:"filters"`
+	Summary     *Summary         `json:"summary,omitempty"`
+	GmailIDs    []string         `json:"gmail_ids"`
+	Status      Status           `json:"status"`
+	Execution   *Execution       `json:"execution,omitempty"`
+	Source      *SourceReference `json:"source,omitempty"`
 	// RawFilter records the serialized HTTP API staging request fields for
 	// provenance — Filters cannot represent every request field
 	// (sender_name, recipient_name, source_id). Absent on manifests created
 	// by the TUI/CLI.
 	RawFilter json.RawMessage `json:"raw_filter,omitempty"`
+}
+
+// NewManifestForSource creates a source-bound version-2 manifest.
+func NewManifestForSource(description string, gmailIDs []string, source SourceReference) *Manifest {
+	manifest := NewManifest(description, gmailIDs)
+	manifest.Version = 2
+	manifest.Source = &source
+	return manifest
+}
+
+// ValidateVersion enforces the manifest-version/source contract.
+func (m *Manifest) ValidateVersion() error {
+	switch m.Version {
+	case 1:
+		if m.Source != nil {
+			return errors.New("version 1 manifest must not contain a source reference")
+		}
+		return nil
+	case 2:
+		if m.Source == nil || m.Source.ID <= 0 || strings.TrimSpace(m.Source.Type) == "" || strings.TrimSpace(m.Source.Identifier) == "" {
+			return errors.New("version 2 manifest requires a complete source reference")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported manifest version %d", m.Version)
+	}
 }
 
 // NewManifest creates a new deletion manifest.
@@ -191,12 +242,18 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
+	if err := m.ValidateVersion(); err != nil {
+		return nil, err
+	}
 
 	return &m, nil
 }
 
 // Save writes the manifest to a JSON file.
 func (m *Manifest) Save(path string) error {
+	if err := m.ValidateVersion(); err != nil {
+		return err
+	}
 	// Ensure parent directory exists
 	//
 	// codeql[go/path-injection] -- manifest paths are explicit local CLI
@@ -481,6 +538,12 @@ func (m *Manager) FinalizeInProgress(id string, target Status) error {
 // ErrManifestCancelled). Only one manifest's lock is ever held at a time, so
 // there is no lock-ordering cycle to deadlock on.
 func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
+	return m.ClaimManifestWithDigest(id, method, "")
+}
+
+// ClaimManifestWithDigest claims a manifest only if its complete persisted
+// state still matches the state confirmed by the caller.
+func (m *Manager) ClaimManifestWithDigest(id string, method Method, expectedDigest string) (*Manifest, error) {
 	if err := ValidateManifestID(id); err != nil {
 		return nil, err
 	}
@@ -499,6 +562,9 @@ func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
 	manifest, err := LoadManifest(inProgressPath)
 	switch {
 	case err == nil:
+		if err := requireManifestDigest(manifest, expectedDigest); err != nil {
+			return nil, err
+		}
 		return m.resumeClaimedManifest(manifest, inProgressPath, method)
 	case !errors.Is(err, os.ErrNotExist):
 		return nil, fmt.Errorf("load in-progress manifest %s: %w", id, err)
@@ -519,12 +585,29 @@ func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
 	manifest, err = LoadManifest(pendingPath)
 	switch {
 	case err == nil:
+		if err := requireManifestDigest(manifest, expectedDigest); err != nil {
+			return nil, err
+		}
 		return m.claimPendingManifest(manifest, pendingPath, inProgressPath, method)
 	case !errors.Is(err, os.ErrNotExist):
 		return nil, fmt.Errorf("load pending manifest %s: %w", id, err)
 	}
 
 	return nil, fmt.Errorf("manifest %s not found", id)
+}
+
+func requireManifestDigest(manifest *Manifest, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	actual, err := manifest.Digest()
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return errors.New("staged deletion manifest changed since confirmation")
+	}
+	return nil
 }
 
 // resumeClaimedManifest handles the ClaimManifest resume branch: the manifest

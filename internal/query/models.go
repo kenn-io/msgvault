@@ -49,6 +49,16 @@ type MessageSummary struct {
 	BodyContextSnippetsTruncated bool       `json:"-"`
 }
 
+// DeletionTarget preserves the source provenance of a message selected for
+// remote deletion. SourceMessageID is unique only within SourceID.
+type DeletionTarget struct {
+	MessageID        int64  `json:"message_id"`
+	SourceID         int64  `json:"source_id"`
+	SourceType       string `json:"source_type"`
+	SourceIdentifier string `json:"source_identifier"`
+	SourceMessageID  string `json:"source_message_id"`
+}
+
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
 	ID                   int64      `json:"id"`

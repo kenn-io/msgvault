@@ -128,6 +128,45 @@ func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
 	assert.Contains(stdout.String(), "Deletion complete!", "daemon output")
 }
 
+func TestDeleteStagedDisplayNamePlanPinsSourceIDForDaemonRunner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	resetDeleteStagedRoutingGlobals(t)
+	t.Setenv(remoteDeleteEnvVar, "1")
+
+	server, runRequests, planRequests := newDaemonCLIDeleteStagedTestServer(t, func(req daemonCLIDeleteStagedPlanTestRequest) {
+		assert.Equal("Work", req.Account, "account selector")
+		assert.True(req.Yes, "yes")
+		assert.True(req.RemoteDeleteEnabled, "remote delete enabled")
+	}, map[string]any{
+		"stdout":                "Deletion Summary:\n  Batches:  1\n  Messages: 1\n  Method:   trash (30-day recovery)\n\n",
+		"needs_execution":       true,
+		"needs_confirmation":    false,
+		"planned_batch_ids":     []string{"batch-123"},
+		"plan_fingerprint":      "fp-display-name",
+		"resolved_source_id":    42,
+		"remote_delete_env_var": remoteDeleteEnvVar,
+	}, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{
+			"delete-staged",
+			"--confirmed",
+			"--plan-fingerprint=fp-display-name",
+			"--planned-batch=batch-123",
+			"--skip-prelude",
+			"--source-id=42",
+			"--yes",
+		}, req.Args, "args")
+	}, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetArgs([]string{"--account", "Work", "--yes"})
+
+	require.NoError(cmd.Execute(), "delete-staged")
+	assert.Equal(1, int(planRequests.Load()), "plan endpoint calls")
+	assert.Equal(1, int(runRequests.Load()), "runner endpoint calls")
+}
+
 func TestDeleteStagedPermanentPromptsBeforeDaemonRunner(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -338,12 +377,14 @@ func resetDeleteStagedRoutingGlobals(t *testing.T) {
 	savedDryRun := deleteDryRun
 	savedList := deleteList
 	savedAccount := deleteAccount
+	savedSourceID := deleteSourceID
 	savedPlannedBatchIDs := deletePlannedBatchIDs
 	deletePermanent = false
 	deleteYes = false
 	deleteDryRun = false
 	deleteList = false
 	deleteAccount = ""
+	deleteSourceID = 0
 	deletePlannedBatchIDs = nil
 	t.Cleanup(func() {
 		deletePermanent = savedPermanent
@@ -351,6 +392,7 @@ func resetDeleteStagedRoutingGlobals(t *testing.T) {
 		deleteDryRun = savedDryRun
 		deleteList = savedList
 		deleteAccount = savedAccount
+		deleteSourceID = savedSourceID
 		deletePlannedBatchIDs = savedPlannedBatchIDs
 	})
 }
@@ -366,6 +408,7 @@ func newDeleteStagedRoutingTestCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Dry run")
 	cmd.Flags().BoolVarP(&deleteList, "list", "l", false, "List")
 	cmd.Flags().StringVar(&deleteAccount, "account", "", "Account")
+	cmd.Flags().Int64Var(&deleteSourceID, "source-id", 0, "Exact source ID")
 	cmd.Flags().Bool("confirmed", false, "Internal confirmation marker")
 	cmd.Flags().Bool("skip-prelude", false, "Internal prelude marker")
 	cmd.Flags().StringArrayVar(&deletePlannedBatchIDs, "planned-batch", nil, "Internal planned batch marker")
@@ -377,6 +420,7 @@ func newDeleteStagedRoutingTestCommand() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("plan-fingerprint")
 	_ = cmd.Flags().MarkHidden("scope-escalation-confirmed")
 	cmd.MarkFlagsMutuallyExclusive("permanent", "yes")
+	cmd.MarkFlagsMutuallyExclusive("account", "source-id")
 	return cmd
 }
 

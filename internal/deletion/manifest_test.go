@@ -250,6 +250,86 @@ func TestNewManifest(t *testing.T) {
 	assert.False(m.CreatedAt.IsZero(), "CreatedAt is zero")
 }
 
+func TestNewManifestForSourceRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	path := filepath.Join(t.TempDir(), "source-bound.json")
+	wantSource := SourceReference{ID: 42, Type: "gmail", Identifier: "account@example.invalid"}
+	manifest := NewManifestForSource("source-bound", []string{"gm-1"}, wantSource)
+
+	require.NoError(manifest.Save(path))
+	loaded, err := LoadManifest(path)
+	require.NoError(err)
+	assert.Equal(2, loaded.Version)
+	require.NotNil(loaded.Source)
+	assert.Equal(wantSource, *loaded.Source)
+}
+
+func TestManifestVersionSourceContract(t *testing.T) {
+	validSource := &SourceReference{ID: 42, Type: "gmail", Identifier: "account@example.invalid"}
+	tests := []struct {
+		name     string
+		version  int
+		source   *SourceReference
+		wantPart string
+	}{
+		{name: "v1 with source", version: 1, source: validSource, wantPart: "version 1"},
+		{name: "v2 missing source", version: 2, wantPart: "complete source"},
+		{name: "v2 zero id", version: 2, source: &SourceReference{Type: "gmail", Identifier: "account@example.invalid"}, wantPart: "complete source"},
+		{name: "unsupported", version: 3, wantPart: "unsupported"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := NewManifest("invalid", []string{"gm-1"})
+			manifest.Version = tt.version
+			manifest.Source = tt.source
+			err := manifest.Save(filepath.Join(t.TempDir(), "manifest.json"))
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantPart)
+		})
+	}
+}
+
+func TestLoadLiteralVersionOneManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	require.NoError(os.WriteFile(path, []byte(`{
+		"version":1,"id":"legacy-batch","created_at":"2026-08-19T00:00:00Z",
+		"created_by":"cli","description":"legacy","filters":{"account":"legacy@example.invalid"},
+		"gmail_ids":["gm-1"],"status":"pending"
+	}`), 0o600))
+
+	manifest, err := LoadManifest(path)
+	require.NoError(err)
+	assert.Equal(1, manifest.Version)
+	assert.Nil(manifest.Source)
+}
+
+func TestClaimManifestWithDigestRejectsReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr := testManager(t)
+	manifest := NewManifestForSource("confirmed", []string{"gm-1"}, SourceReference{
+		ID: 42, Type: "gmail", Identifier: "account@example.invalid",
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+	digest, err := manifest.Digest()
+	require.NoError(err)
+
+	replacement := *manifest
+	replacement.Filters.Account = "changed@example.invalid"
+	require.NoError(replacement.Save(filepath.Join(mgr.PendingDir(), manifest.ID+".json")))
+
+	_, err = mgr.ClaimManifestWithDigest(manifest.ID, MethodTrash, digest)
+	require.ErrorContains(err, "changed since confirmation")
+	assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
+	assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
+}
+
 func TestManifest_SaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test-manifest.json")
@@ -983,6 +1063,7 @@ func setupInProgress(t *testing.T, mgr *Manager, desc string) *Manifest {
 // This is the invariant a torn checkpoint write would violate.
 func assertSingleValidManifest(t *testing.T, mgr *Manager, id string) {
 	t.Helper()
+	require := require.New(t)
 	found := 0
 	for _, status := range persistedStatuses {
 		path := filepath.Join(mgr.dirForStatus(status), id+".json")
@@ -991,12 +1072,12 @@ func assertSingleValidManifest(t *testing.T, mgr *Manager, id string) {
 			continue
 		}
 		found++
-		require.Positive(t, info.Size(), "manifest %s in %s must not be empty", id, status)
+		require.Positive(info.Size(), "manifest %s in %s must not be empty", id, status)
 		loaded, err := LoadManifest(path)
-		require.NoError(t, err, "manifest %s in %s must be fully parseable", id, status)
-		require.Equal(t, id, loaded.ID, "parsed manifest %s in %s has wrong ID", id, status)
+		require.NoError(err, "manifest %s in %s must be fully parseable", id, status)
+		require.Equal(id, loaded.ID, "parsed manifest %s in %s has wrong ID", id, status)
 	}
-	require.Equal(t, 1, found, "manifest %s must exist in exactly one status directory", id)
+	require.Equal(1, found, "manifest %s must exist in exactly one status directory", id)
 }
 
 // TestManager_CheckpointCancelSerialize deterministically drives the

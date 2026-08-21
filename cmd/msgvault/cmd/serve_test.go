@@ -1042,21 +1042,24 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBOpenFailureMarksIntentFailed(t *
 }
 
 func TestOpenDaemonAnalyticsEngineSQLLeavesExplicitIntentUnconsumed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineSQL
 	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
-		require.FailNow(t, "SQL engine must leave cache intent for the HTTP path")
+		require.FailNow("SQL engine must leave cache intent for the HTTP path")
 		return nil
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
 		context.Background(), c, s, startupCacheBuildIntentDefault,
 	)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = engine.Close() }()
 
-	assert.Equal(t, api.AnalyticsModeSQL, mode)
-	assert.Equal(t, startupCacheBuildOutcomeUnconsumed, outcome)
+	assert.Equal(api.AnalyticsModeSQL, mode)
+	assert.Equal(startupCacheBuildOutcomeUnconsumed, outcome)
 }
 
 func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
@@ -1239,6 +1242,17 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 			Folders:     []string{"Path\\To\\File"},
 			SkipFolders: []string{"Fold,er"},
 		}),
+	)
+}
+
+func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
+	assert.Equal(t,
+		[]string{"sync", "--source-id", "42"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{SourceID: 42, SourceIDSet: true}),
+	)
+	assert.Equal(t,
+		[]string{"sync-full", "--source-id", "42"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, SourceID: 42, SourceIDSet: true}),
 	)
 }
 

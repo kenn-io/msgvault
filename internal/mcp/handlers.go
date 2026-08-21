@@ -326,10 +326,18 @@ func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, er
 	if err != nil {
 		return nil, newInternalError("list accounts", err)
 	}
+	var matched *int64
 	for _, acc := range accounts {
 		if acc.Identifier == account {
-			return &acc.ID, nil
+			if matched != nil {
+				return nil, &expectedHandlerError{message: "account matches multiple sources: " + account}
+			}
+			id := acc.ID
+			matched = &id
 		}
+	}
+	if matched != nil {
+		return matched, nil
 	}
 	return nil, &expectedHandlerError{message: "account not found: " + account}
 }
@@ -1885,7 +1893,16 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
-	var gmailIDs []string
+	accounts, err := h.engine.ListAccounts(ctx)
+	if err != nil {
+		return dependencyError("list deletion sources", err)
+	}
+	accountsByID := make(map[int64]query.AccountInfo, len(accounts))
+	for _, info := range accounts {
+		accountsByID[info.ID] = info
+	}
+
+	var targets []query.DeletionTarget
 	var description string
 
 	if hasQuery {
@@ -1914,7 +1931,20 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 
 		for _, msg := range results {
-			gmailIDs = append(gmailIDs, msg.SourceMessageID)
+			if msg.SourceID <= 0 {
+				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+			}
+			info, ok := accountsByID[msg.SourceID]
+			if !ok {
+				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+			}
+			if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
+				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
+			}
+			targets = append(targets, query.DeletionTarget{
+				MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
+				SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
+			})
 		}
 		description = "query: " + queryStr
 		if len(description) > 50 {
@@ -1936,7 +1966,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 
 		var err error
-		gmailIDs, err = h.engine.GetGmailIDsByFilter(ctx, filter)
+		targets, err = h.engine.GetDeletionTargetsByFilter(ctx, filter)
 		if err != nil {
 			return nil, newInternalError("filter messages for deletion", err)
 		}
@@ -1967,15 +1997,26 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 	}
 
-	if len(gmailIDs) == 0 {
+	if len(targets) == 0 {
 		return toolErrorResult("no messages match the specified criteria"), nil
 	}
+	source, sourceErr := deletion.SourceReferenceForTargets(targets)
+	if errors.Is(sourceErr, deletion.ErrMultipleDeletionSources) {
+		return toolErrorResult("selected messages span multiple sources; set account or stage each source separately"), nil
+	}
+	if errors.Is(sourceErr, deletion.ErrIncompleteDeletionSource) {
+		return toolErrorResult("selected message has incomplete source metadata"), nil
+	}
+	if sourceErr != nil {
+		return toolErrorResult(sourceErr.Error()), nil
+	}
+	gmailIDs := deletion.SourceMessageIDs(targets)
 
-	manifest := deletion.NewManifest(description, gmailIDs)
+	manifest := deletion.NewManifestForSource(description, gmailIDs, source)
 	manifest.CreatedBy = "mcp"
 
 	// Set filter metadata for execution
-	manifest.Filters.Account = account
+	manifest.Filters.Account = source.Identifier
 	if fromStr != "" {
 		manifest.Filters.Senders = []string{fromStr}
 	}

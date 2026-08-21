@@ -605,12 +605,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "syncCLI":
 		return []*huma.Param{
 			queryStringParam("email", "Account email or display name to sync", false),
+			queryIntegerParam("source_id", "Exact source ID to sync"),
 			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
 			queryRefArrayParam("skip-folder", "IMAP folder names to exclude (repeatable)"),
 		}
 	case "syncFullCLI":
 		return []*huma.Param{
 			queryStringParam("email", "Account email or display name to sync", false),
+			queryIntegerParam("source_id", "Exact source ID to sync"),
 			queryStringParam("query", "Gmail search query", false),
 			queryStringParam("after", "Only messages on or after this YYYY-MM-DD date", false),
 			queryStringParam("before", "Only messages before this YYYY-MM-DD date", false),

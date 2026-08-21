@@ -84,9 +84,9 @@ type Engine interface {
 	SearchFastWithStats(ctx context.Context, query *search.Query, queryStr string,
 		filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error)
 
-	// GetGmailIDsByFilter returns Gmail message IDs (source_message_id) matching a filter.
-	// This is useful for batch operations like staging messages for deletion.
-	GetGmailIDsByFilter(ctx context.Context, filter MessageFilter) ([]string, error)
+	// GetDeletionTargetsByFilter returns deletion candidates without losing
+	// their source provenance.
+	GetDeletionTargetsByFilter(ctx context.Context, filter MessageFilter) ([]DeletionTarget, error)
 
 	// SearchByDomains returns messages where any participant (from, to, cc, or bcc)
 	// belongs to one of the given domains.

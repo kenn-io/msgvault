@@ -37,16 +37,17 @@ type e2eFixture struct {
 
 func newE2EFixture(t *testing.T) *e2eFixture {
 	t.Helper()
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	srcA, err := st.GetOrCreateSource("gmail", "alice@example.com")
-	require.NoError(t, err, "GetOrCreateSource A")
+	require.NoError(err, "GetOrCreateSource A")
 	srcB, err := st.GetOrCreateSource("gmail", "bob@example.com")
-	require.NoError(t, err, "GetOrCreateSource B")
+	require.NoError(err, "GetOrCreateSource B")
 	convA, err := st.EnsureConversation(srcA.ID, "thread-A", "Thread A")
-	require.NoError(t, err, "EnsureConversation A")
+	require.NoError(err, "EnsureConversation A")
 	convB, err := st.EnsureConversation(srcB.ID, "thread-B", "Thread B")
-	require.NoError(t, err, "EnsureConversation B")
+	require.NoError(err, "EnsureConversation B")
 
 	f := &e2eFixture{
 		t:       t,
@@ -79,6 +80,11 @@ func newE2EFixture(t *testing.T) *e2eFixture {
 
 func (f *e2eFixture) addMessage(gmailID string, sourceID, convID int64) {
 	f.t.Helper()
+	f.msgIDs[gmailID] = f.addMessageReturningID(gmailID, sourceID, convID)
+}
+
+func (f *e2eFixture) addMessageReturningID(gmailID string, sourceID, convID int64) int64 {
+	f.t.Helper()
 	id, err := f.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        sourceID,
@@ -87,7 +93,7 @@ func (f *e2eFixture) addMessage(gmailID string, sourceID, convID int64) {
 		SizeEstimate:    1024,
 	})
 	require.NoErrorf(f.t, err, "UpsertMessage(%s)", gmailID)
-	f.msgIDs[gmailID] = id
+	return id
 }
 
 func (f *e2eFixture) upsertAttachment(gmailID, filename, storagePath, contentHash string) {
@@ -165,6 +171,78 @@ func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
 	// Mock Gmail was called for each ID exactly once via TrashMessage.
 	assert.Len(tc.MockAPI.TrashCalls, 3, "TrashCalls")
 	assert.Empty(tc.MockAPI.DeleteCalls, "DeleteCalls (trash method)")
+}
+
+func TestExecutor_E2E_VersionTwoScopesDuplicateRemoteID(t *testing.T) {
+	tests := []struct {
+		name    string
+		execute func(*e2eContext, string) error
+	}{
+		{name: "trash", execute: func(tc *e2eContext, id string) error {
+			return tc.Exec.Execute(context.Background(), id, DefaultExecuteOptions())
+		}},
+		{name: "permanent", execute: func(tc *e2eContext, id string) error {
+			opts := DefaultExecuteOptions()
+			opts.Method = MethodDelete
+			return tc.Exec.Execute(context.Background(), id, opts)
+		}},
+		{name: "batch", execute: func(tc *e2eContext, id string) error {
+			return tc.Exec.ExecuteBatch(context.Background(), id)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			f := newE2EFixture(t)
+			tc := newE2EContext(t, f)
+			const sharedID = "shared-remote-id"
+			targetRowID := f.addMessageReturningID(sharedID, f.sourceA.ID, f.convA)
+			otherRowID := f.addMessageReturningID(sharedID, f.sourceB.ID, f.convB)
+
+			manifest := NewManifestForSource("source-bound collision", []string{sharedID}, SourceReference{
+				// The snapshot deliberately points at source B. The stable tuple
+				// remains authoritative and resolves source A.
+				ID: f.sourceB.ID, Type: f.sourceA.SourceType, Identifier: f.sourceA.Identifier,
+			})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+			require.NoError(tt.execute(tc, manifest.ID))
+
+			var otherDeletedAt any
+			require.NoError(f.store.DB().QueryRow(
+				f.store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), otherRowID,
+			).Scan(&otherDeletedAt))
+			assert.Nil(otherDeletedAt)
+			var targetCount int
+			require.NoError(f.store.DB().QueryRow(
+				f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), targetRowID,
+			).Scan(&targetCount))
+			if tt.name == "permanent" {
+				assert.Zero(targetCount)
+			} else {
+				assert.Equal(1, targetCount)
+			}
+		})
+	}
+}
+
+func TestExecutor_E2E_MissingVersionTwoSourceMakesNoRemoteCall(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newE2EFixture(t)
+	tc := newE2EContext(t, f)
+	manifest := NewManifestForSource("missing source", []string{"msg-a1"}, SourceReference{
+		ID: 999, Type: "gmail", Identifier: "missing@example.invalid",
+	})
+	require.NoError(tc.Mgr.SaveManifest(manifest))
+
+	err := tc.Exec.Execute(context.Background(), manifest.ID, DefaultExecuteOptions())
+	require.ErrorContains(err, "resolve manifest source")
+	assert.Empty(tc.MockAPI.TrashCalls)
+	assert.Empty(tc.MockAPI.DeleteCalls)
+	assert.Empty(tc.MockAPI.BatchDeleteCalls)
 }
 
 // TestExecutor_E2E_PermanentDeleteCascadesAttachments verifies that

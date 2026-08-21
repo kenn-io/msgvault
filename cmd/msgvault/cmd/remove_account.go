@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/slack"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -32,7 +33,7 @@ var removeAccountAfterCascadeHook func()
 
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   removeAccountCommandName + " <email>",
+		Use:   removeAccountCommandName + " [account]",
 		Short: "Remove an account and all its data",
 		Long: `Remove an account and all associated messages, labels, and sync data
 from the local database. This is irreversible.
@@ -52,7 +53,7 @@ Examples:
   msgvault remove-account you@gmail.com
   msgvault remove-account you@gmail.com --yes
   msgvault remove-account you@gmail.com --type mbox`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: runRemoveAccount,
 	}
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -64,6 +65,7 @@ Examples:
 		"type", "",
 		"Source type to remove (gmail, mbox, etc.)",
 	)
+	cmd.Flags().Int64("source-id", 0, "Exact source ID to remove")
 	return cmd
 }
 
@@ -75,6 +77,9 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 }
 
 func runRemoveAccountHTTP(cmd *cobra.Command, args []string) error {
+	if _, err := removeAccountSelector(cmd, args); err != nil {
+		return usageErr(cmd, err)
+	}
 	yes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
 		return fmt.Errorf("read --yes flag: %w", err)
@@ -116,15 +121,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read --yes flag: %w", err)
 	}
-	sourceType, err := cmd.Flags().GetString("type")
-	if err != nil {
-		return fmt.Errorf("read --type flag: %w", err)
-	}
 	confirmed, err := cmd.Flags().GetBool(removeAccountConfirmedFlag)
 	if err != nil {
 		return fmt.Errorf("read --%s flag: %w", removeAccountConfirmedFlag, err)
 	}
-	email := args[0]
+	selector, err := removeAccountSelector(cmd, args)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 
 	s, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
@@ -132,10 +136,11 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	source, err := resolveSource(s, email, sourceType)
+	source, err := sourceops.ResolveExactOne(s, selector)
 	if err != nil {
 		return err
 	}
+	email := source.Identifier
 
 	activeSync, err := s.GetActiveSync(source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
@@ -563,40 +568,38 @@ func deleteOneAttachmentFile(
 func resolveSource(
 	s *store.Store, identifier, sourceType string,
 ) (*store.Source, error) {
-	sources, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
+	return sourceops.ResolveExactOne(s, sourceops.Selector{
+		Account: identifier, SourceType: sourceType,
+	})
+}
+
+func removeAccountSelector(cmd *cobra.Command, args []string) (sourceops.Selector, error) {
+	sourceID, err := cmd.Flags().GetInt64("source-id")
 	if err != nil {
-		return nil, fmt.Errorf("look up account: %w", err)
+		return sourceops.Selector{}, fmt.Errorf("read --source-id flag: %w", err)
 	}
-	if len(sources) == 0 {
-		return nil, fmt.Errorf("account %q not found", identifier)
+	sourceType, err := cmd.Flags().GetString("type")
+	if err != nil {
+		return sourceops.Selector{}, fmt.Errorf("read --type flag: %w", err)
 	}
-
-	if sourceType != "" {
-		for _, src := range sources {
-			if src.SourceType == sourceType {
-				return src, nil
-			}
-		}
-		return nil, fmt.Errorf(
-			"account %q with type %q not found",
-			identifier, sourceType,
-		)
+	account := ""
+	if len(args) == 1 {
+		account = args[0]
 	}
-
-	if len(sources) == 1 {
-		return sources[0], nil
+	sourceIDSet := cmd.Flags().Changed("source-id")
+	switch {
+	case sourceIDSet && sourceID <= 0:
+		return sourceops.Selector{}, errors.New("source ID must be positive")
+	case sourceIDSet && account != "":
+		return sourceops.Selector{}, errors.New("account and source ID are mutually exclusive")
+	case sourceIDSet && sourceType != "":
+		return sourceops.Selector{}, errors.New("source type and source ID are mutually exclusive")
+	case !sourceIDSet && account == "":
+		return sourceops.Selector{}, errors.New("account or source ID is required")
 	}
-
-	// Multiple matches — require --type to disambiguate
-	var types []string
-	for _, src := range sources {
-		types = append(types, src.SourceType)
-	}
-	return nil, fmt.Errorf(
-		"multiple accounts found for %q (types: %s)\n"+
-			"Use --type to specify which one to remove",
-		identifier, strings.Join(types, ", "),
-	)
+	return sourceops.Selector{
+		Account: account, SourceID: sourceID, SourceIDSet: sourceIDSet, SourceType: sourceType,
+	}, nil
 }
 
 func init() {

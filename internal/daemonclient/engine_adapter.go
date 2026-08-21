@@ -913,7 +913,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	}, nil
 }
 
-func (e *Engine) GetGmailIDsByFilter(ctx context.Context, filter query.MessageFilter) ([]string, error) {
+func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetGmailIDsByFilterResp, error) {
 		return client.GetGmailIDsByFilterWithResponse(ctx, &generated.GetGmailIDsByFilterRequestOptions{
 			Query: gmailIDsFilterQuery(filter),
@@ -922,10 +922,18 @@ func (e *Engine) GetGmailIDsByFilter(ctx context.Context, filter query.MessageFi
 	if err != nil {
 		return nil, err
 	}
-	if resp.JSON200.GmailIds == nil {
-		return []string{}, nil
+	if len(resp.JSON200.Targets) == 0 && len(resp.JSON200.GmailIds) > 0 {
+		return nil, errors.New("daemon did not return deletion source provenance; upgrade the daemon and retry")
 	}
-	return resp.JSON200.GmailIds, nil
+	targets := make([]query.DeletionTarget, len(resp.JSON200.Targets))
+	for i, target := range resp.JSON200.Targets {
+		targets[i] = query.DeletionTarget{
+			MessageID: target.MessageID, SourceID: target.SourceID,
+			SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier,
+			SourceMessageID: target.SourceMessageID,
+		}
+	}
+	return targets, nil
 }
 
 func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {

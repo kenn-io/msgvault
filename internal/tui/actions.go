@@ -98,17 +98,25 @@ func (c *ActionController) SaveManifest(manifest *deletion.Manifest) error {
 
 // StageForDeletion prepares messages for deletion based on selection.
 func (c *ActionController) StageForDeletion(ctx DeletionContext) (*deletion.Manifest, error) {
-	gmailIDs, err := c.resolveGmailIDs(ctx)
+	targets, err := c.resolveDeletionTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(gmailIDs) == 0 {
+	if len(targets) == 0 {
 		return nil, errors.New("no messages selected")
 	}
+	source, err := deletion.SourceReferenceForTargets(targets)
+	if errors.Is(err, deletion.ErrMultipleDeletionSources) {
+		return nil, errors.New("selected messages span multiple sources; press 'a' to filter by account, then stage again")
+	}
+	if err != nil {
+		return nil, err
+	}
+	gmailIDs := deletion.SourceMessageIDs(targets)
 
 	description := c.buildManifestDescription(ctx)
-	manifest := deletion.NewManifest(description, gmailIDs)
+	manifest := deletion.NewManifestForSource(description, gmailIDs, source)
 	manifest.CreatedBy = "tui"
 
 	c.applyManifestFilters(manifest, ctx)
@@ -117,8 +125,8 @@ func (c *ActionController) StageForDeletion(ctx DeletionContext) (*deletion.Mani
 }
 
 // resolveGmailIDs converts selections (aggregate keys and message IDs) into Gmail IDs.
-func (c *ActionController) resolveGmailIDs(dctx DeletionContext) ([]string, error) {
-	gmailIDSet := make(map[string]bool)
+func (c *ActionController) resolveDeletionTargets(dctx DeletionContext) ([]query.DeletionTarget, error) {
+	targetsByMessageID := make(map[int64]query.DeletionTarget)
 	ctx := context.Background()
 
 	// From selected aggregates - resolve to Gmail IDs via query engine
@@ -126,30 +134,42 @@ func (c *ActionController) resolveGmailIDs(dctx DeletionContext) ([]string, erro
 		for key := range dctx.AggregateSelection {
 			filter := c.buildFilterForAggregate(key, dctx)
 
-			ids, err := c.queries.GetGmailIDsByFilter(ctx, filter)
+			targets, err := c.queries.GetDeletionTargetsByFilter(ctx, filter)
 			if err != nil {
 				return nil, fmt.Errorf("error loading messages: %w", err)
 			}
-			for _, id := range ids {
-				gmailIDSet[id] = true
+			for _, target := range targets {
+				targetsByMessageID[target.MessageID] = target
 			}
 		}
 	}
 
 	// From selected message IDs
 	if len(dctx.MessageSelection) > 0 {
+		accounts := make(map[int64]query.AccountInfo, len(dctx.Accounts))
+		for _, account := range dctx.Accounts {
+			accounts[account.ID] = account
+		}
 		for _, msg := range dctx.Messages {
 			if dctx.MessageSelection[msg.ID] {
-				gmailIDSet[msg.SourceMessageID] = true
+				account, ok := accounts[msg.SourceID]
+				if !ok {
+					return nil, fmt.Errorf("selected message %d has no source metadata", msg.ID)
+				}
+				targetsByMessageID[msg.ID] = query.DeletionTarget{
+					MessageID: msg.ID, SourceID: msg.SourceID, SourceType: account.SourceType,
+					SourceIdentifier: account.Identifier, SourceMessageID: msg.SourceMessageID,
+				}
 			}
 		}
 	}
 
-	gmailIDs := make([]string, 0, len(gmailIDSet))
-	for id := range gmailIDSet {
-		gmailIDs = append(gmailIDs, id)
+	targets := make([]query.DeletionTarget, 0, len(targetsByMessageID))
+	for _, target := range targetsByMessageID {
+		targets = append(targets, target)
 	}
-	return gmailIDs, nil
+	sort.Slice(targets, func(i, j int) bool { return targets[i].MessageID < targets[j].MessageID })
+	return targets, nil
 }
 
 // buildFilterForAggregate constructs a MessageFilter for a single aggregate key.

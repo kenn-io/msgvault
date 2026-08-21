@@ -102,6 +102,7 @@ func cliDeleteStagedPlanFromGenerated(resp *generated.PlanCLIDeleteStagedRespons
 		ConfirmationMode:          stringValue(resp.ConfirmationMode),
 		PlannedBatchIDs:           append([]string(nil), resp.PlannedBatchIds...),
 		PlanFingerprint:           stringValue(resp.PlanFingerprint),
+		ResolvedSourceID:          resp.ResolvedSourceID,
 		NeedsScopeEscalation:      boolValue(resp.NeedsScopeEscalation),
 		ScopeEscalationHeadline:   stringValue(resp.ScopeEscalationHeadline),
 		ScopeEscalationBodyLines:  append([]string(nil), resp.ScopeEscalationBodyLines...),
@@ -139,6 +140,11 @@ func cliDeletionManifestToGenerated(manifest *deletion.Manifest) generated.Creat
 	}
 	if manifest.Execution != nil {
 		out.Execution = cliDeletionExecutionToGenerated(manifest.Execution)
+	}
+	if manifest.Source != nil {
+		out.Source = &generated.SourceReference{
+			ID: manifest.Source.ID, Type: manifest.Source.Type, Identifier: manifest.Source.Identifier,
+		}
 	}
 	if manifest.Summary != nil {
 		out.Summary = cliDeletionSummaryToGenerated(manifest.Summary)

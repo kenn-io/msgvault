@@ -82,6 +82,10 @@ func validateSyncFullFlags(cmd *cobra.Command) error {
 }
 
 func runSyncFullLocal(cmd *cobra.Command, args []string) error {
+	selector, selectorSet, err := syncSourceSelector(cmd, args)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 	s, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
 		return err
@@ -94,14 +98,14 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	// Determine which sources to sync
 	var sources []*store.Source
 	var syncErrors []string
-	if len(args) == 1 {
+	if selectorSet {
 		// Look up all sources matching the identifier and
 		// keep only syncable types (gmail, imap). Non-syncable
 		// sources like mbox/apple-mail imports share the same
 		// identifier namespace but cannot be synced.
-		allMatches, err := s.GetSourcesByIdentifierOrDisplayName(args[0])
+		allMatches, legacy, err := resolveSyncSources(s, selector)
 		if err != nil {
-			return fmt.Errorf("look up source: %w", err)
+			return err
 		}
 		for _, src := range allMatches {
 			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
@@ -111,10 +115,12 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		if len(sources) == 0 {
 			if len(allMatches) > 0 {
 				// Identifier exists but has no syncable source types.
-				return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
+				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail and imap are supported)", syncSelectorLabel(selector))
 			}
-			// Not in DB yet - assume Gmail (legacy behaviour)
-			sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
+			if legacy {
+				// Token not in DB yet - assume Gmail (legacy behaviour).
+				sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: selector.Account}}
+			}
 		}
 	} else {
 		// Sync all configured sources
@@ -914,6 +920,7 @@ func imapSkipReason(src *store.Source) (string, error) {
 }
 
 func init() {
+	syncFullCmd.Flags().Int64("source-id", 0, "Exact source ID to sync")
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
 	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")

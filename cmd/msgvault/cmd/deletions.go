@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -23,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -281,6 +283,7 @@ var (
 	deleteDryRun    bool
 	deleteList      bool
 	deleteAccount   string
+	deleteSourceID  int64
 	// deletePlannedBatchIDs is an internal daemon-runner guard. The
 	// foreground CLI receives this exact set from the planning endpoint after
 	// showing the summary and confirmation prompt, then passes it to the
@@ -310,14 +313,18 @@ func remoteDeleteEnabled() bool {
 }
 
 type deleteStagedPlanOptions struct {
-	BatchID             string
-	PlannedBatchIDs     []string
-	Permanent           bool
-	Yes                 bool
-	DryRun              bool
-	List                bool
-	Account             string
-	RemoteDeleteEnabled bool
+	BatchID                  string
+	PlannedBatchIDs          []string
+	Permanent                bool
+	Yes                      bool
+	DryRun                   bool
+	List                     bool
+	Account                  string
+	SourceID                 int64
+	SourceIDSet              bool
+	ResolvedSourceType       string
+	ResolvedSourceIdentifier string
+	RemoteDeleteEnabled      bool
 }
 
 type deleteStagedPlan struct {
@@ -325,6 +332,7 @@ type deleteStagedPlan struct {
 	Manifests                 []*deletion.Manifest
 	PlannedBatchIDs           []string
 	PlanFingerprint           string
+	ManifestDigests           map[string]string
 	Stdout                    string
 	NeedsExecution            bool
 	NeedsConfirmation         bool
@@ -340,6 +348,12 @@ type deleteStagedPlan struct {
 }
 
 func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, error) {
+	if opts.SourceIDSet && opts.SourceID <= 0 {
+		return deleteStagedPlan{}, newDeleteStagedUsageError(errors.New("source ID must be positive"))
+	}
+	if opts.SourceIDSet && strings.TrimSpace(opts.Account) != "" {
+		return deleteStagedPlan{}, newDeleteStagedUsageError(errors.New("cannot use --account with --source-id"))
+	}
 	deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
 	manager, err := deletion.NewManager(deletionsDir)
 	if err != nil {
@@ -386,13 +400,26 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 			}
 		}
 	}
-
+	var filterErr error
+	manifests, filterErr = filterDeleteStagedManifests(manifests, opts)
+	if filterErr != nil {
+		return deleteStagedPlan{}, filterErr
+	}
 	var out strings.Builder
+	manifestDigests := make(map[string]string, len(manifests))
+	for _, manifest := range manifests {
+		digest, err := manifest.Digest()
+		if err != nil {
+			return deleteStagedPlan{}, fmt.Errorf("validate batch %s: %w", manifest.ID, err)
+		}
+		manifestDigests[manifest.ID] = digest
+	}
 	plan := deleteStagedPlan{
 		Manager:            manager,
 		Manifests:          manifests,
 		PlannedBatchIDs:    deleteStagedManifestIDs(manifests),
 		PlanFingerprint:    fingerprintDeleteStagedPlan(manifests),
+		ManifestDigests:    manifestDigests,
 		RemoteDeleteEnvVar: remoteDeleteEnvVar,
 	}
 	if len(manifests) == 0 {
@@ -455,6 +482,11 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 		plan.Stdout = out.String()
 		return plan, nil
 	}
+	if err := requireSingleDeletionSourceTuple(
+		manifests, opts.SourceIDSet || strings.TrimSpace(opts.Account) != "",
+	); err != nil {
+		return deleteStagedPlan{}, err
+	}
 
 	plan.NeedsExecution = true
 	if !opts.RemoteDeleteEnabled {
@@ -478,6 +510,71 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 	}
 	plan.Stdout = out.String()
 	return plan, nil
+}
+
+func requireSingleDeletionSourceTuple(manifests []*deletion.Manifest, selectorSet bool) error {
+	var sourceType, identifier string
+	hasUnboundLegacy := false
+	for _, manifest := range manifests {
+		if manifest.Version != 2 || manifest.Source == nil {
+			if manifest.Version == 1 && strings.TrimSpace(manifest.Filters.Account) == "" {
+				hasUnboundLegacy = true
+			}
+			continue
+		}
+		if sourceType == "" {
+			sourceType, identifier = manifest.Source.Type, manifest.Source.Identifier
+			continue
+		}
+		if sourceType != manifest.Source.Type || identifier != manifest.Source.Identifier {
+			return newDeleteStagedUsageError(errors.New(
+				"pending batches target multiple sources; select one batch or use --source-id"))
+		}
+	}
+	if hasUnboundLegacy && !selectorSet {
+		return newDeleteStagedUsageError(errors.New(
+			"legacy deletion manifest does not identify a source; use --account or --source-id"))
+	}
+	return nil
+}
+
+func filterDeleteStagedManifests(manifests []*deletion.Manifest, opts deleteStagedPlanOptions) ([]*deletion.Manifest, error) {
+	if len(opts.PlannedBatchIDs) > 0 {
+		// The daemon planner already selected these exact IDs against the
+		// current source catalog. The subprocess still verifies the plan
+		// fingerprint and resolves the selector again before any remote call.
+		return manifests, nil
+	}
+	if !opts.SourceIDSet && strings.TrimSpace(opts.Account) == "" {
+		return manifests, nil
+	}
+	explicit := opts.BatchID != "" || len(opts.PlannedBatchIDs) > 0
+	filtered := make([]*deletion.Manifest, 0, len(manifests))
+	for _, manifest := range manifests {
+		var matches bool
+		switch {
+		case opts.SourceIDSet:
+			matches = manifest.Version == 2 && manifest.Source != nil &&
+				manifest.Source.Type == opts.ResolvedSourceType &&
+				manifest.Source.Identifier == opts.ResolvedSourceIdentifier
+			if manifest.Version == 1 {
+				legacyAccount := strings.TrimSpace(manifest.Filters.Account)
+				matches = legacyAccount == "" || legacyAccount == opts.ResolvedSourceIdentifier
+			}
+		case manifest.Version == 2 && manifest.Source != nil:
+			matches = manifest.Source.Identifier == opts.Account
+		default:
+			matches = manifest.Filters.Account == "" || manifest.Filters.Account == opts.Account
+		}
+		if matches {
+			filtered = append(filtered, manifest)
+			continue
+		}
+		if explicit {
+			return nil, newDeleteStagedUsageError(fmt.Errorf("batch %s does not match the requested source", manifest.ID))
+		}
+	}
+	return filtered, nil
 }
 
 // assertDeleteStagedMethodMatchesFlag rejects a run whose --permanent flag
@@ -531,30 +628,7 @@ func fingerprintDeleteStagedPlan(manifests []*deletion.Manifest) string {
 	if len(manifests) == 0 {
 		return ""
 	}
-	type manifestFingerprint struct {
-		ID          string           `json:"id"`
-		Status      deletion.Status  `json:"status"`
-		Description string           `json:"description"`
-		Account     string           `json:"account,omitempty"`
-		GmailIDs    []string         `json:"gmail_ids"`
-		Execution   *deletion.Method `json:"execution_method,omitempty"`
-	}
-	parts := make([]manifestFingerprint, 0, len(manifests))
-	for _, manifest := range manifests {
-		part := manifestFingerprint{
-			ID:          manifest.ID,
-			Status:      manifest.Status,
-			Description: manifest.Description,
-			Account:     manifest.Filters.Account,
-			GmailIDs:    append([]string(nil), manifest.GmailIDs...),
-		}
-		if manifest.Execution != nil {
-			method := manifest.Execution.Method
-			part.Execution = &method
-		}
-		parts = append(parts, part)
-	}
-	data, err := json.Marshal(parts)
+	data, err := json.Marshal(manifests)
 	if err != nil {
 		panic(fmt.Sprintf("marshal deletion plan fingerprint: %v", err))
 	}
@@ -593,85 +667,106 @@ func resolveDeleteStagedTarget(
 	manifests []*deletion.Manifest,
 	requestedAccount string,
 ) (deleteStagedTarget, error) {
-	if requestedAccount != "" {
-		return resolveExplicitDeleteStagedTarget(st, manifests, requestedAccount)
-	}
-
-	accountSet := make(map[string]bool)
-	for _, manifest := range manifests {
-		if manifest.Filters.Account != "" {
-			accountSet[manifest.Filters.Account] = true
-		}
-	}
-
-	accounts := make([]string, 0, len(accountSet))
-	for account := range accountSet {
-		accounts = append(accounts, account)
-	}
-	slices.Sort(accounts)
-	switch len(accounts) {
-	case 0:
-		return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New("no account in deletion manifest - use --account flag"))
-	case 1:
-		src, err := lookupDeleteStagedSyncableSource(st, accounts[0])
-		if err != nil {
-			return deleteStagedTarget{}, err
-		}
-		return deleteStagedTarget{Account: accounts[0], Source: src}, nil
-	default:
-		return deleteStagedTarget{}, newDeleteStagedUsageError(
-			fmt.Errorf("multiple accounts in pending batches (%v) - use --account flag to specify which account", accounts),
-		)
-	}
+	return resolveDeleteStagedTargetWithSourceID(st, manifests, requestedAccount, 0, false)
 }
 
-func resolveExplicitDeleteStagedTarget(
+func resolveDeleteStagedTargetWithSourceID(
 	st *store.Store,
 	manifests []*deletion.Manifest,
 	requestedAccount string,
+	requestedSourceID int64,
+	requestedSourceIDSet bool,
 ) (deleteStagedTarget, error) {
-	resolved, err := st.GetSourcesByIdentifierOrDisplayName(requestedAccount)
-	if err != nil {
-		return deleteStagedTarget{}, fmt.Errorf("look up source for %s: %w", requestedAccount, err)
-	}
-	var syncable []*store.Source
-	for _, candidate := range resolved {
-		if candidate.SourceType == sourceTypeGmail || candidate.SourceType == sourceTypeIMAP {
-			syncable = append(syncable, candidate)
-		}
-	}
-	if len(syncable) == 0 {
-		return deleteStagedTarget{}, fmt.Errorf("no gmail or imap source found for %s", requestedAccount)
-	}
-	if len(syncable) > 1 {
-		var types []string
-		for _, candidate := range syncable {
-			types = append(types, fmt.Sprintf("%s (%s)", candidate.Identifier, candidate.SourceType))
-		}
-		return deleteStagedTarget{}, fmt.Errorf("multiple accounts match %q: %s\nUse the full identifier with --account to disambiguate", requestedAccount, strings.Join(types, ", "))
-	}
-
-	found := syncable[0]
-	account := found.Identifier
+	var durable *deletion.SourceReference
 	for _, manifest := range manifests {
-		if manifest.Filters.Account != "" && manifest.Filters.Account != account {
-			return deleteStagedTarget{}, fmt.Errorf("batch %s is for account %s, not %s - filter batches by account or execute separately", manifest.ID, manifest.Filters.Account, account)
+		if err := manifest.ValidateVersion(); err != nil {
+			return deleteStagedTarget{}, fmt.Errorf("batch %s: %w", manifest.ID, err)
+		}
+		if manifest.Version != 2 {
+			continue
+		}
+		if durable == nil {
+			copyRef := *manifest.Source
+			durable = &copyRef
+			continue
+		}
+		if durable.Type != manifest.Source.Type || durable.Identifier != manifest.Source.Identifier {
+			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
+				"pending batches target multiple sources; select one batch or use --source-id"))
 		}
 	}
-	return deleteStagedTarget{Account: account, Source: found}, nil
-}
 
-func lookupDeleteStagedSyncableSource(st *store.Store, account string) (*store.Source, error) {
-	sources, err := st.GetSourcesByIdentifier(account)
-	if err != nil {
-		return nil, fmt.Errorf("look up source for %s: %w", account, err)
+	if durable != nil {
+		source, err := st.GetSourceByTypeAndIdentifier(durable.Type, durable.Identifier)
+		if err != nil {
+			return deleteStagedTarget{}, err
+		}
+		if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
+			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
+		}
+		if requestedSourceIDSet {
+			selected, selectErr := sourceops.ResolveExactOne(st, sourceops.Selector{
+				SourceID: requestedSourceID, SourceIDSet: true,
+			})
+			if selectErr != nil {
+				return deleteStagedTarget{}, selectErr
+			}
+			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
+				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
+					"requested source ID resolves to %s/%s, which does not match manifest source %s/%s",
+					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
+			}
+		}
+		if strings.TrimSpace(requestedAccount) != "" {
+			selected, selectErr := sourceops.ResolveExactOne(st, sourceops.Selector{Account: requestedAccount})
+			if selectErr != nil {
+				return deleteStagedTarget{}, selectErr
+			}
+			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
+				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
+					"requested account resolves to %s/%s, which does not match manifest source %s/%s",
+					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
+			}
+		}
+		for _, manifest := range manifests {
+			if manifest.Version == 1 && manifest.Filters.Account != "" && manifest.Filters.Account != source.Identifier {
+				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
+					"batch %s is for account %s, not %s", manifest.ID, manifest.Filters.Account, source.Identifier))
+			}
+		}
+		return deleteStagedTarget{Account: source.Identifier, Source: source}, nil
 	}
-	for _, candidate := range sources {
-		if candidate.SourceType == sourceTypeGmail || candidate.SourceType == sourceTypeIMAP {
-			return candidate, nil
+
+	selector := sourceops.Selector{Account: requestedAccount, SourceID: requestedSourceID, SourceIDSet: requestedSourceIDSet}
+	if !requestedSourceIDSet && strings.TrimSpace(requestedAccount) == "" {
+		accountSet := make(map[string]struct{})
+		for _, manifest := range manifests {
+			if manifest.Filters.Account != "" {
+				accountSet[manifest.Filters.Account] = struct{}{}
+			}
+		}
+		if len(accountSet) != 1 {
+			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
+				"legacy deletion manifests do not identify one unambiguous account; use --account or --source-id"))
+		}
+		for account := range accountSet {
+			selector.Account = account
 		}
 	}
-	return nil, fmt.Errorf("no gmail or imap source found for %s", account)
+	source, err := sourceops.ResolveExactOne(st, selector)
+	if err != nil {
+		return deleteStagedTarget{}, err
+	}
+	if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
+		return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
+	}
+	for _, manifest := range manifests {
+		if manifest.Filters.Account != "" && manifest.Filters.Account != source.Identifier {
+			return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
+				"batch %s is for account %s, not %s", manifest.ID, manifest.Filters.Account, source.Identifier))
+		}
+	}
+	return deleteStagedTarget{Account: source.Identifier, Source: source}, nil
 }
 
 type deleteStagedScopeEscalation struct {
@@ -786,6 +881,8 @@ Examples:
 			DryRun:              deleteDryRun,
 			List:                deleteList,
 			Account:             deleteAccount,
+			SourceID:            deleteSourceID,
+			SourceIDSet:         cmd.Flags().Changed("source-id"),
 			RemoteDeleteEnabled: remoteDeleteEnabled(),
 		})
 		if err != nil {
@@ -832,8 +929,13 @@ Examples:
 		if err := runStartupMigrations(s); err != nil {
 			return fmt.Errorf("startup migrations: %w", err)
 		}
-
-		target, err := resolveDeleteStagedTarget(s, manifests, deleteAccount)
+		// Resolve the target before any durable claim. The digest-checked claim
+		// below rejects a manifest replacement between this preflight and the
+		// remote call, while the direct write lock keeps the source catalog
+		// stable for the duration of the command.
+		target, err := resolveDeleteStagedTargetWithSourceID(
+			s, manifests, deleteAccount, deleteSourceID, cmd.Flags().Changed("source-id"),
+		)
 		if err != nil {
 			if isDeleteStagedUsageError(err) {
 				return usageErr(cmd, err)
@@ -925,79 +1027,105 @@ Examples:
 
 		// Create executor
 		executor := deletion.NewExecutor(manager, s, client).
+			WithSourceID(src.ID).
 			WithLogger(logger).
 			WithProgress(&CLIDeletionProgress{})
-
-		// Execute each manifest
-		for i, m := range manifests {
-			if i > 0 {
-				fmt.Println()
-			}
-			fmt.Printf("  [%d/%d] %s (%d messages)\n", i+1, len(manifests), m.Description, len(m.GmailIDs))
-
-			var execErr error
-			// The confirmed method wins: the summary, the confirmation, and
-			// the OAuth scopes above all describe this flag. Planning already
-			// refused a batch whose stored method disagrees, and the executor
-			// refuses again before touching a message, so a batch resumed
-			// through the wrong path fails loudly instead of silently
-			// switching between trash and permanent deletion.
-			useTrash := !deletePermanent
-
-			if useTrash {
-				// Use individual trash calls (slower but recoverable)
-				opts := deletion.DefaultExecuteOptions()
-				opts.Method = deletion.MethodTrash
-				execErr = executor.Execute(ctx, m.ID, opts)
-			} else {
-				// Use batch delete for permanent deletion (fast - 1 API call per 1000 messages)
-				execErr = executor.ExecuteBatch(ctx, m.ID)
-			}
-
-			if execErr != nil {
-				if ctx.Err() != nil {
-					fmt.Println("\nInterrupted. Run again to resume.")
-					return nil
-				}
-
-				// A concurrent cancel (e.g. from the web UI/daemon) moved this
-				// batch out of in_progress. Report it plainly and move on to the
-				// next batch rather than surfacing it as a failure.
-				if errors.Is(execErr, deletion.ErrManifestCancelled) {
-					fmt.Printf("  Cancelled: %s\n", m.ID)
-					continue
-				}
-
-				// Check if this is a scope error - offer to re-authorize (Gmail only)
-				if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
-					if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
-						return fmt.Errorf(
-							"service account lacks required Gmail deletion scope for %s: "+
-								"authorize https://mail.google.com/ for the service account client "+
-								"in Google Admin Console, then run delete-staged again",
-							account,
-						)
-					}
-					if err := promptDeletionScopeEscalation(ctx, account, !useTrash, clientSecretsPath); err != nil {
-						if errors.Is(err, errUserCanceled) {
-							return nil
-						}
-						return err
-					}
-					fmt.Println("Run delete-staged again to continue.")
-					return nil
-				}
-
-				logger.Warn("deletion failed", "batch", m.ID, "error", execErr)
-				continue
-			}
+		method := deletion.MethodTrash
+		if deletePermanent {
+			method = deletion.MethodDelete
 		}
 
-		fmt.Println("\nDeletion complete!")
+		return runDeleteStagedExecution(func(markCacheDirty func()) error {
+			// Claim each manifest immediately before its executor call. All
+			// credential, scope, and client setup has completed by this point,
+			// and a later batch is never left claimed if an earlier/later claim
+			// fails.
+			for i, plannedManifest := range manifests {
+				m, claimErr := manager.ClaimManifestWithDigest(
+					plannedManifest.ID, method, plan.ManifestDigests[plannedManifest.ID],
+				)
+				if claimErr != nil {
+					return fmt.Errorf("claim batch %s: %w", plannedManifest.ID, claimErr)
+				}
+				if i > 0 {
+					fmt.Println()
+				}
+				fmt.Printf("  [%d/%d] %s (%d messages)\n", i+1, len(manifests), m.Description, len(m.GmailIDs))
 
-		// Refresh analytics cache to reflect deleted messages.
-		return rebuildCacheAfterWrite(dbPath)
+				var execErr error
+				// The confirmed method wins: the summary, the confirmation, and
+				// the OAuth scopes above all describe this flag. Planning already
+				// refused a batch whose stored method disagrees, and the executor
+				// refuses again before touching a message, so a batch resumed
+				// through the wrong path fails loudly instead of silently
+				// switching between trash and permanent deletion.
+				useTrash := !deletePermanent
+				markCacheDirty()
+
+				if useTrash {
+					// Use individual trash calls (slower but recoverable)
+					opts := deletion.DefaultExecuteOptions()
+					opts.Method = deletion.MethodTrash
+					execErr = executor.Execute(ctx, m.ID, opts)
+				} else {
+					// Use batch delete for permanent deletion (fast - 1 API call per 1000 messages)
+					execErr = executor.ExecuteBatch(ctx, m.ID)
+				}
+
+				if execErr != nil {
+					if ctx.Err() != nil {
+						fmt.Println("\nInterrupted. Run again to resume.")
+						return nil
+					}
+
+					// A concurrent cancel (e.g. from the web UI/daemon) moved this
+					// batch out of in_progress. Report it plainly and move on to the
+					// next batch rather than surfacing it as a failure.
+					if errors.Is(execErr, deletion.ErrManifestCancelled) {
+						fmt.Printf("  Cancelled: %s\n", m.ID)
+						continue
+					}
+
+					// Check if this is a scope error - offer to re-authorize (Gmail only)
+					if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
+						if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
+							return fmt.Errorf(
+								"service account lacks required Gmail deletion scope for %s: "+
+									"authorize https://mail.google.com/ for the service account client "+
+									"in Google Admin Console, then run delete-staged again",
+								account,
+							)
+						}
+						if err := promptDeletionScopeEscalation(ctx, account, !useTrash, clientSecretsPath); err != nil {
+							if errors.Is(err, errUserCanceled) {
+								return nil
+							}
+							return err
+						}
+						fmt.Println("Run delete-staged again to continue.")
+						return nil
+					}
+
+					logger.Warn("deletion failed", "batch", m.ID, "error", execErr)
+					continue
+				}
+			}
+
+			fmt.Println("\nDeletion complete!")
+			return nil
+		}, func() error {
+			return rebuildCacheAfterWrite(dbPath)
+		})
 	},
+}
+
+func runDeleteStagedExecution(work func(markCacheDirty func()) error, refreshCache func() error) error {
+	cacheDirty := false
+	workErr := work(func() { cacheDirty = true })
+	if !cacheDirty {
+		return workErr
+	}
+	return errors.Join(workErr, refreshCache())
 }
 
 func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
@@ -1019,6 +1147,7 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		DryRun:              deleteDryRun,
 		List:                deleteList,
 		Account:             deleteAccount,
+		SourceID:            deleteStagedSourceIDPtr(cmd),
 		RemoteDeleteEnabled: remoteDeleteAllowed,
 	})
 	if err != nil {
@@ -1072,6 +1201,15 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("set --%s after planning: %w", deleteStagedPlanFingerprintFlag, err)
 		}
 	}
+	if plan.ResolvedSourceID != nil {
+		deleteAccount = ""
+		if accountFlag := cmd.Flags().Lookup("account"); accountFlag != nil {
+			accountFlag.Changed = false
+		}
+		if err := cmd.Flags().Set("source-id", strconv.FormatInt(*plan.ResolvedSourceID, 10)); err != nil {
+			return fmt.Errorf("set resolved deletion source ID: %w", err)
+		}
+	}
 	for _, batchID := range plan.PlannedBatchIDs {
 		if err := cmd.Flags().Set(deleteStagedPlannedBatchFlag, batchID); err != nil {
 			return fmt.Errorf("set --%s after planning: %w", deleteStagedPlannedBatchFlag, err)
@@ -1082,6 +1220,14 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		env = map[string]string{remoteDeleteEnvVar: "1"}
 	}
 	return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, nil, env)
+}
+
+func deleteStagedSourceIDPtr(cmd *cobra.Command) *int64 {
+	if !cmd.Flags().Changed("source-id") {
+		return nil
+	}
+	value := deleteSourceID
+	return &value
 }
 
 // preflightDeleteStagedScopeEscalation performs the confirmed Gmail scope
@@ -1161,20 +1307,49 @@ func planCLIDeleteStaged(
 	st *store.Store,
 	req api.CLIDeleteStagedPlanRequest,
 ) (api.CLIDeleteStagedPlanResponse, error) {
+	var resolvedSource *store.Source
+	if req.SourceID != nil {
+		resolved, err := sourceops.ResolveExactOne(st, sourceops.Selector{
+			Account: req.Account, SourceID: *req.SourceID, SourceIDSet: true,
+		})
+		if err != nil {
+			return api.CLIDeleteStagedPlanResponse{}, err
+		}
+		resolvedSource = resolved
+	} else if strings.TrimSpace(req.Account) != "" {
+		resolved, err := sourceops.ResolveExactOne(st, sourceops.Selector{Account: req.Account})
+		if err != nil {
+			return api.CLIDeleteStagedPlanResponse{}, err
+		}
+		resolvedSource = resolved
+	}
+	resolvedSourceID := int64(0)
+	resolvedSourceType := ""
+	resolvedSourceIdentifier := ""
+	if resolvedSource != nil {
+		resolvedSourceID = resolvedSource.ID
+		resolvedSourceType = resolvedSource.SourceType
+		resolvedSourceIdentifier = resolvedSource.Identifier
+	}
 	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
-		BatchID:             req.BatchID,
-		Permanent:           req.Permanent,
-		Yes:                 req.Yes,
-		DryRun:              req.DryRun,
-		List:                req.List,
-		Account:             req.Account,
-		RemoteDeleteEnabled: req.RemoteDeleteEnabled,
+		BatchID:                  req.BatchID,
+		Permanent:                req.Permanent,
+		Yes:                      req.Yes,
+		DryRun:                   req.DryRun,
+		List:                     req.List,
+		SourceID:                 resolvedSourceID,
+		SourceIDSet:              resolvedSource != nil,
+		ResolvedSourceType:       resolvedSourceType,
+		ResolvedSourceIdentifier: resolvedSourceIdentifier,
+		RemoteDeleteEnabled:      req.RemoteDeleteEnabled,
 	})
 	if err != nil {
 		return api.CLIDeleteStagedPlanResponse{}, err
 	}
 	if plan.NeedsExecution && req.RemoteDeleteEnabled {
-		target, err := resolveDeleteStagedTarget(st, plan.Manifests, req.Account)
+		target, err := resolveDeleteStagedTargetWithSourceID(
+			st, plan.Manifests, "", resolvedSourceID, resolvedSource != nil,
+		)
 		if err != nil {
 			return api.CLIDeleteStagedPlanResponse{}, err
 		}
@@ -1203,6 +1378,10 @@ func planCLIDeleteStaged(
 			}
 		}
 	}
+	var resolvedSourceIDPtr *int64
+	if resolvedSource != nil {
+		resolvedSourceIDPtr = &resolvedSourceID
+	}
 	return api.CLIDeleteStagedPlanResponse{
 		Stdout:                    plan.Stdout,
 		NeedsExecution:            plan.NeedsExecution,
@@ -1210,6 +1389,7 @@ func planCLIDeleteStaged(
 		ConfirmationMode:          plan.ConfirmationMode,
 		PlannedBatchIDs:           plan.PlannedBatchIDs,
 		PlanFingerprint:           plan.PlanFingerprint,
+		ResolvedSourceID:          resolvedSourceIDPtr,
 		NeedsScopeEscalation:      plan.NeedsScopeEscalation,
 		ScopeEscalationHeadline:   plan.ScopeEscalationHeadline,
 		ScopeEscalationBodyLines:  plan.ScopeEscalationBodyLines,
@@ -1527,6 +1707,7 @@ func init() {
 	deleteStagedCmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Show what would be deleted")
 	deleteStagedCmd.Flags().BoolVarP(&deleteList, "list", "l", false, "List staged batches without executing")
 	deleteStagedCmd.Flags().StringVar(&deleteAccount, "account", "", "Account to use (Gmail or IMAP)")
+	deleteStagedCmd.Flags().Int64Var(&deleteSourceID, "source-id", 0, "Exact source ID to use")
 	deleteStagedCmd.Flags().Bool(deleteStagedConfirmedFlag, false, "Internal confirmation marker")
 	deleteStagedCmd.Flags().Bool(deleteStagedSkipPreludeFlag, false, "Internal planning marker")
 	deleteStagedCmd.Flags().StringArrayVar(&deletePlannedBatchIDs, deleteStagedPlannedBatchFlag, nil, "Internal planned batch marker")
@@ -1539,6 +1720,7 @@ func init() {
 	_ = deleteStagedCmd.Flags().MarkHidden(deleteStagedScopeEscalationConfirmedFlag)
 
 	deleteStagedCmd.MarkFlagsMutuallyExclusive("permanent", "yes")
+	deleteStagedCmd.MarkFlagsMutuallyExclusive("account", "source-id")
 	listDeletionsCmd.Flags().BoolVar(&listDeletionsJSON, flagJSON, false, "Output as JSON with full batch IDs")
 	rootCmd.AddCommand(listDeletionsCmd)
 	rootCmd.AddCommand(showDeletionCmd)

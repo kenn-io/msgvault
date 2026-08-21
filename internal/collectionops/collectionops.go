@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -23,8 +23,7 @@ var (
 // AccountResolverStore is the source/collection lookup surface needed to
 // resolve user-supplied account tokens.
 type AccountResolverStore interface {
-	GetSourcesByIdentifierOrDisplayName(query string) ([]*store.Source, error)
-	GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*store.Source, error)
+	sourceops.Store
 	GetCollectionByName(name string) (*store.CollectionWithSources, error)
 }
 
@@ -196,50 +195,18 @@ func ResolveAccount(st AccountResolverStore, input string) (Scope, error) {
 		return scope, nil
 	}
 
-	sources, err := st.GetSourcesByIdentifierOrDisplayName(input)
-	if err != nil {
-		return scope, opserr.Internal(fmt.Errorf("look up source for %q: %w", input, err))
-	}
-	calendarSources, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, input)
-	if err != nil {
-		return scope, opserr.Internal(fmt.Errorf("look up calendar sources for %q: %w", input, err))
-	}
-	if len(sources) > 1 {
-		names := make([]string, 0, len(sources))
-		for _, src := range sources {
-			names = append(names, fmt.Sprintf(
-				"%s (%s, id=%d)",
-				src.Identifier, src.SourceType, src.ID,
-			))
-		}
-		return scope, opserr.Invalid(fmt.Errorf(
-			"ambiguous account %q matches multiple sources: %v",
-			input, names,
-		))
-	}
-	if len(sources) == 1 {
-		scope.Source = sources[0]
-		if sources[0].SourceType != gcal.SourceType &&
-			!store.EqualIdentifier(sources[0].Identifier, input) {
-			resolvedCalendarSources, err := st.GetSourcesByTypeAndAccount(
-				gcal.SourceType,
-				sources[0].Identifier,
-			)
-			if err != nil {
-				return scope, opserr.Internal(fmt.Errorf(
-					"look up calendar sources for %q: %w",
-					sources[0].Identifier,
-					err,
-				))
+	selection, err := sourceops.ResolveAccountFamily(st, sourceops.Selector{Account: input})
+	if err == nil {
+		scope.Source = selection.Primary
+		for _, source := range selection.Sources {
+			if scope.Source == nil || source.ID != scope.Source.ID {
+				scope.AdditionalSourceIDs = append(scope.AdditionalSourceIDs, source.ID)
 			}
-			calendarSources = appendUniqueSources(calendarSources, resolvedCalendarSources)
 		}
-		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, sources[0].ID)
 		return scope, nil
 	}
-	if len(calendarSources) > 0 {
-		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, 0)
-		return scope, nil
+	if opserr.KindOf(err) != opserr.KindNotFound {
+		return scope, err
 	}
 
 	_, collErr := st.GetCollectionByName(input)
@@ -306,46 +273,6 @@ func ResolveCollection(st AccountResolverStore, input string) (CollectionScope, 
 	return scope, opserr.NotFound(fmt.Errorf(
 		"no collection named %q (try 'msgvault collection list')", input),
 	)
-}
-
-func appendUniqueSources(dst []*store.Source, srcs []*store.Source) []*store.Source {
-	seen := make(map[int64]struct{}, len(dst)+len(srcs))
-	for _, src := range dst {
-		if src == nil {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-	}
-	for _, src := range srcs {
-		if src == nil {
-			continue
-		}
-		if _, ok := seen[src.ID]; ok {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-		dst = append(dst, src)
-	}
-	return dst
-}
-
-func sourceIDsExcept(sources []*store.Source, exclude int64) []int64 {
-	ids := make([]int64, 0, len(sources))
-	seen := map[int64]struct{}{}
-	if exclude != 0 {
-		seen[exclude] = struct{}{}
-	}
-	for _, src := range sources {
-		if src == nil {
-			continue
-		}
-		if _, ok := seen[src.ID]; ok {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-		ids = append(ids, src.ID)
-	}
-	return ids
 }
 
 func storeMutationError(err error) error {

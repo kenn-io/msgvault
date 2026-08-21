@@ -10,7 +10,8 @@ All notable changes to msgvault, grouped by release.
 **Breaking changes**
 
 - The HTTP API separates observed participant analytics from durable curated
-  people, and the API schema version moves from 1.44.0 to 2.1.0. The
+  people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
+  current unreleased API schema is 2.4.0. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -22,7 +23,20 @@ All notable changes to msgvault, grouped by release.
   `/api/v1/health`, and a CLI in remote mode verifies it on connect,
   rejecting daemons that predate schema 2.0.
 
+- Deletion staging now requires every selected message to belong to one exact
+  source. TUI and MCP selections that span accounts are rejected instead of
+  creating a manifest that could mark or delete the wrong account's messages.
+  In the TUI, press `a` to filter by account before staging again; MCP callers
+  should pass `account` or stage each source separately.
+
 **Features**
+
+- Exact source selection is available through `--source-id` on `sync`,
+  `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
+  Account arguments continue to accept identifiers and display names, while
+  destructive commands reject ambiguous tokens. Version-2 deletion manifests
+  and staging responses preserve the source type and identifier so execution
+  remains scoped when two source types share the same identifier.
 
 - Person profile catalog and tracking foundation: eleven reconciled system
   profile attributes (location, birthplace, membership, religion, politics,

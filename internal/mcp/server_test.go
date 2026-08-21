@@ -2991,19 +2991,11 @@ func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest 
 func TestStageDeletion(t *testing.T) {
 	eng := &querytest.MockEngine{
 		Accounts: []query.AccountInfo{
-			{ID: 1, Identifier: "alice@gmail.com"},
+			{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"},
 		},
 		SearchFastResults: []query.MessageSummary{
-			testutil.NewMessageSummary(1).
-				WithSubject("Newsletter").
-				WithFromEmail("news@example.com").
-				WithSourceMessageID("gmail-001").
-				Build(),
-			testutil.NewMessageSummary(2).
-				WithSubject("Promo").
-				WithFromEmail("promo@example.com").
-				WithSourceMessageID("gmail-002").
-				Build(),
+			{ID: 1, SourceID: 1, Subject: "Newsletter", FromEmail: "news@example.com", SourceMessageID: "gmail-001"},
+			{ID: 2, SourceID: 1, Subject: "Promo", FromEmail: "promo@example.com", SourceMessageID: "gmail-002"},
 		},
 		GmailIDs: []string{"gmail-010", "gmail-011"},
 	}
@@ -3047,7 +3039,40 @@ func TestStageDeletion(t *testing.T) {
 		require.NotNil(t, saver.manifest, "manifest saver should receive manifest")
 		assert.Equal(resp.BatchID, saver.manifest.ID, "manifest ID")
 		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
+		assert.Equal(2, saver.manifest.Version)
+		require.NotNil(t, saver.manifest.Source)
+		assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "alice@gmail.com"}, *saver.manifest.Source)
 		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
+	})
+
+	t.Run("query result without source ID is rejected", func(t *testing.T) {
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{
+			engine: &querytest.MockEngine{
+				Accounts:          []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"}},
+				SearchFastResults: []query.MessageSummary{{ID: 7, SourceMessageID: "gmail-007"}},
+			},
+			dataDir: t.TempDir(), manifestSaver: saver,
+		}
+
+		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		assert.Contains(t, resultText(t, result), "has no source metadata")
+		assert.Nil(t, saver.manifest)
+	})
+
+	t.Run("query result with incomplete account source is rejected", func(t *testing.T) {
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{
+			engine: &querytest.MockEngine{
+				Accounts:          []query.AccountInfo{{ID: 1, Identifier: "alice@gmail.com"}},
+				SearchFastResults: []query.MessageSummary{{ID: 8, SourceID: 1, SourceMessageID: "gmail-008"}},
+			},
+			dataDir: t.TempDir(), manifestSaver: saver,
+		}
+
+		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		assert.Contains(t, resultText(t, result), "has incomplete source metadata")
+		assert.Nil(t, saver.manifest)
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {
@@ -3125,9 +3150,12 @@ func TestStageDeletion(t *testing.T) {
 			Accounts: []query.AccountInfo{
 				{ID: 1, Identifier: "alice@gmail.com"},
 			},
-			GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 				capturedFilter = f
-				return []string{"gmail-100"}, nil
+				return []query.DeletionTarget{{
+					MessageID: 100, SourceID: 1, SourceType: "gmail",
+					SourceIdentifier: "alice@gmail.com", SourceMessageID: "gmail-100",
+				}}, nil
 			},
 		}
 		h := &handlers{engine: eng, dataDir: dataDir}
@@ -3158,13 +3186,36 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, txt, "account not found", "expected account error, got: %s")
 	})
 
+	t.Run("ambiguous account rejected", func(t *testing.T) {
+		dataDir := t.TempDir()
+		ambiguous := &querytest.MockEngine{
+			Accounts: []query.AccountInfo{
+				{ID: 1, SourceType: "gmail", Identifier: "shared@example.invalid"},
+				{ID: 2, SourceType: "imap", Identifier: "shared@example.invalid"},
+			},
+		}
+		h := &handlers{engine: ambiguous, dataDir: dataDir}
+
+		r := runToolExpectError(
+			t, "stage_deletion", h.stageDeletion,
+			map[string]any{
+				"account": "shared@example.invalid",
+				"from":    "news@example.invalid",
+			},
+		)
+		assert.Contains(t, resultText(t, r), "matches multiple sources")
+	})
+
 	t.Run("structured filter limit enforced", func(t *testing.T) {
 		dataDir := t.TempDir()
 		var capturedFilter query.MessageFilter
 		eng := &querytest.MockEngine{
-			GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 				capturedFilter = f
-				return []string{"gmail-200"}, nil
+				return []query.DeletionTarget{{
+					MessageID: 200, SourceID: 1, SourceType: "gmail",
+					SourceIdentifier: "test@gmail.com", SourceMessageID: "gmail-200",
+				}}, nil
 			},
 		}
 		h := &handlers{engine: eng, dataDir: dataDir}

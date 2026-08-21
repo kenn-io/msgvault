@@ -309,7 +309,7 @@ func (s FastmailSource) Selector() (identityops.SourceSelector, error) {
 	case s.SourceID > 0 && account != "":
 		return identityops.SourceSelector{}, errors.New("account and source_id are mutually exclusive")
 	case s.SourceID > 0:
-		return identityops.SourceSelector{SourceID: s.SourceID}, nil
+		return identityops.SourceSelector{SourceID: s.SourceID, SourceIDSet: true}, nil
 	case account == "":
 		return identityops.SourceSelector{}, errors.New("account or source_id is required")
 	default:

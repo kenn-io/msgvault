@@ -23,28 +23,27 @@ type MockEngine struct {
 	Accounts          []query.AccountInfo
 	AggregateRows     []query.AggregateRow
 	GmailIDs          []string
-	GmailAccounts     []string
+	DeletionTargets   []query.DeletionTarget
 
 	// MessagesBySourceID maps source IDs to message details for GetMessageBySourceID.
 	// When nil, GetMessageBySourceID falls back to scanning Messages for a matching SourceMessageID.
 	MessagesBySourceID map[string]*query.MessageDetail
 
 	// Optional overrides — set these to customise behavior per-test.
-	SearchFastFunc               func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error)
-	SearchFunc                   func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
-	SearchMessageBodiesFunc      func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
-	GetMessageFunc               func(context.Context, int64) (*query.MessageDetail, error)
-	GetMessageBySourceIDFunc     func(context.Context, string) (*query.MessageDetail, error)
-	GetTotalStatsFunc            func(context.Context, query.StatsOptions) (*query.TotalStats, error)
-	ListMessagesFunc             func(context.Context, query.MessageFilter) ([]query.MessageSummary, error)
-	SearchFastCountFunc          func(context.Context, *search.Query, query.MessageFilter) (int64, error)
-	GetGmailIDsByFilterFunc      func(context.Context, query.MessageFilter) ([]string, error)
-	GetGmailIDsByMessageIDsFunc  func(context.Context, []int64) ([]string, error)
-	GetAccountsByGmailIDsFunc    func(context.Context, []string) ([]string, error)
-	SearchByDomainsFunc          func(context.Context, []string, *time.Time, *time.Time, int, int) ([]query.MessageSummary, error)
-	SearchFastWithStatsFunc      func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
-	GetMessageRawFunc            func(context.Context, int64) ([]byte, error)
-	GetMessageSummariesByIDsFunc func(context.Context, []int64) ([]query.MessageSummary, error)
+	SearchFastFunc                     func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error)
+	SearchFunc                         func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
+	SearchMessageBodiesFunc            func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
+	GetMessageFunc                     func(context.Context, int64) (*query.MessageDetail, error)
+	GetMessageBySourceIDFunc           func(context.Context, string) (*query.MessageDetail, error)
+	GetTotalStatsFunc                  func(context.Context, query.StatsOptions) (*query.TotalStats, error)
+	ListMessagesFunc                   func(context.Context, query.MessageFilter) ([]query.MessageSummary, error)
+	SearchFastCountFunc                func(context.Context, *search.Query, query.MessageFilter) (int64, error)
+	GetDeletionTargetsByFilterFunc     func(context.Context, query.MessageFilter) ([]query.DeletionTarget, error)
+	GetDeletionTargetsByMessageIDsFunc func(context.Context, []int64) ([]query.DeletionTarget, error)
+	SearchByDomainsFunc                func(context.Context, []string, *time.Time, *time.Time, int, int) ([]query.MessageSummary, error)
+	SearchFastWithStatsFunc            func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
+	GetMessageRawFunc                  func(context.Context, int64) ([]byte, error)
+	GetMessageSummariesByIDsFunc       func(context.Context, []int64) ([]query.MessageSummary, error)
 
 	RawMessages map[int64][]byte
 }
@@ -194,25 +193,44 @@ func (m *MockEngine) SearchFastWithStats(ctx context.Context, q *search.Query, q
 	}, nil
 }
 
-func (m *MockEngine) GetGmailIDsByFilter(ctx context.Context, filter query.MessageFilter) ([]string, error) {
-	if m.GetGmailIDsByFilterFunc != nil {
-		return m.GetGmailIDsByFilterFunc(ctx, filter)
+func (m *MockEngine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+	if m.GetDeletionTargetsByFilterFunc != nil {
+		return m.GetDeletionTargetsByFilterFunc(ctx, filter)
 	}
-	return m.GmailIDs, nil
+	return m.defaultDeletionTargets(), nil
 }
 
-func (m *MockEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
-	if m.GetGmailIDsByMessageIDsFunc != nil {
-		return m.GetGmailIDsByMessageIDsFunc(ctx, ids)
+func (m *MockEngine) defaultDeletionTargets() []query.DeletionTarget {
+	if m.DeletionTargets != nil {
+		return m.DeletionTargets
 	}
-	return m.GmailIDs, nil
+	return m.targetsForIDs(m.GmailIDs)
 }
 
-func (m *MockEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
-	if m.GetAccountsByGmailIDsFunc != nil {
-		return m.GetAccountsByGmailIDsFunc(ctx, gmailIDs)
+func (m *MockEngine) targetsForIDs(ids []string) []query.DeletionTarget {
+	account := query.AccountInfo{ID: 1, SourceType: "gmail", Identifier: "test@gmail.com"}
+	if len(m.Accounts) == 1 {
+		account = m.Accounts[0]
+		if account.ID == 0 {
+			account.ID = 1
+		}
+		if account.SourceType == "" {
+			account.SourceType = "gmail"
+		}
 	}
-	return m.GmailAccounts, nil
+	targets := make([]query.DeletionTarget, len(ids))
+	for i, id := range ids {
+		targets[i] = query.DeletionTarget{MessageID: int64(i + 1), SourceID: account.ID,
+			SourceType: account.SourceType, SourceIdentifier: account.Identifier, SourceMessageID: id}
+	}
+	return targets
+}
+
+func (m *MockEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]query.DeletionTarget, error) {
+	if m.GetDeletionTargetsByMessageIDsFunc != nil {
+		return m.GetDeletionTargetsByMessageIDsFunc(ctx, ids)
+	}
+	return m.defaultDeletionTargets(), nil
 }
 
 func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {

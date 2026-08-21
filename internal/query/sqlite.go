@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -795,7 +794,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	}
 	// Stable tiebreaker on the PK so pagination is deterministic when the
 	// primary sort field ties (e.g. identical sent_at). m.id is non-null
-	// and unique, mirroring GetGmailIDsByFilter's ORDER BY ... , m.id DESC.
+	// and unique, mirroring GetDeletionTargetsByFilter's ORDER BY ... , m.id DESC.
 	orderBy += ", m.id DESC"
 
 	limit := filter.Pagination.Limit
@@ -1265,7 +1264,7 @@ func statsUseMatchingPopulation(opts StatsOptions) bool {
 		opts.SearchQuery != ""
 }
 
-// GetGmailIDsByFilter returns Gmail message IDs (source_message_id) matching a filter.
+// GetDeletionTargetsByFilter returns source-bound message targets matching a filter.
 // This is more efficient than ListMessages when you only need the IDs.
 //
 // All filter predicates that would otherwise need 1:N joins
@@ -1276,7 +1275,7 @@ func statsUseMatchingPopulation(opts StatsOptions) bool {
 // the "most recent first" ordering callers (MCP, TUI) depend on under
 // Pagination.Limit. The EXISTS form also matches the SQL guidance in
 // CLAUDE.md ("Never use SELECT DISTINCT with JOINs — use EXISTS").
-func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFilter) ([]string, error) {
+func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter MessageFilter) ([]DeletionTarget, error) {
 	var conditions []string
 	var args []any
 
@@ -1447,7 +1446,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	// subquery; messages.id is PK so each row contributes exactly one
 	// source_message_id.
 	query := fmt.Sprintf(`
-		SELECT m.source_message_id
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier, m.source_message_id
 		FROM messages m
 		%s
 		WHERE %s
@@ -1462,124 +1461,46 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 
 	rows, err := e.queryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("get gmail ids: %w", err)
+		return nil, fmt.Errorf("get deletion targets: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return collectGmailIDs(rows)
+	return collectDeletionTargets(rows)
 }
 
-// GetGmailIDsByMessageIDs returns Gmail message IDs (source_message_id)
-// for the given internal message IDs. It enforces the same constraints
-// as GetGmailIDsByFilter: only live messages (LiveMessagesWhere — not
-// remote-deleted, not dedup-soft-deleted) from Gmail sources.
-// Non-qualifying IDs are silently dropped, mirroring
-// GetMessageSummariesByIDs semantics. The lookup is chunked so large
-// explicit selections stay under the backend's bind-parameter limit.
-func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+func (e *SQLiteEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return gmailIDsByMessageIDsChunked(ctx, ids, e.gmailIDsForMessageIDChunk)
+	return deletionTargetsByMessageIDsChunked(ctx, ids, e.deletionTargetsForMessageIDChunk)
 }
 
-func (e *SQLiteEngine) gmailIDsForMessageIDChunk(ctx context.Context, ids []int64) ([]gmailIDRow, error) {
+func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := fmt.Sprintf(`
-		SELECT m.source_message_id, m.sent_at, m.id
+	q := fmt.Sprintf(`
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
+		       m.source_message_id, m.sent_at
 		FROM messages m
 		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
 		WHERE %s AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
-
-	rows, err := e.queryContext(ctx, query, args...)
+	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("get gmail ids by message ids: %w", err)
+		return nil, fmt.Errorf("get deletion targets by message ids: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	return collectGmailIDRows(rows)
+	return collectDeletionTargetRows(rows)
 }
 
 // inListChunkSize bounds the IN-list size per deletion-staging lookup.
-// Staging feeds full resolved Gmail-ID sets into GetAccountsByGmailIDs
-// and full explicit selections into GetGmailIDsByMessageIDs, either of
-// which can exceed the SQLite bind-parameter limit
+// Explicit selections can exceed the SQLite bind-parameter limit
 // (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default). 500 stays well under
 // every backend's limit.
 const inListChunkSize = 500
-
-// accountsByGmailIDsChunked runs queryChunk over gmailIDs in
-// inListChunkSize batches and returns the union of accounts,
-// deduplicated and sorted ascending.
-func accountsByGmailIDsChunked(
-	ctx context.Context,
-	gmailIDs []string,
-	queryChunk func(ctx context.Context, chunk []string) ([]string, error),
-) ([]string, error) {
-	seen := make(map[string]struct{})
-	for start := 0; start < len(gmailIDs); start += inListChunkSize {
-		end := min(start+inListChunkSize, len(gmailIDs))
-		accounts, err := queryChunk(ctx, gmailIDs[start:end])
-		if err != nil {
-			return nil, err
-		}
-		for _, a := range accounts {
-			seen[a] = struct{}{}
-		}
-	}
-	accounts := make([]string, 0, len(seen))
-	for a := range seen {
-		accounts = append(accounts, a)
-	}
-	slices.Sort(accounts)
-	return accounts, nil
-}
-
-// GetAccountsByGmailIDs returns the distinct Gmail account identifiers
-// owning live messages with the given Gmail IDs (source_message_id),
-// sorted ascending. Deletion staging uses this to stamp the manifest
-// with its account and to reject selections spanning multiple accounts,
-// since delete-staged executes a manifest against a single mailbox.
-// The lookup is chunked so arbitrarily large selections stay under the
-// backend's bind-parameter limit.
-func (e *SQLiteEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
-	if len(gmailIDs) == 0 {
-		return nil, nil
-	}
-	return accountsByGmailIDsChunked(ctx, gmailIDs, e.accountsForGmailIDChunk)
-}
-
-func (e *SQLiteEngine) accountsForGmailIDChunk(ctx context.Context, gmailIDs []string) ([]string, error) {
-	placeholders := make([]string, len(gmailIDs))
-	args := make([]any, len(gmailIDs))
-	for i, id := range gmailIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	query := fmt.Sprintf(`
-		SELECT s.identifier
-		FROM sources s
-		WHERE s.source_type = 'gmail' AND EXISTS (
-			SELECT 1 FROM messages m
-			WHERE m.source_id = s.id AND %s AND m.source_message_id IN (%s)
-		)
-		ORDER BY s.identifier
-	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
-
-	rows, err := e.queryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("get accounts by gmail ids: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	return collectGmailIDs(rows)
-}
 
 // SearchByDomains returns messages where any participant (from, to, cc, or bcc)
 // belongs to one of the given domains. Uses the shared executeSearchQuery

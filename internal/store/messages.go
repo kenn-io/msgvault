@@ -2321,28 +2321,32 @@ func (s *Store) MarkMessagesDeletedFromReader(sourceID int64, reader io.Reader, 
 // When permanent is true, the message row is deleted entirely; otherwise it is
 // soft-deleted by setting deleted_from_source_at.
 //
-// A2 (deferred): the match is NOT scoped by source_id, so a Gmail-ID collision
-// across two accounts would delete/soft-delete the wrong account's row (blast
-// radius: one row in the colliding account). This is deferred rather than fixed
-// because the deletion Manifest carries only a flat []GmailIDs with no per-id
-// source_id (internal/deletion/manifest.go), and a single manifest can legitimately
-// span multiple accounts (see internal/tui/actions.go resolveGmailIDs /
-// internal/mcp/handlers.go, where the account filter is optional), so a single
-// Filters.Account cannot scope every id correctly. Properly scoping this needs a
-// manifest schema/version change (out of scope). Gmail IDs are random enough that
-// a cross-account collision is astronomically unlikely. See docs/internal/PG_STATUS.md.
+// This compatibility entry point is intentionally unscoped. New deletion
+// execution resolves a manifest source and uses
+// MarkMessageDeletedBySourceMessageID instead.
 func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) error {
+	return s.MarkMessageDeletedBySourceMessageID(0, permanent, gmailID)
+}
+
+// MarkMessageDeletedBySourceMessageID marks only the message belonging to
+// sourceID. A zero sourceID retains the legacy unscoped behavior for version-1
+// deletion manifests.
+func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, permanent bool, gmailID string) error {
+	sourceClause := ""
+	args := []any{gmailID}
+	if sourceID > 0 {
+		sourceClause = " AND source_id = ?"
+		args = append(args, sourceID)
+	}
 	if permanent {
-		// A2 (deferred): unscoped by source_id — see function doc.
-		_, err := s.db.Exec(`DELETE FROM messages WHERE source_message_id = ?`, gmailID)
+		_, err := s.db.Exec(`DELETE FROM messages WHERE source_message_id = ?`+sourceClause, args...)
 		return err
 	}
-	// A2 (deferred): unscoped by source_id — see function doc.
 	_, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE messages
 		SET deleted_from_source_at = %s
-		WHERE source_message_id = ? AND deleted_from_source_at IS NULL
-	`, s.dialect.Now()), gmailID)
+		WHERE source_message_id = ?%s AND deleted_from_source_at IS NULL
+	`, s.dialect.Now(), sourceClause), args...)
 	return err
 }
 
@@ -2354,11 +2358,15 @@ func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) erro
 // for that chunk and continues with remaining chunks. Returns the first error encountered
 // (if any) after processing all IDs.
 //
-// A2 (deferred): the IN (...) match is NOT scoped by source_id — same unscoped
-// collision caveat as MarkMessageDeletedByGmailID; see that function's doc and
-// docs/internal/PG_STATUS.md for why it is deferred (manifest lacks per-id source_id and
-// can span multiple accounts; collision astronomically unlikely).
+// This compatibility entry point is intentionally unscoped. New deletion
+// execution uses MarkMessagesDeletedBySourceMessageIDBatch.
 func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
+	return s.MarkMessagesDeletedBySourceMessageIDBatch(0, gmailIDs)
+}
+
+// MarkMessagesDeletedBySourceMessageIDBatch scopes batch archive marking to
+// sourceID. A zero sourceID preserves legacy version-1 behavior.
+func (s *Store) MarkMessagesDeletedBySourceMessageIDBatch(sourceID int64, gmailIDs []string) error {
 	if len(gmailIDs) == 0 {
 		return nil
 	}
@@ -2371,16 +2379,20 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 		chunk := gmailIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]any, len(chunk))
+		args := make([]any, 0, len(chunk)+1)
 		for j, id := range chunk {
 			placeholders[j] = "?"
-			args[j] = id
+			args = append(args, id)
+		}
+		sourceClause := ""
+		if sourceID > 0 {
+			sourceClause = " AND source_id = ?"
+			args = append(args, sourceID)
 		}
 
-		// A2 (deferred): unscoped by source_id — see function doc.
 		query := fmt.Sprintf(
-			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s) AND deleted_from_source_at IS NULL`,
-			s.dialect.Now(), strings.Join(placeholders, ","))
+			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)%s AND deleted_from_source_at IS NULL`,
+			s.dialect.Now(), strings.Join(placeholders, ","), sourceClause)
 
 		if _, err := s.db.Exec(query, args...); err != nil {
 			if firstErr == nil {
@@ -2388,7 +2400,7 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 			}
 			// Fall back to individual updates for this chunk
 			for _, id := range chunk {
-				s.MarkMessageDeletedByGmailID(false, id) //nolint:errcheck,gosec // best-effort
+				s.MarkMessageDeletedBySourceMessageID(sourceID, false, id) //nolint:errcheck,gosec // best-effort
 			}
 		}
 	}

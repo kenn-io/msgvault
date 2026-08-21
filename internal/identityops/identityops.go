@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -21,17 +22,12 @@ const (
 
 type Store interface {
 	collectionops.AccountResolverStore
-	GetSourceByID(id int64) (*store.Source, error)
 	ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error)
 	AddAccountIdentity(sourceID int64, address, signal string) error
 	RemoveAccountIdentity(sourceID int64, address string) (int64, error)
 }
 
-type SourceSelector struct {
-	Account     string `json:"account,omitempty"`
-	SourceID    int64  `json:"source_id,omitempty"`
-	sourceIDSet bool
-}
+type SourceSelector = sourceops.Selector
 
 type AddRequest struct {
 	SourceSelector
@@ -50,7 +46,7 @@ func (r *AddRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	decoded.sourceIDSet = set
+	decoded.SourceIDSet = set
 	*r = AddRequest(decoded)
 	return nil
 }
@@ -84,7 +80,7 @@ func (r *RemoveRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	decoded.sourceIDSet = set
+	decoded.SourceIDSet = set
 	*r = RemoveRequest(decoded)
 	return nil
 }
@@ -206,37 +202,22 @@ func Remove(st Store, req RemoveRequest) (RemoveResult, error) {
 }
 
 func ResolveSource(st Store, selector SourceSelector) (*store.Source, error) {
-	account := strings.TrimSpace(selector.Account)
-	switch {
-	case selector.SourceID < 0 || (selector.sourceIDSet && selector.SourceID == 0):
-		return nil, opserr.Invalid(errors.New("source ID must be positive"))
-	case selector.SourceID > 0 && account != "":
-		return nil, opserr.Invalid(errors.New("account and source ID are mutually exclusive"))
-	case selector.SourceID > 0:
-		src, err := st.GetSourceByID(selector.SourceID)
-		if errors.Is(err, store.ErrSourceNotFound) {
-			return nil, opserr.NotFound(err)
-		}
-		if err != nil {
-			return nil, opserr.Internal(err)
-		}
-		return src, nil
-	case account == "":
-		return nil, opserr.Invalid(errors.New("account or source ID is required"))
-	default:
-		return resolveAccountSource(st, account)
+	source, err := sourceops.ResolveExactOne(st, selector)
+	if err == nil || opserr.KindOf(err) != opserr.KindNotFound ||
+		selector.SourceIDSet || selector.SourceID != 0 || strings.TrimSpace(selector.Account) == "" {
+		return source, err
 	}
-}
 
-func resolveAccountSource(st Store, input string) (*store.Source, error) {
-	scope, err := collectionops.ResolveAccount(st, input)
-	if err != nil {
+	account := strings.TrimSpace(selector.Account)
+	_, collectionErr := st.GetCollectionByName(account)
+	switch {
+	case collectionErr == nil:
+		return nil, opserr.Invalid(fmt.Errorf("%q is a collection, not an account", account))
+	case errors.Is(collectionErr, store.ErrCollectionNotFound):
 		return nil, err
+	default:
+		return nil, opserr.Internal(fmt.Errorf("look up collection %q: %w", account, collectionErr))
 	}
-	if scope.Source == nil {
-		return nil, opserr.Invalid(fmt.Errorf("no primary account source found for %q", input))
-	}
-	return scope.Source, nil
 }
 
 // SplitSignalSet parses a stored source_signal field into a sorted slice.
