@@ -68,6 +68,10 @@ func TestConfig_Validate(t *testing.T) {
 		{"HTTPS_OK", func(c *Config) { c.Embeddings.Endpoint = "https://host:8080/v1" }, ""},
 		{"PgvectorBackend_OK", func(c *Config) { c.Backend = "pgvector" }, ""},
 		{"OpenAIAPIFormat_OK", func(c *Config) { c.Embeddings.APIFormat = APIFormatOpenAI }, ""},
+		{"OrcaRouterAPIFormat_OK", func(c *Config) {
+			c.Embeddings.APIFormat = APIFormatOrcaRouter
+			c.ApplyDefaults()
+		}, ""},
 		{"VoyageContextualAPIFormat_OK", func(c *Config) {
 			c.Embeddings.APIFormat = APIFormatVoyageContextual
 			c.Embeddings.Model = "voyage-context-4"
@@ -298,6 +302,40 @@ func TestEmbeddingsConfig_APIFormatDefaultsToOpenAI(t *testing.T) {
 	cfg := Config{}
 	cfg.ApplyDefaults()
 	assert.Equal(t, APIFormatOpenAI, cfg.Embeddings.EffectiveAPIFormat())
+}
+
+// TestEmbeddingsConfig_OrcaRouterFormatAppliesGatewayDefaults catches the
+// named OrcaRouter format filling in the gateway endpoint, model,
+// dimension, and key env so an operator can enable vector search with a
+// minimal block.
+func TestEmbeddingsConfig_OrcaRouterFormatAppliesGatewayDefaults(t *testing.T) {
+	cfg := Config{}
+	cfg.Embeddings.APIFormat = APIFormatOrcaRouter
+	cfg.ApplyDefaults()
+	require.Equal(t, APIFormatOrcaRouter, cfg.Embeddings.EffectiveAPIFormat())
+	assert.Equal(t, OrcaRouterDefaultEndpoint, cfg.Embeddings.Endpoint)
+	assert.Equal(t, OrcaRouterDefaultModel, cfg.Embeddings.Model)
+	assert.Equal(t, OrcaRouterDefaultDimension, cfg.Embeddings.Dimension)
+	assert.Equal(t, OrcaRouterDefaultAPIKeyEnv, cfg.Embeddings.APIKeyEnv)
+	require.NoError(t, cfg.Validate())
+}
+
+// TestEmbeddingsConfig_OrcaRouterFormatKeepsExplicitSettings catches an
+// explicit endpoint/model/dimension/api_key_env winning over the gateway
+// defaults.
+func TestEmbeddingsConfig_OrcaRouterFormatKeepsExplicitSettings(t *testing.T) {
+	cfg := Config{}
+	cfg.Embeddings.APIFormat = APIFormatOrcaRouter
+	cfg.Embeddings.Endpoint = "https://proxy.example.test/v1"
+	cfg.Embeddings.Model = "my-embedding-model"
+	cfg.Embeddings.Dimension = 1024
+	cfg.Embeddings.APIKeyEnv = "MY_EMBED_KEY"
+	cfg.ApplyDefaults()
+	assert.Equal(t, "https://proxy.example.test/v1", cfg.Embeddings.Endpoint)
+	assert.Equal(t, "my-embedding-model", cfg.Embeddings.Model)
+	assert.Equal(t, 1024, cfg.Embeddings.Dimension)
+	assert.Equal(t, "MY_EMBED_KEY", cfg.Embeddings.APIKeyEnv)
+	require.NoError(t, cfg.Validate())
 }
 
 // TestGenerationFingerprint_ChangesForVoyageContextual catches contextual

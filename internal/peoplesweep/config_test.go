@@ -47,6 +47,57 @@ func TestConfigDefaultsStayDisabled(t *testing.T) {
 	require.ErrorContains(err, "disabled")
 }
 
+func TestOrcaRouterProviderDefaults(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
+		Kind:             peoplesweep.ProviderOrcaRouter,
+		RetentionPosture: "zero_retention",
+		TrainingPosture:  "no_training",
+		AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceMeetingText,
+			peoplesweep.SourceConversationText,
+		},
+		SourceSince: "2025-01-01",
+	}}
+	config.ApplyDefaults()
+
+	assert.Equal(peoplesweep.ProviderOrcaRouter, config.Provider.Kind)
+	assert.Equal(peoplesweep.OrcaRouterDefaultEndpoint, config.Provider.Endpoint)
+	assert.Equal(peoplesweep.OrcaRouterDefaultModel, config.Provider.Model)
+	assert.Equal(peoplesweep.OrcaRouterDefaultAPIKeyEnv, config.Provider.APIKeyEnv)
+	require.NoError(config.Validate())
+
+	profile, err := config.Profile()
+	require.NoError(err)
+	assert.Equal(peoplesweep.OrcaRouterDefaultEndpoint, profile.Endpoint)
+	assert.Equal(peoplesweep.OrcaRouterDefaultModel, profile.Model)
+	assert.Equal(peoplesweep.OrcaRouterDefaultAPIKeyEnv, profile.APIKeyEnv)
+}
+
+func TestOrcaRouterProviderKeepsExplicitSettings(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
+		Kind:             peoplesweep.ProviderOrcaRouter,
+		Endpoint:         "https://proxy.example.test/v1",
+		Model:            "my-model",
+		APIKeyEnv:        "MY_KEY",
+		RetentionPosture: "zero_retention",
+		TrainingPosture:  "no_training",
+		AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceMeetingText,
+		},
+		SourceSince: "2025-01-01",
+	}}
+	config.ApplyDefaults()
+
+	assert.Equal("https://proxy.example.test/v1", config.Provider.Endpoint)
+	assert.Equal("my-model", config.Provider.Model)
+	assert.Equal("MY_KEY", config.Provider.APIKeyEnv)
+	require.NoError(config.Validate())
+}
+
 func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 	assert := assert.New(t)
 	profile, err := validConfig().Profile()

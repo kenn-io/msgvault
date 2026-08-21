@@ -42,6 +42,13 @@ All notable changes to msgvault, grouped by release.
   empty one, and the daemon marks vector search stale when the configured
   accounts resolve to a different source set than it was started with.
 
+- Named [OrcaRouter](https://www.orcarouter.ai) provider for the embedding
+  and people-sweep inference surfaces: `[vector.embeddings] api_format =
+  "orcarouter"` and `[people.sweep.provider] kind = "orcarouter"` each fill
+  in the gateway endpoint, model, dimension, and `ORCAROUTER_API_KEY`
+  environment variable so a minimal config block selects the gateway by
+  name.
+
 **Bug fixes**
 
 - Everything and Files now page narrow analytical metadata before enriching

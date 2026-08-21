@@ -83,6 +83,31 @@ source_since = "2025-01-01"
 	assert.ErrorContains(t, err, "allowed_sources")
 }
 
+func TestLoadOrcaRouterPeopleSweepProviderFillsDefaults(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`
+[people.sweep]
+enabled = true
+
+[people.sweep.provider]
+kind = "orcarouter"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+`), 0o600))
+
+	loaded, err := Load(path, "")
+	require.NoError(err)
+	provider := loaded.People.Sweep.Provider
+	assert.Equal(peoplesweep.ProviderOrcaRouter, provider.Kind)
+	assert.Equal(peoplesweep.OrcaRouterDefaultEndpoint, provider.Endpoint)
+	assert.Equal(peoplesweep.OrcaRouterDefaultModel, provider.Model)
+	assert.Equal(peoplesweep.OrcaRouterDefaultAPIKeyEnv, provider.APIKeyEnv)
+}
+
 func TestLoadDoesNotReplaceExplicitEmptyPeopleProviderKeyEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`

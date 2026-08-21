@@ -141,6 +141,20 @@ run_after_sync = true                    # run a pass after every successful sch
 message_types = ["teams"]
 ```
 
+For a hosted gateway, [OrcaRouter](https://www.orcarouter.ai) serves the same
+OpenAI-compatible `/v1/embeddings` contract. Selecting `api_format =
+"orcarouter"` fills in the endpoint, model, dimension, and key environment
+variable so the block can stay minimal:
+
+```toml
+[vector]
+enabled = true
+backend = "sqlite-vec"
+
+[vector.embeddings]
+api_format = "orcarouter"     # fills in endpoint/model/dimension/api_key_env
+```
+
 The `[vector]` section only takes effect when `enabled = true` **and**
 the binary was built with the needed vector backend. If either is
 missing, msgvault behaves as before. Disabled vector search returns
