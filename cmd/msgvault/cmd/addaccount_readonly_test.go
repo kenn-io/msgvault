@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -549,6 +550,45 @@ func TestAddAccount_LegacyTokenStillReusableWithoutReadonly(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(out, "already authorized")
 	assert.NotContains(out, "Warning")
+}
+
+func TestAddAccount_AuthenticatedPreflightRegistersWiderGrant(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+
+	out, err := runAddAccountForTest(t,
+		scopeEscalationAccount, "--readonly", "--grant-decided", "--no-default-identity")
+
+	require.NoError(err)
+	assert.Contains(out, "already authorized")
+	assert.NotContains(out, "Starting browser authorization")
+}
+
+func TestAddAccount_ImplicitDefaultRejectsKnownDifferentClient(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	otherClientToken := strings.Replace(
+		gmailReadonlyTokenJSON,
+		"test.apps.googleusercontent.com",
+		"other.apps.googleusercontent.com",
+		1,
+	)
+	_, restore := seedTokenEnv(t, otherClientToken)
+	defer restore()
+
+	out, err := runAddAccountForTest(t,
+		scopeEscalationAccount, "--readonly", "--no-default-identity")
+
+	require.ErrorIs(err, context.Canceled)
+	assert.Contains(out, "Starting browser authorization")
+	assert.NotContains(out, "already authorized")
 }
 
 // TestAddAccount_HeadlessAppliesGrantDecision is the regression for a bypass:

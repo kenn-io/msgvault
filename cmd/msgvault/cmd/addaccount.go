@@ -166,16 +166,30 @@ func newAddAccountOAuthManager(clientSecretsPath, email string) (*oauth.Manager,
 }
 
 // addAccountTokenReusable reports whether the stored token can be reused
-// without a fresh authorization. The token's client identity is validated
-// whenever any named app is involved — from an explicit flag, a binding
-// change, or a stored binding — because a mismatched token would fail on
-// its next refresh.
-func addAccountTokenReusable(mgr *oauth.Manager, email string, binding addAccountBinding) bool {
-	needsClientCheck := binding.bindingChanged || binding.explicit ||
+// without a fresh authorization. A known client mismatch is never reusable.
+// Named-app and authenticated-preflight paths also reject unknown client
+// provenance, while the ordinary implicit-default path retains its legacy
+// tolerance for tokens without client metadata.
+//
+// grantDecided is true only in the daemon subprocess after an authenticated
+// frontend preflight minted the token. That token can be registered even when
+// the provider returned wider scopes than requested; the frontend already
+// warned about the grant, and reauthorizing cannot narrow it.
+func addAccountTokenReusable(
+	mgr *oauth.Manager,
+	email string,
+	binding addAccountBinding,
+	grantDecided bool,
+) bool {
+	if !mgr.HasToken(email) || mgr.TokenIssuedByDifferentClient(email) {
+		return false
+	}
+	needsClientCheck := grantDecided || binding.bindingChanged || binding.explicit ||
 		binding.resolvedApp != ""
-	return mgr.HasToken(email) &&
-		(!needsClientCheck || mgr.TokenMatchesClient(email)) &&
-		addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
+	if needsClientCheck && !mgr.TokenMatchesClient(email) {
+		return false
+	}
+	return grantDecided || addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
 }
 
 // addAccountAuthorizeError decorates an authorization failure with the
@@ -299,7 +313,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 			fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
 		}
 	}
-	if addAccountTokenReusable(mgr, email, binding) {
+	if addAccountTokenReusable(mgr, email, binding, false) {
 		return false, nil
 	}
 
@@ -485,7 +499,8 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	// on disk — --force below removes the evidence this decision needs.
 	// Skipped when the frontend CLI already decided and authorized; see
 	// addAccountGrantDecidedFlag.
-	if !addAccountGrantDecided(cmd) {
+	grantDecided := addAccountGrantDecided(cmd)
+	if !grantDecided {
 		if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), oauthMgr, email, resolvedApp); err != nil {
 			return err
 		}
@@ -503,7 +518,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	tokenReusable := !forceReauth && addAccountTokenReusable(oauthMgr, email, binding)
+	tokenReusable := !forceReauth && addAccountTokenReusable(oauthMgr, email, binding, grantDecided)
 	if tokenReusable {
 		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 		if err != nil {

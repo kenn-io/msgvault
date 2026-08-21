@@ -1339,6 +1339,7 @@ func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil).WithContext(ctx)
+	req.RemoteAddr = "127.0.0.1:4242"
 	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 	requestDone := make(chan struct{})
 	go func() {
