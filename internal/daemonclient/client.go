@@ -31,24 +31,26 @@ const (
 
 // Config holds configuration for creating a daemon HTTP client.
 type Config struct {
-	URL           string
-	APIKey        string
-	AllowInsecure bool
-	Timeout       time.Duration
-	HTTPClient    *http.Client
-	Context       context.Context
-	RequestMode   RequestMode
+	URL              string
+	APIKey           string
+	LocalDaemonToken string
+	AllowInsecure    bool
+	Timeout          time.Duration
+	HTTPClient       *http.Client
+	Context          context.Context
+	RequestMode      RequestMode
 }
 
 // Client provides HTTP access to a local or configured remote msgvault daemon.
 type Client struct {
-	baseURL     string
-	apiKey      string
-	httpClient  *http.Client
-	typedClient *apiclient.Client
-	busyNotify  func(message string)
-	rootContext context.Context
-	requestMode RequestMode
+	baseURL          string
+	apiKey           string
+	httpClient       *http.Client
+	typedClient      *apiclient.Client
+	busyNotify       func(message string)
+	rootContext      context.Context
+	requestMode      RequestMode
+	localDaemonToken string
 }
 
 // SetBusyNotifier registers a callback invoked when the daemon reports that
@@ -136,11 +138,12 @@ func New(cfg Config) (*Client, error) {
 	httpClient.Timeout = timeout
 
 	c := &Client{
-		baseURL:     strings.TrimSuffix(cfg.URL, "/"),
-		apiKey:      cfg.APIKey,
-		httpClient:  httpClient,
-		rootContext: rootContext,
-		requestMode: cfg.RequestMode,
+		baseURL:          strings.TrimSuffix(cfg.URL, "/"),
+		apiKey:           cfg.APIKey,
+		httpClient:       httpClient,
+		rootContext:      rootContext,
+		requestMode:      cfg.RequestMode,
+		localDaemonToken: cfg.LocalDaemonToken,
 	}
 	if _, err := c.GeneratedClient(); err != nil {
 		return nil, err
@@ -187,7 +190,7 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 			client:      c.httpClient,
 			rootContext: c.requestContext(),
 		}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.requestMode)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.requestMode, c.localDaemonToken)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -332,13 +335,18 @@ func (b *cancelOnCloseBody) Close() error {
 	return err
 }
 
-func requestEditor(apiKey string, mode RequestMode) apiclient.RequestEditorFn {
+type grantDecisionContextKey struct{}
+
+func requestEditor(apiKey string, mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
 		if apiKey != "" {
 			req.Header.Set("X-Api-Key", apiKey)
 		}
 		if mode == RequestModeCLI {
 			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+		}
+		if decided, _ := ctx.Value(grantDecisionContextKey{}).(bool); decided {
+			req.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, localDaemonToken)
 		}
 		req.Header.Set("Accept", "application/json")
 		daemonW3CPropagator.Inject(ctx, propagation.HeaderCarrier(req.Header))

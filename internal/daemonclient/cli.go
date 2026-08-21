@@ -58,9 +58,10 @@ type CLIVerifyRequest struct {
 }
 
 type CLIRunRequest struct {
-	Args []string          `json:"args"`
-	Env  map[string]string `json:"env,omitempty"`
-	Cwd  string            `json:"cwd,omitempty"`
+	Args         []string          `json:"args"`
+	Env          map[string]string `json:"env,omitempty"`
+	Cwd          string            `json:"cwd,omitempty"`
+	GrantDecided bool              `json:"-"`
 }
 
 type CLIAddCalendarPlanRequest struct {
@@ -521,6 +522,12 @@ func (c *Client) RunCLICommand(
 	req CLIRunRequest,
 	output func(stream, data string) error,
 ) error {
+	if req.GrantDecided {
+		if c.localDaemonToken == "" {
+			return errors.New("grant preflight proof is unavailable for this daemon")
+		}
+		ctx = context.WithValue(ctx, grantDecisionContextKey{}, true)
+	}
 	body := generated.RunCLIBody{Args: req.Args, Env: req.Env, Cwd: optionalString(req.Cwd)}
 	return c.runCLIStream(ctx, "/api/v1/cli/run", "run", &generated.RunCLIRequestOptions{Body: &body}, output)
 }

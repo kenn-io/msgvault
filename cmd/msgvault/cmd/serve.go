@@ -1527,7 +1527,11 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
 	}
 	runSubprocess := func(ctx context.Context) error {
-		return run(ctx, req.Args, req.Env, req.Cwd, emitSubprocess)
+		args := req.Args
+		if req.GrantDecided {
+			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+		}
+		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
 		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {

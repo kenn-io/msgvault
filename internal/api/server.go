@@ -407,7 +407,7 @@ const (
 	inProgressLogInterval  = 30 * time.Second
 	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
 	// #nosec G101
-	DaemonShutdownTokenHeader     = "X-Msgvault-Daemon-Token"
+	DaemonShutdownTokenHeader     = apiprotocol.DaemonRuntimeTokenHeader
 	DaemonIdentityChallengeHeader = "X-Msgvault-Daemon-Challenge"
 	DaemonIdentityProofHeader     = "X-Msgvault-Daemon-Proof"
 )

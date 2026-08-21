@@ -39,7 +39,19 @@ func runDaemonCLICommandHTTPFromCobraWithEnv(cmd *cobra.Command, args []string, 
 	if err != nil {
 		return err
 	}
-	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, false)
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, false, false)
+}
+
+func runDaemonCLICommandHTTPFromCobraWithGrantDecision(
+	cmd *cobra.Command,
+	args []string,
+	grantDecided bool,
+) error {
+	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
+	if err != nil {
+		return err
+	}
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, false, grantDecided)
 }
 
 func runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd *cobra.Command, args []string, env map[string]string) error {
@@ -47,10 +59,16 @@ func runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd *cobra.Command, args []s
 	if err != nil {
 		return err
 	}
-	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, true)
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, true, false)
 }
 
-func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[string]string, requiresLocalFiles bool) error {
+func runDaemonCLICommandHTTPWithEnv(
+	cmd *cobra.Command,
+	args []string,
+	env map[string]string,
+	requiresLocalFiles bool,
+	grantDecided bool,
+) error {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -62,7 +80,9 @@ func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[s
 		return err
 	}
 
-	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{Args: args, Env: env, Cwd: cwd}, func(stream, data string) error {
+	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{
+		Args: args, Env: env, Cwd: cwd, GrantDecided: grantDecided,
+	}, func(stream, data string) error {
 		switch stream {
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
@@ -113,6 +133,9 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 	flags := make([]*pflag.Flag, 0)
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		if !flag.Changed {
+			return
+		}
+		if flag.Name == addAccountGrantDecidedFlag {
 			return
 		}
 		if isRootPersistentFlag(cmd, flag) && !loggingPassthroughFlags[flag.Name] {

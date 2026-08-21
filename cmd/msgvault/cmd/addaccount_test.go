@@ -259,10 +259,10 @@ func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 func TestAddAccountOAuthScopesForTokenPreservesExistingCalendarGrant(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.ElementsMatch(oauth.Scopes, addAccountOAuthScopesForToken(false, nil),
+	assert.ElementsMatch(oauth.Scopes, addAccountOAuthScopesForToken(false, nil, false),
 		"new and legacy-token Gmail auth should request only Gmail scopes")
 	assert.ElementsMatch(append(append([]string{}, oauth.Scopes...), oauth.ScopeCalendarReadonly),
-		addAccountOAuthScopesForToken(true, oauth.ScopesCalendar),
+		addAccountOAuthScopesForToken(true, oauth.ScopesCalendar, false),
 		"Calendar-only tokens should reauthorize with Gmail while preserving Calendar")
 }
 

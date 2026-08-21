@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/accountops"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/collectionops"
@@ -491,9 +493,10 @@ type CLIRepairEncodingEvent struct {
 }
 
 type CLIRunRequest struct {
-	Args []string          `json:"args"`
-	Env  map[string]string `json:"env,omitempty"`
-	Cwd  string            `json:"cwd,omitempty"`
+	Args         []string          `json:"args"`
+	Env          map[string]string `json:"env,omitempty"`
+	Cwd          string            `json:"cwd,omitempty"`
+	GrantDecided bool              `json:"-"`
 }
 
 type CLIAddCalendarPlanRequest struct {
@@ -1232,6 +1235,18 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
 	}
+	if cliRunArgsContainFlag(req.Args, "grant-decided") {
+		writeError(w, http.StatusBadRequest, "invalid_args", "--grant-decided is not accepted through the daemon CLI runner")
+		return
+	}
+	if proof := r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader); proof != "" {
+		if req.Args[0] != "add-account" || s.shutdownToken == "" ||
+			subtle.ConstantTimeCompare([]byte(proof), []byte(s.shutdownToken)) != 1 {
+			writeError(w, http.StatusBadRequest, "invalid_grant_preflight", "grant preflight proof is invalid")
+			return
+		}
+		req.GrantDecided = true
+	}
 	for name := range req.Env {
 		if !s.cliRunEnvAllowed(name) {
 			writeError(w, http.StatusBadRequest, "env_not_allowed", fmt.Sprintf("env %q is not allowed through the daemon CLI runner", name))
@@ -1250,6 +1265,16 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	if err := writeEvent(CLIRunEvent{Type: cliStreamEventTypeComplete}); err != nil {
 		s.logger.Error("failed to stream CLI run completion event", "error", err)
 	}
+}
+
+func cliRunArgsContainFlag(args []string, name string) bool {
+	flag := "--" + name
+	for _, arg := range args {
+		if arg == flag || strings.HasPrefix(arg, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request) {

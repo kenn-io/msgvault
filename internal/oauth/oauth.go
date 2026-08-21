@@ -26,16 +26,170 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// Gmail scope identifiers. Declared once so the scope *sets* below and every
+// "does this account have write access" check derive from the same strings.
+const (
+	// ScopeGmailReadonly grants read access to mail and settings.
+	ScopeGmailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
+	// ScopeGmailModify grants read plus trash/untrash/label changes.
+	ScopeGmailModify = "https://www.googleapis.com/auth/gmail.modify"
+	// ScopeGmailFull is Gmail's broad full-access scope. It is required for
+	// batchDelete and, being a superset of modify, also permits trashing.
+	ScopeGmailFull = "https://mail.google.com/"
+
+	// ScopeGmailSend and the scopes below it are the remaining write-capable
+	// Gmail scopes. msgvault never requests any of them, but a token it is
+	// asked to reuse may carry them, and narrowing must not leave one behind.
+	ScopeGmailSend            = "https://www.googleapis.com/auth/gmail.send"
+	ScopeGmailCompose         = "https://www.googleapis.com/auth/gmail.compose"
+	ScopeGmailInsert          = "https://www.googleapis.com/auth/gmail.insert"
+	ScopeGmailLabels          = "https://www.googleapis.com/auth/gmail.labels"
+	ScopeGmailSettingsBasic   = "https://www.googleapis.com/auth/gmail.settings.basic"
+	ScopeGmailSettingsSharing = "https://www.googleapis.com/auth/gmail.settings.sharing"
+
+	// ScopeGmailMetadata is read-only: headers and labels without message
+	// bodies. Named so it is not mistaken for a write scope.
+	ScopeGmailMetadata = "https://www.googleapis.com/auth/gmail.metadata"
+)
+
 // Scopes for normal msgvault operations (sync, search, read).
 var Scopes = []string{
-	"https://www.googleapis.com/auth/gmail.readonly",
-	"https://www.googleapis.com/auth/gmail.modify",
+	ScopeGmailReadonly,
+	ScopeGmailModify,
 }
 
 // ScopesDeletion includes full access required for batchDelete API.
 // gmail.modify supports trash/untrash but NOT batchDelete.
 var ScopesDeletion = []string{
+	ScopeGmailFull,
+}
+
+// ScopesGmailReadonly is the Gmail scope set requested by
+// `add-account --readonly`: read access and nothing else.
+var ScopesGmailReadonly = []string{
+	ScopeGmailReadonly,
+}
+
+// ScopesGmailWrite is every Gmail scope that confers write access, meaning any
+// ability to alter the mailbox or act as the user: modify mail, send or insert
+// it, manage labels, or change settings.
+//
+// Any decision of the form "does this account currently have Gmail write
+// access" or "which scopes should be dropped when narrowing to read-only" MUST
+// consider this whole set. Checking gmail.modify alone silently mishandles an
+// account holding only the full-access scope, and checking only those two
+// silently mishandles one holding gmail.send.
+//
+// msgvault requests only readonly, modify, and full, so the rest appear only on
+// a token minted elsewhere for the same OAuth client. Narrowing still has to
+// strip them: a grant is read-only when nothing in it can write, not when the
+// scopes msgvault happens to request are absent.
+//
+// This list names the write scopes for documentation and for messages that
+// enumerate them. It is NOT what classification consults — that is
+// isGmailWriteScope, which allow-lists the read-only scopes so an unrecognised
+// Gmail scope fails closed rather than passing as read-only.
+var ScopesGmailWrite = []string{
+	ScopeGmailModify,
+	ScopeGmailFull,
+	ScopeGmailSend,
+	ScopeGmailCompose,
+	ScopeGmailInsert,
+	ScopeGmailLabels,
+	ScopeGmailSettingsBasic,
+	ScopeGmailSettingsSharing,
+}
+
+// gmailScopePrefixes match every scope Google issues for Gmail. A scope
+// carrying one of these is Gmail's; anything else belongs to another API.
+var gmailScopePrefixes = []string{
 	"https://mail.google.com/",
+	"https://www.googleapis.com/auth/gmail.",
+}
+
+// gmailReadOnlyScopes is the complete allow-list of Gmail scopes that cannot
+// modify the mailbox or act as the user.
+//
+// Classification is an allow-list on purpose. A deny-list of known write scopes
+// fails open: a Gmail scope nobody thought of reads as read-only, so a grant
+// that can send mail passes as narrow. Enumerating what is safe fails closed
+// instead — an unrecognised Gmail scope is treated as write access, which at
+// worst refuses a narrowing that would have been fine.
+var gmailReadOnlyScopes = []string{
+	ScopeGmailReadonly,
+	ScopeGmailMetadata,
+	"https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+	"https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+}
+
+// isGmailScope reports whether a scope belongs to the Gmail API.
+func isGmailScope(scope string) bool {
+	for _, prefix := range gmailScopePrefixes {
+		if strings.HasPrefix(scope, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isGmailWriteScope reports whether a scope is a Gmail scope that is not on the
+// read-only allow-list. Unrecognised Gmail scopes count as write.
+func isGmailWriteScope(scope string) bool {
+	return isGmailScope(scope) && !slices.Contains(gmailReadOnlyScopes, scope)
+}
+
+// HasGmailWriteScope reports whether scopes contain any Gmail scope that
+// grants write access. See gmailReadOnlyScopes for why this is decided by an
+// allow-list rather than by membership of ScopesGmailWrite.
+func HasGmailWriteScope(scopes []string) bool {
+	return len(GrantedGmailWriteScopes(scopes)) > 0
+}
+
+// GrantedGmailWriteScopes returns the Gmail write scopes present in scopes,
+// so callers can name exactly what an account holds in operator-facing
+// messages rather than guessing.
+func GrantedGmailWriteScopes(scopes []string) []string {
+	var granted []string
+	for _, scope := range scopes {
+		if isGmailWriteScope(scope) {
+			granted = append(granted, scope)
+		}
+	}
+	return granted
+}
+
+// WithoutGmailWriteScopes returns scopes with every Gmail write scope removed
+// and everything else — Calendar, Drive, gmail.readonly — left in place and in
+// order. This is how narrowing preserves unrelated grants.
+func WithoutGmailWriteScopes(scopes []string) []string {
+	kept := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		if isGmailWriteScope(scope) {
+			continue
+		}
+		kept = append(kept, scope)
+	}
+	return kept
+}
+
+// HasAnyGmailScope reports whether scopes contain any Gmail scope at all.
+// It distinguishes "this account holds a narrower Gmail grant" from "this
+// account has no Gmail grant yet", which read differently: the first is a
+// deliberate narrowing worth preserving, the second is a first-time
+// authorization where warning about widening would be noise.
+func HasAnyGmailScope(scopes []string) bool {
+	return slices.ContainsFunc(scopes, isGmailScope)
+}
+
+// IsNarrowedGmailGrant reports whether scopes describe a Gmail grant that has
+// deliberately been narrowed: Gmail access is present, but no write scope is.
+// Re-authorization paths use this to avoid silently restoring write access to
+// an account the operator narrowed on purpose.
+//
+// A grant with no Gmail scopes at all is not "narrowed" — it has simply never
+// had Gmail — so this returns false and such accounts widen as before.
+func IsNarrowedGmailGrant(scopes []string) bool {
+	return HasAnyGmailScope(scopes) && !HasGmailWriteScope(scopes)
 }
 
 // ScopeCalendarReadonly is the read-only Calendar scope: it covers both
@@ -80,6 +234,7 @@ type Manager struct {
 	tokensDir  string
 	logger     *slog.Logger
 	profileURL string // profile endpoint override for tests
+	revokeURL  string // revocation endpoint override for tests
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -169,7 +324,10 @@ func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
 // Google's device flow does not support Gmail scopes, so users must authorize
 // on a machine with a browser and copy the token file.
 // tokensDir should be the configured tokens directory (e.g., cfg.TokensDir()).
-func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
+// readonly echoes --readonly back into the printed commands so the operator
+// authorizes on the browser machine with the same narrowed grant they asked
+// for here.
+func PrintHeadlessInstructions(email, tokensDir, oauthApp string, readonly bool) {
 	// Use same sanitization as tokenPath for consistency
 	tokenFile := sanitizeEmail(email) + ".json"
 	tokenPath := filepath.Join(tokensDir, tokenFile)
@@ -177,6 +335,9 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
 	addCmd := "    msgvault add-account " + email
 	if oauthApp != "" {
 		addCmd += " --oauth-app " + oauthApp
+	}
+	if readonly {
+		addCmd += " --readonly"
 	}
 
 	fmt.Println()
@@ -275,6 +436,12 @@ func sanitizeEmail(email string) string {
 // Handles embedded single quotes by ending the quoted string, adding an
 // escaped single quote, and starting a new quoted string: ' -> '\”.
 func shellQuote(s string) string {
+	return ShellQuote(s)
+}
+
+// ShellQuote returns a shell-safe single-quoted form of s, so a path printed
+// into a copy-pasteable command survives spaces and quotes.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
@@ -319,7 +486,22 @@ func (m *Manager) withScopes(scopes []string) *Manager {
 	return &scoped
 }
 
+// scopesWithPreservedGrants unions the scopes a caller requires with the ones
+// the account already holds, because Google's forced re-consent REPLACES the
+// granted set rather than adding to it.
+//
+// The union is asymmetric in one direction: if the existing grant is a
+// deliberately narrowed Gmail grant (read access, no write scope), the Gmail
+// write scopes are dropped from the required set rather than being restored.
+// Callers here reach this path on incidental re-authorization — a token
+// expired, or Calendar is being added — where quietly handing back write
+// access the operator removed would defeat `add-account --readonly`. Paths
+// that mean to escalate build their scope list explicitly and call Authorize
+// directly, so they are unaffected.
 func scopesWithPreservedGrants(required, granted []string) []string {
+	if IsNarrowedGmailGrant(granted) {
+		required = WithoutGmailWriteScopes(required)
+	}
 	scopes := append([]string(nil), required...)
 	for _, scope := range granted {
 		if !slices.Contains(scopes, scope) {
@@ -499,7 +681,7 @@ func tokenProfileEndpointForScopes(scopes []string) tokenProfileEndpoint {
 }
 
 func hasGmailProfileScope(scopes []string) bool {
-	if slices.Contains(scopes, "https://mail.google.com/") {
+	if slices.Contains(scopes, ScopeGmailFull) {
 		return true
 	}
 	for _, scope := range Scopes {
@@ -663,6 +845,22 @@ func (m *Manager) TokenMatchesClient(email string) bool {
 		return false // legacy token without client_id metadata
 	}
 	return tf.ClientID == m.config.ClientID
+}
+
+// TokenIssuedByDifferentClient reports whether the stored token is known to
+// have come from a different OAuth client than this manager's.
+//
+// It differs from !TokenMatchesClient in what it does with uncertainty. That
+// helper answers "can this token be trusted for this client", so an unreadable
+// token or one with no recorded client_id is a no. Callers asking the opposite
+// question — "is this definitely a different client" — must not read those same
+// cases as a yes, or an unknown provenance becomes a positive claim about it.
+func (m *Manager) TokenIssuedByDifferentClient(email string) bool {
+	tf, err := m.loadTokenFile(email)
+	if err != nil || tf.ClientID == "" {
+		return false // provenance unknown; do not claim it differs
+	}
+	return tf.ClientID != m.config.ClientID
 }
 
 // HasScopeMetadata returns true if the token file for this account has any
@@ -1018,6 +1216,122 @@ func fetchTokenProfileEmailFromEndpoint(
 func ValidateTokenEmail(ctx context.Context, ts oauth2.TokenSource, email string) error {
 	_, err := fetchTokenProfileEmail(ctx, ts, defaultProfileURL, email, tokenProfileErrorServiceAccount)
 	return err
+}
+
+// revokeTimeout bounds the revocation request; revocation is a single POST
+// and should not hang a CLI command on a stalled connection.
+const revokeTimeout = 15 * time.Second
+
+const defaultRevokeURL = "https://oauth2.googleapis.com/revoke"
+
+// ErrRevokeCredentialInvalid reports that the revocation endpoint rejected
+// the stored credential as already expired or revoked. Callers treating
+// revocation as cleanup (account removal) can read it as nothing-to-do.
+var ErrRevokeCredentialInvalid = errors.New("stored credential is already expired or revoked")
+
+// RevokeToken revokes the stored grant at Google's revocation endpoint.
+// Revoking the refresh token invalidates the grant server-side, so copies of
+// the token file (backups, other hosts, previously exposed credentials) lose
+// access too — deleting the local file alone would not achieve that.
+func (m *Manager) RevokeToken(ctx context.Context, email string) error {
+	tf, err := m.loadTokenFile(email)
+	if err != nil {
+		return fmt.Errorf("load token for %s: %w", email, err)
+	}
+	credential := tf.RefreshToken
+	if credential == "" {
+		credential = tf.AccessToken
+	}
+	if credential == "" {
+		return fmt.Errorf("token for %s holds no credential to revoke", email)
+	}
+
+	endpoint := m.revokeURL
+	if endpoint == "" {
+		endpoint = defaultRevokeURL
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	form := url.Values{"token": {credential}}
+	req, err := http.NewRequestWithContext(
+		reqCtx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("create revocation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke token for %s: %w", email, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusBadRequest {
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &apiErr) == nil && apiErr.Error == "invalid_token" {
+			return fmt.Errorf("revoke token for %s: %w", email, ErrRevokeCredentialInvalid)
+		}
+	}
+	return fmt.Errorf(
+		"revoke token for %s: revocation endpoint returned HTTP %d: %s",
+		email, resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+// RevokeStoredCredential revokes the credential stored for email in
+// tokensDir at Google's revocation endpoint. Revocation needs no OAuth
+// client configuration — the endpoint takes only the token — so account
+// removal can retire the grant before deleting the file even when no
+// client secrets are configured. Behavior matches Manager.RevokeToken.
+func RevokeStoredCredential(ctx context.Context, tokensDir, email string) error {
+	m := &Manager{tokensDir: tokensDir, logger: slog.Default(), config: &oauth2.Config{}}
+	return m.RevokeToken(ctx, email)
+}
+
+// FindEquivalentTokenEmails returns every stored spelling other than email
+// itself that refers to the same Google account under Gmail's alias rules —
+// case, dots, plus-addresses, googlemail.com.
+//
+// Read-only decisions use this to fail closed: authorization accepts alias
+// variants (sameGoogleAccount), so without this check a --readonly run
+// through an alias spelling would read as a fresh account while an
+// equivalent stored spelling kept an unnarrowed, possibly write-capable
+// credential.
+//
+// A candidate that is the account's own file does not count. On
+// case-insensitive filesystems a case-variant filename resolves to the same
+// file as the exact spelling, so candidates are also compared by identity
+// (os.SameFile), not just by name.
+func (m *Manager) FindEquivalentTokenEmails(email string) []string {
+	entries, err := os.ReadDir(m.tokensDir)
+	if err != nil {
+		return nil
+	}
+	own := sanitizeEmail(email) + ".json"
+	ownInfo, ownErr := os.Stat(filepath.Join(m.tokensDir, own))
+	var equivalents []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".json") || name == own {
+			continue
+		}
+		if ownErr == nil {
+			if info, infoErr := entry.Info(); infoErr == nil && os.SameFile(ownInfo, info) {
+				continue
+			}
+		}
+		stored := strings.TrimSuffix(name, ".json")
+		if sameGoogleAccount(email, stored) {
+			equivalents = append(equivalents, stored)
+		}
+	}
+	return equivalents
 }
 
 // DeleteToken removes the token file for the given email.

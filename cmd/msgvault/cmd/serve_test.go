@@ -1328,6 +1328,36 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	}
 }
 
+func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
+	adapter := &storeAPIAdapter{}
+	req := api.CLIRunRequest{
+		Args:         []string{"add-account", "user@example.com", "--readonly"},
+		GrantDecided: true,
+	}
+	var gotArgs []string
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(), req, nil,
+		func(
+			_ context.Context,
+			args []string,
+			_ map[string]string,
+			_ string,
+			_ func(string, string) error,
+		) error {
+			gotArgs = args
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"add-account", "user@example.com", "--readonly", "--grant-decided=true",
+	}, gotArgs)
+	assert.Equal(t, []string{"add-account", "user@example.com", "--readonly"}, req.Args,
+		"server injection must not mutate caller-owned args")
+}
+
 func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

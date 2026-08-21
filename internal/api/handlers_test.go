@@ -1076,6 +1076,84 @@ func TestHandleCLIRunStreamsGenericCommandOutput(t *testing.T) {
 	assert.Equal(CLIRunEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
 }
 
+func TestHandleCLIRunProtectsAddAccountGrantDecision(t *testing.T) {
+	t.Run("caller supplied flag is rejected", func(t *testing.T) {
+		runs := 0
+		st := &mockStore{runFunc: func(
+			context.Context, CLIRunRequest, func(CLIRunEvent) error,
+		) error {
+			runs++
+			return nil
+		}}
+		srv := newCLIHandlerTestServer(st)
+
+		body := strings.NewReader(`{"args":["add-account","user@example.com","--readonly","--grant-decided"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+		assert.Contains(t, resp.Body.String(), "invalid_args")
+		assert.Zero(t, runs, "rejected flag must not reach the runner")
+	})
+
+	t.Run("daemon runtime proof records a server owned decision", func(t *testing.T) {
+		require := require.New(t)
+		var gotReq CLIRunRequest
+		st := &mockStore{runFunc: func(
+			_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error,
+		) error {
+			gotReq = req
+			return emit(CLIRunEvent{Type: cliStreamEventTypeComplete})
+		}}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:         st,
+			Logger:        testLogger(),
+			ShutdownToken: "runtime-secret",
+		})
+
+		body := strings.NewReader(`{"args":["add-account","user@example.com","--readonly"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, "runtime-secret")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+
+		require.Equal(http.StatusOK, resp.Code, "body: %s", resp.Body.String())
+		assert.Equal(t, []string{"add-account", "user@example.com", "--readonly"}, gotReq.Args)
+		assert.True(t, gotReq.GrantDecided)
+	})
+
+	t.Run("invalid runtime proof is rejected", func(t *testing.T) {
+		runs := 0
+		st := &mockStore{runFunc: func(
+			context.Context, CLIRunRequest, func(CLIRunEvent) error,
+		) error {
+			runs++
+			return nil
+		}}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:         st,
+			Logger:        testLogger(),
+			ShutdownToken: "runtime-secret",
+		})
+
+		body := strings.NewReader(`{"args":["add-account","user@example.com","--readonly"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, "forged")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+		assert.Contains(t, resp.Body.String(), "invalid_grant_preflight")
+		assert.Zero(t, runs, "invalid proof must not reach the runner")
+	})
+}
+
 func TestHandleCLIRunAllowsLegacyBuildEmbeddingsCommand(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

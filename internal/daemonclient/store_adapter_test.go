@@ -307,6 +307,45 @@ func TestRunCLICommandStreamsOutput(t *testing.T) {
 	assert.Equal("warning\n", stderr.String(), "stderr")
 }
 
+func TestRunCLICommandGrantDecisionUsesLocalDaemonProof(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal("runtime-secret", r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader))
+		var body map[string]any
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		assert.NotContains(body, "grant_decided", "the decision must not be caller-controlled JSON")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	st, err := New(Config{
+		URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client(), LocalDaemonToken: "runtime-secret",
+	})
+	require.NoError(err)
+	require.NoError(st.RunCLICommand(context.Background(), CLIRunRequest{
+		Args: []string{"add-account", "user@example.com", "--readonly"}, GrantDecided: true,
+	}, nil))
+	assert.Equal(1, requests)
+}
+
+func TestRunCLICommandGrantDecisionRequiresLocalDaemonProof(t *testing.T) {
+	st, err := New(Config{URL: "http://127.0.0.1:1", AllowInsecure: true})
+	require.NoError(t, err)
+
+	err = st.RunCLICommand(context.Background(), CLIRunRequest{
+		Args: []string{"add-account", "user@example.com", "--readonly"}, GrantDecided: true,
+	}, nil)
+
+	require.EqualError(t, err, "grant preflight proof is unavailable for this daemon")
+}
+
 func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

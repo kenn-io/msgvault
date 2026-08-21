@@ -159,9 +159,10 @@ func openHTTPStoreWithStartupCacheIntent(
 	}
 	url := urlFromDaemonRuntime(rt)
 	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
-		URL:           url,
-		APIKey:        cfg.Server.APIKey,
-		AllowInsecure: true,
+		URL:              url,
+		APIKey:           cfg.Server.APIKey,
+		LocalDaemonToken: rt.Record.Metadata[runtimeShutdownToken],
+		AllowInsecure:    true,
 	})
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err

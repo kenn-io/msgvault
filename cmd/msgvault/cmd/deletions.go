@@ -802,12 +802,32 @@ func deleteStagedScopeEscalationForSource(
 		}
 		return deleteStagedScopeEscalation{}, nil
 	}
-	for _, scope := range requiredScopes {
-		if !oauthMgr.HasScope(account, scope) {
-			return newDeleteStagedScopeEscalation(account, permanent, clientSecretsPath), nil
-		}
+	if grantCoversDeletion(oauthMgr.GrantedScopes(account), permanent) {
+		return deleteStagedScopeEscalation{}, nil
 	}
-	return deleteStagedScopeEscalation{}, nil
+	return newDeleteStagedScopeEscalation(account, permanent, clientSecretsPath), nil
+}
+
+// grantCoversDeletion reports whether an account's granted scopes already
+// permit the requested deletion, so no re-consent prompt is needed.
+//
+// Trashing is a capability question, not a scope-list question: gmail.modify
+// grants it, and the broader full-access scope grants it too, being a superset.
+// Requiring every member of oauth.Scopes would prompt an account that holds
+// full access but not modify to "upgrade" to permissions it already exceeds —
+// reachable as soon as read-only accounts exist, since narrowing to read-only
+// and later escalating for permanent deletion produces exactly that grant.
+//
+// Permanent deletion still requires the full-access scope; modify does not
+// cover batchDelete.
+func grantCoversDeletion(grantedScopes []string, permanent bool) bool {
+	if slices.Contains(grantedScopes, oauth.ScopeGmailFull) {
+		return true
+	}
+	if permanent {
+		return false
+	}
+	return slices.Contains(grantedScopes, oauth.ScopeGmailModify)
 }
 
 func newDeleteStagedScopeEscalation(

@@ -465,23 +465,65 @@ type scopePreservingReauthorizer interface {
 	AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error
 }
 
+// grantInspector is implemented by managers that record which scopes a token
+// was granted. Remediation guidance uses it to stay faithful to the account's
+// current grant: an account deliberately narrowed to read-only must not be
+// handed a command that would widen it again.
+type grantInspector interface {
+	GrantedScopes(email string) []string
+}
+
+// accountIsNarrowed reports whether the account's recorded grant is Gmail
+// read-only. A manager that cannot report scopes, or a grant with no Gmail
+// scopes at all, is treated as not narrowed, so guidance is unchanged for
+// every pre-existing case.
+func accountIsNarrowed(mgr tokenReauthorizer, email string) bool {
+	inspector, ok := mgr.(grantInspector)
+	if !ok {
+		return false
+	}
+	return oauth.IsNarrowedGmailGrant(inspector.GrantedScopes(email))
+}
+
+// readonlyFlagSuffix renders the grant-affecting flag for inclusion in
+// remediation commands.
+func readonlyFlagSuffix(readonly bool) string {
+	if readonly {
+		return " --readonly"
+	}
+	return ""
+}
+
 // reauthHint returns caller-specific, out-of-band re-authorization guidance for
 // an expired/revoked token in a non-interactive session. Gmail and Calendar use
 // different commands (add-account vs add-calendar), so the shared reauth helper
 // must be told which one to point the user at.
-type reauthHint func(email string) string
+//
+// readonly reports whether the account's current grant is Gmail read-only, so
+// the suggested command preserves that rather than silently widening it.
+type reauthHint func(email string, readonly bool) string
 
 // gmailReauthHint points at add-account, the Gmail authorization command.
-func gmailReauthHint(email string) string {
+//
+// For a narrowed account this suggests `--readonly --force`, which looks like
+// the combination add-account refuses. It is not: that refusal fires only when
+// the account holds a Gmail write scope, and a narrowed account by definition
+// holds none. Here --force is doing its ordinary job — discard a dead token and
+// authorize again — at the same scope the account already has, which neither
+// narrows nor widens anything.
+func gmailReauthHint(email string, readonly bool) string {
+	flags := readonlyFlagSuffix(readonly)
 	return fmt.Sprintf(
-		"re-authorize with 'msgvault add-account %s --force' (or "+
-			"'msgvault add-account %s --headless' on a server without a browser)",
-		email, email,
+		"re-authorize with 'msgvault add-account %s%s --force' (or "+
+			"'msgvault add-account %s%s --headless' on a server without a browser)",
+		email, flags, email, flags,
 	)
 }
 
-// calendarReauthHint points at add-calendar, the Calendar authorization command.
-func calendarReauthHint(email string) string {
+// calendarReauthHint points at add-calendar, the Calendar authorization
+// command. Calendar has a single read-only scope, so there is no grant mode to
+// preserve.
+func calendarReauthHint(email string, _ bool) string {
 	return fmt.Sprintf(
 		"re-authorize with 'msgvault add-calendar %s' (or "+
 			"'msgvault add-calendar %s --headless' on a server without a browser)",
@@ -526,10 +568,14 @@ func getTokenSourceWithReauth(
 	// --force browser flow works even from here (it opens its own loopback
 	// callback). On a headless server with no browser, --headless prints
 	// device-code instructions instead (--force is browser-only).
+	// Read the recorded grant before any reauthorization replaces it, so the
+	// guidance reflects what the account holds now.
+	narrowed := accountIsNarrowed(mgr, email)
+
 	if !interactive {
 		return nil, fmt.Errorf(
 			"token for %s is expired or revoked; %s",
-			email, recovery(email),
+			email, recovery(email, narrowed),
 		)
 	}
 
@@ -547,9 +593,10 @@ func getTokenSourceWithReauth(
 					"If this account uses an alias, remove "+
 					"and re-add with the primary address:\n"+
 					"  msgvault remove-account %s --type gmail\n"+
-					"  msgvault add-account %s",
+					"  msgvault add-account %s%s",
 				email, authErr,
 				mismatch.Expected, mismatch.Actual,
+				readonlyFlagSuffix(narrowed),
 			)
 		}
 		return nil, fmt.Errorf("re-authorize %s: %w", email, authErr)
