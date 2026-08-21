@@ -68,17 +68,22 @@ MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$$" "$binary" --home "$home_dir" --local
 "$binary" --home "$home_dir" serve > "$scratch/serve.log" 2>&1 &
 daemon_pid=$!
 base_url=""
+analytics_ready=0
 for _ in $(seq 1 180); do
   if ! kill -0 "$daemon_pid" 2>/dev/null; then
     sed -n '1,240p' "$scratch/serve.log" >&2
     exit 1
   fi
   base_url="$(sed -n 's/^  API server: //p' "$scratch/serve.log" | tail -1)"
-  if [[ -n "$base_url" ]] && curl --fail --silent --show-error "$base_url/api/session" -o "$scratch/session.json"; then
+  if [[ -n "$base_url" ]] &&
+    curl --fail --silent --show-error "$base_url/api/session" -o "$scratch/session.json" &&
+    curl --fail --silent --show-error "$base_url/health" -o "$scratch/health.json" &&
+    python3 -c 'import json,sys; raise SystemExit(json.load(open(sys.argv[1], encoding="utf-8")).get("analytics_engine") != "duckdb")' "$scratch/health.json"; then
+    analytics_ready=1
     break
   fi
   sleep 0.1
 done
-[[ -n "$base_url" && -s "$scratch/session.json" ]] || { sed -n '1,240p' "$scratch/serve.log" >&2; exit 1; }
+[[ "$analytics_ready" == "1" ]] || { sed -n '1,240p' "$scratch/serve.log" >&2; exit 1; }
 node "$script_dir/smoke_fixture.mjs" "$base_url" "$fixture_dir/manifest.json"
 printf 'docs fixture smoke passed\n'
