@@ -182,6 +182,7 @@ type CLIHybridSearchRequest struct {
 	Account        string
 	Collection     string
 	MessageTypes   []string
+	Filter         query.MessageFilter
 	Mode           string
 	Limit          int
 	Offset         int
@@ -208,6 +209,7 @@ type CLIHybridGeneration struct {
 }
 
 type CLIHybridSearchResult struct {
+	Message          query.MessageSummary
 	ID               int64
 	Subject          string
 	FromEmail        string
@@ -462,6 +464,17 @@ func (c *Client) daemonAPISchemaVersion(ctx context.Context) (string, error) {
 		version = *resp.JSON200.APISchemaVersion
 	}
 	return version, nil
+}
+
+// SupportsAPISchemaVersion reports whether the daemon implements at least the
+// requested additive HTTP contract. Missing and malformed versions fail
+// closed, as do health-probe errors.
+func (c *Client) SupportsAPISchemaVersion(ctx context.Context, minimum string) (bool, error) {
+	version, err := c.daemonAPISchemaVersion(ctx)
+	if err != nil {
+		return false, err
+	}
+	return apiSchemaVersionAtLeast(version, minimum), nil
 }
 
 func apiSchemaVersionAtLeast(version, minimum string) bool {
@@ -816,16 +829,26 @@ func (c *Client) GetCLIHybridSearch(
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMessagesResp, error) {
 		return client.SearchMessagesWithResponse(ctx, &generated.SearchMessagesRequestOptions{
 			Query: &generated.SearchMessagesQuery{
-				Q:              req.Query,
-				Mode:           optionalString(req.Mode),
-				Explain:        optionalBool(true),
-				Account:        optionalString(req.Account),
-				Collection:     optionalString(req.Collection),
-				MessageType:    optionalMessageTypes(req.MessageTypes),
-				PageSize:       optionalPositiveInt64(req.Limit),
-				Offset:         optionalPositiveInt64(req.Offset),
-				IncludeMatches: optionalBool(req.IncludeMatches),
-				MinScore:       optionalFloat32(req.MinScore),
+				Q:               req.Query,
+				Mode:            optionalString(req.Mode),
+				Explain:         optionalBool(true),
+				Account:         optionalString(req.Account),
+				Collection:      optionalString(req.Collection),
+				MessageType:     optionalMessageTypes(req.MessageTypes),
+				PageSize:        optionalPositiveInt64(req.Limit),
+				Offset:          optionalPositiveInt64(req.Offset),
+				IncludeMatches:  optionalBool(req.IncludeMatches),
+				MinScore:        optionalFloat32(req.MinScore),
+				Sender:          optionalString(req.Filter.Sender),
+				Recipient:       optionalString(req.Filter.Recipient),
+				Domain:          optionalString(req.Filter.Domain),
+				Label:           optionalString(req.Filter.Label),
+				TimePeriod:      optionalString(req.Filter.TimeRange.Period),
+				TimeGranularity: optionalString(timeGranularityToString(req.Filter.TimeRange.Granularity)),
+				SourceID:        req.Filter.SourceID,
+				AttachmentsOnly: optionalBool(req.Filter.WithAttachmentsOnly),
+				After:           optionalTimeRFC3339(req.Filter.After),
+				Before:          optionalTimeRFC3339(req.Filter.Before),
 			},
 		})
 	})

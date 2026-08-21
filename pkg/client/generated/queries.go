@@ -701,7 +701,7 @@ type SearchMessagesQuery struct {
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
-	// Mode Search mode: fts, vector, or hybrid
+	// Mode Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes
 	Mode *string `json:"mode,omitempty"`
 
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
@@ -730,6 +730,36 @@ type SearchMessagesQuery struct {
 
 	// Collection Restrict to one collection
 	Collection *string `json:"collection,omitempty"`
+
+	// Sender Exact sender email/address filter (vector or hybrid mode only)
+	Sender *string `json:"sender,omitempty"`
+
+	// Recipient Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only)
+	Recipient *string `json:"recipient,omitempty"`
+
+	// Domain Exact sender domain filter (vector or hybrid mode only)
+	Domain *string `json:"domain,omitempty"`
+
+	// Label Exact case-insensitive label filter (vector or hybrid mode only)
+	Label *string `json:"label,omitempty"`
+
+	// TimePeriod Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
+	TimePeriod *string `json:"time_period,omitempty"`
+
+	// TimeGranularity Time bucket granularity (vector or hybrid mode only)
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// SourceID Exact source ID (vector or hybrid mode only)
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// AttachmentsOnly Only include messages with attachments (vector or hybrid mode only)
+	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)
+	Before *string `json:"before,omitempty"`
 }
 
 func (s SearchMessagesQuery) Validate() error {

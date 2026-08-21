@@ -266,6 +266,9 @@ func (m Model) buildBreadcrumb() string {
 
 // buildStatsString builds the stats summary string for the header.
 func (m Model) buildStatsString() string {
+	if m.searchQuery != "" && m.searchMode == searchModeSemantic {
+		return ""
+	}
 	if m.contextStats != nil && (m.level == levelMessageList || m.level == levelDrillDown || m.searchQuery != "") {
 		// Show "+" suffix when search has more results than loaded
 		msgsSuffix := ""
@@ -486,6 +489,9 @@ func (m Model) messageListView() string {
 
 	// Header row with sort indicators
 	msgSortIndicator := func(field query.MessageSortField) string {
+		if m.hasActiveSemanticSearch() {
+			return ""
+		}
 		if m.msgSortField == field {
 			if m.msgSortDirection == query.SortDesc {
 				return "↓"
@@ -633,8 +639,12 @@ func (m Model) messageListView() string {
 	isLoading := m.loading || m.inlineSearchLoading || m.searchLoadingMore
 	if m.inlineSearchActive {
 		modeTag := "[Fast]"
-		if m.searchMode == searchModeDeep {
+		switch m.searchMode {
+		case searchModeFast:
+		case searchModeDeep:
 			modeTag = "[Deep]"
+		case searchModeSemantic:
+			modeTag = "[Semantic: active messages only]"
 		}
 		infoContent = modeTag + "/" + m.searchInput.View()
 	} else if m.searchQuery != "" {
@@ -646,8 +656,12 @@ func (m Model) messageListView() string {
 		} else if m.searchTotalCount == -1 {
 			infoContent += fmt.Sprintf(" (%d+ results, PgDn for more)", len(m.messages))
 		}
-		if m.searchMode == searchModeDeep {
+		switch m.searchMode {
+		case searchModeFast:
+		case searchModeDeep:
 			infoContent += " [Deep]"
+		case searchModeSemantic:
+			infoContent += " [Semantic: active messages only]"
 		}
 	}
 	sb.WriteString(m.renderInfoLine(infoContent, isLoading))
@@ -713,7 +727,8 @@ func (m Model) buildDetailLines() []string {
 			fmt.Sprintf("Attachments (%d):", len(msg.Attachments)),
 		)
 		for _, att := range msg.Attachments {
-			lines = append(lines, fmt.Sprintf("  📎 %s (%s)", att.Filename, formatBytes(att.Size)))
+			filename := textutil.SanitizeTerminal(att.Filename)
+			lines = append(lines, fmt.Sprintf("  📎 %s (%s)", filename, formatBytes(att.Size)))
 		}
 	}
 
@@ -1041,8 +1056,10 @@ func (m Model) footerView() string {
 			"Enter",
 			"Esc",
 			"Space",
-			"s sort",
 			"d del",
+		}
+		if !m.hasActiveSemanticSearch() {
+			keys = append(keys, "s sort")
 		}
 		keys = append(keys, "/ search", "? help")
 		if len(m.messages) > 0 {
@@ -1074,7 +1091,7 @@ func (m Model) footerView() string {
 		}
 		// Show export option if message has attachments
 		if m.messageDetail != nil && len(m.messageDetail.Attachments) > 0 {
-			keys = append(keys, "e export")
+			keys = append(keys, "e attachments")
 		}
 		keys = append(keys, "Esc back", "q quit")
 		// Show message position (N/M) in the list - reuse total from parent view
@@ -1189,10 +1206,10 @@ var rawHelpLines = []string{
 	"  a           View all messages",
 	"",
 	"Other",
-	"  /           Search",
+	"  /           Search (Tab cycles modes in message lists)",
 	"  A           Select account",
 	"  f           Filter (attachments, deleted)",
-	"  e           Export attachments (in message view)",
+	"  e           Browse attachments (in message view)",
 	"  m           Cycle Email/Texts/Meetings",
 	"  q           Quit",
 	"",
@@ -1359,14 +1376,14 @@ func (m Model) renderHelpModal() string {
 // renderExportAttachmentsModal renders the export attachments modal content.
 func (m Model) renderExportAttachmentsModal() string {
 	if m.messageDetail == nil || len(m.messageDetail.Attachments) == 0 {
-		return m.styles.modalTitle.Render("Export Attachments") + "\n\n" +
-			"No attachments to export.\n\n" +
+		return m.styles.modalTitle.Render("Attachments") + "\n\n" +
+			"No attachments available.\n\n" +
 			"[Esc] Close"
 	}
 	var sb strings.Builder
-	sb.WriteString(m.styles.modalTitle.Render("Export Attachments"))
+	sb.WriteString(m.styles.modalTitle.Render("Attachments"))
 	sb.WriteString("\n\n")
-	sb.WriteString("Select attachments to export:\n\n")
+	sb.WriteString("Choose a file to download or open:\n\n")
 	for i, att := range m.messageDetail.Attachments {
 		cursor := " "
 		if i == m.exportCursor {
@@ -1376,7 +1393,8 @@ func (m Model) renderExportAttachmentsModal() string {
 		if m.exportSelection[i] {
 			checkbox = "☑"
 		}
-		_, _ = fmt.Fprintf(&sb, "%s %s %s (%s)\n", cursor, checkbox, att.Filename, formatBytes(att.Size))
+		filename := truncateRunes(textutil.SanitizeTerminal(attachmentDisplayName(att)), 60)
+		_, _ = fmt.Fprintf(&sb, "%s %s %s (%s)\n", cursor, checkbox, filename, formatBytes(att.Size))
 	}
 	// Count selected
 	selectedCount := 0
@@ -1386,8 +1404,8 @@ func (m Model) renderExportAttachmentsModal() string {
 		}
 	}
 	_, _ = fmt.Fprintf(&sb, "\n%d of %d selected\n", selectedCount, len(m.messageDetail.Attachments))
-	sb.WriteString("\n[↑/↓] Navigate  [Space] Toggle  [a] All  [n] None\n")
-	sb.WriteString("[Enter] Export  [Esc] Cancel")
+	sb.WriteString("\n[↑/↓] Navigate  [d] Download  [o] Open\n")
+	sb.WriteString("[Space] Toggle  [a] All  [n] None  [Enter] Export zip  [Esc] Cancel")
 	return sb.String()
 }
 
@@ -1400,8 +1418,12 @@ func (m Model) renderErrorModal() string {
 
 // renderExportResultModal renders the export result modal content.
 func (m Model) renderExportResultModal() string {
-	return m.styles.modalTitle.Render("Export Complete") + "\n\n" +
-		m.modalResult + "\n\n" +
+	title := m.modalResultTitle
+	if title == "" {
+		title = "Attachment Action"
+	}
+	return m.styles.modalTitle.Render(title) + "\n\n" +
+		textutil.SanitizeTerminalMultiline(m.modalResult) + "\n\n" +
 		"Press any key to close"
 }
 

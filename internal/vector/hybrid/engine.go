@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -128,8 +129,21 @@ func (e *Engine) EmbedQuery(ctx context.Context, text string) ([]float32, error)
 // against the engine's main DB. Convenience wrapper around the
 // package-level BuildFilter so callers that already hold an *Engine
 // don't need to plumb a *sql.DB separately.
-func (e *Engine) BuildFilter(ctx context.Context, q *search.Query) (vector.Filter, error) {
-	return BuildFilter(ctx, e.mainDB, e.cfg.Rebind, q)
+func (e *Engine) BuildFilter(
+	ctx context.Context,
+	q *search.Query,
+	structured ...query.MessageFilter,
+) (vector.Filter, error) {
+	filter, err := BuildFilter(ctx, e.mainDB, e.cfg.Rebind, q)
+	if err != nil {
+		return vector.Filter{}, err
+	}
+	for _, exact := range structured {
+		if err := ApplyMessageFilter(ctx, e.mainDB, e.cfg.Rebind, &filter, exact); err != nil {
+			return vector.Filter{}, err
+		}
+	}
+	return filter, nil
 }
 
 // Search runs hybrid or vector mode. Resolves the active generation

@@ -55,6 +55,142 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	assert.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
+func TestEngineSemanticSearchUsesHybridEndpointAndReturnsRankedSummaries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	accountID := int64(7)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search", r.URL.Path)
+		assert.Equal("hybrid", r.URL.Query().Get("mode"))
+		assert.Empty(r.URL.Query().Get("account"))
+		assert.Equal("7", r.URL.Query().Get("source_id"))
+		assert.Equal("agent@example.test", r.URL.Query().Get("sender"))
+		assert.Equal("email", r.URL.Query().Get("message_type"))
+		assert.Equal("true", r.URL.Query().Get("attachments_only"))
+		assert.Equal("25", r.URL.Query().Get("page_size"))
+		assert.Equal("5", r.URL.Query().Get("offset"))
+		assert.Equal("find realtor invoice", r.URL.Query().Get("q"))
+		writeJSONResponse(t, w, map[string]any{
+			"query":          "find realtor invoice",
+			"mode":           "hybrid",
+			"returned":       1,
+			"pool_saturated": false,
+			"has_more":       true,
+			"took_ms":        4,
+			"generation": map[string]any{
+				"id": 9, "model": "test-model", "dimension": 4,
+				"fingerprint": "test:4", "state": "active",
+			},
+			"results": []map[string]any{{
+				"id": 42, "source_id": 7, "source_message_id": "msg-42",
+				"conversation_id": 3, "subject": "Annual realtor statement",
+				"from": "Agent <agent@example.test>", "from_email": "agent@example.test",
+				"from_name": "Agent", "to": []string{"archive@example.test"},
+				"sent_at": "2025-02-03T04:05:06Z", "snippet": "Your annual statement",
+				"labels": []string{"INBOX"}, "has_attachments": true,
+				"size_bytes": 2048, "message_type": "email",
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	engine := NewEngineAdapter(newTestStore(srv, ""))
+	result, err := engine.SearchSemanticMessages(context.Background(), query.SemanticMessageSearchRequest{
+		Query: "find realtor invoice",
+		Filter: query.MessageFilter{
+			SourceID:            &accountID,
+			Sender:              "agent@example.test",
+			MessageType:         "email",
+			WithAttachmentsOnly: true,
+		},
+		Limit: 25, Offset: 5,
+	})
+	require.NoError(err)
+	assert.True(result.HasMore)
+	require.Len(result.Messages, 1)
+	message := result.Messages[0]
+	assert.Equal(int64(42), message.ID)
+	assert.Equal(int64(7), message.SourceID)
+	assert.Equal("agent@example.test", message.FromEmail)
+	assert.Equal("Agent", message.FromName)
+	assert.True(message.HasAttachments)
+	assert.Equal(int64(2048), message.SizeEstimate)
+}
+
+func TestEngineSemanticSearchRejectsScopesItCannotPreserve(t *testing.T) {
+	conversationID := int64(9)
+	tests := []struct {
+		name    string
+		filter  query.MessageFilter
+		wantErr string
+	}{
+		{
+			name:    "multi-source scope",
+			filter:  query.MessageFilter{SourceIDs: []int64{1, 2}},
+			wantErr: "does not support multi-account",
+		},
+		{
+			name:    "display-name scope",
+			filter:  query.MessageFilter{SenderName: "Test Sender"},
+			wantErr: "cannot preserve",
+		},
+		{
+			name:    "conversation scope",
+			filter:  query.MessageFilter{ConversationID: &conversationID},
+			wantErr: "cannot preserve",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := &Engine{}
+			_, err := engine.SearchSemanticMessages(context.Background(), query.SemanticMessageSearchRequest{
+				Query: "find invoice", Filter: tt.filter,
+			})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestEngineSemanticSearchIntersectsMessageTypeScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var requests int
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal("email", r.URL.Query().Get("message_type"))
+		assert.Equal("invoice", r.URL.Query().Get("q"), "message_type operator is carried only by the exact parameter")
+		writeJSONResponse(t, w, map[string]any{
+			"query": "invoice", "mode": "hybrid", "returned": 0,
+			"pool_saturated": false, "has_more": false, "took_ms": 1,
+			"generation": map[string]any{
+				"id": 9, "model": "test-model", "dimension": 4,
+				"fingerprint": "test:4", "state": "active",
+			},
+			"results": []any{},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	engine := NewEngineAdapter(newTestStore(srv, ""))
+	result, err := engine.SearchSemanticMessages(t.Context(), query.SemanticMessageSearchRequest{
+		Query:  "message_type:email invoice",
+		Filter: query.MessageFilter{MessageType: "email"},
+	})
+	require.NoError(err)
+	assert.Empty(result.Messages)
+	assert.Equal(1, requests)
+
+	result, err = engine.SearchSemanticMessages(t.Context(), query.SemanticMessageSearchRequest{
+		Query:  "message_type:sms invoice",
+		Filter: query.MessageFilter{MessageType: "email"},
+	})
+	require.NoError(err)
+	assert.Empty(result.Messages)
+	assert.False(result.HasMore)
+	assert.Equal(1, requests, "disjoint scope must fail closed without an HTTP search")
+}
+
 func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

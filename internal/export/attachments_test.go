@@ -289,6 +289,31 @@ func TestAttachmentsToDirWithOpener(t *testing.T) {
 	assert.Equal(content, got)
 }
 
+func TestAttachmentsToDirWithOpenerKeepsDotNamesInsideOutputDir(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := []byte("untrusted content")
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	root := t.TempDir()
+
+	for _, filename := range []string{".", ".."} {
+		t.Run(filename, func(t *testing.T) {
+			outDir := filepath.Join(root, strings.ReplaceAll(filename, ".", "dot"))
+			require.NoError(os.Mkdir(outDir, 0o700))
+			result := AttachmentsToDirWithOpener(outDir,
+				[]query.AttachmentInfo{{Filename: filename, ContentHash: hash}},
+				func(string) (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(content)), nil
+				})
+
+			require.Empty(result.Errors)
+			require.Len(result.Files, 1)
+			assert.Equal(filepath.Join(outDir, hash), result.Files[0].Path)
+			assert.FileExists(result.Files[0].Path)
+		})
+	}
+}
+
 func TestAttachmentsToDirWithOpenerRejectsCloseVerificationError(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

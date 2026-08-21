@@ -6100,6 +6100,98 @@ func TestHandleSearch_VectorAccountParamReachesFilter(t *testing.T) {
 	assert.Equal(t, []int64{77}, backend.searchFilter.SourceIDs, "SourceIDs")
 }
 
+func TestHandleSearch_VectorSourceIDParamReachesFilterExactly(t *testing.T) {
+	store := &mockStore{messages: []APIMessage{{ID: 42, Subject: "Lunch", SourceID: 77}}}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 42, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=vector&source_id=77", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal(t, []int64{77}, backend.searchFilter.SourceIDs, "SourceIDs")
+}
+
+func TestHandleSearch_FTSRejectsStructuredSemanticFilters(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+	filters := []string{
+		"sender=alice%40example.test",
+		"recipient=bob%40example.test",
+		"domain=example.test",
+		"label=work",
+		"time_period=week",
+		"time_granularity=day",
+		"source_id=77",
+		"attachments_only=true",
+		"after=2026-01-01",
+		"before=2026-02-01",
+	}
+
+	for _, filter := range filters {
+		t.Run(strings.SplitN(filter, "=", 2)[0], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/search?q=lunch&mode=fts&"+filter, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+			var errResp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "decode")
+			assert.Equal("unsupported_filter_mode", errResp.Error, "error")
+			assert.Contains(errResp.Message, strings.SplitN(filter, "=", 2)[0], "parameter name")
+			assert.Contains(errResp.Message, "mode=vector or mode=hybrid", "supported modes")
+		})
+	}
+}
+
+func TestHandleSearch_DefaultFTSRejectsStructuredSemanticFilter(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&source_id=77", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	var errResp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assert.Equal(t, "unsupported_filter_mode", errResp.Error, "error")
+}
+
+func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, _ := newTestServerWithMockStore(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=vector&time_period=this-week", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	var errResp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assert.Equal("invalid_time_period", errResp.Error, "error")
+	assert.Contains(errResp.Message, "YYYY, YYYY-MM, or YYYY-MM-DD", "accepted formats")
+}
+
 func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	store := &mockStore{
 		messages: []APIMessage{{ID: 42, Subject: "Lunch"}},

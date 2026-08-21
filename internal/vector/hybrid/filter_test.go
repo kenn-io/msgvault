@@ -4,13 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func newFilterTestDB(t *testing.T) *sql.DB {
@@ -22,7 +26,9 @@ func newFilterTestDB(t *testing.T) *sql.DB {
 	schema := `
 CREATE TABLE participants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email_address TEXT
+    email_address TEXT,
+    phone_number TEXT,
+    domain TEXT
 );
 CREATE TABLE labels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +44,8 @@ CREATE TABLE labels (
 		"dave.work@example.com",
 	}
 	for _, p := range participants {
-		_, err := db.Exec(`INSERT INTO participants (email_address) VALUES (?)`, p)
+		domain := p[strings.LastIndex(p, "@")+1:]
+		_, err := db.Exec(`INSERT INTO participants (email_address, domain) VALUES (?, ?)`, p, domain)
 		require.NoError(t, err, "insert participant")
 	}
 	for _, l := range []string{"INBOX", "Work", "Archive"} {
@@ -46,6 +53,79 @@ CREATE TABLE labels (
 		require.NoError(t, err, "insert label")
 	}
 	return db
+}
+
+func TestApplyMessageFilterPreservesExactTUIScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	db := newFilterTestDB(t)
+	_, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, "Work Notes")
+	require.NoError(err)
+	sourceID := int64(7)
+	filter := vector.Filter{}
+
+	err = ApplyMessageFilter(t.Context(), db, nil, &filter, query.MessageFilter{
+		SourceID:            &sourceID,
+		Sender:              "alice@example.com",
+		Recipient:           "bob@example.com",
+		Domain:              "example.com",
+		Label:               "work",
+		MessageType:         "email",
+		TimeRange:           query.TimeRange{Period: "2025"},
+		WithAttachmentsOnly: true,
+	})
+	require.NoError(err)
+
+	assert.Equal([]int64{7}, filter.SourceIDs)
+	require.Len(filter.SenderExactGroups, 1)
+	assert.Equal([]int64{1}, filter.SenderExactGroups[0], "sender equality must not include substring matches")
+	require.Len(filter.RecipientAnyGroups, 1)
+	assert.Equal([]int64{2}, filter.RecipientAnyGroups[0])
+	require.Len(filter.SenderGroups, 1)
+	assert.Equal([]int64{1, 2, 4}, filter.SenderGroups[0], "domain equality")
+	require.Len(filter.LabelGroups, 1)
+	assert.Equal([]int64{2}, filter.LabelGroups[0], "label equality is case-insensitive")
+	assert.Equal([]string{"email"}, filter.MessageTypes)
+	if assert.NotNil(filter.HasAttachment) {
+		assert.True(*filter.HasAttachment)
+	}
+	if assert.NotNil(filter.After) {
+		assert.Equal(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), *filter.After)
+	}
+	if assert.NotNil(filter.Before) {
+		assert.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), *filter.Before)
+	}
+}
+
+func TestApplyMessageFilterIntersectsExistingScope(t *testing.T) {
+	db := newFilterTestDB(t)
+	sourceID := int64(7)
+	filter := vector.Filter{
+		SourceIDs:    []int64{8},
+		MessageTypes: []string{"sms"},
+	}
+
+	err := ApplyMessageFilter(t.Context(), db, nil, &filter, query.MessageFilter{
+		SourceID:    &sourceID,
+		MessageType: "email",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []int64{noMatchSentinel}, filter.SourceIDs)
+	assert.Equal(t, []string{"__msgvault_no_matching_message_type__"}, filter.MessageTypes)
+}
+
+func TestApplyMessageFilterRejectsInvalidTimePeriod(t *testing.T) {
+	db := newFilterTestDB(t)
+	filter := vector.Filter{}
+
+	err := ApplyMessageFilter(t.Context(), db, nil, &filter, query.MessageFilter{
+		TimeRange: query.TimeRange{Period: "this-week"},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid time_period")
+	require.ErrorContains(t, err, "YYYY, YYYY-MM, or YYYY-MM-DD")
 }
 
 func sortedIDs(ids []int64) []int64 {

@@ -175,7 +175,7 @@ type Chunk struct {
 // "bob". Within a group, IDs are OR'd (any matching participant
 // satisfies the group); across groups they are AND'd.
 //
-//   - Sender/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
+//   - Sender/SenderExact/RecipientAny/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
 //     slice is one search-token resolution (substring → matching IDs).
 //     SenderGroups is at the message level too — multiple `from`
 //     recipient rows on a single message can satisfy different tokens.
@@ -190,18 +190,20 @@ type Chunk struct {
 //     `>= After` and `< Before`.
 //   - LargerThan/SmallerThan compare against m.size_estimate.
 type Filter struct {
-	SourceIDs         []int64   // from [server/sources].identifier; empty = no source filter
-	SenderGroups      [][]int64 // one inner slice per `from:` token; AND across, OR within
-	ToGroups          [][]int64 // one inner slice per `to:` token; AND across, OR within
-	CcGroups          [][]int64 // one inner slice per `cc:` token; AND across, OR within
-	BccGroups         [][]int64 // one inner slice per `bcc:` token; AND across, OR within
-	LabelGroups       [][]int64 // one inner slice per `label:` token; AND across, OR within
-	HasAttachment     *bool
-	After, Before     *time.Time
-	LargerThan        *int64   // `larger:` — strictly greater than
-	SmallerThan       *int64   // `smaller:` — strictly less than
-	SubjectSubstrings []string // one per `subject:` term (ANDed)
-	MessageTypes      []string // exact m.message_type values; empty = unrestricted
+	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
+	SenderGroups       [][]int64 // one inner slice per `from:` token; AND across, OR within
+	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
+	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd
+	ToGroups           [][]int64 // one inner slice per `to:` token; AND across, OR within
+	CcGroups           [][]int64 // one inner slice per `cc:` token; AND across, OR within
+	BccGroups          [][]int64 // one inner slice per `bcc:` token; AND across, OR within
+	LabelGroups        [][]int64 // one inner slice per `label:` token; AND across, OR within
+	HasAttachment      *bool
+	After, Before      *time.Time
+	LargerThan         *int64   // `larger:` — strictly greater than
+	SmallerThan        *int64   // `smaller:` — strictly less than
+	SubjectSubstrings  []string // one per `subject:` term (ANDed)
+	MessageTypes       []string // exact m.message_type values; empty = unrestricted
 }
 
 // IsEmpty reports whether the filter has no restrictions. A zero-value
@@ -209,6 +211,8 @@ type Filter struct {
 func (f Filter) IsEmpty() bool {
 	return len(f.SourceIDs) == 0 &&
 		len(f.SenderGroups) == 0 &&
+		len(f.SenderExactGroups) == 0 &&
+		len(f.RecipientAnyGroups) == 0 &&
 		len(f.ToGroups) == 0 &&
 		len(f.CcGroups) == 0 &&
 		len(f.BccGroups) == 0 &&

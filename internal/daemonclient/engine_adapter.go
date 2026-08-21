@@ -34,6 +34,7 @@ type Engine struct {
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
 var _ query.MessageBodySearcher = (*Engine)(nil)
+var _ query.SemanticMessageSearcher = (*Engine)(nil)
 
 // NewEngine creates a new daemon-backed query engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -61,6 +62,54 @@ func (e *Engine) Close() error {
 		return nil
 	}
 	return e.store.Close()
+}
+
+// SearchSemanticMessages runs the daemon's hybrid message search while
+// preserving the TUI's exact source, drill-down, date, and attachment scope.
+func (e *Engine) SearchSemanticMessages(
+	ctx context.Context,
+	request query.SemanticMessageSearchRequest,
+) (*query.SemanticMessageSearchResult, error) {
+	filter := request.Filter
+	if filter.SourceIDs != nil {
+		return nil, errors.New("semantic TUI search does not support multi-account source scope")
+	}
+	if !query.SemanticMessageSearchSupportsFilter(filter) {
+		return nil, errors.New("semantic TUI search cannot preserve the current display-name, conversation, or empty-value scope")
+	}
+	parsed := search.Parse(request.Query)
+	if err := parsed.Err(); err != nil {
+		return nil, err
+	}
+	if len(parsed.TextTerms) == 0 {
+		return nil, errors.New("semantic search requires a query")
+	}
+	messageTypes, noMessageTypeMatches := query.ScopedMessageTypes(parsed.MessageTypes, filter.MessageType)
+	if noMessageTypeMatches {
+		return &query.SemanticMessageSearchResult{}, nil
+	}
+	// Carry the canonical intersection as the HTTP parameter and remove the
+	// user-authored operators from q. Leaving both in place would make the
+	// hybrid backend OR them and widen an Email-mode query back to SMS/MMS.
+	parsed.MessageTypes = nil
+	transportQuery := search.Format(parsed)
+
+	response, err := e.store.GetCLIHybridSearch(ctx, CLIHybridSearchRequest{
+		Query:        transportQuery,
+		MessageTypes: messageTypes,
+		Filter:       filter,
+		Mode:         "hybrid",
+		Limit:        request.Limit,
+		Offset:       request.Offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]query.MessageSummary, len(response.Results))
+	for i, result := range response.Results {
+		messages[i] = result.Message
+	}
+	return &query.SemanticMessageSearchResult{Messages: messages, HasMore: response.HasMore}, nil
 }
 
 // ============================================================================

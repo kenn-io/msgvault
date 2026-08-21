@@ -8846,7 +8846,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.6.0
+  version: 2.7.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -17246,7 +17246,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: "Search mode: fts, vector, or hybrid"
+        - description: "Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes"
           in: query
           name: mode
           schema:
@@ -17297,6 +17297,57 @@ paths:
         - description: Restrict to one collection
           in: query
           name: collection
+          schema:
+            type: string
+        - description: Exact sender email/address filter (vector or hybrid mode only)
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only)
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Exact sender domain filter (vector or hybrid mode only)
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Exact case-insensitive label filter (vector or hybrid mode only)
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity (vector or hybrid mode only)
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Exact source ID (vector or hybrid mode only)
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments (vector or hybrid mode only)
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)
+          in: query
+          name: before
           schema:
             type: string
       responses:

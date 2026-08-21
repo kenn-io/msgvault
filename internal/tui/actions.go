@@ -5,17 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // ExportResultMsg is returned when attachment export completes.
 type ExportResultMsg struct {
+	Title  string
 	Result string
 	Err    error
 }
@@ -35,11 +41,14 @@ type DeletionContext struct {
 // ActionController handles business logic for actions like deletion and export,
 // keeping domain operations out of the TUI Model.
 type ActionController struct {
-	queries          query.Engine
-	deletions        *deletion.Manager
-	dataDir          string
-	manifestSaver    DeletionManifestSaver
-	attachmentReader AttachmentReader
+	queries             query.Engine
+	deletions           *deletion.Manager
+	dataDir             string
+	manifestSaver       DeletionManifestSaver
+	attachmentReader    AttachmentReader
+	attachmentOutputDir string
+	openTarget          func(context.Context, string) error
+	markUntrusted       func(string) error
 }
 
 // DeletionManifestSaver saves a staged deletion manifest.
@@ -54,10 +63,12 @@ type AttachmentReader interface {
 
 // ActionControllerOptions configures external action dependencies.
 type ActionControllerOptions struct {
-	DataDir          string
-	Deletions        *deletion.Manager
-	ManifestSaver    DeletionManifestSaver
-	AttachmentReader AttachmentReader
+	DataDir             string
+	Deletions           *deletion.Manager
+	ManifestSaver       DeletionManifestSaver
+	AttachmentReader    AttachmentReader
+	AttachmentOutputDir string
+	OpenTarget          func(context.Context, string) error
 }
 
 // NewActionController creates a new action controller.
@@ -72,11 +83,13 @@ func NewActionController(queries query.Engine, dataDir string, deletions *deleti
 // NewActionControllerWithOptions creates an action controller with explicit dependencies.
 func NewActionControllerWithOptions(queries query.Engine, opts ActionControllerOptions) *ActionController {
 	return &ActionController{
-		queries:          queries,
-		deletions:        opts.Deletions,
-		dataDir:          opts.DataDir,
-		manifestSaver:    opts.ManifestSaver,
-		attachmentReader: opts.AttachmentReader,
+		queries:             queries,
+		deletions:           opts.Deletions,
+		dataDir:             opts.DataDir,
+		manifestSaver:       opts.ManifestSaver,
+		attachmentReader:    opts.AttachmentReader,
+		attachmentOutputDir: opts.AttachmentOutputDir,
+		openTarget:          opts.OpenTarget,
 	}
 }
 
@@ -293,15 +306,158 @@ func (c *ActionController) ExportAttachments(detail *query.MessageDetail, select
 
 	return func() tea.Msg {
 		stats := c.exportSelectedAttachments(zipFilename, attachmentsDir, selectedAttachments)
-		msg := ExportResultMsg{Result: export.FormatExportResult(stats)}
+		msg := ExportResultMsg{Title: "Export Complete", Result: export.FormatExportResult(stats)}
 		// Only set Err for true failures: write errors or zero exported files.
 		// Partial success (some files exported, some errors) should show the
 		// detailed Result which includes both the success info and error list.
 		if stats.WriteError || stats.Count == 0 {
 			msg.Err = errors.New("export failed")
+			msg.Title = "Export Failed"
 		}
 		return msg
 	}
+}
+
+// DownloadAttachment writes one exact attachment into the local output
+// directory without overwriting an existing file.
+func (c *ActionController) DownloadAttachment(att query.AttachmentInfo) tea.Cmd {
+	return func() tea.Msg {
+		exported, err := c.exportOneAttachment(att)
+		if err != nil {
+			msg := ExportResultMsg{Title: "Download Failed", Err: err}
+			if exported.Path != "" {
+				msg.Result = fmt.Sprintf("%v\n\nThe attachment was downloaded to:\n%s", err, exported.Path)
+			}
+			return msg
+		}
+		return ExportResultMsg{
+			Title: "Download Complete",
+			Result: fmt.Sprintf("Downloaded %s (%s)\n\nSaved to:\n%s",
+				filepath.Base(exported.Path), export.FormatBytesLong(exported.Size), exported.Path),
+		}
+	}
+}
+
+// OpenAttachment opens a URL-backed attachment directly, or first downloads a
+// content-backed attachment locally and then hands it to the OS default app.
+func (c *ActionController) OpenAttachment(att query.AttachmentInfo) tea.Cmd {
+	return func() tea.Msg {
+		target := att.URL
+		var savedPath string
+		if target != "" {
+			parsed, err := url.Parse(target)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+				return ExportResultMsg{Title: "Open Failed", Err: errors.New("attachment URL must use http or https")}
+			}
+		} else {
+			if err := validateAttachmentOpen(att); err != nil {
+				return ExportResultMsg{Title: "Open Blocked", Err: err}
+			}
+			exported, err := c.exportOneAttachment(att)
+			if err != nil {
+				msg := ExportResultMsg{Title: "Open Failed", Err: err}
+				if exported.Path != "" {
+					msg.Result = fmt.Sprintf("%v\n\nThe attachment was downloaded to:\n%s", err, exported.Path)
+				}
+				return msg
+			}
+			target = exported.Path
+			savedPath = exported.Path
+		}
+
+		opener := c.openTarget
+		if opener == nil {
+			opener = openSystemTarget
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := opener(ctx, target); err != nil {
+			openErr := fmt.Errorf("open attachment: %w", err)
+			if savedPath != "" {
+				return ExportResultMsg{
+					Title:  "Open Failed",
+					Result: fmt.Sprintf("%v\n\nThe attachment was downloaded to:\n%s", openErr, savedPath),
+					Err:    openErr,
+				}
+			}
+			return ExportResultMsg{Title: "Open Failed", Err: openErr}
+		}
+		result := "Opened " + attachmentDisplayName(att)
+		if savedPath != "" {
+			result += "\n\nSaved to:\n" + savedPath
+		}
+		return ExportResultMsg{Title: "Attachment Opened", Result: result}
+	}
+}
+
+func (c *ActionController) exportOneAttachment(att query.AttachmentInfo) (export.ExportedFile, error) {
+	if att.URL != "" {
+		return export.ExportedFile{}, errors.New("URL-backed attachments can be opened but not downloaded")
+	}
+	outputDir := c.attachmentOutputDir
+	if outputDir == "" {
+		baseDir := c.dataDir
+		if baseDir == "" {
+			var err error
+			baseDir, err = os.UserCacheDir()
+			if err != nil {
+				return export.ExportedFile{}, fmt.Errorf("get user cache directory: %w", err)
+			}
+			baseDir = filepath.Join(baseDir, "msgvault")
+		}
+		outputDir = filepath.Join(baseDir, "downloads")
+	}
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return export.ExportedFile{}, fmt.Errorf("resolve output directory: %w", err)
+	}
+	if err := fileutil.SecureMkdirAll(absOutputDir, 0o700); err != nil {
+		return export.ExportedFile{}, fmt.Errorf("create output directory: %w", err)
+	}
+	result := export.AttachmentsToDirWithOpener(absOutputDir, []query.AttachmentInfo{att}, c.attachmentOpener())
+	if len(result.Files) == 1 {
+		exported := result.Files[0]
+		marker := c.markUntrusted
+		if marker == nil {
+			marker = markAttachmentUntrusted
+		}
+		if err := marker(exported.Path); err != nil {
+			return exported, fmt.Errorf("mark downloaded attachment as untrusted: %w", err)
+		}
+		return exported, nil
+	}
+	if len(result.Errors) > 0 {
+		return export.ExportedFile{}, errors.New(result.Errors[0])
+	}
+	return export.ExportedFile{}, errors.New("attachment was not downloaded")
+}
+
+func (c *ActionController) attachmentOpener() export.AttachmentOpener {
+	if c.attachmentReader != nil {
+		return func(contentHash string) (io.ReadCloser, error) {
+			return c.attachmentReader.OpenAttachment(context.Background(), contentHash)
+		}
+	}
+	attachmentsDir := filepath.Join(c.dataDir, "attachments")
+	return func(contentHash string) (io.ReadCloser, error) {
+		path, err := export.StoragePath(attachmentsDir, contentHash)
+		if err != nil {
+			return nil, err
+		}
+		return os.Open(path)
+	}
+}
+
+func attachmentDisplayName(att query.AttachmentInfo) string {
+	name := filepath.Base(att.Filename)
+	if name == "" || name == "." {
+		if att.URL != "" {
+			name = att.URL
+		} else {
+			name = att.ContentHash
+		}
+	}
+	return textutil.SanitizeTerminal(name)
 }
 
 func (c *ActionController) exportSelectedAttachments(

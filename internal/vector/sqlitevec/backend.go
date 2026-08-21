@@ -1311,10 +1311,28 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 		}
 	}
 	if len(f.MessageTypes) > 0 {
-		clauses = append(clauses, inStringClause("m.message_type", f.MessageTypes))
+		var exact []string
+		includeLegacyEmail := false
 		for _, typ := range f.MessageTypes {
-			args = append(args, typ)
+			if strings.EqualFold(typ, "email") {
+				includeLegacyEmail = true
+			} else {
+				exact = append(exact, typ)
+			}
 		}
+		var messageTypeClauses []string
+		if len(exact) > 0 {
+			messageTypeClauses = append(messageTypeClauses, inStringClause("m.message_type", exact))
+			for _, typ := range exact {
+				args = append(args, typ)
+			}
+		}
+		if includeLegacyEmail {
+			messageTypeClauses = append(messageTypeClauses,
+				"(m.message_type = ? OR m.message_type IS NULL OR m.message_type = '')")
+			args = append(args, "email")
+		}
+		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
 	// Sender filters: one EXISTS per group, AND'd across groups so
 	// repeated `from:` operators each become an independent
@@ -1337,6 +1355,41 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 				   AND mr.recipient_type = 'from'
 				   AND %s
 			)`, inRecipient))
+		for _, id := range group {
+			args = append(args, id)
+		}
+	}
+	for _, group := range f.SenderExactGroups {
+		if len(group) == 0 {
+			continue
+		}
+		direct := inClause("m.sender_id", group)
+		from := inClause("mr.participant_id", group)
+		clauses = append(clauses, fmt.Sprintf(
+			`(%s OR EXISTS (
+				SELECT 1 FROM message_recipients mr
+				 WHERE mr.message_id = m.id
+				   AND mr.recipient_type = 'from'
+				   AND %s
+			))`, direct, from))
+		for _, id := range group {
+			args = append(args, id)
+		}
+		for _, id := range group {
+			args = append(args, id)
+		}
+	}
+	for _, group := range f.RecipientAnyGroups {
+		if len(group) == 0 {
+			continue
+		}
+		clauses = append(clauses, fmt.Sprintf(
+			`EXISTS (
+				SELECT 1 FROM message_recipients mr
+				 WHERE mr.message_id = m.id
+				   AND mr.recipient_type IN ('to', 'cc', 'bcc')
+				   AND %s
+			)`, inClause("mr.participant_id", group)))
 		for _, id := range group {
 			args = append(args, id)
 		}

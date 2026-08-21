@@ -102,6 +102,40 @@ type Engine interface {
 	Close() error
 }
 
+// SemanticMessageSearcher is an optional engine capability for ranked
+// natural-language message search. It stays separate from Engine so local and
+// test engines that do not have a configured vector backend keep working.
+type SemanticMessageSearcher interface {
+	SearchSemanticMessages(ctx context.Context, request SemanticMessageSearchRequest) (*SemanticMessageSearchResult, error)
+}
+
+// SemanticMessageSearchSupportsFilter reports whether semantic message search
+// can preserve every structured scope in filter.
+func SemanticMessageSearchSupportsFilter(filter MessageFilter) bool {
+	return filter.SourceIDs == nil &&
+		filter.SenderName == "" &&
+		filter.RecipientName == "" &&
+		filter.ConversationID == nil &&
+		!filter.HasEmptyTargets()
+}
+
+// SemanticMessageSearchRequest carries the current TUI scope into hybrid
+// search. Filter retains the exact source ID and every representable
+// drill-down, date, message-type, and attachment constraint.
+type SemanticMessageSearchRequest struct {
+	Query  string
+	Filter MessageFilter
+	Limit  int
+	Offset int
+}
+
+// SemanticMessageSearchResult preserves ranking order and reports whether the
+// bounded vector ranking window contains another page.
+type SemanticMessageSearchResult struct {
+	Messages []MessageSummary
+	HasMore  bool
+}
+
 // Explorer is intentionally separate from Engine: only the committed
 // DuckDB/Parquet analytical read model implements it. Transactional engines
 // must never become a modality-specific fallback for exploration.

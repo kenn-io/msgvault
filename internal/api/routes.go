@@ -16,8 +16,11 @@ import (
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
-// limitParam names the shared pagination query/form parameter.
-const limitParam = "limit"
+const (
+	// limitParam names the shared pagination query/form parameter.
+	limitParam     = "limit"
+	recipientParam = "recipient"
+)
 
 const (
 	apiKeySecurityScheme = "apiKey"
@@ -734,9 +737,9 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("cid", "Inline MIME Content-ID", true),
 		}
 	case "searchMessages":
-		return append([]*huma.Param{
+		return mergeParams([]*huma.Param{
 			queryStringParam("q", "Search query", true),
-			queryStringParam("mode", "Search mode: fts, vector, or hybrid", false),
+			queryStringParam("mode", "Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes", false),
 			queryIntegerParam("page", "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
 			queryIntegerParam("page_size", "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
 			queryIntegerParam("offset", "Zero-based ranking offset for vector or hybrid search (default 0)"),
@@ -744,7 +747,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryBooleanParam("include_matches", "Include scored semantic chunk excerpts for vector or hybrid results"),
 			queryNumberParam("min_score", "Minimum chunk score for included excerpts; does not filter ranked messages"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
-		}, scopeParams()...)
+		}, scopeParams(), semanticMessageFilterParams())
 	case "getAggregates":
 		return append([]*huma.Param{
 			queryStringParam("view_type", "Aggregate view type", false),
@@ -880,7 +883,7 @@ func messageFilterParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
-		queryStringParam("recipient", "Recipient email/address filter", false),
+		queryStringParam(recipientParam, "Recipient email/address filter", false),
 		queryStringParam("recipient_name", "Recipient display-name filter", false),
 		queryStringParam("domain", "Domain filter", false),
 		queryStringParam("label", "Label filter", false),
@@ -898,6 +901,21 @@ func messageFilterParams() []*huma.Param {
 		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
 		queryStringParam("sort", "Sort field: date, size, or subject", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
+	}
+}
+
+func semanticMessageFilterParams() []*huma.Param {
+	return []*huma.Param{
+		queryStringParam("sender", "Exact sender email/address filter (vector or hybrid mode only)", false),
+		queryStringParam(recipientParam, "Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only)", false),
+		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
+		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
+		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
+		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),
+		queryIntegerParam("source_id", "Exact source ID (vector or hybrid mode only)"),
+		queryBooleanParam("attachments_only", "Only include messages with attachments (vector or hybrid mode only)"),
+		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)", false),
+		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only)", false),
 	}
 }
 

@@ -162,6 +162,66 @@ func TestFilterToggleInMessageList(t *testing.T) {
 	assert.NotNil(cmd, "expected command to reload messages")
 }
 
+func TestFilterToggleRerunsActiveSemanticSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	accountID := int64(7)
+	searcher := &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+	model := NewBuilder().WithLevel(levelMessageList).WithAccountFilter(&accountID).Build()
+	model.semanticSearch = searcher
+	model.searchMode = searchModeSemantic
+	model.searchQuery = "find the invoice"
+	model.searchFilter = query.MessageFilter{Sender: "stale@example.test"}
+	model.drillFilter = query.MessageFilter{Sender: "sender@example.test"}
+	model.preSearchMessages = []query.MessageSummary{{ID: 1, Subject: "before filter change"}}
+	model.preSearchContextStats = &query.TotalStats{MessageCount: 1}
+	initialSearchRequestID := model.searchRequestID
+	initialLoadRequestID := model.loadRequestID
+
+	model.openFilterModal()
+	model, _ = applyModalKey(t, model, key(' '))
+	model, cmd := applyModalKey(t, model, keyEnter())
+
+	require.NotNil(cmd)
+	assert.Equal(initialSearchRequestID+1, model.searchRequestID)
+	assert.Equal(initialLoadRequestID+1, model.loadRequestID)
+	assert.Equal("sender@example.test", model.searchFilter.Sender)
+	assert.True(model.searchFilter.WithAttachmentsOnly)
+	assert.Nil(model.preSearchMessages)
+	assert.Nil(model.preSearchContextStats)
+	assert.True(model.preSearchSnapshotInvalid)
+	require.NotNil(model.searchFilter.SourceID)
+	assert.Equal(accountID, *model.searchFilter.SourceID)
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(ok, "expected batched semantic search and stats reload")
+	for _, batchCmd := range batch {
+		batchCmd()
+	}
+	assert.Equal("find the invoice", searcher.request.Query)
+	assert.Equal("sender@example.test", searcher.request.Filter.Sender)
+	assert.True(searcher.request.Filter.WithAttachmentsOnly)
+
+	model, clearCmd := applyMessageListKeyWithCmd(t, model, keyEsc())
+	assert.Empty(model.searchQuery)
+	assert.Nil(model.preSearchMessages)
+	assert.False(model.preSearchSnapshotInvalid)
+	assert.NotNil(clearCmd, "clearing search must reload the current filtered list")
+}
+
+func TestFilterCloseKeepsSearchSnapshotWhenScopeIsUnchanged(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model.searchQuery = "find the invoice"
+	model.searchFilter = query.MessageFilter{}
+	model.preSearchMessages = []query.MessageSummary{{ID: 1}}
+
+	model.openFilterModal()
+	model, _ = applyModalKey(t, model, keyEnter())
+
+	assert.Len(t, model.preSearchMessages, 1)
+	assert.False(t, model.preSearchSnapshotInvalid)
+}
+
 func TestOpenFilterModal(t *testing.T) {
 	m := NewBuilder().Build()
 

@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -64,6 +65,10 @@ type Options struct {
 	// from DataDir/attachments for tests or direct embedding.
 	AttachmentReader AttachmentReader
 
+	// SemanticSearch enables the third TUI search mode. Callers should only set
+	// it after the daemon reports that vector search is configured.
+	SemanticSearch query.SemanticMessageSearcher
+
 	// AnalyticsNotice, when non-empty, is shown on the info line while
 	// aggregate views load. It explains slow first queries (for example,
 	// the daemon falling back to live SQL because no analytics cache is
@@ -87,13 +92,18 @@ const (
 	modalError
 )
 
-// searchModeKind represents the search mode (fast metadata vs deep body search).
+// searchModeKind represents the active message search strategy.
 type searchModeKind int
 
 const (
-	searchModeFast searchModeKind = iota // Parquet metadata only (subject, sender, recipient)
-	searchModeDeep                       // SQLite FTS5 (includes body text)
+	searchModeFast     searchModeKind = iota // Parquet metadata only (subject, sender, recipient)
+	searchModeDeep                           // SQLite FTS5 (includes body text)
+	searchModeSemantic                       // Hybrid lexical/vector ranking through the daemon
 )
+
+func (m Model) hasActiveSemanticSearch() bool {
+	return m.searchMode == searchModeSemantic && m.searchQuery != ""
+}
 
 // selectionState tracks selected items for batch operations.
 type selectionState struct {
@@ -176,11 +186,12 @@ type Model struct {
 	selection selectionState
 
 	// Modal state
-	modal           modalType
-	modalCursor     int                // Cursor position within modal (for selector modals)
-	modalResult     string             // Result message to display
-	helpScroll      int                // Scroll offset for help modal
-	pendingManifest *deletion.Manifest // Manifest being confirmed
+	modal            modalType
+	modalCursor      int                // Cursor position within modal (for selector modals)
+	modalResultTitle string             // Optional title for action-result modals
+	modalResult      string             // Result message to display
+	helpScroll       int                // Scroll offset for help modal
+	pendingManifest  *deletion.Manifest // Manifest being confirmed
 
 	// Action controller (deletion, export)
 	actions *ActionController
@@ -204,7 +215,8 @@ type Model struct {
 	textRequestID          uint64 // Latest Text navigation/data request
 
 	// Search state
-	searchMode        searchModeKind  // Fast (Parquet) or Deep (FTS5)
+	searchMode        searchModeKind // Fast metadata, deep FTS, or semantic hybrid
+	semanticSearch    query.SemanticMessageSearcher
 	searchInput       textinput.Model // Text input for search query
 	searchTotalCount  int64           // Total matching messages (for pagination display)
 	searchOffset      int             // Current offset for pagination
@@ -224,6 +236,9 @@ type Model struct {
 	preSearchCursor       int
 	preSearchScrollOffset int
 	preSearchContextStats *query.TotalStats
+	// preSearchSnapshotInvalid marks that the saved list belongs to a
+	// previous filter scope. Clearing search must reload the current scope.
+	preSearchSnapshotInvalid bool
 
 	// transitionBuffer holds the last rendered view during level transitions.
 	// When non-empty, View() returns this string instead of rendering fresh content.
@@ -282,6 +297,7 @@ func New(engine query.Engine, opts Options) Model {
 			ManifestSaver:    opts.ManifestSaver,
 			AttachmentReader: opts.AttachmentReader,
 		}),
+		semanticSearch:     opts.SemanticSearch,
 		version:            opts.Version,
 		analyticsNotice:    opts.AnalyticsNotice,
 		aggregateLimit:     aggLimit,
@@ -558,11 +574,9 @@ type searchDebounceMsg struct {
 	debounceID uint64
 }
 
-// exportResultMsg is returned when attachment export completes.
-type exportResultMsg struct {
-	result string
-	err    error
-}
+// exportResultMsg keeps the model's internal message name while sharing the
+// action controller's public result type.
+type exportResultMsg = ExportResultMsg
 
 // inlineSearchDebounceDelay is the delay before executing inline search (fast mode).
 const inlineSearchDebounceDelay = 100 * time.Millisecond
@@ -605,8 +619,12 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 	requestID := m.searchRequestID
 	presentationGeneration := m.presentationGeneration
 	modeLabel := "fast"
-	if m.searchMode != searchModeFast {
+	switch m.searchMode {
+	case searchModeFast:
+	case searchModeDeep:
 		modeLabel = "deep"
+	case searchModeSemantic:
+		modeLabel = "semantic"
 	}
 	scopeLabel := m.scopeLabelForLog()
 	return safeCmdWithPanic(
@@ -644,7 +662,8 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 				)
 			}()
 
-			if m.searchMode == searchModeFast {
+			switch m.searchMode {
+			case searchModeFast:
 				// Fast search: single-scan with temp table materialization
 				result, fastErr := m.engine.SearchFastWithStats(ctx, q, queryStr, searchFilter, m.viewType, searchPageSize, offset)
 				if fastErr == nil {
@@ -655,7 +674,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 					}
 				}
 				err = fastErr
-			} else {
+			case searchModeDeep:
 				// Deep search: FTS5 body search
 				// Merge context filter into query to honor drill-down context
 				mergedQuery := query.MergeFilterIntoQuery(q, searchFilter)
@@ -688,6 +707,32 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 							}
 							stats = &query.TotalStats{MessageCount: fallbackCount}
 						}
+					}
+				}
+			case searchModeSemantic:
+				if m.semanticSearch == nil {
+					err = errors.New("semantic search is not enabled")
+					break
+				}
+				result, semanticErr := m.semanticSearch.SearchSemanticMessages(ctx, query.SemanticMessageSearchRequest{
+					Query:  queryStr,
+					Filter: searchFilter,
+					Limit:  searchPageSize,
+					Offset: offset,
+				})
+				err = semanticErr
+				if semanticErr == nil {
+					results = result.Messages
+					totalCount = int64(offset + len(results))
+					if result.HasMore {
+						totalCount = -1
+					}
+					if !appendResults {
+						messageCount := totalCount
+						if messageCount < 0 {
+							messageCount = int64(len(results))
+						}
+						stats = &query.TotalStats{MessageCount: messageCount}
 					}
 				}
 			}
@@ -1420,6 +1465,9 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 func (m *Model) appendSearchResults(msg searchResultsMsg) {
 	m.messages = append(m.messages, msg.messages...)
 	m.searchOffset += len(msg.messages)
+	if msg.totalCount >= 0 {
+		m.searchTotalCount = msg.totalCount
+	}
 	// Update contextStats when total is unknown so header reflects loaded count
 	if m.searchTotalCount == -1 && m.contextStats != nil {
 		m.contextStats.MessageCount = int64(len(m.messages))
@@ -1481,10 +1529,11 @@ func (m Model) handleFlashClear() (tea.Model, tea.Cmd) {
 func (m Model) handleExportResult(msg exportResultMsg) (tea.Model, tea.Cmd) {
 	m.loading = false
 	m.modal = modalExportResult
-	if msg.err != nil {
-		m.modalResult = fmt.Sprintf("Export failed: %v", msg.err)
+	m.modalResultTitle = msg.Title
+	if msg.Err != nil && msg.Result == "" {
+		m.modalResult = msg.Err.Error()
 	} else {
-		m.modalResult = msg.result
+		m.modalResult = msg.Result
 	}
 	return m, nil
 }
@@ -1509,17 +1558,14 @@ func (m Model) handleSearchDebounce(msg searchDebounceMsg) (tea.Model, tea.Cmd) 
 
 	if m.level == levelMessageList {
 		// Message list: use search engine for live results
-		m.searchFilter = m.drillFilter
-		m.searchFilter.SourceID = m.accountFilter
-		m.searchFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
-		m.searchFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+		m.syncSearchScope()
 		m.searchRequestID++
 		m.loadRequestID++ // Invalidate any in-flight loadMessages to prevent overwriting search results
 		if msg.query == "" {
 			// Empty query: reload unfiltered messages
 			return m, tea.Batch(spinCmd, m.loadMessages())
 		}
-		m.messages = nil // Clear stale messages immediately so they don't show during search
+		m.prepareSearchReplacement()
 		return m, tea.Batch(spinCmd, m.loadSearch(msg.query))
 	}
 	// Aggregate views: reload aggregates with search filter

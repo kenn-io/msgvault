@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -99,6 +100,179 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 		f.SourceIDs = append([]int64(nil), q.AccountIDs...)
 	}
 	return f, nil
+}
+
+// ApplyMessageFilter intersects an exact structured TUI filter with the
+// Gmail-syntax filter already built from the user's search query. Address,
+// domain, and label drill values are resolved with equality semantics; this
+// deliberately differs from user-authored from:/label: operators, which keep
+// their documented substring behavior.
+func ApplyMessageFilter(
+	ctx context.Context,
+	db *sql.DB,
+	rebind func(string) string,
+	f *vector.Filter,
+	structured query.MessageFilter,
+) error {
+	if rebind == nil {
+		rebind = identityRebind
+	}
+	if period := structured.TimeRange.Period; period != "" {
+		if _, _, ok := query.ParseTimePeriodBounds(period); !ok {
+			return fmt.Errorf("invalid time_period %q: expected YYYY, YYYY-MM, or YYYY-MM-DD", period)
+		}
+	}
+
+	derived := query.MergeFilterIntoQuery(&search.Query{}, structured)
+	intersectSourceIDs(f, derived.AccountIDs)
+	if derived.AfterDate != nil {
+		if f.After == nil || derived.AfterDate.After(*f.After) {
+			f.After = derived.AfterDate
+		}
+	}
+	if derived.BeforeDate != nil {
+		if f.Before == nil || derived.BeforeDate.Before(*f.Before) {
+			f.Before = derived.BeforeDate
+		}
+	}
+	if derived.HasAttachment != nil && *derived.HasAttachment {
+		value := true
+		f.HasAttachment = &value
+	}
+	if len(derived.MessageTypes) > 0 {
+		f.MessageTypes = intersectMessageTypes(f.MessageTypes, derived.MessageTypes)
+	}
+
+	if structured.Sender != "" {
+		group, err := resolveExactParticipantIDs(ctx, db, rebind,
+			"email_address = ? OR phone_number = ?", structured.Sender, structured.Sender)
+		if err != nil {
+			return err
+		}
+		f.SenderExactGroups = append(f.SenderExactGroups, noMatchGroup(group))
+	}
+	if structured.Recipient != "" {
+		group, err := resolveExactParticipantIDs(ctx, db, rebind,
+			"email_address = ?", structured.Recipient)
+		if err != nil {
+			return err
+		}
+		f.RecipientAnyGroups = append(f.RecipientAnyGroups, noMatchGroup(group))
+	}
+	if structured.Domain != "" {
+		group, err := resolveExactParticipantIDs(ctx, db, rebind, "domain = ?", structured.Domain)
+		if err != nil {
+			return err
+		}
+		// Domain drill-downs intentionally match only explicit `from`
+		// recipient rows, matching query.MessageFilter semantics.
+		f.SenderGroups = append(f.SenderGroups, noMatchGroup(group))
+	}
+	if structured.Label != "" {
+		group, err := resolveExactLabelIDs(ctx, db, rebind, structured.Label)
+		if err != nil {
+			return err
+		}
+		f.LabelGroups = append(f.LabelGroups, noMatchGroup(group))
+	}
+	return nil
+}
+
+func intersectSourceIDs(f *vector.Filter, exact []int64) {
+	if exact == nil {
+		return
+	}
+	if len(f.SourceIDs) == 0 {
+		f.SourceIDs = append([]int64(nil), exact...)
+		return
+	}
+	allowed := make(map[int64]struct{}, len(exact))
+	for _, id := range exact {
+		allowed[id] = struct{}{}
+	}
+	out := f.SourceIDs[:0]
+	for _, id := range f.SourceIDs {
+		if _, ok := allowed[id]; ok {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		out = []int64{noMatchSentinel}
+	}
+	f.SourceIDs = out
+}
+
+func intersectMessageTypes(existing, exact []string) []string {
+	if len(existing) == 0 {
+		return append([]string(nil), exact...)
+	}
+	allowed := make(map[string]struct{}, len(exact))
+	for _, value := range exact {
+		allowed[strings.ToLower(value)] = struct{}{}
+	}
+	var out []string
+	for _, value := range existing {
+		if _, ok := allowed[strings.ToLower(value)]; ok {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"__msgvault_no_matching_message_type__"}
+	}
+	return out
+}
+
+func resolveExactParticipantIDs(
+	ctx context.Context,
+	db *sql.DB,
+	rebind func(string) string,
+	where string,
+	args ...any,
+) ([]int64, error) {
+	rows, err := db.QueryContext(ctx, rebind("SELECT id FROM participants WHERE "+where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query exact participants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan exact participant id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate exact participants: %w", err)
+	}
+	return ids, nil
+}
+
+func resolveExactLabelIDs(ctx context.Context, db *sql.DB, rebind func(string) string, label string) ([]int64, error) {
+	rows, err := db.QueryContext(ctx, rebind("SELECT id FROM labels WHERE LOWER(name) = LOWER(?)"), label)
+	if err != nil {
+		return nil, fmt.Errorf("query exact labels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan exact label id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate exact labels: %w", err)
+	}
+	return ids, nil
+}
+
+func noMatchGroup(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return []int64{noMatchSentinel}
+	}
+	return ids
 }
 
 // resolveAddressGroups produces one IDs slice per supplied token. The

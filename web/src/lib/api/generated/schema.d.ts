@@ -16220,7 +16220,7 @@ export interface operations {
             query: {
                 /** @description Search query */
                 q: string;
-                /** @description Search mode: fts, vector, or hybrid */
+                /** @description Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes */
                 mode?: string;
                 /** @description One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400. */
                 page?: number;
@@ -16240,6 +16240,26 @@ export interface operations {
                 account?: string;
                 /** @description Restrict to one collection */
                 collection?: string;
+                /** @description Exact sender email/address filter (vector or hybrid mode only) */
+                sender?: string;
+                /** @description Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only) */
+                recipient?: string;
+                /** @description Exact sender domain filter (vector or hybrid mode only) */
+                domain?: string;
+                /** @description Exact case-insensitive label filter (vector or hybrid mode only) */
+                label?: string;
+                /** @description Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only) */
+                time_period?: string;
+                /** @description Time bucket granularity (vector or hybrid mode only) */
+                time_granularity?: string;
+                /** @description Exact source ID (vector or hybrid mode only) */
+                source_id?: number;
+                /** @description Only include messages with attachments (vector or hybrid mode only) */
+                attachments_only?: boolean;
+                /** @description Lower date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only) */
+                after?: string;
+                /** @description Upper date/time bound (RFC3339 or YYYY-MM-DD; vector or hybrid mode only) */
+                before?: string;
             };
             header?: never;
             path?: never;

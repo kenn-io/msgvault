@@ -770,6 +770,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mode == "vector" || mode == exploreSearchModeHybrid {
+		structuredFilter, err := parseMessageFilter(requestWithoutParams(r, "message_type", "offset"))
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
 		page, _, err := queryInt(r, "page")
 		if err != nil {
 			s.rejectBadParam(w, err)
@@ -818,13 +823,21 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				pageSize = maxPage - offset
 			}
 		}
-		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, offset, pageSize, includeMatches, minScore, scope)
+		s.handleHybridSearch(
+			w, r, query, parsedQuery, structuredFilter,
+			mode, explain, offset, pageSize, includeMatches, minScore, scope,
+		)
 		return
 	}
 
 	if mode != "fts" {
 		writeError(w, http.StatusBadRequest, "invalid_mode",
 			fmt.Sprintf("mode must be one of fts|vector|hybrid, got %q", mode))
+		return
+	}
+	if param, ok := firstPresentQueryParam(r, semanticSearchStructuredFilterParamNames); ok {
+		writeError(w, http.StatusBadRequest, "unsupported_filter_mode",
+			fmt.Sprintf("query parameter %q is only supported when mode=vector or mode=hybrid", param))
 		return
 	}
 
@@ -901,13 +914,37 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 	return parsed
 }
 
+var semanticSearchStructuredFilterParamNames = []string{
+	"sender",
+	recipientParam,
+	"domain",
+	"label",
+	"time_period",
+	"time_granularity",
+	"source_id",
+	"attachments_only",
+	"after",
+	"before",
+}
+
+func firstPresentQueryParam(r *http.Request, names []string) (string, bool) {
+	values := r.URL.Query()
+	for _, name := range names {
+		if _, ok := values[name]; ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // handleHybridSearch runs vector or hybrid search via the configured
 // hybrid engine. Returns 503 when the engine is not configured or the
 // index is stale/building; otherwise returns RRF-ranked hits hydrated
 // through the message store.
 func (s *Server) handleHybridSearch(
 	w http.ResponseWriter, r *http.Request,
-	q string, parsed *search.Query, mode string, explain bool,
+	q string, parsed *search.Query, structuredFilter query.MessageFilter,
+	mode string, explain bool,
 	offset, pageSize int, includeMatches bool, minScore float64,
 	scope cliScope,
 ) {
@@ -939,7 +976,7 @@ func (s *Server) handleHybridSearch(
 		subjectTerms = append(subjectTerms, strings.ToLower(t))
 	}
 
-	filter, err := hybridEngine.BuildFilter(ctx, parsed)
+	filter, err := hybridEngine.BuildFilter(ctx, parsed, structuredFilter)
 	if err != nil {
 		s.logger.Error("build hybrid filter failed", "query", q, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "filter resolution failed")
@@ -2255,13 +2292,17 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 
 	filter.Sender = r.URL.Query().Get("sender")
 	filter.SenderName = r.URL.Query().Get("sender_name")
-	filter.Recipient = r.URL.Query().Get("recipient")
+	filter.Recipient = r.URL.Query().Get(recipientParam)
 	filter.RecipientName = r.URL.Query().Get("recipient_name")
 	filter.Domain = r.URL.Query().Get("domain")
 	filter.Label = r.URL.Query().Get("label")
 	filter.MessageType = r.URL.Query().Get("message_type")
 
 	if v := r.URL.Query().Get("time_period"); v != "" {
+		if _, _, ok := query.ParseTimePeriodBounds(v); !ok {
+			return filter, newParamError("time_period",
+				fmt.Sprintf("query parameter %q must be YYYY, YYYY-MM, or YYYY-MM-DD, got %q", "time_period", v))
+		}
 		filter.TimeRange.Period = v
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {

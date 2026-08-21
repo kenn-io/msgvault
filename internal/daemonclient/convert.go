@@ -276,7 +276,35 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 		}
 		sentAt = parsed
 	}
+	var deletedAt *time.Time
+	if item.DeletedAt != nil && *item.DeletedAt != "" {
+		parsed, err := time.Parse(time.RFC3339, *item.DeletedAt)
+		if err != nil {
+			return CLIHybridSearchResult{}, fmt.Errorf("parse deleted_at: %w", err)
+		}
+		deletedAt = &parsed
+	}
 	out := CLIHybridSearchResult{
+		Message: query.MessageSummary{
+			ID:              item.ID,
+			SourceID:        int64Value(item.SourceID),
+			SourceMessageID: stringValue(item.SourceMessageID),
+			ConversationID:  int64Value(item.ConversationID),
+			Subject:         item.Subject,
+			Snippet:         item.Snippet,
+			FromEmail:       stringValue(item.FromEmail),
+			FromName:        stringValue(item.FromName),
+			FromPhone:       stringValue(item.FromPhone),
+			To:              queryAddressesFromStrings(item.To),
+			Cc:              queryAddressesFromStrings(item.Cc),
+			Bcc:             queryAddressesFromStrings(item.Bcc),
+			SentAt:          sentAt,
+			SizeEstimate:    item.SizeBytes,
+			HasAttachments:  item.HasAttachments,
+			Labels:          item.Labels,
+			DeletedAt:       deletedAt,
+			MessageType:     stringValue(item.MessageType),
+		},
 		ID:               item.ID,
 		Subject:          item.Subject,
 		FromEmail:        stringValue(item.FromEmail),
@@ -297,6 +325,9 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 	if out.FromEmail == "" {
 		out.FromEmail = item.From
 	}
+	if out.Message.FromEmail == "" {
+		out.Message.FromEmail = item.From
+	}
 	if item.Score != nil {
 		out.RRFScore = item.Score.Rrf
 		out.BM25Score = item.Score.Bm25
@@ -304,6 +335,17 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 		out.SubjectBoosted = boolValue(item.Score.SubjectBoosted)
 	}
 	return out, nil
+}
+
+func queryAddressesFromStrings(addresses []string) []query.Address {
+	if addresses == nil {
+		return nil
+	}
+	out := make([]query.Address, len(addresses))
+	for i, address := range addresses {
+		out[i] = query.Address{Email: address}
+	}
+	return out
 }
 
 func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) query.MessageSummary {

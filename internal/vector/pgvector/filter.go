@@ -35,7 +35,24 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		clauses = append(clauses, fmt.Sprintf("m.source_id = ANY(%s::bigint[])", bind(int64Array(f.SourceIDs))))
 	}
 	if len(f.MessageTypes) > 0 {
-		clauses = append(clauses, fmt.Sprintf("m.message_type = ANY(%s::text[])", bind(textArray(f.MessageTypes))))
+		var exact []string
+		includeLegacyEmail := false
+		for _, value := range f.MessageTypes {
+			if strings.EqualFold(value, "email") {
+				includeLegacyEmail = true
+			} else {
+				exact = append(exact, value)
+			}
+		}
+		var parts []string
+		if len(exact) > 0 {
+			parts = append(parts, fmt.Sprintf("m.message_type = ANY(%s::text[])", bind(textArray(exact))))
+		}
+		if includeLegacyEmail {
+			parts = append(parts, fmt.Sprintf(
+				"(m.message_type = %s OR m.message_type IS NULL OR m.message_type = '')", bind("email")))
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
@@ -46,6 +63,31 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 				SELECT 1 FROM message_recipients mr
 				 WHERE mr.message_id = m.id
 				   AND mr.recipient_type = 'from'
+				   AND mr.participant_id = ANY(%s::bigint[])
+			)`, bind(int64Array(group))))
+	}
+	for _, group := range f.SenderExactGroups {
+		if len(group) == 0 {
+			continue
+		}
+		ids := bind(int64Array(group))
+		clauses = append(clauses, fmt.Sprintf(
+			`(m.sender_id = ANY(%[1]s::bigint[]) OR EXISTS (
+				SELECT 1 FROM message_recipients mr
+				 WHERE mr.message_id = m.id
+				   AND mr.recipient_type = 'from'
+				   AND mr.participant_id = ANY(%[1]s::bigint[])
+			))`, ids))
+	}
+	for _, group := range f.RecipientAnyGroups {
+		if len(group) == 0 {
+			continue
+		}
+		clauses = append(clauses, fmt.Sprintf(
+			`EXISTS (
+				SELECT 1 FROM message_recipients mr
+				 WHERE mr.message_id = m.id
+				   AND mr.recipient_type IN ('to', 'cc', 'bcc')
 				   AND mr.participant_id = ANY(%s::bigint[])
 			)`, bind(int64Array(group))))
 	}

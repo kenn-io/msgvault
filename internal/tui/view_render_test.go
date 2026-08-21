@@ -885,6 +885,10 @@ func TestExportAttachmentsModal(t *testing.T) {
 	// Should have all attachments selected by default
 	assert.Len(m.exportSelection, 2)
 	assert.True(m.exportSelection[0] && m.exportSelection[1], "expected all attachments to be selected by default")
+	modal := stripANSI(m.renderExportAttachmentsModal())
+	assert.Contains(modal, "[d] Download")
+	assert.Contains(modal, "[o] Open")
+	assert.Contains(modal, "[Enter] Export zip")
 
 	// Test navigation - move cursor down
 	m, _ = applyModalKey(t, m, key('j'))
@@ -925,6 +929,25 @@ func TestExportAttachmentsNoAttachments(t *testing.T) {
 	assert.Equal(t, "No attachments to export", m.flashMessage)
 }
 
+func TestAttachmentActionResultOpensResultModal(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithLevel(levelMessageDetail).Build()
+	model.loading = true
+
+	m := sendMsg(t, model, ExportResultMsg{
+		Title:  "Download Complete",
+		Result: "Saved to /tmp/invoice.pdf",
+	})
+
+	assert.Equal(modalExportResult, m.modal)
+	assert.Equal("Download Complete", m.modalResultTitle)
+	assert.Equal("Saved to /tmp/invoice.pdf", m.modalResult)
+	assert.False(m.loading)
+	view := stripANSI(m.renderExportResultModal())
+	assert.Contains(view, "Download Complete")
+	assert.Contains(view, "/tmp/invoice.pdf")
+}
+
 // TestRenderExportAttachmentsModalEdgeCases tests the export modal renderer
 // handles edge cases gracefully (nil detail, empty attachments).
 func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
@@ -938,7 +961,7 @@ func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
 		content := model.renderExportAttachmentsModal()
 
 		assert.NotEmpty(t, content, "expected non-empty modal content when messageDetail is nil")
-		assert.Contains(t, content, "Export Attachments", "expected modal title in content")
+		assert.Contains(t, content, "Attachments", "expected modal title in content")
 		assert.Contains(t, content, "No attachments")
 	})
 
@@ -956,7 +979,7 @@ func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
 		content := model.renderExportAttachmentsModal()
 
 		assert.NotEmpty(t, content, "expected non-empty modal content when attachments is empty")
-		assert.Contains(t, content, "Export Attachments", "expected modal title in content")
+		assert.Contains(t, content, "Attachments", "expected modal title in content")
 		assert.Contains(t, content, "No attachments")
 	})
 

@@ -35,23 +35,16 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.level != levelMessageList {
 			return m, nil
 		}
-		if m.searchMode == searchModeFast {
-			m.searchMode = searchModeDeep
-			m.searchInput.Placeholder = "search (Tab: fast)"
-		} else {
-			m.searchMode = searchModeFast
-			m.searchInput.Placeholder = "search (Tab: deep)"
-		}
+		m.searchMode = m.nextSearchMode()
+		m.syncSearchScope()
+		m.searchInput.Placeholder = m.searchPlaceholder()
 		m.inlineSearchDebounce++
 		if query := m.searchInput.Value(); query != "" {
 			m.searchQuery = query
 			m.inlineSearchLoading = true
 			spinCmd := m.startSpinner()
-			m.searchFilter = m.drillFilter
-			m.searchFilter.SourceID = m.accountFilter
-			m.searchFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
-			m.searchFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
 			m.searchRequestID++
+			m.prepareSearchReplacement()
 			return m, tea.Batch(spinCmd, m.loadSearch(query))
 		}
 		return m, nil
@@ -67,7 +60,7 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		debounceID := m.inlineSearchDebounce
 
 		delay := inlineSearchDebounceDelay
-		if m.searchMode == searchModeDeep {
+		if m.searchMode != searchModeFast {
 			delay = deepSearchDebounceDelay
 		}
 
@@ -85,6 +78,54 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		})
 
 		return m, tea.Batch(cmd, spinCmd, debounceCmd)
+	}
+}
+
+func (m Model) currentSearchFilter() query.MessageFilter {
+	filter := m.drillFilter
+	filter.SourceID = m.accountFilter
+	filter.WithAttachmentsOnly = m.filters.attachmentsOnly
+	filter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+	return filter
+}
+
+func (m Model) semanticSearchAvailable() bool {
+	return m.semanticSearch != nil &&
+		query.SemanticMessageSearchSupportsFilter(m.currentSearchFilter())
+}
+
+func (m *Model) syncSearchScope() {
+	m.searchFilter = m.currentSearchFilter()
+	if m.searchMode == searchModeSemantic && !m.semanticSearchAvailable() {
+		m.searchMode = searchModeFast
+	}
+}
+
+func (m Model) nextSearchMode() searchModeKind {
+	switch m.searchMode {
+	case searchModeFast:
+		return searchModeDeep
+	case searchModeDeep:
+		if m.semanticSearchAvailable() {
+			return searchModeSemantic
+		}
+		return searchModeFast
+	default:
+		return searchModeFast
+	}
+}
+
+func (m Model) searchPlaceholder() string {
+	switch m.searchMode {
+	case searchModeFast:
+		return "search (Tab: deep)"
+	case searchModeDeep:
+		if m.semanticSearchAvailable() {
+			return "search (Tab: semantic)"
+		}
+		return "search (Tab: fast)"
+	default:
+		return "search (Tab: fast)"
 	}
 }
 
@@ -224,10 +265,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		// If there's an active search query, show search results instead of all messages
 		if m.searchQuery != "" {
-			m.searchFilter = m.drillFilter
-			m.searchFilter.SourceID = m.accountFilter
-			m.searchFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
-			m.searchFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+			m.syncSearchScope()
 			m.loadRequestID++ // Invalidate stale loadMessages responses
 			m.searchRequestID++
 			return m, m.loadSearch(m.searchQuery)
@@ -377,10 +415,10 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	// Back - clear inner search first, then navigate back
 	case keyNameEsc:
-		// Clear search only if it was initiated at this level (snapshot exists).
-		// Inherited search (from aggregate drill-down) has no snapshot —
-		// goBack restores the parent view with its search intact.
-		if m.searchQuery != "" && m.preSearchMessages != nil {
+		// Clear search only if it was initiated at this level. A valid snapshot
+		// restores immediately; an invalidated one reloads the current scope.
+		// Inherited search has neither marker, so goBack restores the parent.
+		if m.searchQuery != "" && (m.preSearchMessages != nil || m.preSearchSnapshotInvalid) {
 			return m.clearMessageListSearch()
 		}
 		// Invalidate in-flight search responses so they don't write
@@ -522,6 +560,9 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Sorting - use explicit field list to avoid hidden coupling
 	case "s":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
 		msgSortFields := []query.MessageSortField{
 			query.MessageSortByDate,
 			query.MessageSortBySize,
@@ -539,6 +580,9 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadMessages()
 
 	case "r", "v":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
 		if m.msgSortDirection == query.SortDesc {
 			m.msgSortDirection = query.SortAsc
 		} else {
@@ -582,8 +626,8 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // maybeLoadMoreSearchResults checks if we're near the end of search results and should load more.
 func (m *Model) maybeLoadMoreSearchResults() tea.Cmd {
-	// Only paginate search results in fast mode
-	if m.searchQuery == "" || m.searchMode != searchModeFast {
+	// Deep search paginates only when the user explicitly reaches the bottom.
+	if m.searchQuery == "" || m.searchMode == searchModeDeep {
 		return nil
 	}
 
@@ -1058,6 +1102,18 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 
 		if m.level == levelMessageList {
+			if m.searchQuery != "" {
+				if m.searchFilter.WithAttachmentsOnly != m.filters.attachmentsOnly ||
+					m.searchFilter.HideDeletedFromSource != m.filters.hideDeletedFromSource {
+					m.invalidatePreSearchSnapshot()
+				}
+				m.syncSearchScope()
+				m.searchLoadingMore = false
+				m.loadRequestID++ // Invalidate normal list loads before replacing ranked results.
+				m.searchRequestID++
+				m.prepareSearchReplacement()
+				return m, tea.Batch(m.loadSearch(m.searchQuery), m.loadStats())
+			}
 			m.loadRequestID++
 			return m, tea.Batch(m.loadMessages(), m.loadStats())
 		}
@@ -1094,6 +1150,10 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.
 		}
 	case keyNameEnter:
 		return m.exportAttachments()
+	case "d":
+		return m.startAttachmentAction(m.actions.DownloadAttachment(m.messageDetail.Attachments[m.exportCursor]))
+	case "o":
+		return m.startAttachmentAction(m.actions.OpenAttachment(m.messageDetail.Attachments[m.exportCursor]))
 	case keyNameEsc:
 		m.modal = modalNone
 		m.exportSelection = nil
@@ -1101,9 +1161,17 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.
 	return m, nil
 }
 
+func (m Model) startAttachmentAction(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.modal = modalNone
+	m.loading = true
+	m.exportSelection = nil
+	return m, cmd
+}
+
 func (m Model) handleExportResultKeys() (tea.Model, tea.Cmd) {
 	// Any key closes the result modal
 	m.modal = modalNone
+	m.modalResultTitle = ""
 	m.modalResult = ""
 	return m, nil
 }
@@ -1274,10 +1342,7 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 	// Preserve search query through drill-down so the message list
 	// shows only messages matching both the drill filter and the search.
 	if m.searchQuery != "" {
-		m.searchFilter = m.drillFilter
-		m.searchFilter.SourceID = m.accountFilter
-		m.searchFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
-		m.searchFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+		m.syncSearchScope()
 		m.loadRequestID++ // Invalidate stale loadMessages responses
 		m.searchRequestID++
 		return m, m.loadSearch(m.searchQuery)
@@ -1327,6 +1392,18 @@ func (m *Model) clearSearchState() {
 	m.contextStats = nil
 }
 
+// prepareSearchReplacement removes results and presentation state tied to the
+// previous search mode or filter before a non-append search starts.
+func (m *Model) prepareSearchReplacement() {
+	m.messages = nil
+	m.contextStats = nil
+	m.cursor = 0
+	m.scrollOffset = 0
+	m.searchOffset = 0
+	m.searchTotalCount = 0
+	m.searchLoadingMore = false
+}
+
 // reloadCurrentView triggers a data reload based on the current level.
 func (m Model) reloadCurrentView() (tea.Model, tea.Cmd) {
 	if m.level == levelMessageList {
@@ -1345,23 +1422,22 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 	if queryStr == "" {
 		// Empty search clears filter - restore from snapshot if available
 		m.clearSearchState()
-		if m.level == levelMessageList && m.preSearchMessages != nil {
+		if m.level == levelMessageList && !m.preSearchSnapshotInvalid && m.preSearchMessages != nil {
 			m.restorePreSearchSnapshot()
 			return m, nil
 		}
+		m.clearPreSearchSnapshot()
 		return m.reloadCurrentView()
 	}
 
 	m.searchQuery = queryStr
 	// In message list view, execute search to show results
 	if m.level == levelMessageList {
-		m.searchFilter = m.drillFilter
-		m.searchFilter.SourceID = m.accountFilter
-		m.searchFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
-		m.searchFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+		m.syncSearchScope()
 		m.searchRequestID++
 		m.loading = true
 		spinCmd := m.startSpinner()
+		m.prepareSearchReplacement()
 		return m, tea.Batch(spinCmd, m.loadSearch(queryStr))
 	}
 	// In aggregate views, results already showing from debounced search
@@ -1374,10 +1450,11 @@ func (m Model) cancelInlineSearch() (tea.Model, tea.Cmd) {
 	m.searchInput.SetValue("")
 	m.clearSearchState()
 
-	if m.level == levelMessageList && m.preSearchMessages != nil {
+	if m.level == levelMessageList && !m.preSearchSnapshotInvalid && m.preSearchMessages != nil {
 		m.restorePreSearchSnapshot()
 		return m, nil
 	}
+	m.clearPreSearchSnapshot()
 	return m.reloadCurrentView()
 }
 
@@ -1388,10 +1465,11 @@ func (m Model) clearMessageListSearch() (tea.Model, tea.Cmd) {
 	m.searchInput.SetValue("")
 	m.searchRequestID++
 
-	if m.preSearchMessages != nil {
+	if !m.preSearchSnapshotInvalid && m.preSearchMessages != nil {
 		m.restorePreSearchSnapshot()
 		return m, nil
 	}
+	m.clearPreSearchSnapshot()
 	m.contextStats = nil
 	m.loadRequestID++
 	return m, m.loadMessages()
@@ -1410,9 +1488,19 @@ func (m *Model) restorePreSearchSnapshot() {
 	m.inlineSearchLoading = false
 	m.searchOffset = 0
 	m.searchTotalCount = 0
-	// Clear the snapshot
+	m.clearPreSearchSnapshot()
+}
+
+func (m *Model) invalidatePreSearchSnapshot() {
 	m.preSearchMessages = nil
 	m.preSearchContextStats = nil
+	m.preSearchSnapshotInvalid = true
+}
+
+func (m *Model) clearPreSearchSnapshot() {
+	m.preSearchMessages = nil
+	m.preSearchContextStats = nil
+	m.preSearchSnapshotInvalid = false
 }
 
 func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {
@@ -1421,7 +1509,7 @@ func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {
 	// keep the original snapshot). This also handles inherited search
 	// from aggregate drill-down: the first local / captures the
 	// inherited results so Esc can restore them.
-	if m.level == levelMessageList && m.preSearchMessages == nil {
+	if m.level == levelMessageList && !m.preSearchSnapshotInvalid && m.preSearchMessages == nil {
 		m.preSearchMessages = m.messages
 		m.preSearchCursor = m.cursor
 		m.preSearchScrollOffset = m.scrollOffset
@@ -1435,7 +1523,11 @@ func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {
 	}
 	m.inlineSearchActive = true
 	m.searchMode = searchModeFast
-	m.searchInput.Placeholder = placeholder
+	if m.mode == modeEmail && m.level == levelMessageList {
+		m.searchInput.Placeholder = m.searchPlaceholder()
+	} else {
+		m.searchInput.Placeholder = placeholder
+	}
 	m.searchInput.SetValue("") // Clear previous search
 	m.searchInput.Focus()
 	return textinput.Blink

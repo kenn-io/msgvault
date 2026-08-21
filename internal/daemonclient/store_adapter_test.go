@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -1112,6 +1113,16 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 		assert.Equal("5", r.URL.Query().Get("offset"), "offset query")
 		assert.Equal("true", r.URL.Query().Get("include_matches"), "include_matches query")
 		assert.Equal("0.75", r.URL.Query().Get("min_score"), "min_score query")
+		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender query")
+		assert.Equal("bob@example.com", r.URL.Query().Get("recipient"), "recipient query")
+		assert.Equal("example.com", r.URL.Query().Get("domain"), "domain query")
+		assert.Equal("Work", r.URL.Query().Get("label"), "label query")
+		assert.Equal("2025-02", r.URL.Query().Get("time_period"), "time_period query")
+		assert.Equal("month", r.URL.Query().Get("time_granularity"), "time_granularity query")
+		assert.Equal("77", r.URL.Query().Get("source_id"), "source_id query")
+		assert.Equal("true", r.URL.Query().Get("attachments_only"), "attachments_only query")
+		assert.Equal("2025-02-01T00:00:00Z", r.URL.Query().Get("after"), "after query")
+		assert.Equal("2025-03-01T00:00:00Z", r.URL.Query().Get("before"), "before query")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"query": "lunch",
@@ -1159,6 +1170,9 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(srv, "key")
+	after := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+	sourceID := int64(77)
 	resp, err := s.GetCLIHybridSearch(
 		context.Background(),
 		CLIHybridSearchRequest{
@@ -1170,6 +1184,17 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 			Offset:         5,
 			IncludeMatches: true,
 			MinScore:       0.75,
+			Filter: query.MessageFilter{
+				Sender:              "alice@example.com",
+				Recipient:           "bob@example.com",
+				Domain:              "example.com",
+				Label:               "Work",
+				TimeRange:           query.TimeRange{Period: "2025-02", Granularity: query.TimeMonth},
+				SourceID:            &sourceID,
+				WithAttachmentsOnly: true,
+				After:               &after,
+				Before:              &before,
+			},
 		},
 	)
 	require.NoError(err, "GetCLIHybridSearch")

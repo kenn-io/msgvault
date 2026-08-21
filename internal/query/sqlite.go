@@ -2044,7 +2044,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// like "2024" → [2024-01-01, 2025-01-01), "2024-03" →
 	// [2024-03-01, 2024-04-01), "2024-03-15" → [2024-03-15, 2024-03-16).
 	if filter.TimeRange.Period != "" {
-		if after, before, ok := timePeriodToBounds(
+		if after, before, ok := ParseTimePeriodBounds(
 			filter.TimeRange.Period,
 		); ok {
 			if merged.AfterDate == nil ||
@@ -2066,9 +2066,9 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	return &merged
 }
 
-// timePeriodToBounds converts a time period string to half-open date
+// ParseTimePeriodBounds converts a calendar period string to half-open date
 // bounds [after, before). Returns ok=false if the format is unrecognized.
-func timePeriodToBounds(period string) (after, before time.Time, ok bool) {
+func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 	switch len(period) {
 	case 4: // "2024" → year
 		t, err := time.Parse("2006", period)

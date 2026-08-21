@@ -22,8 +22,23 @@ func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"sms", "mms"}}, bind)
 
 	require.Len(t, clauses, 1)
-	assert.Equal(t, "m.message_type = ANY($1::text[])", clauses[0])
+	assert.Equal(t, "(m.message_type = ANY($1::text[]))", clauses[0])
 	assert.Equal(t, []any{`{"sms","mms"}`}, args)
+}
+
+func TestBuildPGFilterClausesLegacyEmail(t *testing.T) {
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"email"}}, bind)
+
+	require.Len(t, clauses, 1)
+	assert.Contains(t, clauses[0], "m.message_type IS NULL")
+	assert.Contains(t, clauses[0], "m.message_type = ''")
+	assert.Equal(t, []any{"email"}, args)
 }
 
 func TestBackendSearchStructuredFilters(t *testing.T) {
@@ -86,6 +101,16 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 		{
 			name:   "to group",
 			filter: vector.Filter{ToGroups: [][]int64{{200}}},
+			want:   []int64{2},
+		},
+		{
+			name:   "recipient any group",
+			filter: vector.Filter{RecipientAnyGroups: [][]int64{{300}}},
+			want:   []int64{3},
+		},
+		{
+			name:   "exact sender group",
+			filter: vector.Filter{SenderExactGroups: [][]int64{{100}}},
 			want:   []int64{2},
 		},
 		{

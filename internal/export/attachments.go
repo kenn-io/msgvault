@@ -177,7 +177,7 @@ func addAttachmentToZip(zw *zip.Writer, open AttachmentOpener, att query.Attachm
 
 func resolveUniqueFilename(original, contentHash string, usedNames map[string]int) string {
 	filename := SanitizeFilename(filepath.Base(original))
-	if filename == "" || filename == "." {
+	if filename == "" || filename == "." || filename == ".." || !filepath.IsLocal(filename) {
 		filename = contentHash
 	}
 
@@ -294,6 +294,16 @@ func looseOpener(attachmentsDir string) AttachmentOpener {
 // outputDir/filename. Uses O_EXCL to avoid overwriting; appends _1, _2, etc.
 // on conflict.
 func exportAttachmentToFile(outputDir string, open AttachmentOpener, contentHash, filename string) (ExportedFile, error) {
+	if filename == "." || filename == ".." || !filepath.IsLocal(filename) {
+		return ExportedFile{}, fmt.Errorf("invalid output filename %q", filename)
+	}
+	cleanOutputDir := filepath.Clean(outputDir)
+	destPath := filepath.Join(cleanOutputDir, filename)
+	rel, err := filepath.Rel(cleanOutputDir, destPath)
+	if err != nil || !filepath.IsLocal(rel) {
+		return ExportedFile{}, fmt.Errorf("output filename %q escapes output directory", filename)
+	}
+
 	src, err := open(contentHash)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -301,7 +311,6 @@ func exportAttachmentToFile(outputDir string, open AttachmentOpener, contentHash
 		}
 		return ExportedFile{}, fmt.Errorf("open source: %w", err)
 	}
-	destPath := filepath.Join(outputDir, filename)
 	dst, finalPath, err := CreateExclusiveFile(destPath, 0600)
 	if err != nil {
 		return ExportedFile{}, fmt.Errorf("create output file: %w", errors.Join(err, src.Close()))

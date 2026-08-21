@@ -219,7 +219,10 @@ import (
 // results contain only the durable person root and semantic score; person
 // projection text and raw profile details remain internal.
 // Additive (minor bump): existing person and participant routes are unchanged.
-const APISchemaVersion = "2.6.0"
+// 2.7.0 adds exact structured sender, recipient, domain, label, source, date,
+// time-period, and attachment filters to vector and hybrid search.
+// Additive (minor bump): existing unfiltered searches are unchanged.
+const APISchemaVersion = "2.7.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

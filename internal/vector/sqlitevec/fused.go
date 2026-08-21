@@ -63,13 +63,30 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	if err != nil {
 		return nil, false, fmt.Errorf("encode source_ids: %w", err)
 	}
-	messageTypes, err := stringsToJSON(req.Filter.MessageTypes)
+	var exactMessageTypes []string
+	includeLegacyEmail := false
+	for _, value := range req.Filter.MessageTypes {
+		if strings.EqualFold(value, "email") {
+			includeLegacyEmail = true
+		} else {
+			exactMessageTypes = append(exactMessageTypes, value)
+		}
+	}
+	messageTypes, err := stringsToJSON(exactMessageTypes)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode message_types: %w", err)
 	}
 	senderGroupSQL, senderGroupArgs, err := senderGroupClauses(req.Filter.SenderGroups)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode sender_groups: %w", err)
+	}
+	senderExactGroupSQL, senderExactGroupArgs, err := senderExactGroupClauses(req.Filter.SenderExactGroups)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode sender_exact_groups: %w", err)
+	}
+	recipientAnyGroupSQL, recipientAnyGroupArgs, err := recipientAnyGroupClauses(req.Filter.RecipientAnyGroups)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode recipient_any_groups: %w", err)
 	}
 	toGroupSQL, toGroupArgs, err := recipientGroupClauses("to", req.Filter.ToGroups)
 	if err != nil {
@@ -150,9 +167,13 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	// guarantees the ceiling's "is this message included" predicate
 	// stays bit-for-bit aligned with the live one without forcing
 	// callers (or the test suite) to keep two copies in sync.
-	messageTypeSQL := `AND (:message_types IS NULL OR 0)`
+	messageTypeSQL := `AND (:message_type_filter = 0 OR :include_legacy_email = 1)`
 	if hasMessageType {
-		messageTypeSQL = `AND (:message_types IS NULL OR m.message_type IN (SELECT value FROM json_each(:message_types)))`
+		messageTypeSQL = `AND (
+			:message_type_filter = 0
+			OR m.message_type IN (SELECT value FROM json_each(:message_types))
+			OR (:include_legacy_email = 1 AND (m.message_type = 'email' OR m.message_type IS NULL OR m.message_type = ''))
+		)`
 	}
 
 	filterWhere := fmt.Sprintf(`%s
@@ -162,6 +183,8 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
        %s
        %s
        %s
+	   %s
+	   %s
        AND (:has_attachment IS NULL OR m.has_attachments = :has_attachment)
        AND (:after IS NULL OR m.sent_at >= :after)
        AND (:before IS NULL OR m.sent_at < :before)
@@ -171,7 +194,8 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
              SELECT 1 FROM json_each(:subject_patterns) sp
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
        %s`,
-		store.LiveMessagesWhere("m", true), messageTypeSQL, senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
+		store.LiveMessagesWhere("m", true), messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
+		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -277,7 +301,13 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	// named binds when its placeholder count check fails.
 	filterArgs := []any{
 		sql.Named("source_ids", sourceIDs),
-		sql.Named("message_types", messageTypes),
+	}
+	if hasMessageType {
+		filterArgs = append(filterArgs, sql.Named("message_types", messageTypes))
+	}
+	filterArgs = append(filterArgs,
+		sql.Named("message_type_filter", len(req.Filter.MessageTypes) > 0),
+		sql.Named("include_legacy_email", includeLegacyEmail),
 		sql.Named("has_attachment", hasAttachment),
 		sql.Named("after", after),
 		sql.Named("before", before),
@@ -285,8 +315,10 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		sql.Named("smaller_than", smallerThan),
 		sql.Named("subject_patterns", subjectPatterns),
 		sql.Named("gen", int64(req.Generation)),
-	}
+	)
 	filterArgs = append(filterArgs, senderGroupArgs...)
+	filterArgs = append(filterArgs, senderExactGroupArgs...)
+	filterArgs = append(filterArgs, recipientAnyGroupArgs...)
 	filterArgs = append(filterArgs, toGroupArgs...)
 	filterArgs = append(filterArgs, ccGroupArgs...)
 	filterArgs = append(filterArgs, bccGroupArgs...)
@@ -552,6 +584,64 @@ func senderGroupClauses(groups [][]int64) (string, []any, error) {
                AND mr.recipient_type = 'from'
                AND mr.participant_id IN (SELECT value FROM json_each(:%s)))`,
 			paramName)
+		args = append(args, sql.Named(paramName, js))
+	}
+	return sb.String(), args, nil
+}
+
+// senderExactGroupClauses matches an exact structured sender against either
+// the canonical from-recipient rows or messages.sender_id. The latter keeps
+// WhatsApp/chat senders aligned with query.MessageFilter.
+func senderExactGroupClauses(groups [][]int64) (string, []any, error) {
+	if len(groups) == 0 {
+		return "", nil, nil
+	}
+	var sb strings.Builder
+	args := make([]any, 0, len(groups))
+	for i, ids := range groups {
+		js, err := idsToJSON(ids)
+		if err != nil {
+			return "", nil, fmt.Errorf("encode sender_exact_grp_%d: %w", i, err)
+		}
+		if !js.Valid {
+			continue
+		}
+		paramName := fmt.Sprintf("sender_exact_grp_%d", i)
+		fmt.Fprintf(&sb, `
+       AND (m.sender_id IN (SELECT value FROM json_each(:%[1]s))
+            OR EXISTS (
+                SELECT 1 FROM message_recipients mr
+                 WHERE mr.message_id = m.id
+                   AND mr.recipient_type = 'from'
+                   AND mr.participant_id IN (SELECT value FROM json_each(:%[1]s))))`, paramName)
+		args = append(args, sql.Named(paramName, js))
+	}
+	return sb.String(), args, nil
+}
+
+// recipientAnyGroupClauses preserves the aggregate recipient dimension: one
+// exact address may be present in any of the to, cc, or bcc roles.
+func recipientAnyGroupClauses(groups [][]int64) (string, []any, error) {
+	if len(groups) == 0 {
+		return "", nil, nil
+	}
+	var sb strings.Builder
+	args := make([]any, 0, len(groups))
+	for i, ids := range groups {
+		js, err := idsToJSON(ids)
+		if err != nil {
+			return "", nil, fmt.Errorf("encode recipient_any_grp_%d: %w", i, err)
+		}
+		if !js.Valid {
+			continue
+		}
+		paramName := fmt.Sprintf("recipient_any_grp_%d", i)
+		fmt.Fprintf(&sb, `
+       AND EXISTS (
+            SELECT 1 FROM message_recipients mr
+             WHERE mr.message_id = m.id
+               AND mr.recipient_type IN ('to', 'cc', 'bcc')
+               AND mr.participant_id IN (SELECT value FROM json_each(:%s)))`, paramName)
 		args = append(args, sql.Named(paramName, js))
 	}
 	return sb.String(), args, nil

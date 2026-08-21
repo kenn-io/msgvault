@@ -1042,6 +1042,11 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 			require.NoError(err, "insert cc")
 		}
 	}
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET sender_id = 99 WHERE id = 1`)
+	require.NoError(err, "seed direct sender")
+	_, err = b.mainDB.ExecContext(ctx,
+		`INSERT INTO message_recipients (message_id, recipient_type, participant_id) VALUES (2, 'from', 99)`)
+	require.NoError(err, "seed from sender")
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1069,6 +1074,16 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 	t.Run("CcGroups_singleGroup", func(t *testing.T) {
 		got := matched(t, vector.Filter{CcGroups: [][]int64{{10}}})
 		assert.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "CcGroups=[[10]]: got %v, want {2}", got)
+	})
+	t.Run("RecipientAnyGroups_crosses_to_cc_bcc", func(t *testing.T) {
+		got := matched(t, vector.Filter{RecipientAnyGroups: [][]int64{{10}}})
+		assert.Truef(t, got[1] && got[2] && !got[3] && !got[4],
+			"RecipientAnyGroups=[[10]]: got %v, want {1,2}", got)
+	})
+	t.Run("SenderExactGroups_uses_direct_and_from", func(t *testing.T) {
+		got := matched(t, vector.Filter{SenderExactGroups: [][]int64{{99}}})
+		assert.Truef(t, got[1] && got[2] && !got[3] && !got[4],
+			"SenderExactGroups=[[99]]: got %v, want {1,2}", got)
 	})
 	t.Run("LargerThan", func(t *testing.T) {
 		size := int64(1_000_000)

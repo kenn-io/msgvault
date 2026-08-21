@@ -160,6 +160,53 @@ func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {
 	return mux
 }
 
+func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
+	tests := []struct {
+		name          string
+		stats         map[string]any
+		schemaVersion string
+		wantSearch    bool
+	}{
+		{name: "ready", stats: map[string]any{"vector_status": "ready"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
+		{name: "initializing remains callable", stats: map[string]any{"vector_status": "initializing"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
+		{name: "disabled", stats: map[string]any{"vector_status": "disabled"}, schemaVersion: api.APISchemaVersion},
+		{name: "legacy disabled", stats: map[string]any{"vector_search": map[string]any{"enabled": false}}, schemaVersion: api.APISchemaVersion},
+		{name: "older daemon fails closed", stats: map[string]any{"vector_status": "ready"}, schemaVersion: "2.4.0"},
+		{name: "missing schema version fails closed", stats: map[string]any{"vector_status": "ready"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{"status": "ok"}
+				if tt.schemaVersion != "" {
+					body["api_schema_version"] = tt.schemaVersion
+				}
+				_ = json.NewEncoder(w).Encode(body)
+			})
+			mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tt.stats)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+			engine := daemonclient.NewEngineAdapter(client)
+
+			searcher := tuiSemanticSearcher(context.Background(), client, engine)
+			if tt.wantSearch {
+				assert.NotNil(t, searcher)
+			} else {
+				assert.Nil(t, searcher)
+			}
+		})
+	}
+}
+
 // TestAnalyticsCacheNotice verifies the pre-launch warning keys off the
 // analytics mode the daemon itself reports on /health: only the live-SQL
 // fallback mode warns, while deliberate live SQL (engine = "sql",

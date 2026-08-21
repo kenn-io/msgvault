@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
+
+type recordingSemanticSearcher struct {
+	request  query.SemanticMessageSearchRequest
+	response *query.SemanticMessageSearchResult
+	err      error
+}
+
+func (s *recordingSemanticSearcher) SearchSemanticMessages(
+	_ context.Context,
+	request query.SemanticMessageSearchRequest,
+) (*query.SemanticMessageSearchResult, error) {
+	s.request = request
+	return s.response, s.err
+}
 
 func TestSearchModalOpen(t *testing.T) {
 	model := NewBuilder().
@@ -134,6 +150,171 @@ func TestInlineSearchTabToggle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInlineSearchTabCyclesThroughSemanticWhenEnabled(t *testing.T) {
+	assert := assert.New(t)
+	searcher := &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+	model := NewBuilder().WithLevel(levelMessageList).
+		WithActiveSearch("find the invoice", searchModeDeep).Build()
+	model.semanticSearch = searcher
+	model.drillFilter = query.MessageFilter{Sender: "billing@example.test"}
+
+	m, cmd := applyInlineSearchKey(t, model, keyTab())
+
+	assert.Equal(searchModeSemantic, m.searchMode)
+	assert.Contains(m.searchInput.Placeholder, "fast")
+	assert.NotNil(cmd)
+
+	m, _ = applyInlineSearchKey(t, m, keyTab())
+	assert.Equal(searchModeFast, m.searchMode)
+}
+
+func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
+	conversationID := int64(42)
+	tests := []struct {
+		name   string
+		filter query.MessageFilter
+	}{
+		{name: "sender display name", filter: query.MessageFilter{SenderName: "Billing Team"}},
+		{name: "recipient display name", filter: query.MessageFilter{RecipientName: "Accounts Payable"}},
+		{name: "conversation", filter: query.MessageFilter{ConversationID: &conversationID}},
+		{name: "empty aggregate bucket", filter: query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewSenderNames: true}}},
+		{name: "multiple sources", filter: query.MessageFilter{SourceIDs: []int64{7, 8}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			model := NewBuilder().WithLevel(levelMessageList).
+				WithActiveSearch("find the invoice", searchModeDeep).Build()
+			model.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+			model.drillFilter = tt.filter
+
+			assertions.Contains(model.searchPlaceholder(), "fast")
+			assertions.NotContains(model.searchPlaceholder(), "semantic")
+
+			model, cmd := applyInlineSearchKey(t, model, keyTab())
+			assertions.Equal(searchModeFast, model.searchMode)
+			assertions.NotNil(cmd)
+		})
+	}
+}
+
+func TestInheritedSemanticSearchFallsBackInUnsupportedScope(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).
+		WithActiveSearch("find the invoice", searchModeSemantic).Build()
+	model.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+	model.drillFilter = query.MessageFilter{SenderName: "Billing Team"}
+
+	model.syncSearchScope()
+
+	assert.Equal(t, searchModeFast, model.searchMode)
+	assert.Equal(t, "Billing Team", model.searchFilter.SenderName)
+}
+
+func TestFailedSearchModeChangeDoesNotMislabelStaleResults(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	searcher := &recordingSemanticSearcher{err: errors.New("semantic unavailable")}
+	model := NewBuilder().WithLevel(levelMessageList).
+		WithMessages(query.MessageSummary{ID: 1, Subject: "old deep result"}).
+		WithActiveSearch("find the invoice", searchModeDeep).Build()
+	model.semanticSearch = searcher
+	model.searchQuery = "find the invoice"
+	model.contextStats = &query.TotalStats{MessageCount: 1}
+
+	model, cmd := applyInlineSearchKey(t, model, keyTab())
+
+	require.NotNil(cmd)
+	assert.Equal(searchModeSemantic, model.searchMode)
+	assert.Empty(model.messages, "old deep results must be removed before semantic search")
+	assert.Nil(model.contextStats)
+
+	cmdMsg := cmd()
+	searchResult, ok := cmdMsg.(searchResultsMsg)
+	require.True(ok, "expected semantic search result, got %T", cmdMsg)
+	require.Error(searchResult.err)
+	updated, _ := model.Update(searchResult)
+	model = asModel(t, updated)
+	assert.Empty(model.messages, "failed replacement must not restore stale results")
+}
+
+func TestSemanticSearchPreservesSourceAndAttachmentScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	accountID := int64(7)
+	searcher := &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{
+		Messages: []query.MessageSummary{{
+			ID: 42, Subject: "Annual realtor statement", HasAttachments: true,
+		}},
+		HasMore: true,
+	}}
+	model := NewBuilder().WithLevel(levelMessageList).
+		WithAccounts(query.AccountInfo{ID: accountID, Identifier: "archive@example.test"}).
+		WithAccountFilter(&accountID).Build()
+	model.semanticSearch = searcher
+	model.searchMode = searchModeSemantic
+	model.searchRequestID = 3
+	model.searchFilter = query.MessageFilter{
+		SourceID:            &accountID,
+		Sender:              "agent@example.test",
+		WithAttachmentsOnly: true,
+	}
+
+	msg := model.loadSearch("what was that realtor bill from last year")()
+	result, ok := msg.(searchResultsMsg)
+	require.True(ok, "expected searchResultsMsg, got %T", msg)
+	require.NoError(result.err)
+	assert.Equal(int64(-1), result.totalCount)
+	require.NotNil(searcher.request.Filter.SourceID)
+	assert.Equal(accountID, *searcher.request.Filter.SourceID)
+	assert.Equal("agent@example.test", searcher.request.Filter.Sender)
+	assert.True(searcher.request.Filter.WithAttachmentsOnly)
+	assert.Equal(emailMessageType, searcher.request.Filter.MessageType)
+	assert.Equal(100, searcher.request.Limit)
+	require.Len(result.messages, 1)
+	assert.True(result.messages[0].HasAttachments)
+}
+
+func TestSemanticSearchLabelsItsActiveOnlyPopulation(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).WithSize(120, 20).Build()
+	model.semanticSearch = &recordingSemanticSearcher{}
+	model.searchMode = searchModeSemantic
+	model.inlineSearchActive = true
+	model.searchInput.SetValue("invoice")
+
+	assert.Contains(t, model.View().Content, "Semantic: active messages only")
+
+	model.inlineSearchActive = false
+	model.searchQuery = "invoice"
+	assert.Contains(t, model.View().Content, "Semantic: active messages only")
+}
+
+func TestSemanticSearchDisablesListSorting(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithLevel(levelMessageList).WithSize(120, 20).
+		WithMessages(
+			query.MessageSummary{ID: 2, Subject: "higher-ranked"},
+			query.MessageSummary{ID: 1, Subject: "lower-ranked"},
+		).WithActiveSearch("find the invoice", searchModeSemantic).Build()
+	model.inlineSearchActive = false
+	model.searchQuery = "find the invoice"
+	wantMessages := append([]query.MessageSummary(nil), model.messages...)
+	wantField := model.msgSortField
+	wantDirection := model.msgSortDirection
+
+	for _, sortKey := range []rune{'s', 'r', 'v'} {
+		got, cmd := applyMessageListKeyWithCmd(t, model, key(sortKey))
+		assert.Nil(cmd, "key %q must not reload semantic results", sortKey)
+		assert.Equal(wantMessages, got.messages)
+		assert.Equal(wantField, got.msgSortField)
+		assert.Equal(wantDirection, got.msgSortDirection)
+		assert.False(got.loading)
+	}
+
+	assert.NotContains(model.footerView(), "s sort")
+	assert.NotContains(model.messageListView(), "Date↓")
 }
 
 // TestSpinnerAppearsInViewWhenLoading verifies spinner character appears in rendered view.

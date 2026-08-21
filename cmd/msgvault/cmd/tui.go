@@ -45,7 +45,7 @@ Navigation:
   Esc         Go back
   m           Cycle Email / Texts / Meetings
   g           Cycle aggregate view (Email and Texts)
-  /           Search; find within an open meeting transcript
+  /           Search; Tab adds active-message-only Semantic mode when enabled
   A           Filter by account, or meeting source in Meetings mode
   s           Cycle sort field
   r           Reverse sort direction
@@ -90,12 +90,14 @@ HTTP Mode:
 		}
 
 		// Create and run TUI
+		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
 		model := tui.New(backend.engine, tui.Options{
 			DataDir:          cfg.Data.DataDir,
 			Version:          Version,
 			TextEngine:       textEngine,
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
+			SemanticSearch:   semanticSearch,
 			AnalyticsNotice:  notice,
 		})
 		p := tea.NewProgram(model)
@@ -129,6 +131,28 @@ HTTP Mode:
 		return nil
 	},
 }
+
+func tuiSemanticSearcher(
+	ctx context.Context,
+	client *daemonclient.Client,
+	engine query.Engine,
+) query.SemanticMessageSearcher {
+	if client == nil || engine == nil {
+		return nil
+	}
+	compatible, err := client.SupportsAPISchemaVersion(ctx, semanticSearchMinAPISchemaVersion)
+	if err != nil || !compatible {
+		return nil
+	}
+	available, err := client.VectorSearchAvailable(ctx)
+	if err != nil || !available {
+		return nil
+	}
+	searcher, _ := engine.(query.SemanticMessageSearcher)
+	return searcher
+}
+
+const semanticSearchMinAPISchemaVersion = "2.7.0"
 
 type tuiAttachmentOpener struct {
 	client *daemonclient.Client

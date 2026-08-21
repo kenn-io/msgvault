@@ -290,7 +290,7 @@ func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 	CREATE TABLE messages (
 	    id INTEGER PRIMARY KEY,
 	    subject TEXT,
-	    message_type TEXT NOT NULL DEFAULT 'email',
+	    message_type TEXT DEFAULT 'email',
 	    source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
@@ -530,12 +530,14 @@ func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 
 	rows := []struct {
 		id          int64
-		messageType string
+		messageType any
 	}{
 		{1, "email"},
 		{2, "sms"},
 		{3, "sms"},
 		{4, "mms"},
+		{5, ""},
+		{6, nil},
 	}
 	for _, r := range rows {
 		_, err := main.ExecContext(ctx,
@@ -576,6 +578,22 @@ func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 		got[h.MessageID] = true
 	}
 	assert.Equal(t, map[int64]bool{2: true, 3: true}, got, "message_type=sms hits")
+
+	hits, _, err = b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		Filter:     vector.Filter{MessageTypes: []string{"email"}},
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(err, "FusedSearch legacy email")
+	got = make(map[int64]bool, len(hits))
+	for _, hit := range hits {
+		got[hit.MessageID] = true
+	}
+	assert.Equal(t, map[int64]bool{1: true, 5: true, 6: true}, got,
+		"message_type=email must include typed, legacy empty, and legacy NULL rows")
 }
 
 func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
@@ -611,12 +629,13 @@ func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		FTSTerms:   []string{"topic"},
 		Generation: gid,
+		Filter:     vector.Filter{MessageTypes: []string{"email"}},
 		KPerSignal: 10,
 		Limit:      10,
 		RRFK:       60,
 	})
 	require.NoError(err, "FusedSearch")
-	require.Len(hits, 1, "legacy message should still be searchable")
+	require.Len(hits, 1, "legacy schema should be treated as email")
 	assert.Equal(t, int64(1), hits[0].MessageID, "legacy hit")
 }
 
