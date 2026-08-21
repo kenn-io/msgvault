@@ -64,10 +64,10 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   'vector.embeddings.api_format': entry(
     'search',
     'Embedding API format',
-    'Select the OpenAI-compatible or Voyage contextual API.',
-    { options: ['openai', 'voyage-contextual'] }
+    'Select the OpenAI-compatible, OrcaRouter, or Voyage contextual API.',
+    { options: ['openai', 'orcarouter', 'voyage-contextual'] }
   ),
-  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible or Voyage API base URL.', {
+  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible, OrcaRouter, or Voyage API base URL.', {
     testable: true
   }),
   'vector.embeddings.api_key_env': entry('search', 'Embedding key environment variable', 'Environment variable containing the endpoint key.'),

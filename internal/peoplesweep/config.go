@@ -20,9 +20,18 @@ import (
 const (
 	ProviderOpenAICompatible = "openai_compatible"
 	ProviderCodexAppServer   = "codex_app_server"
+	ProviderOrcaRouter       = "orcarouter"
 
 	CodexExecutionBoundaryV1 = "codex-app-server-packet-only-v1"
 	PacketRendererPolicyV1   = "person-sweep-packet-v1"
+
+	// OrcaRouter defaults for the [people.sweep.provider] block. The
+	// gateway serves the OpenAI-compatible Chat Completions contract, so
+	// the named provider shares the OpenAI-compatible transport.
+	OrcaRouterDefaultEndpoint  = "https://api.orcarouter.ai/v1"
+	OrcaRouterDefaultModel     = "orcarouter/auto"
+	OrcaRouterDefaultAPIKeyEnv = "ORCAROUTER_API_KEY"
+	OrcaRouterSignupURL        = "https://www.orcarouter.ai"
 
 	SourceConversationText  SourceClass = "conversation_text"
 	SourceMeetingText       SourceClass = "meeting_text"
@@ -184,6 +193,20 @@ func (c *Config) ApplyDefaults() {
 			c.Provider.APIKeyEnv = "OPENAI_API_KEY"
 		}
 	}
+	if c.Provider.Kind == ProviderOrcaRouter {
+		// Selecting the gateway by name fills in its defaults so an
+		// operator can point people-sweep at OrcaRouter with a minimal
+		// block. Explicit settings always win.
+		if c.Provider.Endpoint == "" {
+			c.Provider.Endpoint = OrcaRouterDefaultEndpoint
+		}
+		if c.Provider.Model == "" {
+			c.Provider.Model = OrcaRouterDefaultModel
+		}
+		if c.Provider.APIKeyEnv == "" && !c.Provider.AllowAnonymous {
+			c.Provider.APIKeyEnv = OrcaRouterDefaultAPIKeyEnv
+		}
+	}
 	if c.Provider.Kind == ProviderCodexAppServer {
 		setDefaultString(&c.Provider.Executable, "codex")
 		setDefaultString(&c.Provider.ExecutionBoundary, CodexExecutionBoundaryV1)
@@ -203,7 +226,7 @@ func (c Config) Validate() error {
 			c.Provider.RequestTimeout)
 	}
 	switch c.Provider.Kind {
-	case ProviderOpenAICompatible:
+	case ProviderOpenAICompatible, ProviderOrcaRouter:
 		return c.validateOpenAICompatible()
 	case ProviderCodexAppServer:
 		return c.validateCodexAppServer()

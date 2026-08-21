@@ -104,7 +104,7 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("vector.backend", "search", []string{"sqlite-vec", "pgvector"}, func(c *config.Config) string { return c.Vector.Backend }),
 	stringSetting("vector.db_path", "search", nil, func(c *config.Config) string { return c.Vector.DBPath }),
 	boolSetting("vector.skip_extension_create", "search", func(c *config.Config) bool { return c.Vector.SkipExtensionCreate }),
-	stringSetting("vector.embeddings.api_format", "search", []string{"openai", "voyage-contextual"}, func(c *config.Config) string {
+	stringSetting("vector.embeddings.api_format", "search", []string{"openai", "orcarouter", "voyage-contextual"}, func(c *config.Config) string {
 		return string(c.Vector.Embeddings.EffectiveAPIFormat())
 	}),
 	testableStringSetting("vector.embeddings.endpoint", "search", func(c *config.Config) string { return c.Vector.Embeddings.Endpoint }),

@@ -14,6 +14,7 @@ describe('settings catalog', () => {
     expect(settingsCatalog['vector.embeddings.endpoint'].testable).toBe(true);
     expect(settingsCatalog['vector.embeddings.api_format'].options).toEqual([
       'openai',
+      'orcarouter',
       'voyage-contextual'
     ]);
     expect(settingsCatalog['vector.embed.scope.accounts'].group).toBe('search');

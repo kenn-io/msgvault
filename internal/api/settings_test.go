@@ -46,7 +46,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	require.NotNil(byKey["vector.embeddings.api_format"].Value)
 	require.NotNil(byKey["vector.embeddings.api_format"].Value.String)
 	assert.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
-	assert.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
+	assert.Equal([]string{"openai", "orcarouter", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
 	require.NotNil(byKey["vector.people.enabled"].Value)
 	require.NotNil(byKey["vector.people.enabled"].Value.Boolean)
 	assert.False(*byKey["vector.people.enabled"].Value.Boolean)

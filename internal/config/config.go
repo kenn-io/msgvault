@@ -778,6 +778,22 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		// explicitly configured key remains visible to validation and is rejected.
 		cfg.People.Sweep.Provider.APIKeyEnv = ""
 	}
+	if cfg.People.Sweep.Provider.Kind == peoplesweep.ProviderOrcaRouter {
+		// The pre-decode defaults fill in the OpenAI-compatible
+		// endpoint/model/key before the TOML file is read. When the file
+		// names the OrcaRouter gateway without spelling out those fields,
+		// clear the unset ones so the named provider's defaults apply
+		// instead of silently retaining the OpenAI defaults.
+		if !metadata.IsDefined("people", "sweep", "provider", "endpoint") {
+			cfg.People.Sweep.Provider.Endpoint = ""
+		}
+		if !metadata.IsDefined("people", "sweep", "provider", "model") {
+			cfg.People.Sweep.Provider.Model = ""
+		}
+		if !metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
+			cfg.People.Sweep.Provider.APIKeyEnv = ""
+		}
+	}
 	if cfg.People.Sweep.Provider.Kind == peoplesweep.ProviderCodexAppServer {
 		if !metadata.IsDefined("people", "sweep", "provider", "endpoint") {
 			cfg.People.Sweep.Provider.Endpoint = ""
@@ -792,6 +808,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			cfg.People.Sweep.Provider.ExecutionBoundary = peoplesweep.CodexExecutionBoundaryV1
 		}
 	}
+	// Re-apply the people-sweep provider defaults over any zero-valued
+	// fields that survived decode. A config that names the provider
+	// (`kind = "orcarouter"`) without spelling out endpoint/model/key gets
+	// those filled here, mirroring the vector re-apply below.
+	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
