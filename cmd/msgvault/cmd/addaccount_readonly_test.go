@@ -591,6 +591,26 @@ func TestAddAccount_AuthenticatedPreflightRegistersWiderGrant(t *testing.T) {
 	assert.NotContains(out, "Starting browser authorization")
 }
 
+func TestAddAccount_AuthenticatedPreflightRejectsCalendarOnlyToken(t *testing.T) {
+	saveAddAccountFlags(t)
+	calendarOnlyToken := strings.Replace(
+		gmailReadonlyTokenJSON,
+		oauth.ScopeGmailReadonly,
+		oauth.ScopeCalendarReadonly,
+		1,
+	)
+	_, restore := seedTokenEnv(t, calendarOnlyToken)
+	defer restore()
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+
+	out, err := runAddAccountForTest(t,
+		scopeEscalationAccount, "--readonly", "--grant-decided", "--no-default-identity")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, out, "Starting browser authorization")
+	assert.NotContains(t, out, "already authorized")
+}
+
 func TestAddAccount_ImplicitDefaultRejectsKnownDifferentClient(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

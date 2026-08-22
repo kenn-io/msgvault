@@ -174,7 +174,8 @@ func newAddAccountOAuthManager(clientSecretsPath, email string) (*oauth.Manager,
 // grantDecided is true only in the daemon subprocess after an authenticated
 // frontend preflight minted the token. That token can be registered even when
 // the provider returned wider scopes than requested; the frontend already
-// warned about the grant, and reauthorizing cannot narrow it.
+// warned about the grant, and reauthorizing cannot narrow it. The current token
+// must still contain the Gmail read scope the frontend requested.
 func addAccountTokenReusable(
 	mgr *oauth.Manager,
 	email string,
@@ -189,7 +190,10 @@ func addAccountTokenReusable(
 	if needsClientCheck && !mgr.TokenMatchesClient(email) {
 		return false
 	}
-	return grantDecided || addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
+	if grantDecided {
+		return mgr.HasScope(email, oauth.ScopeGmailReadonly)
+	}
+	return addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
 }
 
 // addAccountAuthorizeError decorates an authorization failure with the
