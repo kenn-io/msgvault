@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -975,7 +976,7 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 		// as genuinely poor retrieval instead of erroring.
 		BuildScope: vecCfg.Embed.Scope.BuildScope(),
 	})
-	e.collectVectorStats(vecCfg, backend, vecDBPath, active.ID)
+	e.collectVectorStats(mainDB, vecCfg, backend, vecDBPath, active.ID)
 
 	return func() { _ = backend.Close() }, nil
 }
@@ -1136,7 +1137,7 @@ func requireDisjointSourceIDs(ctx context.Context, db *sql.DB, docKey string, sp
 // size in force for this run, so a score can never be read without knowing
 // what produced it.
 func (e *evaluator) collectVectorStats(
-	vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string, activeGen vector.GenerationID,
+	mainDB *sql.DB, vecCfg vector.Config, backend *sqlitevec.Backend, vecDBPath string, activeGen vector.GenerationID,
 ) {
 	e.prov.VectorEnabled = true
 	e.prov.EmbeddingModel = vecCfg.Embeddings.Model
@@ -1170,7 +1171,87 @@ func (e *evaluator) collectVectorStats(
 		_ = vdb.QueryRowContext(e.ctx,
 			"SELECT COUNT(*) FROM embeddings WHERE generation_id = ?", int64(activeGen)).
 			Scan(&e.prov.IndexedVectors)
+		e.collectVectorCorpusStats(mainDB, vdb, vecCfg, activeGen)
 	}
+}
+
+// collectVectorCorpusStats records the live population an account-scoped
+// vector generation actually searches, when [vector.embed.scope] narrows it
+// below the archive-wide Messages/Conversations collectCorpusStats already
+// recorded.
+//
+// Backend.EmbeddedMessageCount already answers "how many live messages does
+// this generation search" for production coverage reporting, but this
+// function needs the conversation count too, and Backend has no equivalent
+// accessor for that — adding one for a single report field would be more
+// machinery than the risk warrants. Rather than call EmbeddedMessageCount for
+// messages and a second, separately-erroring query for conversations (which
+// can desync under a transient failure on one call but not the other,
+// printing a self-contradictory report), both counts are read from one
+// query: the embedded message ids come from vectors.db, same as
+// IndexedVectors reads, and get intersected once against main.db's live,
+// scoped, stamped population, reading COUNT(DISTINCT id) and
+// COUNT(DISTINCT conversation_id) off the same row.
+//
+// Failures degrade the report rather than the run, same policy as
+// collectCorpusStats: provenance is a courtesy to the reader, not a
+// precondition for scoring.
+func (e *evaluator) collectVectorCorpusStats(
+	mainDB *sql.DB, vdb *sql.DB, vecCfg vector.Config, gen vector.GenerationID,
+) {
+	if mainDB == nil || vdb == nil {
+		return
+	}
+
+	rows, err := vdb.QueryContext(e.ctx,
+		`SELECT DISTINCT message_id FROM embeddings WHERE generation_id = ?`, int64(gen))
+	if err != nil {
+		return
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return
+	}
+
+	blob, err := json.Marshal(ids)
+	if err != nil {
+		return
+	}
+	where := `id IN (SELECT value FROM json_each(?))
+		AND embed_gen = ?
+		AND ` + store.LiveMessagesWhere("", true)
+	args := []any{string(blob), int64(gen)}
+	if len(vecCfg.Embed.Scope.MessageTypes) > 0 {
+		placeholders := make([]string, len(vecCfg.Embed.Scope.MessageTypes))
+		for i, typ := range vecCfg.Embed.Scope.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(vecCfg.Embed.Scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(vecCfg.Embed.Scope.SourceIDs))
+		for i, id := range vecCfg.Embed.Scope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
+	}
+	// One row, one query: reading both counts off the same scan means a
+	// transient failure here can only leave both fields at their zero value
+	// together, never one populated and the other not — a partial success
+	// would print a self-contradictory line no error report explains.
+	_ = mainDB.QueryRowContext(e.ctx,
+		"SELECT COUNT(DISTINCT id), COUNT(DISTINCT conversation_id) FROM messages WHERE "+where, args...).
+		Scan(&e.prov.VectorMessages, &e.prov.VectorConversations)
 }
 
 // sortedCategories returns the category labels seen in a run, sorted for
@@ -1235,6 +1316,11 @@ func (r evalReport) table() {
 	_, _ = fmt.Fprintf(pw, "  corpus\t%d live messages, %d conversations\n",
 		r.prov.Messages, r.prov.Conversations)
 	if r.prov.VectorEnabled {
+		if r.prov.VectorMessages != r.prov.Messages || r.prov.VectorConversations != r.prov.Conversations {
+			_, _ = fmt.Fprintf(pw, "  vector corpus\t%d live messages, %d conversations "+
+				"(embed.scope narrows this generation below the archive)\n",
+				r.prov.VectorMessages, r.prov.VectorConversations)
+		}
 		_, _ = fmt.Fprintf(pw, "  embedding model\t%s (dim %d)\n", r.prov.EmbeddingModel, r.prov.Dimension)
 		_, _ = fmt.Fprintf(pw, "  embedding api format\t%s\n", r.prov.APIFormat)
 		_, _ = fmt.Fprintf(pw, "  embedding endpoint\t%s\n", r.prov.Endpoint)

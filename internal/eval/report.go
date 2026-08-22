@@ -49,6 +49,20 @@ type RunConfig struct {
 	Messages      int64 `json:"messages"`
 	Conversations int64 `json:"conversations"`
 
+	// VectorMessages and VectorConversations report the population an
+	// account-scoped vector generation actually searches, when
+	// [vector.embed.scope] narrows it below the whole archive Messages/
+	// Conversations above describe. A pure-vector run over a scoped
+	// generation can only ever return documents from the accounts that
+	// generation embedded, so the archive-wide count overstates its
+	// searchable corpus the same way an unfiltered table COUNT(*) once
+	// overstated Messages/Conversations themselves. Left at zero when vector
+	// mode did not run, and equal to Messages/Conversations when the
+	// generation's scope covers the whole archive — the report then prints
+	// only the shared corpus line rather than repeating an identical one.
+	VectorMessages      int64 `json:"vector_messages,omitempty"`
+	VectorConversations int64 `json:"vector_conversations,omitempty"`
+
 	// Embeddings / vector index (zero-valued when only --modes fts is run)
 	VectorEnabled  bool   `json:"vector_enabled"`
 	EmbeddingModel string `json:"embedding_model,omitempty"`
