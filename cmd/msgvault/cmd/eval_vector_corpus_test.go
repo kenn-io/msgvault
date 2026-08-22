@@ -165,6 +165,38 @@ func TestAttachVector_MatchesArchiveCorpusWhenScopeCoversIt(t *testing.T) {
 	assert.Equal(ev.prov.Conversations, ev.prov.VectorConversations)
 }
 
+// TestAttachVector_CorpusScopeNormalizesMessageTypeCase is the regression for
+// reading vecCfg.Embed.Scope.MessageTypes directly instead of through
+// BuildScope(): the archive stores message_type lowercase ("email"), but
+// [vector.embed.scope] is user-typed TOML with no case convention enforced.
+// A raw, unnormalized "EMAIL" would match nothing and silently zero the
+// vector corpus even though every message is actually in scope.
+func TestAttachVector_CorpusScopeNormalizesMessageTypeCase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dataDir := t.TempDir()
+	s := seedRankingDivergenceArchiveIn(t, dataDir)
+
+	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
+	c.Data.DataDir = dataDir
+	c.Vector.Embeddings.Dimension = 3
+	c.Vector.Embed.Scope.MessageTypes = []string{"EMAIL"}
+	withTestConfig(t, c)
+
+	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
+
+	ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}
+	cleanup, err := ev.attachVector(ctx, s)
+	require.NoError(err, "attachVector")
+	defer cleanup()
+
+	assert.EqualValues(2, ev.prov.VectorMessages,
+		"an uppercase configured message type must still match the archive's lowercase rows")
+	assert.EqualValues(2, ev.prov.VectorConversations)
+}
+
 // TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp is the
 // regression for requiring messages.embed_gen = gen in the corpus query.
 // Content changes reset a message's embed_gen to mark it for re-embedding,

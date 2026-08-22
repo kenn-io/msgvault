@@ -1270,20 +1270,26 @@ func (e *evaluator) collectVectorCorpusStats(
 	if err != nil {
 		return
 	}
+	// BuildScope, not the raw config fields: it lowercases/trims message
+	// types and drops non-positive source ids the same way the embed and
+	// search paths already do, so a config value like "EMAIL" matches the
+	// lowercase message_type rows the archive actually stores instead of
+	// silently matching nothing.
+	scope := vecCfg.Embed.Scope.BuildScope()
 	where := `id IN (SELECT value FROM json_each(?))
 		AND ` + store.LiveMessagesWhere("", true)
 	args := []any{string(blob)}
-	if len(vecCfg.Embed.Scope.MessageTypes) > 0 {
-		placeholders := make([]string, len(vecCfg.Embed.Scope.MessageTypes))
-		for i, typ := range vecCfg.Embed.Scope.MessageTypes {
+	if len(scope.MessageTypes) > 0 {
+		placeholders := make([]string, len(scope.MessageTypes))
+		for i, typ := range scope.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
 	}
-	if len(vecCfg.Embed.Scope.SourceIDs) > 0 {
-		placeholders := make([]string, len(vecCfg.Embed.Scope.SourceIDs))
-		for i, id := range vecCfg.Embed.Scope.SourceIDs {
+	if len(scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(scope.SourceIDs))
+		for i, id := range scope.SourceIDs {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
