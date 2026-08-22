@@ -11661,7 +11661,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["PersonMergeRequiredError"];
+                    "application/json": components["schemas"]["PersonMergeRequiredError"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -11760,7 +11760,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["PersonMergeRequiredError"];
+                    "application/json": components["schemas"]["PersonMergeRequiredError"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
