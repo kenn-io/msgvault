@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -714,6 +715,9 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	if err := runStartupMigrations(s); err != nil {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
+	if err := requireFTS5ForModes(modes, s.FTS5Available()); err != nil {
+		return err
+	}
 	// Every score this run produces rests on one archive-wide fact about the
 	// chosen key: that its ids name one document each. Establish it before the
 	// vector path is opened and before the first topic is scored, so a run that
@@ -885,6 +889,42 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 		return nil, false, errors.New("--modes is empty")
 	}
 	return modes, needVec, nil
+}
+
+// requireFTS5ForModes stops the run before its first topic when --modes fts
+// is requested against an archive without FTS5, the same "a run that cannot
+// be trusted stops instead of printing a number" precondition
+// requireDisjointSourceIDs establishes for --doc-key.
+//
+// --modes fts scores through Store.SearchMessagesQueryContext (see
+// rankedFTS) expecting its production BM25 relevance ranking. A binary
+// built with the sqlite_vec tag but not fts5 — or one whose FTS5 shadow
+// tables failed to initialize — has that same call silently fall back to a
+// LIKE scan ordered by recency instead of erroring, so the run would score a
+// date sort while the report still labels the mode "fts" and claims BM25
+// ranking. --modes hybrid needs no equivalent guard: its BM25 leg runs a
+// direct messages_fts MATCH inside the vector backend's fused query, which
+// errors outright ("no such table: messages_fts") rather than degrading
+// silently when FTS5 is unavailable.
+//
+// This only covers the startup state: searchMessagesQueryNoFTS documents a
+// second, narrower fallback inside Store itself, forcing the same LIKE
+// branch mid-run if an FTS query that started fine ever errors later
+// (shadow-table corruption, an extension fault). Catching that would mean
+// either threading a "did this call degrade" signal back through
+// Store.SearchMessagesQueryContext — a production API several daemon
+// handlers share, not an eval-only seam — or re-probing FTS5Available()
+// once per topic, which cannot detect a failure the query itself hasn't hit
+// yet either. Both are more machinery than a rare, already-defensive
+// mid-run fallback warrants; this guard catches the case that is actually
+// common (a build or archive that never had FTS5 to begin with).
+func requireFTS5ForModes(modes []string, fts5Available bool) error {
+	if fts5Available || !slices.Contains(modes, string(hybrid.ModeFTS)) {
+		return nil
+	}
+	return errors.New("--modes fts needs FTS5, but this archive's FTS5 index is unavailable " +
+		"(binary built without the fts5 tag, or the shadow tables failed to initialize); " +
+		"rebuild with -tags \"fts5 sqlite_vec\" or drop fts from --modes")
 }
 
 // attachVector wires the sqlite-vec backend and hybrid engine onto the

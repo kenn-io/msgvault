@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // parsedEvalModes runs the flag parser and returns the accepted modes as the
@@ -81,4 +83,30 @@ func TestParseEvalModes_AcceptsTheFullSetAndRejectsAnEmptyOne(t *testing.T) {
 	_, _, err := parseEvalModes(" , ,")
 	require.Error(err, "a list of nothing but separators names no mode")
 	assert.Contains(err.Error(), "--modes is empty")
+}
+
+// TestRequireFTS5ForModes_RejectsFTSModeWithoutFTS5 is the regression for a
+// run that would otherwise silently score a LIKE-and-recency fallback while
+// its own report still calls the mode "fts" and implies BM25 ranking.
+func TestRequireFTS5ForModes_RejectsFTSModeWithoutFTS5(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	err := requireFTS5ForModes([]string{evalTestMode}, false)
+	require.Error(err, "fts without FTS5 must stop the run, not silently degrade it")
+	assert.Contains(err.Error(), "FTS5")
+	assert.Contains(err.Error(), "--modes fts")
+}
+
+// TestRequireFTS5ForModes_AllowsWhatDoesNotNeedFTS5 pins the two ways this
+// guard must stay out of the way: fts5 actually being available, and a
+// --modes list that never asked for fts in the first place (vector/hybrid
+// alone must not be blocked by an FTS5 outage they don't depend on).
+func TestRequireFTS5ForModes_AllowsWhatDoesNotNeedFTS5(t *testing.T) {
+	require := require.New(t)
+
+	require.NoError(requireFTS5ForModes([]string{evalTestMode, string(hybrid.ModeVector)}, true),
+		"fts is fine once FTS5 is actually available")
+	require.NoError(requireFTS5ForModes([]string{string(hybrid.ModeVector), string(hybrid.ModeHybrid)}, false),
+		"neither mode here reads through Store's FTS path")
 }
