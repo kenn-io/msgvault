@@ -390,10 +390,15 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/explore/match-counts",
 	"/api/v1/explore/files",
 	"/api/v1/files/search",
+	// Visual attachment search reads the committed vector index and calls
+	// the embedding provider; it mutates nothing, and gating it would hold
+	// pure reads (and the mutation gate) hostage to provider latency.
+	"/api/v1/search/attachments/visual",
 	"/api/v1/files/groups",
-	"/api/v1/people/search",
-	"/api/v1/people/{id}/summary",
-	"/api/v1/people/{id}/timeline",
+	"/api/v1/participants/search",
+	"/api/v1/participants/{id}/summary",
+	"/api/v1/participants/{id}/timeline",
+	"/api/v1/participants/{id}/files/search",
 	"/api/v1/people/{id}/files/search",
 	"/api/v1/domains/search",
 	"/api/v1/domains/{domain}/summary",

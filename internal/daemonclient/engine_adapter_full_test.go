@@ -622,65 +622,22 @@ func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("hash-42", att.ContentHash, "ContentHash")
 }
 
-func TestEngineGetGmailIDsByFilterUsesAuthoritativeEndpoint(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/messages/gmail-ids", r.URL.Path, "path")
-		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
-		assert.Empty(r.URL.Query().Get("offset"), "offset must not be client-paginated")
-		assert.Equal("10", r.URL.Query().Get("limit"), "limit remains a staging safety cap")
-		assert.Empty(r.URL.Query().Get("sort"), "sort must not affect ID enumeration")
-		assert.Empty(r.URL.Query().Get("direction"), "direction must not affect ID enumeration")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"gmail_ids": []string{"gm-1", "gm-2", "gm-3"},
-		})
-	}))
-	defer srv.Close()
-
-	store := newTestStore(srv, "")
-	engine := NewEngineAdapter(store)
-
-	ids, err := engine.GetGmailIDsByFilter(
-		context.Background(),
-		query.MessageFilter{
-			Sender:     "alice@example.com",
-			Pagination: query.Pagination{Offset: 50, Limit: 10},
-			Sorting:    query.MessageSorting{Field: query.MessageSortBySubject, Direction: query.SortAsc},
-		},
-	)
-	require.NoError(err, "GetGmailIDsByFilter")
-
-	assert.Equal([]string{"gm-1", "gm-2", "gm-3"}, ids)
-}
-
-func TestEngineGetGmailIDsByFilterUsesGeneratedClientAdapter(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
+func TestEngineGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/messages/gmail-ids", r.URL.Path, "path")
-		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
-		assert.Equal("sms", r.URL.Query().Get("message_type"), "message_type")
-		assert.Equal("true", r.URL.Query().Get("hide_deleted"), "hide_deleted")
 		writeJSONResponse(t, w, map[string]any{
-			"gmail_ids": []string{"gm-1", "gm-2"},
+			"gmail_ids": []string{"shared-id"},
+			"targets": []map[string]any{{
+				"message_id": 7, "source_id": 42, "source_type": "gmail",
+				"source_identifier": "account@example.invalid", "source_message_id": "shared-id",
+			}},
 		})
 	})
-
-	engine := NewEngineAdapter(store)
-
-	ids, err := engine.GetGmailIDsByFilter(
-		context.Background(),
-		query.MessageFilter{
-			Sender:                "alice@example.com",
-			MessageType:           "sms",
-			HideDeletedFromSource: true,
-		},
-	)
-	require.NoError(err, "GetGmailIDsByFilter")
-	assert.Equal([]string{"gm-1", "gm-2"}, ids)
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, []query.DeletionTarget{{
+		MessageID: 7, SourceID: 42, SourceType: "gmail",
+		SourceIdentifier: "account@example.invalid", SourceMessageID: "shared-id",
+	}}, targets)
 }
 
 func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
@@ -965,24 +922,30 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineGetTotalStatsOmitsSearchScopeByDefault(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/stats/total", r.URL.Path, "path")
+		assert.Equal("/api/v1/stats/total", r.URL.Path, "path")
 		_, hasSearchScope := r.URL.Query()["search_scope"]
-		assert.False(t, hasSearchScope, "default stats must not opt into search scope")
+		assert.False(hasSearchScope, "default stats must not opt into search scope")
 		writeJSONResponse(t, w, map[string]any{"message_count": 5})
 	})
 
 	engine := NewEngineAdapter(store)
 	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{SearchQuery: "urgent"})
-	require.NoError(t, err, "GetTotalStats")
-	require.NotNil(t, stats, "stats")
-	assert.Equal(t, int64(5), stats.MessageCount)
+	require.NoError(err, "GetTotalStats")
+	require.NotNil(stats, "stats")
+	assert.Equal(int64(5), stats.MessageCount)
 }
 
 func TestEngineGetTotalStatsForwardsSourceIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/stats/total", r.URL.Path, "path")
-		assert.ElementsMatch(t, []string{"8", "7", "8"}, r.URL.Query()["source_ids"], "source_ids")
+		assert.Equal("/api/v1/stats/total", r.URL.Path, "path")
+		assert.ElementsMatch([]string{"8", "7", "8"}, r.URL.Query()["source_ids"], "source_ids")
 		writeJSONResponse(t, w, map[string]any{
 			"message_count":        2,
 			"applied_search_scope": true,
@@ -996,9 +959,9 @@ func TestEngineGetTotalStatsForwardsSourceIDs(t *testing.T) {
 		SearchQuery: "urgent",
 		SearchScope: true,
 	})
-	require.NoError(t, err, "GetTotalStats")
-	require.NotNil(t, stats, "stats")
-	assert.Equal(t, int64(2), stats.MessageCount)
+	require.NoError(err, "GetTotalStats")
+	require.NotNil(stats, "stats")
+	assert.Equal(int64(2), stats.MessageCount)
 }
 
 func TestEngineGetTotalStatsRequiresCapabilityEchoes(t *testing.T) {
@@ -1458,26 +1421,29 @@ func TestEngineSearchMethodsRejectParsedQueryErrorsBeforeHTTP(t *testing.T) {
 }
 
 func TestEngineSearchPreservesExactTimeBounds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	after := time.Date(2024, 2, 1, 10, 30, 15, 123456789,
 		time.FixedZone("UTC-5", -5*60*60))
 	before := time.Date(2024, 3, 1, 0, 0, 0, 0,
 		time.FixedZone("UTC+2", 2*60*60))
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		got := search.Parse(r.URL.Query().Get("q"))
-		if !assert.NoError(t, got.Err()) ||
-			!assert.NotNil(t, got.AfterDate) ||
-			!assert.NotNil(t, got.BeforeDate) {
+		if !assert.NoError(got.Err()) ||
+			!assert.NotNil(got.AfterDate) ||
+			!assert.NotNil(got.BeforeDate) {
 			http.Error(w, "invalid exact-time query", http.StatusBadRequest)
 			return
 		}
-		assert.True(t, after.Equal(*got.AfterDate), "after instant")
-		assert.True(t, before.Equal(*got.BeforeDate), "before instant")
+		assert.True(after.Equal(*got.AfterDate), "after instant")
+		assert.True(before.Equal(*got.BeforeDate), "before instant")
 		_, wantAfterOffset := after.Zone()
 		_, gotAfterOffset := got.AfterDate.Zone()
 		_, wantBeforeOffset := before.Zone()
 		_, gotBeforeOffset := got.BeforeDate.Zone()
-		assert.Equal(t, wantAfterOffset, gotAfterOffset, "after timezone offset")
-		assert.Equal(t, wantBeforeOffset, gotBeforeOffset, "before timezone offset")
+		assert.Equal(wantAfterOffset, gotAfterOffset, "after timezone offset")
+		assert.Equal(wantBeforeOffset, gotBeforeOffset, "before timezone offset")
 		writeJSONResponse(t, w, map[string]any{
 			"query": r.URL.Query().Get("q"), "messages": []map[string]any{},
 			"count": 0, "has_more": false, "offset": 0, "limit": 10,
@@ -1488,7 +1454,7 @@ func TestEngineSearchPreservesExactTimeBounds(t *testing.T) {
 	_, err := engine.Search(context.Background(), &search.Query{
 		TextTerms: []string{"needle"}, AfterDate: &after, BeforeDate: &before,
 	}, 10, 0)
-	require.NoError(t, err)
+	require.NoError(err)
 }
 
 func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {

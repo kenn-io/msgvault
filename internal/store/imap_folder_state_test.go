@@ -27,8 +27,8 @@ func TestIMAPFolderStates_RoundTrip(t *testing.T) {
 	require.NoError(err)
 
 	saved := []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 1234, UIDNext: 501},
-		{Mailbox: "Archive/2009", UIDValidity: 99, UIDNext: 100000},
+		{Mailbox: "INBOX", UIDValidity: 1234, UIDNext: 501, HighestModSeq: 9001},
+		{Mailbox: "Archive/2009", UIDValidity: 99, UIDNext: 100000, HighestModSeq: 42},
 	}
 	require.NoError(st.UpsertIMAPFolderStates(source.ID, saved))
 
@@ -44,19 +44,19 @@ func TestIMAPFolderStates_UpsertOverwrites(t *testing.T) {
 	require.NoError(err)
 
 	require.NoError(st.UpsertIMAPFolderStates(source.ID, []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 10},
-		{Mailbox: "Sent", UIDValidity: 2, UIDNext: 20},
+		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 10, HighestModSeq: 100},
+		{Mailbox: "Sent", UIDValidity: 2, UIDNext: 20, HighestModSeq: 200},
 	}))
 	// INBOX advances; Sent is untouched by this save.
 	require.NoError(st.UpsertIMAPFolderStates(source.ID, []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 15},
+		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 15, HighestModSeq: 150},
 	}))
 
 	states, err := st.GetIMAPFolderStates(source.ID)
 	require.NoError(err)
 	assert.ElementsMatch(t, []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 15},
-		{Mailbox: "Sent", UIDValidity: 2, UIDNext: 20},
+		{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 15, HighestModSeq: 150},
+		{Mailbox: "Sent", UIDValidity: 2, UIDNext: 20, HighestModSeq: 200},
 	}, states)
 }
 
@@ -84,7 +84,7 @@ func TestIMAPFolderStates_MaxUint32Values(t *testing.T) {
 	require.NoError(err)
 
 	saved := []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 4294967295, UIDNext: 4294967295},
+		{Mailbox: "INBOX", UIDValidity: 4294967295, UIDNext: 4294967295, HighestModSeq: ^uint64(0)},
 	}
 	require.NoError(st.UpsertIMAPFolderStates(source.ID, saved))
 

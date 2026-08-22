@@ -118,11 +118,13 @@ func newDiscordImporterForSource(
 
 func discordImportOptions(source *store.Source, deps discordCommandDeps, full bool, after time.Time, progress func(string)) discord.ImportOptions {
 	provider := deps.providerConfig()
+	policy := provider.MediaPolicy(source.Identifier)
 	return discord.ImportOptions{
 		GuildID:          source.Identifier,
 		GuildConfig:      provider.Guilds[source.Identifier],
 		AttachmentsDir:   deps.attachmentsDir(),
-		MaxMediaBytes:    provider.MaxMediaBytes,
+		MaxMediaBytes:    policy.MaxBytes,
+		MediaPolicy:      policy,
 		EditRescanWindow: provider.EditRescanWindow,
 		After:            after,
 		Full:             full,

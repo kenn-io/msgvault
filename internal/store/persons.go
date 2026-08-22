@@ -169,6 +169,16 @@ func (s *Store) DeletePerson(id, expectedRevision int64) error {
 // ErrPersonNotFound if no such person exists and ErrPersonRevisionConflict
 // if expectedRevision is stale.
 func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision int64) error {
+	// The deletion locks this person and then, through the counterpart bump,
+	// everyone they share an edge with; relationship writes bump the same
+	// rows in a different order. On PostgreSQL the two can deadlock, so a
+	// deadlock victim starts over from a clean transaction.
+	return retryContendedWriteErr(ctx, s, "delete person", func() error {
+		return s.deletePersonOnce(ctx, id, expectedRevision)
+	})
+}
+
+func (s *Store) deletePersonOnce(ctx context.Context, id, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -224,6 +234,12 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 			IdentityMatchContactPoint, id,
 		); err != nil {
 			return fmt.Errorf("delete identity match candidates for person %d: %w", id, err)
+		}
+		// Before the cascade: the edges this person stands at either end of
+		// and the reviews that matched them are projected onto the surviving
+		// counterpart's card, which the deletion otherwise never touches.
+		if err := s.bumpPersonDeletionCounterpartVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
 		}
 		var deletedID int64
 		err = tx.QueryRowContext(ctx,
@@ -284,6 +300,19 @@ func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
 	displayName = normalizePersonDisplayName(displayName)
+	// The rename locks the identity row, this person, and then every
+	// relationship counterpart; relationship writes lock the same person
+	// rows in their own order. On PostgreSQL the two can deadlock, so a
+	// deadlock victim starts over from a clean transaction.
+	return retryContendedWrite(ctx, s, "update person display name",
+		func() (*Person, error) {
+			return s.updatePersonDisplayNameOnce(ctx, id, expectedRevision, displayName)
+		})
+}
+
+func (s *Store) updatePersonDisplayNameOnce(
+	ctx context.Context, id, expectedRevision int64, displayName *string,
+) (*Person, error) {
 	var person *Person
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
@@ -292,7 +321,9 @@ func (s *Store) UpdatePersonDisplayNameContext(
 		var updatedID int64
 		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
 			UPDATE persons
-			SET display_name = ?, revision = revision + 1, updated_at = %s
+			SET display_name = ?, revision = revision + 1,
+			    vcard_projection_revision = vcard_projection_revision + 1,
+			    updated_at = %s
 			WHERE id = ? AND revision = ?
 			RETURNING id
 		`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
@@ -301,6 +332,11 @@ func (s *Store) UpdatePersonDisplayNameContext(
 		}
 		if err != nil {
 			return fmt.Errorf("update person %d: %w", id, err)
+		}
+		if err := s.bumpDisplayNameCounterpartVCardProjectionsTx(
+			ctx, tx, updatedID,
+		); err != nil {
+			return err
 		}
 		person, err = s.getPersonTx(ctx, tx, updatedID)
 		return err
@@ -529,20 +565,21 @@ func (s *Store) mergePersonBindingsTx(
 	return removed > 0 || filled, nil
 }
 
+// bumpPersonRevisionsTx advances the person record's compare-and-swap token
+// after a component or binding write. Every such write also changes the
+// person's native vCard projection, so the projection revision moves in the
+// same statement — keeping the two together means a new profile-component
+// writer cannot pick up the CAS bump and silently miss the projection one.
 func (s *Store) bumpPersonRevisionsTx(ctx context.Context, tx *loggedTx, personIDs ...int64) error {
-	slices.Sort(personIDs)
-	personIDs = slices.Compact(personIDs)
-	if len(personIDs) == 0 {
+	placeholders, args := sortedIDPlaceholders(personIDs)
+	if placeholders == "" {
 		return nil
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(personIDs)), ",")
-	args := make([]any, len(personIDs))
-	for i, id := range personIDs {
-		args[i] = id
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE persons
-		SET revision = revision + 1, updated_at = %s
+		SET revision = revision + 1,
+		    vcard_projection_revision = vcard_projection_revision + 1,
+		    updated_at = %s
 		WHERE id IN (%s)
 	`, s.dialect.Now(), placeholders), args...); err != nil {
 		return fmt.Errorf("bump person revisions: %w", err)

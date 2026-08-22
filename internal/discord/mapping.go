@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -31,6 +32,7 @@ type conversationMetadata struct {
 	Topic              string          `json:"topic,omitempty"`
 	NSFW               bool            `json:"nsfw,omitempty"`
 	OwnerID            string          `json:"owner_id,omitempty"`
+	MemberCount        int             `json:"member_count,omitempty"`
 	AppliedTagIDs      []string        `json:"applied_tag_ids,omitempty"`
 	Thread             *ThreadMetadata `json:"thread,omitempty"`
 }
@@ -46,6 +48,7 @@ func mapConversation(channel *Channel) (mappedConversation, error) {
 		Topic:              channel.Topic,
 		NSFW:               channel.NSFW,
 		OwnerID:            channel.OwnerID,
+		MemberCount:        channel.MemberCount,
 		AppliedTagIDs:      channel.AppliedTags,
 		Thread:             channel.ThreadMetadata,
 	})
@@ -444,6 +447,7 @@ func mapAttachments(attachments []Attachment) []store.AttachmentRef {
 			SourceAttachmentID: "discord:" + attachment.ID,
 			MediaType:          attachmentMediaType(attachment.ContentType),
 			DurationMS:         int64(math.Round(attachment.Duration * 1000)),
+			State:              attachmentpolicy.StatePending,
 		}
 		if attachment.Width != nil {
 			ref.Width = int64(*attachment.Width)

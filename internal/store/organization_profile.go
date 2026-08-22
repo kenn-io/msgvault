@@ -153,6 +153,14 @@ type OrganizationProfileInput struct {
 	Categories    []OrganizationCategoryInput
 }
 
+const (
+	MaxOrganizationProfileValues           = 200
+	MaxOrganizationProfileMediaBytes int64 = 32 << 20
+)
+
+var ErrOrganizationProfileTooLarge = errors.New(
+	"organization profile exceeds the aggregate size limit")
+
 type preparedOrganizationContact struct {
 	input                OrganizationContactPointInput
 	serviceID            any
@@ -163,14 +171,15 @@ type preparedOrganizationContact struct {
 }
 
 type preparedOrganizationProfile struct {
-	input          OrganizationProfileInput
-	nameKeys       []string
-	identifierKeys []string
-	addressKeys    []string
-	contacts       []preparedOrganizationContact
-	contactKeys    []string
-	mediaKeys      []string
-	categoryKeys   []string
+	input              OrganizationProfileInput
+	explicitMediaBytes int64
+	nameKeys           []string
+	identifierKeys     []string
+	addressKeys        []string
+	contacts           []preparedOrganizationContact
+	contactKeys        []string
+	mediaKeys          []string
+	categoryKeys       []string
 }
 
 func (s *Store) GetOrganizationProfileContext(
@@ -199,9 +208,22 @@ func (s *Store) ReplaceOrganizationProfileContext(
 	if err != nil {
 		return nil, err
 	}
+	// Same lock order as ReplaceOrganizationContext (organization, then its
+	// employed persons), so the same employment-write deadlock applies and the
+	// same retry resolves it.
+	return retryContendedWrite(ctx, s, "replace organization profile",
+		func() (*OrganizationProfile, error) {
+			return s.replaceOrganizationProfileOnce(ctx, id, expectedRevision, prepared)
+		})
+}
+
+func (s *Store) replaceOrganizationProfileOnce(
+	ctx context.Context, id, expectedRevision int64,
+	prepared *preparedOrganizationProfile,
+) (*OrganizationProfile, error) {
 	now := time.Now().UTC()
 	var profile *OrganizationProfile
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE organizations
 			SET revision = revision + 1, updated_at = %s
@@ -216,6 +238,9 @@ func (s *Store) ReplaceOrganizationProfileContext(
 		}
 		if changed == 0 {
 			return organizationMutableCASMissTx(ctx, tx, id, expectedRevision)
+		}
+		if err := s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
 		}
 		organization, err := getOrganizationTx(ctx, tx, id)
 		if err != nil {
@@ -234,10 +259,38 @@ func (s *Store) ReplaceOrganizationProfileContext(
 	return profile, err
 }
 
+func validateOrganizationProfileLimits(input OrganizationProfileInput) (int64, error) {
+	valueCount := len(input.Names) + len(input.Identifiers) + len(input.Addresses) +
+		len(input.ContactPoints) + len(input.Media) + len(input.Categories)
+	if valueCount > MaxOrganizationProfileValues {
+		return 0, fmt.Errorf(
+			"%w: profile contains %d values; maximum is %d",
+			ErrOrganizationProfileTooLarge, valueCount, MaxOrganizationProfileValues)
+	}
+
+	var explicitMediaBytes int64
+	for i := range input.Media {
+		size := int64(len(input.Media[i].Data))
+		if size > MaxOrganizationProfileMediaBytes-explicitMediaBytes {
+			return 0, fmt.Errorf(
+				"%w: inline media exceeds %d bytes",
+				ErrOrganizationProfileTooLarge, MaxOrganizationProfileMediaBytes)
+		}
+		explicitMediaBytes += size
+	}
+	return explicitMediaBytes, nil
+}
+
 func (s *Store) prepareOrganizationProfileContext(
 	ctx context.Context, input OrganizationProfileInput,
 ) (*preparedOrganizationProfile, error) {
-	prepared := &preparedOrganizationProfile{input: input}
+	explicitMediaBytes, err := validateOrganizationProfileLimits(input)
+	if err != nil {
+		return nil, err
+	}
+	prepared := &preparedOrganizationProfile{
+		input: input, explicitMediaBytes: explicitMediaBytes,
+	}
 	nameSeen := map[string]int{}
 	for i := range prepared.input.Names {
 		row := &prepared.input.Names[i]
@@ -425,7 +478,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationNameInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationName, desired OrganizationNameInput) bool {
@@ -450,7 +504,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationIdentifierInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationIdentifier, desired OrganizationIdentifierInput) bool {
@@ -474,7 +529,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationAddressInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationAddress, desired OrganizationAddressInput) bool {
@@ -520,7 +576,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row preparedOrganizationContact, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.input.Envelope.VCard, Source: row.input.Envelope.Source,
-				SourceRef: row.input.Envelope.SourceRef,
+				SourceRef:         row.input.Envelope.SourceRef,
+				SourceResourceUID: row.input.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationContactPoint, desired preparedOrganizationContact) bool {
@@ -545,7 +602,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		return err
 	}
 	if err := s.resolveOrganizationMediaRetentionTx(
-		ctx, tx, current.Media, prepared.input.Media); err != nil {
+		ctx, tx, current.Media, prepared.input.Media, prepared.explicitMediaBytes,
+	); err != nil {
 		return err
 	}
 	if err := reconcileOrganizationCollection(ctx, tx, s, organizationID,
@@ -559,7 +617,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationMediaInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationMedia, desired OrganizationMediaInput) bool {
@@ -588,7 +647,8 @@ func (s *Store) reconcileOrganizationProfileTx(
 		func(row OrganizationCategoryInput, _ int) string {
 			return organizationVCardIdentityKey(ValueEnvelope{
 				VCard: row.Envelope.VCard, Source: row.Envelope.Source,
-				SourceRef: row.Envelope.SourceRef,
+				SourceRef:         row.Envelope.SourceRef,
+				SourceResourceUID: row.Envelope.SourceResourceUID,
 			})
 		},
 		func(current OrganizationCategory, desired OrganizationCategoryInput) bool {
@@ -696,6 +756,7 @@ func reconcileOrganizationCollection[C any, D any](
 func organizationValueDiscriminator(env ValueEnvelopeInput) string {
 	identity := organizationVCardIdentityKey(ValueEnvelope{
 		VCard: env.VCard, Source: env.Source, SourceRef: env.SourceRef,
+		SourceResourceUID: env.SourceResourceUID,
 	})
 	ordinal := ""
 	if env.Ordinal != nil {
@@ -708,7 +769,7 @@ func organizationValueDiscriminator(env ValueEnvelopeInput) string {
 }
 
 // organizationVCardIdentityKey returns the identity that a source can keep
-// stable while the value itself changes. The database uses the same four
+// stable while the value itself changes. The database uses the same five
 // fields for its active property-identity uniqueness indexes.
 func organizationVCardIdentityKey(env ValueEnvelope) string {
 	if env.SourceRef == nil || *env.SourceRef == "" ||
@@ -716,7 +777,8 @@ func organizationVCardIdentityKey(env ValueEnvelope) string {
 		return ""
 	}
 	return strings.Join([]string{
-		string(env.Source), *env.SourceRef, env.VCard.Property, *env.VCard.PropID,
+		string(env.Source), *env.SourceRef, derefString(env.SourceResourceUID),
+		env.VCard.Property, *env.VCard.PropID,
 	}, "\x1f")
 }
 
@@ -732,6 +794,7 @@ func organizationEnvelopeMatches(current ValueEnvelope, desired ValueEnvelopeInp
 		!equalVCardIdentity(current.VCard, desired.VCard) ||
 		current.Source != desired.Source ||
 		!equalOptionalString(current.SourceRef, desired.SourceRef) ||
+		!equalOptionalString(current.SourceResourceUID, desired.SourceResourceUID) ||
 		!equalOptionalFloat(current.Confidence, desired.Confidence) {
 		return false
 	}
@@ -1073,30 +1136,69 @@ func organizationMediaInputHash(input OrganizationMediaInput) string {
 func (s *Store) resolveOrganizationMediaRetentionTx(
 	ctx context.Context, tx *loggedTx,
 	currentMedia []OrganizationMedia, inputs []OrganizationMediaInput,
+	explicitMediaBytes int64,
 ) error {
+	type retentionSource struct {
+		id       int64
+		byteSize *int64
+	}
+	sources := make(map[string]retentionSource, len(currentMedia))
+	for _, row := range currentMedia {
+		if !row.HasData || row.ContentHash == nil {
+			continue
+		}
+		if _, exists := sources[*row.ContentHash]; !exists {
+			sources[*row.ContentHash] = retentionSource{
+				id: row.Envelope.ID, byteSize: row.ByteSize,
+			}
+		}
+	}
+
+	retainedBytes := explicitMediaBytes
 	for i := range inputs {
 		input := &inputs[i]
 		if len(input.Data) > 0 || input.ContentHash == nil {
 			continue
 		}
-		var sourceID int64
-		for _, row := range currentMedia {
-			if row.HasData && row.ContentHash != nil &&
-				*row.ContentHash == *input.ContentHash {
-				sourceID = row.Envelope.ID
-				break
-			}
-		}
-		if sourceID == 0 {
+		source, exists := sources[*input.ContentHash]
+		if !exists {
 			return fmt.Errorf(
 				"%w: media[%d].content_hash %q does not match an active media row; re-send data or drop content_hash",
 				ErrOrganizationInvalid, i, *input.ContentHash)
 		}
-		var data []byte
-		if err := tx.QueryRowContext(ctx,
-			`SELECT data FROM organization_media WHERE id = ?`, sourceID,
-		).Scan(&data); err != nil {
-			return fmt.Errorf("load retained media %d content: %w", sourceID, err)
+		if source.byteSize == nil || *source.byteSize <= 0 {
+			return fmt.Errorf(
+				"active organization media %d has invalid byte_size", source.id)
+		}
+		if *source.byteSize > MaxOrganizationProfileMediaBytes-retainedBytes {
+			return fmt.Errorf(
+				"%w: inline media exceeds %d bytes",
+				ErrOrganizationProfileTooLarge, MaxOrganizationProfileMediaBytes)
+		}
+		retainedBytes += *source.byteSize
+	}
+
+	dataByHash := make(map[string][]byte, len(sources))
+	for i := range inputs {
+		input := &inputs[i]
+		if len(input.Data) > 0 || input.ContentHash == nil {
+			continue
+		}
+		contentHash := *input.ContentHash
+		data, loaded := dataByHash[contentHash]
+		if !loaded {
+			source := sources[contentHash]
+			if err := tx.QueryRowContext(ctx,
+				`SELECT data FROM organization_media WHERE id = ?`, source.id,
+			).Scan(&data); err != nil {
+				return fmt.Errorf("load retained media %d content: %w", source.id, err)
+			}
+			if int64(len(data)) != *source.byteSize {
+				return fmt.Errorf(
+					"active organization media %d byte_size does not match stored data",
+					source.id)
+			}
+			dataByHash[contentHash] = data
 		}
 		input.Data = data
 	}
@@ -1159,12 +1261,15 @@ func organizationMediaRowFingerprint(row OrganizationMedia) string {
 	}, "\x1f")
 }
 
-type organizationProfileQuerier interface {
+// contextRowsQuerier is the multi-row read surface shared by *loggedTx and the
+// store's own database handle, so a listing can run inside a caller's
+// transaction or on its own.
+type contextRowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 }
 
 func (s *Store) loadOrganizationProfileContext(
-	ctx context.Context, queryer organizationProfileQuerier,
+	ctx context.Context, queryer contextRowsQuerier,
 	organization *Organization, includeSuperseded bool,
 ) (*OrganizationProfile, error) {
 	profile := &OrganizationProfile{Organization: *organization}
@@ -1204,7 +1309,7 @@ func (s *Store) loadOrganizationProfileContext(
 }
 
 func queryOrganizationRows[T any](
-	ctx context.Context, queryer organizationProfileQuerier, base string,
+	ctx context.Context, queryer contextRowsQuerier, base string,
 	organizationID int64, includeSuperseded bool,
 	scan func(scanner) (*T, error),
 ) ([]T, error) {

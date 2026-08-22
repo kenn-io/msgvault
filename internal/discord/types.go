@@ -11,6 +11,7 @@ type API interface {
 	Me(ctx context.Context) (User, error)
 	Guilds(ctx context.Context) ([]Guild, error)
 	Guild(ctx context.Context, guildID string) (Guild, error)
+	GuildWithCounts(ctx context.Context, guildID string) (Guild, error)
 	GuildChannels(ctx context.Context, guildID string) ([]Channel, error)
 	ActiveThreads(ctx context.Context, guildID string) ([]Channel, error)
 	ArchivedThreads(ctx context.Context, channelID string, private bool, before ArchiveCursor) (ThreadPage, error)
@@ -41,14 +42,17 @@ type User struct {
 }
 
 // Guild contains the metadata needed to bind and display a Discord source.
+// ApproximateMemberCount is Discord's own estimate of guild membership and is
+// populated only for responses requested with counts.
 type Guild struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Icon        string   `json:"icon"`
-	OwnerID     string   `json:"owner_id"`
-	Description string   `json:"description"`
-	Features    []string `json:"features"`
-	Unavailable bool     `json:"unavailable"`
+	ID                     string   `json:"id"`
+	Name                   string   `json:"name"`
+	Icon                   string   `json:"icon"`
+	OwnerID                string   `json:"owner_id"`
+	Description            string   `json:"description"`
+	Features               []string `json:"features"`
+	Unavailable            bool     `json:"unavailable"`
+	ApproximateMemberCount int      `json:"approximate_member_count"`
 }
 
 // Channel contains catalog and conversation metadata for guild channels and

@@ -91,10 +91,11 @@ func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {
 		Service: daemonService,
 		Version: "v-test",
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
-			runtimeCreateTime: matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -125,9 +126,10 @@ func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
 		Service: daemonService,
 		Version: "v-test",
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       portText,
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
 		},
 	})
 	require.NoError(err, "write runtime record")

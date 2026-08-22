@@ -42,13 +42,19 @@ func TestResolveRelatedValueLinksExactUIDAndReturnsExactCanonicalDuplicate(t *te
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
 	ref := "carddav-resource-1"
-	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "agent", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &ref, Actor: "system"}
+	resourceUID := "alice.vcf"
+	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "agent", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &ref, SourceResourceUID: &resourceUID, Actor: "system"}
 	first, err := f.Store.ResolveRelatedValueContext(ctx, in)
 	require.NoError(err)
 	require.NotNil(first.Relationship)
 	assert.Equal("agent", first.Relationship.TypeSlug)
 	assert.Equal(bobID, first.Relationship.SourcePersonID, "TYPE=agent on alice's card makes bob the agent")
 	assert.Equal(aliceID, first.Relationship.TargetPersonID)
+	require.NotNil(first.Relationship.SourceResourceUID)
+	assert.Equal(resourceUID, *first.Relationship.SourceResourceUID)
+	require.NotNil(first.Review)
+	require.NotNil(first.Review.SourceResourceUID)
+	assert.Equal(resourceUID, *first.Review.SourceResourceUID)
 
 	// agent is asymmetric, so its reciprocal edge is distinct. Re-importing
 	// alice's assertion must find the first exact canonical triple, not search
@@ -103,13 +109,15 @@ func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T
 	ctx := context.Background()
 	aliceID, _ := mustTwoPersons(t, f)
 	sourceRef := "  resource-1.vcf  "
+	sourceResourceUID := "card-a"
 	group := "item1"
 	propID := "property-1"
 	altID := "alternative-1"
 	base := store.RelatedImport{
 		PersonID: aliceID, RawValue: "Bob from the gym", RawType: "friend",
 		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport,
-		SourceRef: &sourceRef,
+		SourceRef:         &sourceRef,
+		SourceResourceUID: &sourceResourceUID,
 		VCardIdentity: store.VCardIdentity{
 			Property: "RELATED", Group: &group, PropID: &propID,
 			PID: []string{"1.1", "2.1"}, AltID: &altID,
@@ -121,6 +129,8 @@ func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T
 	require.NoError(err)
 	require.NotNil(first.Review)
 	assert.Equal("resource-1.vcf", *first.Review.SourceRef)
+	require.NotNil(first.Review.SourceResourceUID)
+	assert.Equal(sourceResourceUID, *first.Review.SourceResourceUID)
 	assert.Equal(base.VCardIdentity, first.Review.VCardIdentity)
 
 	secondRef := "resource-2.vcf"
@@ -148,9 +158,19 @@ func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T
 	require.NotNil(repeated.Review)
 	assert.Equal(first.Review.ID, repeated.Review.ID)
 
+	otherCardUID := "card-b"
+	otherCardInput := repeatedInput
+	otherCardInput.SourceResourceUID = &otherCardUID
+	otherCard, err := f.Store.ResolveRelatedValueContext(ctx, otherCardInput)
+	require.NoError(err)
+	require.NotNil(otherCard.Review)
+	assert.NotEqual(first.Review.ID, otherCard.Review.ID)
+	require.NotNil(otherCard.Review.SourceResourceUID)
+	assert.Equal(otherCardUID, *otherCard.Review.SourceResourceUID)
+
 	reviews, err := f.Store.ListRelationshipReviewsContext(ctx, store.RelationshipReviewListOptions{PersonID: aliceID})
 	require.NoError(err)
-	assert.Len(reviews, 2)
+	assert.Len(reviews, 3)
 }
 
 func TestResolveRelatedValueAcceptsUrnUUIDCaseInsensitively(t *testing.T) {
@@ -365,7 +385,7 @@ func TestRelationshipReviewDatabaseConstraintsAndColumns(t *testing.T) {
 	columns, err := rows.Columns()
 	require.NoError(err)
 	require.NoError(rows.Err())
-	assert.ElementsMatch([]string{"id", "person_id", "raw_related_value", "raw_related_type", "value_kind", "matched_person_id", "status", "accepted_relationship_id", "source", "source_ref", "vcard_property", "vcard_group", "vcard_prop_id", "vcard_pid", "vcard_altid", "created_by", "reviewed_by", "reviewed_at", "created_at", "updated_at"}, columns)
+	assert.ElementsMatch([]string{"id", "person_id", "raw_related_value", "raw_related_type", "value_kind", "matched_person_id", "status", "accepted_relationship_id", "source", "source_ref", "source_resource_uid", "vcard_property", "vcard_group", "vcard_prop_id", "vcard_pid", "vcard_altid", "created_by", "reviewed_by", "reviewed_at", "created_at", "updated_at"}, columns)
 }
 
 func TestResolveRelatedValueOrientsAsymmetricTypeFromTheRelatedPerson(t *testing.T) {
@@ -665,4 +685,58 @@ func TestAcceptRelationshipReviewAttachesToExistingActiveEdge(t *testing.T) {
 	assert.Equal(store.RelationshipReviewAccepted, reviews[0].Status)
 	require.NotNil(reviews[0].AcceptedRelationshipID)
 	assert.Equal(existing.ID, *reviews[0].AcceptedRelationshipID)
+}
+
+// TestAcceptRelationshipReviewKeepsEdgeIdentityAndBindsReview pins what a
+// reused edge inherits: nothing. The review stood for one RELATED occurrence
+// on one card; its identity and source stay on the review row, and the
+// snapshot exposes the review-to-edge binding so a projection can hand that
+// occurrence to the edge on that card alone. Copying the identity onto the
+// edge would drop the source and let the edge claim look-alike occurrences on
+// every card it appears on.
+func TestAcceptRelationshipReviewKeepsEdgeIdentityAndBindsReview(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	group := "item1"
+	book := "address-book"
+	resourceUID := "alice.vcf"
+	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: "Bob from the gym", RawType: "friend",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport,
+		SourceRef: &book, SourceResourceUID: &resourceUID, Actor: "system",
+		VCardIdentity: store.VCardIdentity{Property: "RELATED", Group: &group},
+	})
+	require.NoError(err)
+	require.NotNil(staged.Review)
+
+	existing, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
+		SourcePersonID: aliceID, TargetPersonID: bobID, TypeSlug: "friend",
+		Source: store.ProvenanceUser, Actor: "user",
+	})
+	require.NoError(err)
+
+	edge, err := f.Store.AcceptRelationshipReviewContext(ctx, staged.Review.ID, "friend", bobID, "user")
+	require.NoError(err)
+	assert.Equal(existing.ID, edge.ID)
+	assert.True(edge.VCardIdentity.IsZero(), "the reused edge keeps its own identity")
+	assert.Nil(edge.SourceRef, "the reused edge keeps its own provenance")
+	assert.Equal(existing.Revision, edge.Revision)
+
+	snapshot, err := f.Store.LoadPersonVCardSnapshotContext(ctx, aliceID)
+	require.NoError(err)
+	assert.Empty(snapshot.PendingRelationshipReviews)
+	require.Len(snapshot.AcceptedRelationshipReviews, 1)
+	binding := snapshot.AcceptedRelationshipReviews[0]
+	assert.Equal(staged.Review.ID, binding.ReviewID)
+	assert.Equal(edge.ID, binding.RelationshipID)
+	assert.Equal("RELATED", binding.VCardIdentity.Property)
+	require.NotNil(binding.VCardIdentity.Group)
+	assert.Equal("item1", *binding.VCardIdentity.Group)
+	require.NotNil(binding.SourceRef)
+	assert.Equal(book, *binding.SourceRef)
+	require.NotNil(binding.SourceResourceUID)
+	assert.Equal(resourceUID, *binding.SourceResourceUID)
 }

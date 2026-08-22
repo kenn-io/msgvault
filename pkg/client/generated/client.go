@@ -451,6 +451,26 @@ type ClientInterface interface {
 	UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResponse, error)
 	UnlinkMessageTaskWithResponse(ctx context.Context, options *UnlinkMessageTaskRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkMessageTaskResp, error)
 
+	// StartVisualAttachmentBuild Consent and run one bounded visual attachment embedding pass
+	StartVisualAttachmentBuild(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResponse, error)
+	StartVisualAttachmentBuildWithResponse(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResp, error)
+
+	// RetireVisualAttachmentGeneration Retire the visual attachment generation
+	RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	RetireVisualAttachmentGenerationWithResponse(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireVisualAttachmentGenerationResp, error)
+
+	// RetryVisualAttachmentOwner Retry one visual attachment owner
+	RetryVisualAttachmentOwner(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResponse, error)
+	RetryVisualAttachmentOwnerWithResponse(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResp, error)
+
+	// ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
+	ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error)
+	ResumeVisualAttachmentBuildWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResp, error)
+
+	// GetVisualAttachmentStatus Get visual attachment embedding status
+	GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error)
+	GetVisualAttachmentStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResp, error)
+
 	// ListOrganizations List organizations
 	ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error)
 	ListOrganizationsWithResponse(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResp, error)
@@ -503,53 +523,37 @@ type ClientInterface interface {
 	GetOrganizationProfileMediaContent(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResponse, error)
 	GetOrganizationProfileMediaContentWithResponse(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResp, error)
 
-	// SearchPeople Search analytical people
-	SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error)
-	SearchPeopleWithResponse(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResp, error)
+	// SearchParticipants Search observed participant clusters
+	SearchParticipants(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResponse, error)
+	SearchParticipantsWithResponse(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResp, error)
 
-	// GetPerson Get one analytical person
-	GetPerson(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResponse, error)
-	GetPersonWithResponse(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResp, error)
+	// GetParticipant Get one observed participant cluster
+	GetParticipant(ctx context.Context, options *GetParticipantRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantResponse, error)
+	GetParticipantWithResponse(ctx context.Context, options *GetParticipantRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantResp, error)
 
-	// SearchPersonFiles Search one person's analytical files
-	SearchPersonFiles(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResponse, error)
-	SearchPersonFilesWithResponse(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResp, error)
+	// SearchParticipantFiles Search one participant cluster's analytical files
+	SearchParticipantFiles(ctx context.Context, options *SearchParticipantFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantFilesResponse, error)
+	SearchParticipantFilesWithResponse(ctx context.Context, options *SearchParticipantFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantFilesResp, error)
 
-	// GetPersonContextSummary Get one person's contextual analytical summary
-	GetPersonContextSummary(ctx context.Context, options *GetPersonContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonContextSummaryResponse, error)
-	GetPersonContextSummaryWithResponse(ctx context.Context, options *GetPersonContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonContextSummaryResp, error)
+	// GetParticipantContextSummary Get one participant cluster's contextual analytical summary
+	GetParticipantContextSummary(ctx context.Context, options *GetParticipantContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantContextSummaryResponse, error)
+	GetParticipantContextSummaryWithResponse(ctx context.Context, options *GetParticipantContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantContextSummaryResp, error)
 
-	// GetPersonTimeline Get one person's canonical activity timeline
-	GetPersonTimeline(ctx context.Context, options *GetPersonTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTimelineResponse, error)
-	GetPersonTimelineWithResponse(ctx context.Context, options *GetPersonTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTimelineResp, error)
+	// GetParticipantTimeline Get one participant cluster's canonical activity timeline
+	GetParticipantTimeline(ctx context.Context, options *GetParticipantTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantTimelineResponse, error)
+	GetParticipantTimelineWithResponse(ctx context.Context, options *GetParticipantTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantTimelineResp, error)
 
-	// ListPersonRelationshipReviews List imported RELATED values awaiting review
-	ListPersonRelationshipReviews(ctx context.Context, options *ListPersonRelationshipReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipReviewsResponse, error)
-	ListPersonRelationshipReviewsWithResponse(ctx context.Context, options *ListPersonRelationshipReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipReviewsResp, error)
-
-	// CreatePersonRelationship Declare a relationship between two persons
-	CreatePersonRelationship(ctx context.Context, options *CreatePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonRelationshipResponse, error)
-	CreatePersonRelationshipWithResponse(ctx context.Context, options *CreatePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonRelationshipResp, error)
-
-	// DeletePersonRelationship Delete a person relationship
-	DeletePersonRelationship(ctx context.Context, options *DeletePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-	DeletePersonRelationshipWithResponse(ctx context.Context, options *DeletePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeletePersonRelationshipResp, error)
-
-	// GetPersonRelationship Get one person relationship
-	GetPersonRelationship(ctx context.Context, options *GetPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonRelationshipResponse, error)
-	GetPersonRelationshipWithResponse(ctx context.Context, options *GetPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonRelationshipResp, error)
-
-	// PatchPersonRelationship End a relationship or replace its notes
-	PatchPersonRelationship(ctx context.Context, options *PatchPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonRelationshipResponse, error)
-	PatchPersonRelationshipWithResponse(ctx context.Context, options *PatchPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonRelationshipResp, error)
-
-	// ListPersons List durable person profiles
-	ListPersons(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPersonsResponse, error)
-	ListPersonsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPersonsResp, error)
+	// ListPeople List durable person profiles
+	ListPeople(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPeopleResponse, error)
+	ListPeopleWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPeopleResp, error)
 
 	// CreatePerson Promote a participant cluster to a durable person
 	CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponseJSON, error)
 	CreatePersonWithResponse(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResp, error)
+
+	// SearchPeople Search durable people semantically
+	SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error)
+	SearchPeopleWithResponse(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResp, error)
 
 	// DeletePerson Delete a durable person profile
 	DeletePerson(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
@@ -591,6 +595,10 @@ type ClientInterface interface {
 	ListPersonEmployments(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResponse, error)
 	ListPersonEmploymentsWithResponse(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResp, error)
 
+	// SearchPersonFiles Search one durable person's analytical files
+	SearchPersonFiles(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResponse, error)
+	SearchPersonFilesWithResponse(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResp, error)
+
 	// GetPersonStructuredProfile Get a person's current structured profile
 	GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error)
 	GetPersonStructuredProfileWithResponse(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResp, error)
@@ -610,6 +618,34 @@ type ClientInterface interface {
 	// ListPersonRelationships List one person's relationships
 	ListPersonRelationships(ctx context.Context, options *ListPersonRelationshipsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipsResponse, error)
 	ListPersonRelationshipsWithResponse(ctx context.Context, options *ListPersonRelationshipsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipsResp, error)
+
+	// GetPersonTracking Get a person's tracking state
+	GetPersonTracking(ctx context.Context, options *GetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTrackingResponse, error)
+	GetPersonTrackingWithResponse(ctx context.Context, options *GetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTrackingResp, error)
+
+	// SetPersonTracking Replace a person's tracking state
+	SetPersonTracking(ctx context.Context, options *SetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonTrackingResponse, error)
+	SetPersonTrackingWithResponse(ctx context.Context, options *SetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonTrackingResp, error)
+
+	// ListPersonRelationshipReviews List imported RELATED values awaiting review
+	ListPersonRelationshipReviews(ctx context.Context, options *ListPersonRelationshipReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipReviewsResponse, error)
+	ListPersonRelationshipReviewsWithResponse(ctx context.Context, options *ListPersonRelationshipReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipReviewsResp, error)
+
+	// CreatePersonRelationship Declare a relationship between two persons
+	CreatePersonRelationship(ctx context.Context, options *CreatePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonRelationshipResponse, error)
+	CreatePersonRelationshipWithResponse(ctx context.Context, options *CreatePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonRelationshipResp, error)
+
+	// DeletePersonRelationship Delete a person relationship
+	DeletePersonRelationship(ctx context.Context, options *DeletePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DeletePersonRelationshipWithResponse(ctx context.Context, options *DeletePersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeletePersonRelationshipResp, error)
+
+	// GetPersonRelationship Get one person relationship
+	GetPersonRelationship(ctx context.Context, options *GetPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonRelationshipResponse, error)
+	GetPersonRelationshipWithResponse(ctx context.Context, options *GetPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonRelationshipResp, error)
+
+	// PatchPersonRelationship End a relationship or replace its notes
+	PatchPersonRelationship(ctx context.Context, options *PatchPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonRelationshipResponse, error)
+	PatchPersonRelationshipWithResponse(ctx context.Context, options *PatchPersonRelationshipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonRelationshipResp, error)
 
 	// RunQuery Run an aggregate query
 	RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponse, error)
@@ -670,6 +706,10 @@ type ClientInterface interface {
 	// SearchMessages Search messages
 	SearchMessages(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResponse, error)
 	SearchMessagesWithResponse(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResp, error)
+
+	// SearchVisualAttachments Search visual attachment content
+	SearchVisualAttachments(ctx context.Context, options *SearchVisualAttachmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResponse, error)
+	SearchVisualAttachmentsWithResponse(ctx context.Context, options *SearchVisualAttachmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResp, error)
 
 	// GetSearchCoverage Get semantic index coverage for an analytical context
 	GetSearchCoverage(ctx context.Context, options *GetSearchCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSearchCoverageResponse, error)
@@ -7175,6 +7215,288 @@ func (c *Client) UnlinkMessageTask(ctx context.Context, options *UnlinkMessageTa
 	return responseParser(ctx, resp)
 }
 
+// StartVisualAttachmentBuild Consent and run one bounded visual attachment embedding pass
+func (c *Client) StartVisualAttachmentBuild(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/build",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartVisualAttachmentBuildResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(StartVisualAttachmentBuildErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "StartVisualAttachmentBuildErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(StartVisualAttachmentBuildResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "StartVisualAttachmentBuildResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/build")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireVisualAttachmentGeneration Retire the visual attachment generation
+func (c *Client) RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/retire",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		if resp.StatusCode != 204 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetryVisualAttachmentOwner Retry one visual attachment owner
+func (c *Client) RetryVisualAttachmentOwner(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/retry",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RetryVisualAttachmentOwnerResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RetryVisualAttachmentOwnerErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RetryVisualAttachmentOwnerErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RetryVisualAttachmentOwnerResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RetryVisualAttachmentOwnerResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/retry")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
+func (c *Client) ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/run",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResumeVisualAttachmentBuildResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ResumeVisualAttachmentBuildErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ResumeVisualAttachmentBuildErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ResumeVisualAttachmentBuildResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ResumeVisualAttachmentBuildResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/run")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetVisualAttachmentStatus Get visual attachment embedding status
+func (c *Client) GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetVisualAttachmentStatusResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetVisualAttachmentStatusErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetVisualAttachmentStatusErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetVisualAttachmentStatusResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetVisualAttachmentStatusResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListOrganizations List organizations
 func (c *Client) ListOrganizations(ctx context.Context, options *ListOrganizationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOrganizationsResponse, error) {
 	var err error
@@ -7970,7 +8292,452 @@ func (c *Client) GetOrganizationProfileMediaContent(ctx context.Context, options
 	return responseParser(ctx, resp)
 }
 
-// SearchPeople Search analytical people
+// SearchParticipants Search observed participant clusters
+func (c *Client) SearchParticipants(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/participants/search",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchParticipantsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchParticipantsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchParticipantsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchParticipantsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchParticipantsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParticipant Get one observed participant cluster
+func (c *Client) GetParticipant(ctx context.Context, options *GetParticipantRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/participants/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetParticipantResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetParticipantErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetParticipantErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetParticipantResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetParticipantResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchParticipantFiles Search one participant cluster's analytical files
+func (c *Client) SearchParticipantFiles(ctx context.Context, options *SearchParticipantFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantFilesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/participants/{id}/files/search",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchParticipantFilesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchParticipantFilesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchParticipantFilesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchParticipantFilesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchParticipantFilesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}/files/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParticipantContextSummary Get one participant cluster's contextual analytical summary
+func (c *Client) GetParticipantContextSummary(ctx context.Context, options *GetParticipantContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantContextSummaryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/participants/{id}/summary",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetParticipantContextSummaryResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetParticipantContextSummaryErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetParticipantContextSummaryErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetParticipantContextSummaryResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetParticipantContextSummaryResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}/summary")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParticipantTimeline Get one participant cluster's canonical activity timeline
+func (c *Client) GetParticipantTimeline(ctx context.Context, options *GetParticipantTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantTimelineResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/participants/{id}/timeline",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetParticipantTimelineResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetParticipantTimelineErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetParticipantTimelineErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetParticipantTimelineResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetParticipantTimelineResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}/timeline")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPeople List durable person profiles
+func (c *Client) ListPeople(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPeopleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPeopleResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPeopleErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPeopleErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPeopleResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPeopleResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePerson Promote a participant cluster to a durable person
+func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreatePersonResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(CreatePersonErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreatePersonErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreatePersonResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreatePersonResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchPeople Search durable people semantically
 func (c *Client) SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -8034,12 +8801,12 @@ func (c *Client) SearchPeople(ctx context.Context, options *SearchPeopleRequestO
 	return responseParser(ctx, resp)
 }
 
-// GetPerson Get one analytical person
-func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResponse, error) {
+// DeletePerson Delete a durable person profile
+func (c *Client) DeletePerson(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}",
-		Method:     "GET",
+		Method:     "DELETE",
 		Options:    options,
 	}
 
@@ -8048,10 +8815,10 @@ func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonErrorResponse)
+		if resp.StatusCode != 204 {
+			target := new(DeletePersonErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
 				if err = json.Unmarshal(bodyBytes, target); err != nil {
@@ -8059,7 +8826,7 @@ func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions
 						StatusCode:    resp.StatusCode,
 						ContentType:   resp.Headers.Get("Content-Type"),
 						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonErrorResponse",
+						TargetType:    "DeletePersonErrorResponse",
 						Body:          bodyBytes,
 						Err:           err,
 					}
@@ -8072,7 +8839,55 @@ func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetPersonResponse)
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonProfile Get a durable person profile
+func (c *Client) GetPersonProfile(ctx context.Context, options *GetPersonProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonProfileErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonProfileErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonProfileResponse)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -8082,7 +8897,7 @@ func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonResponse",
+				TargetType:    "GetPersonProfileResponse",
 				Body:          bodyBytes,
 				Err:           err,
 			}
@@ -8097,7 +8912,513 @@ func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions
 	return responseParser(ctx, resp)
 }
 
-// SearchPersonFiles Search one person's analytical files
+// PatchPerson Update a durable person's display name
+func (c *Client) PatchPerson(ctx context.Context, options *PatchPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchPersonResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PatchPersonErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PatchPersonErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PatchPersonResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PatchPersonResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonAttributes List a person's typed attributes
+func (c *Client) ListPersonAttributes(ctx context.Context, options *ListPersonAttributesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonAttributesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/attributes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonAttributesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonAttributesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonAttributesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonAttributesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonAttributesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/attributes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ClearPersonAttribute Supersede a person's attribute value
+func (c *Client) ClearPersonAttribute(ctx context.Context, options *ClearPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClearPersonAttributeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/attributes/{slug}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ClearPersonAttributeResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ClearPersonAttributeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ClearPersonAttributeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ClearPersonAttributeResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ClearPersonAttributeResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/attributes/{slug}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPersonAttribute Set a person's attribute value
+func (c *Client) SetPersonAttribute(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/attributes/{slug}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetPersonAttributeResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SetPersonAttributeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SetPersonAttributeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SetPersonAttributeResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SetPersonAttributeResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/attributes/{slug}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonContactState Get computed contact state for a person
+func (c *Client) GetPersonContactState(ctx context.Context, options *GetPersonContactStateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonContactStateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/contact-state",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonContactStateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonContactStateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonContactStateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonContactStateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonContactStateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/contact-state")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonActivityDays List calendar days intersecting a person
+func (c *Client) ListPersonActivityDays(ctx context.Context, options *ListPersonActivityDaysRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonActivityDaysResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/days",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonActivityDaysResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonActivityDaysErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonActivityDaysErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonActivityDaysResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonActivityDaysResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/days")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonActivityDay Get one person's activity and notes for a day
+func (c *Client) GetPersonActivityDay(ctx context.Context, options *GetPersonActivityDayRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonActivityDayResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/days/{date}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonActivityDayResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonActivityDayErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonActivityDayErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonActivityDayResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonActivityDayResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/days/{date}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonEmployments List a person's employment history
+func (c *Client) ListPersonEmployments(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/employments",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonEmploymentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonEmploymentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonEmploymentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonEmploymentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonEmploymentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/employments")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchPersonFiles Search one durable person's analytical files
 func (c *Client) SearchPersonFiles(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -8161,14 +9482,13 @@ func (c *Client) SearchPersonFiles(ctx context.Context, options *SearchPersonFil
 	return responseParser(ctx, resp)
 }
 
-// GetPersonContextSummary Get one person's contextual analytical summary
-func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPersonContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonContextSummaryResponse, error) {
+// GetPersonStructuredProfile Get a person's current structured profile
+func (c *Client) GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/summary",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/profile",
+		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -8176,10 +9496,10 @@ func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPerson
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonContextSummaryResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonStructuredProfileResponse, error) {
 		bodyBytes := resp.Content
 		if resp.StatusCode != 200 {
-			target := new(GetPersonContextSummaryErrorResponse)
+			target := new(GetPersonStructuredProfileErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
 				if err = json.Unmarshal(bodyBytes, target); err != nil {
@@ -8187,7 +9507,7 @@ func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPerson
 						StatusCode:    resp.StatusCode,
 						ContentType:   resp.Headers.Get("Content-Type"),
 						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonContextSummaryErrorResponse",
+						TargetType:    "GetPersonStructuredProfileErrorResponse",
 						Body:          bodyBytes,
 						Err:           err,
 					}
@@ -8200,7 +9520,7 @@ func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPerson
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetPersonContextSummaryResponse)
+		target := new(GetPersonStructuredProfileResponse)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -8210,7 +9530,7 @@ func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPerson
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonContextSummaryResponse",
+				TargetType:    "GetPersonStructuredProfileResponse",
 				Body:          bodyBytes,
 				Err:           err,
 			}
@@ -8218,19 +9538,19 @@ func (c *Client) GetPersonContextSummary(ctx context.Context, options *GetPerson
 		return target, nil
 	}
 
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/summary")
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/profile")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
 	return responseParser(ctx, resp)
 }
 
-// GetPersonTimeline Get one person's canonical activity timeline
-func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTimelineResponse, error) {
+// PatchPersonStructuredProfile Atomically patch a person's structured profile
+func (c *Client) PatchPersonStructuredProfile(ctx context.Context, options *PatchPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonStructuredProfileResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/timeline",
-		Method:      "POST",
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/profile",
+		Method:      "PATCH",
 		Options:     options,
 		ContentType: "application/json",
 	}
@@ -8240,10 +9560,10 @@ func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimeli
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonTimelineResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchPersonStructuredProfileResponse, error) {
 		bodyBytes := resp.Content
 		if resp.StatusCode != 200 {
-			target := new(GetPersonTimelineErrorResponse)
+			target := new(PatchPersonStructuredProfileErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
 				if err = json.Unmarshal(bodyBytes, target); err != nil {
@@ -8251,7 +9571,7 @@ func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimeli
 						StatusCode:    resp.StatusCode,
 						ContentType:   resp.Headers.Get("Content-Type"),
 						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonTimelineErrorResponse",
+						TargetType:    "PatchPersonStructuredProfileErrorResponse",
 						Body:          bodyBytes,
 						Err:           err,
 					}
@@ -8264,7 +9584,7 @@ func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimeli
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetPersonTimelineResponse)
+		target := new(PatchPersonStructuredProfileResponse)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -8274,7 +9594,7 @@ func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimeli
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonTimelineResponse",
+				TargetType:    "PatchPersonStructuredProfileResponse",
 				Body:          bodyBytes,
 				Err:           err,
 			}
@@ -8282,7 +9602,309 @@ func (c *Client) GetPersonTimeline(ctx context.Context, options *GetPersonTimeli
 		return target, nil
 	}
 
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/timeline")
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/profile")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonProfileHistory Get a person's structured profile history
+func (c *Client) GetPersonProfileHistory(ctx context.Context, options *GetPersonProfileHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileHistoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/profile/history",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileHistoryResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonProfileHistoryErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonProfileHistoryErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonProfileHistoryResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonProfileHistoryResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/profile/history")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonProfileMediaContent Download stored inline content for one person profile media value
+func (c *Client) GetPersonProfileMediaContent(ctx context.Context, options *GetPersonProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileMediaContentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/profile/media/{media_id}/content",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileMediaContentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonProfileMediaContentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonProfileMediaContentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := GetPersonProfileMediaContentResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/profile/media/{media_id}/content")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonRelationships List one person's relationships
+func (c *Client) ListPersonRelationships(ctx context.Context, options *ListPersonRelationshipsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/relationships",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonRelationshipsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonRelationshipsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonRelationshipsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonRelationshipsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonRelationshipsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/relationships")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonTracking Get a person's tracking state
+func (c *Client) GetPersonTracking(ctx context.Context, options *GetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonTrackingResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/tracking",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonTrackingResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonTrackingErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonTrackingErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonTrackingResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonTrackingResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/tracking")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPersonTracking Replace a person's tracking state
+func (c *Client) SetPersonTracking(ctx context.Context, options *SetPersonTrackingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonTrackingResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/tracking",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetPersonTrackingResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SetPersonTrackingErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SetPersonTrackingErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SetPersonTrackingResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SetPersonTrackingResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/tracking")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -8585,1051 +10207,6 @@ func (c *Client) PatchPersonRelationship(ctx context.Context, options *PatchPers
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/person-relationships/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ListPersons List durable person profiles
-func (c *Client) ListPersons(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPersonsResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ListPersonsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListPersonsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ListPersonsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListPersonsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// CreatePerson Promote a participant cluster to a durable person
-func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponseJSON, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreatePersonResponseJSON, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
-			target := new(CreatePersonErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreatePersonErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(CreatePersonResponseJSON)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreatePersonResponseJSON",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// DeletePerson Delete a durable person profile
-func (c *Client) DeletePerson(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 204 {
-			target := new(DeletePersonErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "DeletePersonErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		return nil, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonProfile Get a durable person profile
-func (c *Client) GetPersonProfile(ctx context.Context, options *GetPersonProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonProfileErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonProfileErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(GetPersonProfileResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonProfileResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// PatchPerson Update a durable person's display name
-func (c *Client) PatchPerson(ctx context.Context, options *PatchPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons/{id}",
-		Method:      "PATCH",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchPersonResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(PatchPersonErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PatchPersonErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(PatchPersonResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PatchPersonResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ListPersonAttributes List a person's typed attributes
-func (c *Client) ListPersonAttributes(ctx context.Context, options *ListPersonAttributesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonAttributesResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/attributes",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonAttributesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ListPersonAttributesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListPersonAttributesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ListPersonAttributesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListPersonAttributesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/attributes")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ClearPersonAttribute Supersede a person's attribute value
-func (c *Client) ClearPersonAttribute(ctx context.Context, options *ClearPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClearPersonAttributeResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/attributes/{slug}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ClearPersonAttributeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ClearPersonAttributeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ClearPersonAttributeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ClearPersonAttributeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ClearPersonAttributeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/attributes/{slug}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// SetPersonAttribute Set a person's attribute value
-func (c *Client) SetPersonAttribute(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/attributes/{slug}",
-		Method:      "PUT",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetPersonAttributeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(SetPersonAttributeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "SetPersonAttributeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(SetPersonAttributeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "SetPersonAttributeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/attributes/{slug}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonContactState Get computed contact state for a person
-func (c *Client) GetPersonContactState(ctx context.Context, options *GetPersonContactStateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonContactStateResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/contact-state",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonContactStateResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonContactStateErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonContactStateErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(GetPersonContactStateResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonContactStateResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/contact-state")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ListPersonActivityDays List calendar days intersecting a person
-func (c *Client) ListPersonActivityDays(ctx context.Context, options *ListPersonActivityDaysRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonActivityDaysResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/days",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonActivityDaysResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ListPersonActivityDaysErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListPersonActivityDaysErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ListPersonActivityDaysResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListPersonActivityDaysResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/days")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonActivityDay Get one person's activity and notes for a day
-func (c *Client) GetPersonActivityDay(ctx context.Context, options *GetPersonActivityDayRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonActivityDayResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/days/{date}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonActivityDayResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonActivityDayErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonActivityDayErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(GetPersonActivityDayResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonActivityDayResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/days/{date}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ListPersonEmployments List a person's employment history
-func (c *Client) ListPersonEmployments(ctx context.Context, options *ListPersonEmploymentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonEmploymentsResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/employments",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonEmploymentsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ListPersonEmploymentsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListPersonEmploymentsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ListPersonEmploymentsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListPersonEmploymentsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/employments")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonStructuredProfile Get a person's current structured profile
-func (c *Client) GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonStructuredProfileResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonStructuredProfileErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonStructuredProfileErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(GetPersonStructuredProfileResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonStructuredProfileResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// PatchPersonStructuredProfile Atomically patch a person's structured profile
-func (c *Client) PatchPersonStructuredProfile(ctx context.Context, options *PatchPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonStructuredProfileResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile",
-		Method:      "PATCH",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchPersonStructuredProfileResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(PatchPersonStructuredProfileErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PatchPersonStructuredProfileErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(PatchPersonStructuredProfileResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PatchPersonStructuredProfileResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonProfileHistory Get a person's structured profile history
-func (c *Client) GetPersonProfileHistory(ctx context.Context, options *GetPersonProfileHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileHistoryResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile/history",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileHistoryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonProfileHistoryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonProfileHistoryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(GetPersonProfileHistoryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetPersonProfileHistoryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile/history")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetPersonProfileMediaContent Download stored inline content for one person profile media value
-func (c *Client) GetPersonProfileMediaContent(ctx context.Context, options *GetPersonProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileMediaContentResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile/media/{media_id}/content",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileMediaContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(GetPersonProfileMediaContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetPersonProfileMediaContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		result := GetPersonProfileMediaContentResponse(bodyBytes)
-		return &result, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile/media/{media_id}/content")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ListPersonRelationships List one person's relationships
-func (c *Client) ListPersonRelationships(ctx context.Context, options *ListPersonRelationshipsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonRelationshipsResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/relationships",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonRelationshipsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
-			target := new(ListPersonRelationshipsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListPersonRelationshipsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(ListPersonRelationshipsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListPersonRelationshipsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/relationships")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -10549,6 +11126,70 @@ func (c *Client) SearchMessages(ctx context.Context, options *SearchMessagesRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchVisualAttachments Search visual attachment content
+func (c *Client) SearchVisualAttachments(ctx context.Context, options *SearchVisualAttachmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchVisualAttachmentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/attachments/visual",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchVisualAttachmentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchVisualAttachmentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchVisualAttachmentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchVisualAttachmentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchVisualAttachmentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/attachments/visual")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -121,6 +122,8 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-all", "channel", "all")
 	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = 12 WHERE id = ?`), conversationID)
+	require.NoError(err)
 	completedID := insertStoreTestMessage(t, st, source.ID, conversationID, "completed")
 	pendingID := insertStoreTestMessage(t, st, source.ID, conversationID, "pending")
 	beeperOnlyID := insertStoreTestMessage(t, st, source.ID, conversationID, "beeper-only")
@@ -148,8 +151,8 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 	items, err := st.ListDiscordAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{
-		{MessageID: completedID, SourceMessageID: "completed", ChatID: "channel-all"},
-		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "channel-all"},
+		{MessageID: completedID, SourceMessageID: "completed", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
+		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
 	}, items)
 	assert.Equal(1, strings.Count(logs.String(), `"kind":"query"`), "all-attachment scan must use one query")
 }
@@ -326,6 +329,9 @@ func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
 			"a duplicate-byte Slack occurrence must stay accessible through the API (%s)", att.Filename)
 		assert.Empty(att.URL)
 	}
+	retryable, err := st.ListSlackRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	require.NoError(err)
+	assert.Empty(retryable, "a hashless canonical CAS alias is already downloaded")
 }
 
 func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {

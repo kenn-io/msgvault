@@ -1,7 +1,11 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +17,10 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const filesMaxLimit = 500
@@ -34,12 +40,28 @@ type FileSearchSort struct {
 }
 
 type FileSearchHTTPRequest struct {
-	Predicate     ExploreHTTPRequest     `json:"predicate"`
-	FilenameQuery string                 `json:"filename_query,omitempty"`
-	MIMEFamilies  []query.FileMIMEFamily `json:"mime_families,omitempty"`
-	Sort          FileSearchSort         `json:"sort"`
-	Cursor        string                 `json:"cursor,omitempty"`
-	Limit         int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Predicate         ExploreHTTPRequest     `json:"predicate"`
+	FilenameQuery     string                 `json:"filename_query,omitempty"`
+	VisualQuery       string                 `json:"visual_query,omitempty"`
+	VisualImageBase64 string                 `json:"visual_image_base64,omitempty"`
+	MIMEFamilies      []query.FileMIMEFamily `json:"mime_families,omitempty"`
+	Sort              FileSearchSort         `json:"sort"`
+	Cursor            string                 `json:"cursor,omitempty"`
+	Limit             int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
+}
+
+// PersonFileSearchHTTPRequest keeps the normal Files filters while making
+// the person-relative direction set an explicit, generated-client contract.
+type PersonFileSearchHTTPRequest struct {
+	Predicate         ExploreHTTPRequest          `json:"predicate"`
+	FilenameQuery     string                      `json:"filename_query,omitempty"`
+	VisualQuery       string                      `json:"visual_query,omitempty"`
+	VisualImageBase64 string                      `json:"visual_image_base64,omitempty"`
+	MIMEFamilies      []query.FileMIMEFamily      `json:"mime_families,omitempty"`
+	Directions        []query.PersonFileDirection `json:"directions,omitempty" enum:"from_person,to_person,group"`
+	Sort              FileSearchSort              `json:"sort"`
+	Cursor            string                      `json:"cursor,omitempty"`
+	Limit             int                         `json:"limit,omitempty" minimum:"0" maximum:"500"`
 }
 
 type FileSearchRow struct {
@@ -62,10 +84,32 @@ type FileSearchRow struct {
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
 	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
 	ContentAvailable   bool                 `json:"content_available"`
+	SearchExplain      *FileSearchExplain   `json:"search_explain,omitempty"`
+}
+
+type FileSearchExplain struct {
+	FilenameRank *int    `json:"filename_rank,omitempty"`
+	VisualRank   *int    `json:"visual_rank,omitempty"`
+	RRF          float64 `json:"rrf"`
 }
 
 type FileSearchHTTPResponse struct {
 	Files               []FileSearchRow        `json:"files"`
+	TotalCount          int64                  `json:"total_count"`
+	CacheRevision       string                 `json:"cache_revision"`
+	SearchProvenance    query.SearchProvenance `json:"search_provenance"`
+	NextCursor          string                 `json:"next_cursor,omitempty"`
+	CandidateSnapshotID string                 `json:"candidate_snapshot_id,omitempty"`
+}
+
+type PersonFileSearchRow struct {
+	FileSearchRow
+
+	PersonProvenance query.PersonFileProvenance `json:"person_provenance"`
+}
+
+type PersonFileSearchHTTPResponse struct {
+	Files               []PersonFileSearchRow  `json:"files"`
 	TotalCount          int64                  `json:"total_count"`
 	CacheRevision       string                 `json:"cache_revision"`
 	SearchProvenance    query.SearchProvenance `json:"search_provenance"`
@@ -106,6 +150,29 @@ type FileMetadataResponse struct {
 	ContentAvailable bool             `json:"content_available"`
 }
 
+type visualRevisionSource interface {
+	VisualPublicationRevision(ctx context.Context, generationID int64) (string, error)
+	ActiveVisualGeneration(ctx context.Context) (store.VisualGeneration, error)
+}
+
+// preSearchVisualRevision reads the current visual-index revision before
+// ranking runs. Returns empty when no generation is active or the store
+// cannot report revisions; the search itself surfaces not-ready states.
+func (s *Server) preSearchVisualRevision(ctx context.Context) (string, error) {
+	revisionSource, ok := s.store.(visualRevisionSource)
+	if !ok {
+		return "", nil
+	}
+	generation, err := revisionSource.ActiveVisualGeneration(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return revisionSource.VisualPublicationRevision(ctx, generation.ID)
+}
+
 type fileMetadataCatalog interface {
 	GetFileMetadata(ctx context.Context, id int64) (*store.FileMetadata, error)
 	GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int64]store.FileMetadata, error)
@@ -115,9 +182,10 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchFiles", "/files/search", "Search analytical files", s.handleSearchFiles,
 	)
-	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
-		api, "searchPersonFiles", "/people/{id}/files/search", "Search one person's analytical files", s.handleSearchPersonFiles,
-	)
+	registerPersonFileRoute(api, "searchParticipantFiles", "/participants/{id}/files/search",
+		"Search one participant cluster's analytical files", "", s.handleSearchParticipantFiles)
+	registerPersonFileRoute(api, "searchPersonFiles", "/people/{id}/files/search",
+		"Search one durable person's analytical files", "Durable person ID", s.handleSearchPersonFiles)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchDomainFiles", "/domains/{domain}/files/search", "Search one domain's analytical files", s.handleSearchDomainFiles,
 	)
@@ -127,6 +195,27 @@ func (s *Server) registerFilesRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[FileMetadataResponse](
 		api, "getFile", http.MethodGet, "/files/{id}", "Get authoritative file metadata", s.handleGetFile,
 	)
+}
+
+func registerPersonFileRoute(
+	api huma.API,
+	operationID, path, summary, idDescription string,
+	handler http.HandlerFunc,
+) {
+	op := rawAPIV1Operation(operationID, http.MethodPost, path, summary)
+	op.Tags = []string{"Exploration"}
+	if idDescription != "" {
+		op.Parameters = append(op.Parameters, &huma.Param{
+			Name: "id", In: "path", Required: true, Description: idDescription,
+			Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
+		})
+	}
+	op.RequestBody = jsonRequestBodyFor[PersonFileSearchHTTPRequest](api)
+	op.Responses = jsonResponsesFor[PersonFileSearchHTTPResponse](api)
+	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusConflict,
+		http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = exploreUnavailableResponseFor(api)
+	registerRawHumaRoute(api, op, handler)
 }
 
 func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
@@ -243,25 +332,53 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 	s.handleSearchFilesWithScope(w, r, nil)
 }
 
-func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request) {
-	id, ok := positivePersonPathID(w, r)
+func (s *Server) handleSearchParticipantFiles(w http.ResponseWriter, r *http.Request) {
+	id, ok := positiveParticipantPathID(w, r)
 	if !ok {
 		return
 	}
-	// Widen the scope to the person's whole identity cluster so files owned
-	// only by a linked alias are found — the same identity the person detail
-	// header and the relationship timeline report. clusterMemberIDs returns
-	// nil for an unlinked participant, leaving the scope on id alone.
-	members := s.clusterMemberIDs(id)
-	if len(members) < 2 {
-		members = []int64{id}
+	s.handleSearchPersonFilesReference(w, r, resolver.Reference{
+		Kind: resolver.ReferenceParticipant, ID: id,
+	})
+}
+
+func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/people/"), "/files/search")
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_person_id", "person ID must be a positive integer")
+		return
 	}
-	values := make([]string, len(members))
-	for i, member := range members {
-		values[i] = strconv.FormatInt(member, 10)
+	s.handleSearchPersonFilesReference(w, r, resolver.Reference{
+		Kind: resolver.ReferencePerson, ID: id,
+	})
+}
+
+func (s *Server) handleSearchPersonFilesReference(
+	w http.ResponseWriter,
+	r *http.Request,
+	reference resolver.Reference,
+) {
+	var personRequest PersonFileSearchHTTPRequest
+	if !decodeFileSearchJSON(w, r, &personRequest) {
+		return
 	}
-	scope := ExploreFilter{Dimension: exploreFilterParticipant, Values: values}
-	s.handleSearchFilesWithScope(w, r, &scope)
+	_, _, err := resolver.NormalizeDirections(personRequest.Directions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_person_file_directions", err.Error())
+		return
+	}
+	resolved, err := resolver.Resolve(r.Context(), s.store, reference, personRequest.Directions)
+	if err != nil {
+		s.writePersonScopeError(w, reference, err, "file")
+		return
+	}
+	s.handleSearchFilesRequest(w, r, FileSearchHTTPRequest{
+		Predicate: personRequest.Predicate, FilenameQuery: personRequest.FilenameQuery,
+		VisualQuery: personRequest.VisualQuery, VisualImageBase64: personRequest.VisualImageBase64,
+		MIMEFamilies: personRequest.MIMEFamilies, Sort: personRequest.Sort,
+		Cursor: personRequest.Cursor, Limit: personRequest.Limit,
+	}, nil, &resolved.Scope)
 }
 
 func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request) {
@@ -275,8 +392,35 @@ func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) {
 	var request FileSearchHTTPRequest
-	if !decodeExploreJSON(w, r, &request) {
+	if !decodeFileSearchJSON(w, r, &request) {
 		return
+	}
+	s.handleSearchFilesRequest(w, r, request, scope, nil)
+}
+
+func (s *Server) handleSearchFilesRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	request FileSearchHTTPRequest,
+	scope *ExploreFilter,
+	person *query.PersonFileScope,
+) {
+	visualQuery := visual.SearchQuery{Text: strings.TrimSpace(request.VisualQuery), Limit: 100}
+	if request.VisualImageBase64 != "" {
+		if visualQuery.Text != "" {
+			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Provide visual_query or visual_image_base64, not both")
+			return
+		}
+		image, decodeErr := base64.StdEncoding.DecodeString(request.VisualImageBase64)
+		if decodeErr != nil || int64(len(image)) > visual.MaxQueryImageBytes {
+			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Visual query image is invalid or too large")
+			return
+		}
+		visualQuery.Image, decodeErr = visual.DecodeQueryImage(image)
+		if decodeErr != nil {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported_image_query", decodeErr.Error())
+			return
+		}
 	}
 	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
@@ -294,7 +438,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		request.Sort = FileSearchSort{Field: "occurred_at", Direction: apiSortDirectionDesc}
 	}
 	request.Predicate = predicate.request
-	requestHash := canonicalScopedFileSearchHash(request, scope)
+	requestHash := canonicalScopedFileSearchHash(request, scope, person)
 	offset, ok := s.parseExploreCursor(w, request.Cursor, requestHash)
 	if !ok {
 		return
@@ -330,17 +474,69 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
-	result, err := searcher.SearchFiles(r.Context(), query.FileSearchRequest{
+	fileRequest := query.FileSearchRequest{
 		Explore: predicate.query, FilenameQuery: strings.TrimSpace(request.FilenameQuery),
 		MIMEFamilies: request.MIMEFamilies,
 		Sort:         query.SortSpec{Field: request.Sort.Field, Direction: request.Sort.Direction},
 		Page:         query.PageSpec{Limit: request.Limit, Offset: offset},
-	})
+		Person:       person,
+	}
+	var result *query.FileSearchResponse
+	var searchExplain map[int64]FileSearchExplain
+	var visualGeneration int64
+	var preVisualRevision string
+	if visualQuery.Text != "" || visualQuery.Image != nil {
+		// Push the hard filters the visual index can evaluate into the
+		// vector search itself, so a scoped query ranks the nearest IN-SCOPE
+		// attachments instead of post-filtering a global top-K down to
+		// nothing. Filters the index cannot evaluate (participants, labels,
+		// multiple accounts) still intersect afterwards, so a heavily scoped
+		// query remains best-effort over the candidate set.
+		applyVisualSearchScope(&visualQuery, fileRequest)
+		// Capture the visual-index revision BEFORE ranking: a publish
+		// landing during the search would otherwise pair this page's stale
+		// results with the newer revision and let the next page slide past
+		// the guard. Stored pre-search, a racing publish fails the next
+		// page's comparison and restarts pagination instead.
+		visualRevision, revisionErr := s.preSearchVisualRevision(r.Context())
+		if revisionErr != nil {
+			s.writeExploreError(r.Context(), w, revisionErr)
+			return
+		}
+		preVisualRevision = visualRevision
+		result, searchExplain, visualGeneration, err = s.searchFilesWithVisual(
+			r.Context(), searcher, fileRequest, visualQuery, request.Cursor != "")
+	} else {
+		result, err = searcher.SearchFiles(r.Context(), fileRequest)
+	}
 	if err != nil {
+		if errors.Is(err, visual.ErrSearchNotReady) {
+			writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", err.Error())
+			return
+		}
+		if errors.Is(err, visual.ErrInvalidCursor) {
+			writeError(w, http.StatusConflict, "visual_cursor_stale",
+				"The visual query vector for this cursor is no longer available; restart pagination")
+			return
+		}
 		s.writeExploreError(r.Context(), w, err)
 		return
 	}
+	// The visual-index revision pins the set of current publications the
+	// first page ranked with: each page recomputes rankings and applies an
+	// offset, so a publish or tombstone landing mid-pagination would
+	// silently skip or duplicate rows without this guard. Captured before
+	// ranking, above.
+	visualRevision := preVisualRevision
 	if request.Cursor != "" {
+		if cursor.VisualGeneration != visualGeneration {
+			writeError(w, http.StatusConflict, "visual_generation_changed", "The active visual index generation changed; restart pagination")
+			return
+		}
+		if cursor.VisualRevision != visualRevision {
+			writeError(w, http.StatusConflict, "visual_index_changed", "The visual index changed; restart pagination")
+			return
+		}
 		if cursor.Revision != result.CacheRevision {
 			writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
 			return
@@ -383,26 +579,283 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 			MIMEFamily: file.MIMEFamily, Size: file.Size, ParticipantIDs: file.ParticipantIDs,
 			ParticipantLabels: file.ParticipantLabels, ParticipantDomains: file.ParticipantDomains,
 			ContentState: state, ContentAvailable: available,
+			SearchExplain: fileSearchExplainFor(searchExplain, file.ID),
 		})
 	}
 	if next := offset + len(result.Files); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{
 			Offset: next, Request: requestHash, Revision: result.CacheRevision,
-			SearchRevision: exploreResolvedSearchRevision(searchSpec), Snapshot: snapshotID,
+			SearchRevision: exploreResolvedSearchRevision(searchSpec), VisualGeneration: visualGeneration,
+			VisualRevision: visualRevision, Snapshot: snapshotID,
 		})
 	}
-	writeJSON(w, http.StatusOK, response)
+	if person == nil {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	personResponse := PersonFileSearchHTTPResponse{
+		Files: make([]PersonFileSearchRow, 0, len(result.Files)), TotalCount: response.TotalCount,
+		CacheRevision: response.CacheRevision, SearchProvenance: response.SearchProvenance,
+		NextCursor: response.NextCursor, CandidateSnapshotID: response.CandidateSnapshotID,
+	}
+	for i, file := range result.Files {
+		if file.PersonProvenance == nil {
+			writeError(w, http.StatusInternalServerError, "person_file_provenance_unavailable",
+				"Person file provenance is unavailable")
+			return
+		}
+		personResponse.Files = append(personResponse.Files, PersonFileSearchRow{
+			FileSearchRow: response.Files[i], PersonProvenance: *file.PersonProvenance,
+		})
+	}
+	writeJSON(w, http.StatusOK, personResponse)
 }
 
-func canonicalScopedFileSearchHash(request FileSearchHTTPRequest, scope *ExploreFilter) string {
+// applyVisualSearchScope maps the request's hard filters onto the visual
+// index's native predicates where an exact mapping exists.
+func applyVisualSearchScope(visualQuery *visual.SearchQuery, request query.FileSearchRequest) {
+	context := request.Explore.Context
+	visualQuery.Person = request.Person
+	if len(context.SourceIDs) == 1 {
+		visualQuery.SourceID = context.SourceIDs[0]
+	}
+	visualQuery.After = context.After
+	visualQuery.Before = context.Before
+	if len(request.MIMEFamilies) == 1 {
+		switch request.MIMEFamilies[0] {
+		case query.FileMIMEImage:
+			visualQuery.MIMEPrefix = "image/"
+		case query.FileMIMEVideo:
+			visualQuery.MIMEPrefix = "video/"
+		default:
+			// Other families have no exact MIME-prefix mapping; they stay a
+			// post-filter over the candidate set.
+		}
+	}
+	if visualQuery.Filename == "" {
+		visualQuery.Filename = strings.TrimSpace(request.FilenameQuery)
+	}
+}
+
+func (s *Server) searchFilesWithVisual(
+	ctx context.Context,
+	searcher query.FileSearcher,
+	request query.FileSearchRequest,
+	visualQuery visual.SearchQuery,
+	continuation bool,
+) (*query.FileSearchResponse, map[int64]FileSearchExplain, int64, error) {
+	s.vectorMu.RLock()
+	visualService := s.visualSearch
+	s.vectorMu.RUnlock()
+	if visualService == nil {
+		return nil, nil, 0, visual.ErrSearchNotReady
+	}
+	candidatePage := query.PageSpec{Limit: filesMaxLimit}
+	var lexical *query.FileSearchResponse
+	if strings.TrimSpace(request.FilenameQuery) != "" {
+		lexicalRequest := request
+		lexicalRequest.Page = candidatePage
+		var err error
+		lexical, err = searcher.SearchFiles(ctx, lexicalRequest)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	// Scopes without a native vector-index predicate (participants, labels,
+	// multiple accounts) are applied by the candidate fetch below, so one
+	// global result window can under-fill a narrow scope. Page through the
+	// vector results until the scoped candidate budget is met or the result
+	// set is exhausted, with a hard ceiling so a very narrow scope over a
+	// huge archive stays bounded. The query embeds ONCE per pagination:
+	// EmbedQueryVector consults the search service's generation-keyed
+	// vector cache, so a cursor continuation reuses the vector instead of
+	// paying another hosted embedding and stays stable against provider
+	// nondeterminism (the generation and cache-revision guards already 409
+	// on index swaps).
+	var queryVector []float32
+	if continuation {
+		// A cursor page must reuse the exact vector page one ranked with;
+		// a fresh embedding can reorder the fused results and silently
+		// skip or duplicate rows across the offset boundary.
+		var err error
+		queryVector, err = visualService.QueryVectorForContinuation(ctx, visualQuery)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	} else {
+		var err error
+		queryVector, _, err = visualService.EmbedQueryVector(ctx, visualQuery)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	visualQuery.QueryVector = queryVector
+	const maxVisualCandidatePages = 10
+	visualRanks := make(map[int64]int, visualQuery.Limit)
+	var visualFiles *query.FileSearchResponse
+	var visualGenerationID int64
+	for page := 0; ; page++ {
+		visualResult, err := visualService.Search(ctx, visualQuery)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		visualGenerationID = visualResult.GenerationID
+		// Backend ranks restart at one on every cursor page; reciprocal-rank
+		// fusion needs the global position, which is the insertion order
+		// across the strictly score-descending pages. Each page's fetch
+		// carries only its own IDs, keeping every SearchFiles call within
+		// the request-size cap while results accumulate.
+		newIDs := make([]int64, 0, len(visualResult.Results))
+		for _, hit := range visualResult.Results {
+			if _, exists := visualRanks[hit.AttachmentID]; exists {
+				continue
+			}
+			visualRanks[hit.AttachmentID] = len(visualRanks) + 1
+			newIDs = append(newIDs, hit.AttachmentID)
+		}
+		if len(newIDs) > 0 {
+			visualRequest := request
+			visualRequest.FilenameQuery = ""
+			visualRequest.AttachmentIDs = newIDs
+			visualRequest.Page = candidatePage
+			pageFiles, err := searcher.SearchFiles(ctx, visualRequest)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if visualFiles == nil {
+				visualFiles = pageFiles
+			} else {
+				if visualFiles.CacheRevision != pageFiles.CacheRevision {
+					return nil, nil, 0, errors.New("analytical cache changed during visual file fusion")
+				}
+				visualFiles.Files = append(visualFiles.Files, pageFiles.Files...)
+			}
+		}
+		scoped := 0
+		if visualFiles != nil {
+			scoped = len(visualFiles.Files)
+		}
+		if scoped >= candidatePage.Limit || visualResult.NextCursor == "" ||
+			page+1 >= maxVisualCandidatePages {
+			break
+		}
+		visualQuery.Cursor = visualResult.NextCursor
+	}
+	// A no-hit visual query still needs the committed cache revision for the
+	// Files cursor contract. Read one hard-filtered row and discard it.
+	if lexical == nil && visualFiles == nil {
+		probe := request
+		probe.FilenameQuery = ""
+		probe.Page = query.PageSpec{Limit: 1}
+		probeResult, probeErr := searcher.SearchFiles(ctx, probe)
+		if probeErr != nil {
+			return nil, nil, 0, probeErr
+		}
+		probeResult.Files = nil
+		probeResult.TotalCount = 0
+		return probeResult, map[int64]FileSearchExplain{}, visualGenerationID, nil
+	}
+	base := lexical
+	if base == nil {
+		base = visualFiles
+	}
+	if lexical != nil && visualFiles != nil && lexical.CacheRevision != visualFiles.CacheRevision {
+		return nil, nil, 0, errors.New("analytical cache changed during visual file fusion")
+	}
+	fused, explain := fuseFileRanks(lexical, visualFiles, visualRanks)
+	total := len(fused)
+	start := min(request.Page.Offset, total)
+	end := min(start+request.Page.Limit, total)
+	base.Files = fused[start:end]
+	base.TotalCount = int64(total)
+	return base, explain, visualGenerationID, nil
+}
+
+func fuseFileRanks(
+	lexical *query.FileSearchResponse,
+	visualFiles *query.FileSearchResponse,
+	visualRanks map[int64]int,
+) ([]query.FileRow, map[int64]FileSearchExplain) {
+	rows := make(map[int64]query.FileRow)
+	explain := make(map[int64]FileSearchExplain)
+	if lexical != nil {
+		for index, row := range lexical.Files {
+			rank := index + 1
+			rows[row.ID] = row
+			explain[row.ID] = FileSearchExplain{FilenameRank: &rank, RRF: 1 / float64(60+rank)}
+		}
+	}
+	if visualFiles != nil {
+		for _, row := range visualFiles.Files {
+			rank, exists := visualRanks[row.ID]
+			if !exists {
+				continue
+			}
+			rows[row.ID] = row
+			entry := explain[row.ID]
+			entry.VisualRank = &rank
+			entry.RRF += 1 / float64(60+rank)
+			explain[row.ID] = entry
+		}
+	}
+	fused := make([]query.FileRow, 0, len(rows))
+	for _, row := range rows {
+		fused = append(fused, row)
+	}
+	slices.SortFunc(fused, func(a, b query.FileRow) int {
+		if explain[a.ID].RRF > explain[b.ID].RRF {
+			return -1
+		}
+		if explain[a.ID].RRF < explain[b.ID].RRF {
+			return 1
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return fused, explain
+}
+
+func fileSearchExplainFor(explain map[int64]FileSearchExplain, id int64) *FileSearchExplain {
+	if explain == nil {
+		return nil
+	}
+	value, ok := explain[id]
+	if !ok {
+		return nil
+	}
+	return &value
+}
+
+// decodeFileSearchJSON accepts the wider request envelope that a base64
+// visual query image needs; both files-search request shapes carry one.
+func decodeFileSearchJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
+	const envelopeBytes = (visual.MaxQueryImageBytes*4)/3 + (2 << 20)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, envelopeBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body: "+err.Error())
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "bad_request", "Request body must contain one JSON object")
+		return false
+	}
+	return true
+}
+
+func canonicalScopedFileSearchHash(
+	request FileSearchHTTPRequest,
+	scope *ExploreFilter,
+	person *query.PersonFileScope,
+) string {
 	request.Cursor = ""
-	if scope == nil {
+	if scope == nil && person == nil {
 		return hashCanonicalValue(request, false)
 	}
 	return hashCanonicalValue(struct {
-		Request FileSearchHTTPRequest `json:"request"`
-		Scope   ExploreFilter         `json:"identity_scope"`
-	}{Request: request, Scope: *scope}, false)
+		Request FileSearchHTTPRequest  `json:"request"`
+		Scope   *ExploreFilter         `json:"identity_scope,omitempty"`
+		Person  *query.PersonFileScope `json:"person_scope,omitempty"`
+	}{Request: request, Scope: scope, Person: person}, false)
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {

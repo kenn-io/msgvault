@@ -31,36 +31,38 @@ func (v VCardIdentity) IsZero() bool {
 
 // ValueEnvelope carries ordering, provenance, vCard identity, and history.
 type ValueEnvelope struct {
-	ID           int64         `json:"id"`
-	Pref         *int          `json:"pref,omitempty"`
-	Ordinal      int           `json:"ordinal"`
-	TypeLabel    *string       `json:"type_label,omitempty"`
-	TypeTokens   []string      `json:"type_tokens,omitempty"`
-	VCard        VCardIdentity `json:"vcard"`
-	Source       Provenance    `json:"source"`
-	SourceRef    *string       `json:"source_ref,omitempty"`
-	Confidence   *float64      `json:"confidence,omitempty"`
-	ActiveFrom   *time.Time    `json:"active_from,omitempty"`
-	ActiveUntil  *time.Time    `json:"active_until,omitempty"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	SupersededAt *time.Time    `json:"superseded_at,omitempty"`
+	ID                int64         `json:"id"`
+	Pref              *int          `json:"pref,omitempty"`
+	Ordinal           int           `json:"ordinal"`
+	TypeLabel         *string       `json:"type_label,omitempty"`
+	TypeTokens        []string      `json:"type_tokens,omitempty"`
+	VCard             VCardIdentity `json:"vcard"`
+	Source            Provenance    `json:"source"`
+	SourceRef         *string       `json:"source_ref,omitempty"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
+	Confidence        *float64      `json:"confidence,omitempty"`
+	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
+	SupersededAt      *time.Time    `json:"superseded_at,omitempty"`
 }
 
 // ValueEnvelopeInput is the writable part of ValueEnvelope. Ordinal is a
 // pointer because zero is a valid explicit position; nil requests automatic
 // append ordering.
 type ValueEnvelopeInput struct {
-	Pref        *int          `json:"pref,omitempty"`
-	Ordinal     *int          `json:"ordinal,omitempty" minimum:"0"`
-	TypeLabel   *string       `json:"type_label,omitempty"`
-	TypeTokens  []string      `json:"type_tokens,omitempty"`
-	VCard       VCardIdentity `json:"vcard,omitzero"`
-	Source      Provenance    `json:"source"`
-	SourceRef   *string       `json:"source_ref,omitempty"`
-	Confidence  *float64      `json:"confidence,omitempty"`
-	ActiveFrom  *time.Time    `json:"active_from,omitempty"`
-	ActiveUntil *time.Time    `json:"active_until,omitempty"`
+	Pref              *int          `json:"pref,omitempty"`
+	Ordinal           *int          `json:"ordinal,omitempty" minimum:"0"`
+	TypeLabel         *string       `json:"type_label,omitempty"`
+	TypeTokens        []string      `json:"type_tokens,omitempty"`
+	VCard             VCardIdentity `json:"vcard,omitzero"`
+	Source            Provenance    `json:"source"`
+	SourceRef         *string       `json:"source_ref,omitempty"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
+	Confidence        *float64      `json:"confidence,omitempty"`
+	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
 }
 
 // Validate checks writable envelope invariants before a value is inserted.
@@ -78,7 +80,8 @@ func (e ValueEnvelopeInput) valueEnvelope(ordinal int) ValueEnvelope {
 	return ValueEnvelope{
 		Pref: e.Pref, Ordinal: ordinal, TypeLabel: e.TypeLabel,
 		TypeTokens: e.TypeTokens, VCard: e.VCard, Source: e.Source,
-		SourceRef: e.SourceRef, Confidence: e.Confidence,
+		SourceRef: e.SourceRef, SourceResourceUID: e.SourceResourceUID,
+		Confidence: e.Confidence,
 		ActiveFrom: e.ActiveFrom, ActiveUntil: e.ActiveUntil,
 	}
 }
@@ -110,7 +113,7 @@ func (e ValueEnvelope) Validate() error {
 
 const profileEnvelopeWriteColumns = `pref, ordinal, type_label, type_tokens, ` +
 	`vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid, ` +
-	`source, source_ref, confidence, active_from, active_until`
+	`source, source_ref, source_resource_uid, confidence, active_from, active_until`
 
 const profileEnvelopeReadColumns = profileEnvelopeWriteColumns +
 	`, created_at, updated_at, superseded_at`
@@ -128,6 +131,7 @@ func profileEnvelopeArgs(env ValueEnvelope) []any {
 		stringValue(env.VCard.AltID),
 		string(env.Source),
 		stringValue(env.SourceRef),
+		stringValue(env.SourceResourceUID),
 		floatValue(env.Confidence),
 		timeValue(env.ActiveFrom),
 		timeValue(env.ActiveUntil),
@@ -195,20 +199,21 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 // scan destinations after their table-specific columns without duplicating
 // the null-conversion contract.
 type profileEnvelopeScanValues struct {
-	pref, ordinal                       sql.NullInt64
-	typeLabel, typeTokens               sql.NullString
-	property, group, propID, pid, altID sql.NullString
-	source, sourceRef                   sql.NullString
-	confidence                          sql.NullFloat64
-	activeFrom, activeUntil             sql.NullTime
-	createdAt, updatedAt, supersededAt  sql.NullTime
+	pref, ordinal                        sql.NullInt64
+	typeLabel, typeTokens                sql.NullString
+	property, group, propID, pid, altID  sql.NullString
+	source, sourceRef, sourceResourceUID sql.NullString
+	confidence                           sql.NullFloat64
+	activeFrom, activeUntil              sql.NullTime
+	createdAt, updatedAt, supersededAt   sql.NullTime
 }
 
 func (v *profileEnvelopeScanValues) destinations() []any {
 	return []any{
 		&v.pref, &v.ordinal, &v.typeLabel, &v.typeTokens,
 		&v.property, &v.group, &v.propID, &v.pid, &v.altID,
-		&v.source, &v.sourceRef, &v.confidence, &v.activeFrom, &v.activeUntil,
+		&v.source, &v.sourceRef, &v.sourceResourceUID,
+		&v.confidence, &v.activeFrom, &v.activeUntil,
 		&v.createdAt, &v.updatedAt, &v.supersededAt,
 	}
 }
@@ -229,6 +234,7 @@ func (v *profileEnvelopeScanValues) apply(env *ValueEnvelope) error {
 	}
 	env.Source = Provenance(v.source.String)
 	env.SourceRef = nullStringPtr(v.sourceRef)
+	env.SourceResourceUID = nullStringPtr(v.sourceResourceUID)
 	env.Confidence = nullFloatPtr(v.confidence)
 	env.ActiveFrom = nullTimePtr(v.activeFrom)
 	env.ActiveUntil = nullTimePtr(v.activeUntil)

@@ -21,8 +21,35 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
+
+type voyageRequestConsentState struct{ active atomic.Bool }
+
+func (s *voyageRequestConsentState) HasActivePersonSemanticEmbeddingConsent(
+	context.Context, string,
+) (bool, error) {
+	return s.active.Load(), nil
+}
+
+func newVoyageSemanticRequestGate() (*voyageRequestConsentState, vector.SemanticPersonEmbeddingGate) {
+	consent := &voyageRequestConsentState{}
+	consent.active.Store(true)
+	config := vector.Config{
+		Enabled: true,
+		Embeddings: vector.EmbeddingsConfig{
+			Endpoint: "https://embedding.example.test/v1", APIFormat: vector.APIFormatVoyageContextual,
+			Model: "voyage-context-4", Dimension: 4,
+		},
+		People: vector.PeopleConfig{
+			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		},
+	}
+	return consent, vector.NewExactSemanticPersonEmbeddingGate(
+		func() (vector.Config, error) { return config, nil }, consent,
+	)
+}
 
 type capturedVoyageRequest struct {
 	Path               string     `json:"-"`
@@ -505,6 +532,171 @@ func TestVoyageClient_LaterPackedRequestReturnsSuccessfulPrefix(t *testing.T) {
 		"the caller needs the successful prefix to avoid repeating a billed request")
 }
 
+// TestVoyageClientBeforeRequestFencesLaterPackedRequest catches a gate that is
+// checked only once around EmbedDocuments. Voyage may split one logical call
+// into several provider requests, and each packed request needs fresh
+// authorization.
+func TestVoyageClientBeforeRequestFencesLaterPackedRequest(t *testing.T) {
+	var requests atomic.Int32
+	consent, gate := newVoyageSemanticRequestGate()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := decodeVoyageRequest(t, r)
+		requests.Add(1)
+		consent.active.Store(false)
+		writeVoyageResponse(t, w, sequentialVoyageResults(request.Inputs))
+	}))
+	t.Cleanup(server.Close)
+
+	got, err := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
+		cfg.MaxRetries = 1
+		cfg.Limits.MaxDocuments = 1
+		cfg.BeforeRequest = gate.Check
+	}).EmbedDocuments(t.Context(), []embed.DocumentInput{
+		{Chunks: []string{"first curated person"}},
+		{Chunks: []string{"second curated person"}},
+	})
+
+	require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+	assert.Equal(t, int32(1), requests.Load(),
+		"policy removal after the first packed request must fence the second")
+	assert.Equal(t, [][][]float32{{{1, 1, 1, 1}}}, got,
+		"the authorized successful prefix remains available to the caller")
+}
+
+// TestVoyageClientBeforeRequestRejectsProviderRedirects catches gated person
+// clients that let net/http replay nested document or query input to a
+// provider-selected URL.
+func TestVoyageClientBeforeRequestRejectsProviderRedirects(t *testing.T) {
+	operations := []struct {
+		name    string
+		wantErr string
+		run     func(context.Context, *embed.VoyageClient) error
+	}{
+		{
+			name:    "documents",
+			wantErr: "embedding provider redirects are not allowed",
+			run: func(ctx context.Context, client *embed.VoyageClient) error {
+				_, err := client.EmbedDocuments(ctx, []embed.DocumentInput{{Chunks: []string{"curated person"}}})
+				return err
+			},
+		},
+		{
+			name:    "query",
+			wantErr: "embed query: embedding provider redirects are not allowed",
+			run: func(ctx context.Context, client *embed.VoyageClient) error {
+				_, err := client.EmbedQuery(ctx, "curated person query")
+				return err
+			},
+		},
+	}
+	statuses := []struct {
+		name string
+		code int
+	}{
+		{name: "307", code: http.StatusTemporaryRedirect},
+		{name: "308", code: http.StatusPermanentRedirect},
+	}
+	destinations := []struct {
+		name        string
+		crossOrigin bool
+	}{
+		{name: "same_origin"},
+		{name: "cross_origin", crossOrigin: true},
+	}
+
+	for _, operation := range operations {
+		for _, status := range statuses {
+			for _, destination := range destinations {
+				t.Run(operation.name+"/"+status.name+"/"+destination.name, func(t *testing.T) {
+					var originRequests atomic.Int32
+					var targetRequests atomic.Int32
+					redirectLocation := "/redirected"
+					if destination.crossOrigin {
+						target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							targetRequests.Add(1)
+							writeVoyageResponse(t, w, sequentialVoyageResults([][]string{{"redirected"}}))
+						}))
+						t.Cleanup(target.Close)
+						redirectLocation = target.URL + "/redirected"
+					}
+					origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						switch r.URL.Path {
+						case "/contextualizedembeddings":
+							originRequests.Add(1)
+							w.Header().Set("Location", redirectLocation)
+							w.WriteHeader(status.code)
+						case "/redirected":
+							targetRequests.Add(1)
+							writeVoyageResponse(t, w, sequentialVoyageResults([][]string{{"redirected"}}))
+						default:
+							http.NotFound(w, r)
+						}
+					}))
+					t.Cleanup(origin.Close)
+					_, gate := newVoyageSemanticRequestGate()
+					client := newVoyageClient(origin.URL, func(cfg *embed.VoyageConfig) {
+						cfg.MaxRetries = 3
+						cfg.BeforeRequest = gate.Check
+					})
+
+					err := operation.run(t.Context(), client)
+
+					assert := assert.New(t)
+					require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
+					assert.Equal(operation.wantErr, err.Error())
+					assert.Equal(int32(1), originRequests.Load(), "redirect responses must not be retried")
+					assert.Zero(targetRequests.Load(), "person text must not reach the redirect target")
+				})
+			}
+		}
+	}
+}
+
+// TestVoyageClientWithoutBeforeRequestFollowsProviderRedirects protects the
+// message client composition, which intentionally retains default redirects.
+func TestVoyageClientWithoutBeforeRequestFollowsProviderRedirects(t *testing.T) {
+	for _, status := range []struct {
+		name string
+		code int
+	}{
+		{name: "307", code: http.StatusTemporaryRedirect},
+		{name: "308", code: http.StatusPermanentRedirect},
+	} {
+		t.Run(status.name, func(t *testing.T) {
+			var originRequests atomic.Int32
+			var targetRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/contextualizedembeddings":
+					originRequests.Add(1)
+					w.Header().Set("Location", "/redirected")
+					w.WriteHeader(status.code)
+				case "/redirected":
+					targetRequests.Add(1)
+					request := decodeVoyageRequest(t, r)
+					assert.Equal(t, "query", request.InputType)
+					assert.Equal(t, [][]string{{"message query"}}, request.Inputs)
+					writeVoyageResponse(t, w, sequentialVoyageResults(request.Inputs))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
+				cfg.MaxRetries = 1
+			})
+
+			vector, err := client.EmbedQuery(t.Context(), "message query")
+
+			assert := assert.New(t)
+			require.NoError(t, err)
+			assert.Equal([]float32{1, 1, 1, 1}, vector)
+			assert.Equal(int32(1), originRequests.Load())
+			assert.Equal(int32(1), targetRequests.Load())
+		})
+	}
+}
+
 // TestVoyageClient_EmbedQueryUsesQueryRole catches query calls that use the
 // document role or the flat /embeddings request shape.
 func TestVoyageClient_EmbedQueryUsesQueryRole(t *testing.T) {
@@ -762,6 +954,29 @@ func TestVoyageClient_RetriesTransientResponses(t *testing.T) {
 			assert.Equal(t, int32(2), attempts.Load())
 		})
 	}
+}
+
+// TestVoyageClientBeforeRequestFencesQueryRetry covers the query-role retry
+// path separately from packed document calls.
+func TestVoyageClientBeforeRequestFencesQueryRetry(t *testing.T) {
+	var requests atomic.Int32
+	consent, gate := newVoyageSemanticRequestGate()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		consent.active.Store(false)
+		w.Header().Set("Retry-After", "0")
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
+		cfg.MaxRetries = 3
+		cfg.BeforeRequest = gate.Check
+	}).EmbedQuery(t.Context(), "curated person query")
+
+	require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+	assert.Equal(t, int32(1), requests.Load(),
+		"revocation after the first 429 must fence the Voyage query retry")
 }
 
 func TestVoyageClient_ContextCancellationStopsRetryBackoff(t *testing.T) {

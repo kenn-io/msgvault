@@ -588,6 +588,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS sync_config JSONB`, "sync_config"},
+		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
@@ -615,6 +616,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS new_message_type TEXT`, "embedding_changes.new_message_type"},
 		{`ALTER TABLE embedding_change_clock ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
+		{`ALTER TABLE attribute_definitions ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN NOT NULL DEFAULT FALSE`, "attribute_definitions.is_sensitive"},
 		// FTS tsvector column for legacy PG databases created before FTS
 		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
 		// pre-existing table), so without this an upgraded DB never gets the
@@ -651,6 +653,29 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_index_state ADD COLUMN IF NOT EXISTS target_profile_id TEXT`, "document_index_state.target_profile_id"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_state TEXT`, "attachments.attachment_state"},
+		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
+		// vcard_projection_revision: the lock and change token native vCard
+		// envelope commits serialize on. Existing rows take the same DEFAULT 1
+		// as fresh ones; the absolute value never matters, only that a
+		// projection write moves it, so no backfill is needed.
+		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS vcard_projection_revision BIGINT NOT NULL DEFAULT 1`,
+			"persons.vcard_projection_revision"},
+		{`ALTER TABLE person_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_names.source_resource_uid"},
+		{`ALTER TABLE person_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
+		{`ALTER TABLE person_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_addresses.source_resource_uid"},
+		{`ALTER TABLE person_dates ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_dates.source_resource_uid"},
+		{`ALTER TABLE person_categories ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_categories.source_resource_uid"},
+		{`ALTER TABLE person_media ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_media.source_resource_uid"},
+		{`ALTER TABLE participant_contact_observations ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "participant_contact_observations.source_resource_uid"},
+		{`ALTER TABLE organization_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_names.source_resource_uid"},
+		{`ALTER TABLE organization_identifiers ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_identifiers.source_resource_uid"},
+		{`ALTER TABLE organization_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_addresses.source_resource_uid"},
+		{`ALTER TABLE organization_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_contact_points.source_resource_uid"},
+		{`ALTER TABLE organization_categories ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_categories.source_resource_uid"},
+		{`ALTER TABLE organization_media ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "organization_media.source_resource_uid"},
+		{`ALTER TABLE person_relationships ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_relationships.source_resource_uid"},
+		{`ALTER TABLE person_relationship_reviews ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_relationship_reviews.source_resource_uid"},
 	}
 }
 
@@ -803,6 +828,19 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
 		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
 		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		// Deletion is a content change: without the bump, a body deleted
+		// between a visual context snapshot and its claim passes the
+		// content-stamp CAS and publishes an embedding of the deleted text.
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION bump_message_content_changed_at_del() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE messages SET content_changed_at = %s WHERE id = OLD.message_id;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`, now),
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_del ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_content_changed_del
+		     AFTER DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_content_changed_at_del()`,
 		// Source mutations share this transaction-level advisory lock. Contextual
 		// activation takes its exclusive form before reading the journal clock, so
 		// neither side can hold a source row while waiting for the other side.
@@ -1241,6 +1279,235 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		           IS DISTINCT FROM
 		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
 		     EXECUTE FUNCTION capture_attachment_message_live_change()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_attachment() RETURNS trigger AS $$
+		 BEGIN
+		     IF TG_OP <> 'INSERT' THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         SELECT vp.generation_id, vp.pending_vector_token FROM visual_publications vp
+		         WHERE vp.pending_vector_token IS NOT NULL
+		           AND vp.message_id = OLD.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		                OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                    AND LOWER(OLD.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		         UPDATE visual_publications vp
+		         SET state = CASE WHEN EXISTS (
+		                 SELECT 1 FROM attachments a
+		                 JOIN messages m ON m.id = a.message_id
+		                 WHERE a.message_id = vp.message_id
+		                   AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		                   AND a.attachment_role = 'standalone'
+		                   AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                                         'importer_semantics', 'raw_mime_repair')
+		                   AND (LOWER(COALESCE(a.content_hash, '')) = vp.blob_hash
+		                        OR ((a.content_hash IS NULL OR a.content_hash = '')
+		                            AND LOWER(a.storage_path) =
+		                                SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		             ) THEN 'stale' ELSE 'tombstoned' END,
+		             pending_vector_token = NULL,
+		             updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = OLD.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(OLD.content_hash, ''))
+		                OR ((OLD.content_hash IS NULL OR OLD.content_hash = '')
+		                    AND LOWER(OLD.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP <> 'DELETE'
+		        AND NEW.attachment_role = 'standalone'
+		        AND NEW.role_source IN ('mime_disposition', 'provider_explicit',
+		                                'importer_semantics', 'raw_mime_repair')
+		        AND EXISTS (SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+		                    AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL) THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         SELECT vp.generation_id, vp.pending_vector_token FROM visual_publications vp
+		         WHERE vp.pending_vector_token IS NOT NULL
+		           AND vp.message_id = NEW.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		                OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                    AND LOWER(NEW.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash))
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		         UPDATE visual_publications vp
+		         SET state = 'stale', pending_vector_token = NULL, updated_at = CURRENT_TIMESTAMP
+		         WHERE vp.message_id = NEW.message_id
+		           AND (vp.blob_hash = LOWER(COALESCE(NEW.content_hash, ''))
+		                OR ((NEW.content_hash IS NULL OR NEW.content_hash = '')
+		                    AND LOWER(NEW.storage_path) =
+		                        SUBSTRING(vp.blob_hash FROM 1 FOR 2) || '/' || vp.blob_hash));
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_insert ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_insert
+		     AFTER INSERT ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_update ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_update
+		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
+		         storage_path, media_type, width, height, duration_ms,
+		         source_attachment_id, attachment_metadata, attachment_role,
+		         role_source, source_part_key, content_id, encryption_version
+		     ON attachments FOR EACH ROW
+		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.filename IS DISTINCT FROM NEW.filename
+		        OR OLD.mime_type IS DISTINCT FROM NEW.mime_type
+		        OR OLD.size IS DISTINCT FROM NEW.size
+		        OR OLD.content_hash IS DISTINCT FROM NEW.content_hash
+		        OR OLD.storage_path IS DISTINCT FROM NEW.storage_path
+		        OR OLD.media_type IS DISTINCT FROM NEW.media_type
+		        OR OLD.width IS DISTINCT FROM NEW.width
+		        OR OLD.height IS DISTINCT FROM NEW.height
+		        OR OLD.duration_ms IS DISTINCT FROM NEW.duration_ms
+		        OR OLD.source_attachment_id IS DISTINCT FROM NEW.source_attachment_id
+		        OR OLD.attachment_metadata IS DISTINCT FROM NEW.attachment_metadata
+		        OR OLD.attachment_role IS DISTINCT FROM NEW.attachment_role
+		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
+		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
+		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_attachment_delete ON attachments`,
+		`CREATE TRIGGER trg_visual_publication_attachment_delete
+		     AFTER DELETE ON attachments FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_attachment()`,
+		`CREATE OR REPLACE FUNCTION ledger_visual_publication_tokens() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.current_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.current_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     IF OLD.pending_vector_token IS NOT NULL THEN
+		         INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		         VALUES (OLD.generation_id, OLD.pending_vector_token)
+		         ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     END IF;
+		     RETURN OLD;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_delete_ledger ON visual_publications`,
+		`CREATE TRIGGER trg_visual_publication_delete_ledger
+		     BEFORE DELETE ON visual_publications FOR EACH ROW
+		     EXECUTE FUNCTION ledger_visual_publication_tokens()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_live() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN NEW.deleted_at IS NULL
+		                               AND NEW.deleted_from_source_at IS NULL
+		                          THEN 'stale' ELSE 'tombstoned' END,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_live_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_live_change
+		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		           IS DISTINCT FROM
+		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     EXECUTE FUNCTION invalidate_visual_publication_message_live()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_content() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = NEW.id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		         prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = NEW.id AND state <> 'tombstoned'
+		       AND (state = 'current' OR prepared_revision IS NOT NULL
+		            OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_content_change ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_content_change
+		     AFTER UPDATE OF subject, message_type ON messages FOR EACH ROW
+		     WHEN (OLD.subject IS DISTINCT FROM NEW.subject
+		           OR OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_content()`,
+		`CREATE OR REPLACE FUNCTION seed_visual_publication_scope_entry() RETURNS trigger AS $$
+		 BEGIN
+		     INSERT INTO visual_publications
+		         (generation_id, message_id, blob_hash, media_input_key,
+		          source_fence, attachment_role, role_source, state)
+     SELECT vg.id, a.message_id,
+		            CASE WHEN LOWER(COALESCE(a.content_hash, '')) ~ '^[0-9a-f]{64}$'
+		                 THEN LOWER(a.content_hash)
+		                 ELSE SUBSTRING(a.storage_path FROM 4) END,
+		            'original', 0, 'unknown', 'unknown', 'stale'
+		     FROM attachments a JOIN visual_generations vg
+		          ON vg.state IN ('building', 'active')
+		     WHERE a.message_id = NEW.id
+		       AND a.attachment_role = 'standalone'
+		       AND a.role_source IN ('mime_disposition', 'provider_explicit',
+		                             'importer_semantics', 'raw_mime_repair')
+		       AND (LOWER(COALESCE(a.content_hash, '')) ~ '^[0-9a-f]{64}$'
+		            OR (COALESCE(a.content_hash, '') = ''
+		                AND COALESCE(a.storage_path, '') ~ '^[0-9a-f]{2}/[0-9a-f]{64}$'
+		                AND SUBSTRING(a.storage_path FROM 1 FOR 2) = SUBSTRING(a.storage_path FROM 4 FOR 2)))
+		     ON CONFLICT (generation_id, message_id, blob_hash, media_input_key) DO UPDATE SET
+		         state = 'stale',
+		         outcome_kind = NULL, outcome_reason = NULL,
+		         prepared_revision = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE visual_publications.state = 'tombstoned';
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_type_scope ON messages`,
+		`CREATE TRIGGER trg_visual_publication_message_type_scope
+		     AFTER UPDATE OF message_type ON messages FOR EACH ROW
+		     WHEN (OLD.message_type IS DISTINCT FROM NEW.message_type)
+		     EXECUTE FUNCTION seed_visual_publication_scope_entry()`,
+		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_message_body() RETURNS trigger AS $$
+		 DECLARE target_message_id BIGINT;
+		 BEGIN
+		     IF TG_OP = 'DELETE' THEN
+		         target_message_id := OLD.message_id;
+		     ELSE
+		         target_message_id := NEW.message_id;
+		     END IF;
+		     INSERT INTO visual_obsolete_tokens (generation_id, vector_token)
+		     SELECT generation_id, pending_vector_token FROM visual_publications
+		     WHERE pending_vector_token IS NOT NULL AND message_id = target_message_id
+		     ON CONFLICT (generation_id, vector_token) DO NOTHING;
+		     UPDATE visual_publications
+		     SET state = CASE WHEN state = 'current' THEN 'stale' ELSE state END,
+		         prepared_revision = NULL, outcome_kind = NULL, outcome_reason = NULL,
+		         pending_vector_token = NULL,
+		         updated_at = CURRENT_TIMESTAMP
+		     WHERE message_id = target_message_id AND state <> 'tombstoned'
+		       AND (state = 'current' OR prepared_revision IS NOT NULL
+		            OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_insert ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_insert
+		     AFTER INSERT ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_delete ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_delete
+		     AFTER DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
+		`DROP TRIGGER IF EXISTS trg_visual_publication_message_body_update ON message_bodies`,
+		`CREATE TRIGGER trg_visual_publication_message_body_update
+		     AFTER UPDATE OF body_text, body_html ON message_bodies FOR EACH ROW
+		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
+		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
+		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
@@ -1467,6 +1734,18 @@ func (d *PostgreSQLDialect) IsBusyError(err error) bool {
 	return isPgError(err, "55P03") || isPgError(err, "40P01") || isPgError(err, "57014")
 }
 
+// IsSerializationFailureError reports whether err is PostgreSQL's
+// serialization_failure (SQLSTATE 40001). Under REPEATABLE READ a
+// SELECT ... FOR UPDATE (or an UPDATE/DELETE) that targets a row another
+// transaction updated and committed after this transaction's snapshot cannot
+// be satisfied without either ignoring that commit or reading outside the
+// snapshot, so PostgreSQL aborts with 40001 rather than choose. The condition
+// it reports is exactly "the row I locked changed under me", which is why the
+// vCard envelope commit can translate it into a projection conflict.
+func (d *PostgreSQLDialect) IsSerializationFailureError(err error) bool {
+	return isPgError(err, "40001")
+}
+
 // IsFTSValueTooLargeError reports whether err is PostgreSQL's
 // program_limit_exceeded (SQLSTATE 54000), which to_tsvector raises as
 // "string is too long for tsvector". This is the single FTS error the backfill
@@ -1494,7 +1773,7 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources — a real race before it was added here.
 //   - sync_checkpoints: cascade-reachable from sources; no writer today, but
 //     included so a future checkpoint writer cannot race the cascade.
-//   - imap_folder_state: written by UpsertIMAPFolderStates after IMAP syncs
+//   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
@@ -1516,7 +1795,7 @@ var exclusiveLockTables = []string{
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
-	"imap_folder_state",
+	"imap_folder_state", "imap_message_memberships",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the
@@ -1582,6 +1861,11 @@ func (d *PostgreSQLDialect) BeginWriteSQL() string { return "BEGIN" }
 // SelectForUpdate returns " FOR UPDATE" so a SELECT inside a write
 // transaction takes a row-level lock that serializes subsequent merges.
 func (d *PostgreSQLDialect) SelectForUpdate() string { return " FOR UPDATE" }
+
+// RowWriterLockSQL returns "": PostgreSQL row locks come from SelectForUpdate,
+// and a self-assign UPDATE would make concurrent REPEATABLE READ lockers of
+// the same row report a spurious serialization failure.
+func (d *PostgreSQLDialect) RowWriterLockSQL(table, column string) string { return "" }
 
 // MaintenanceTimeoutResetSQL disables the per-statement timeout for the
 // current transaction. SET LOCAL auto-resets at tx end, so the pool-wide

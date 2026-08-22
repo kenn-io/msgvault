@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/query"
@@ -56,6 +57,16 @@ type StatsResponse struct {
 	DatabaseSize          int64             `json:"database_size_bytes"`
 	VectorSearch          *vector.StatsView `json:"vector_search,omitempty"`
 	VectorStatus          string            `json:"vector_status,omitempty"`
+	// VectorTextStatus reports the TEXT vector lane specifically. A
+	// multimodal-only daemon is vector-"ready" without serving semantic
+	// message search, so text-tool registration must consult this field,
+	// not the shared subsystem status.
+	VectorTextStatus string `json:"vector_text_status,omitempty"`
+	// VectorVisualStatus reports the multimodal lane the same way, so a
+	// one-time capability probe during asynchronous init can distinguish
+	// "still initializing" from "not configured" instead of permanently
+	// omitting the visual tool after a transient 503.
+	VectorVisualStatus string `json:"vector_visual_status,omitempty"`
 }
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
@@ -186,6 +197,10 @@ type HealthResponse struct {
 	// new engine. Empty when the server was built without one (tests, embedded
 	// uses).
 	AnalyticsEngine string `json:"analytics_engine,omitempty"`
+	// APISchemaVersion reports the daemon's APISchemaVersion on authenticated
+	// /api/v1/health so remote CLI clients can refuse a major-version mismatch
+	// before issuing commands. Omitted on the public unauthenticated /health.
+	APISchemaVersion string `json:"api_schema_version,omitempty"`
 }
 
 type MessageListResponse struct {
@@ -213,7 +228,8 @@ type FilteredMessagesResponse struct {
 }
 
 type GmailIDsResponse struct {
-	GmailIDs []string `json:"gmail_ids"`
+	GmailIDs []string               `json:"gmail_ids"`
+	Targets  []query.DeletionTarget `json:"targets,omitempty"`
 }
 
 type DeepSearchResponse struct {
@@ -552,6 +568,30 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
+		// Per-lane statuses mirror the shared status only for lanes the
+		// configuration actually enables (the daemon passes cfg.Vector at
+		// construction, so this holds during initialization too). Blanket
+		// mirroring advertised visual tools on text-only deployments and
+		// vice versa.
+		_, _, vectorCfg := s.vectorComponents()
+		resp.VectorTextStatus = string(VectorStatusDisabled)
+		if vectorCfg.Enabled {
+			resp.VectorTextStatus = string(status)
+		}
+		resp.VectorVisualStatus = string(VectorStatusDisabled)
+		if vectorCfg.Multimodal.Enabled {
+			resp.VectorVisualStatus = string(status)
+			// Visual init can fail while text search stays healthy: the
+			// shared status settles ready with no visual runtime installed.
+			// Report the lane's own failure instead of mirroring ready.
+			s.vectorMu.RLock()
+			visualInstalled := s.visualSearch != nil
+			s.vectorMu.RUnlock()
+			if !visualInstalled &&
+				(status == VectorStatusReady || status == VectorStatusStale) {
+				resp.VectorVisualStatus = string(VectorStatusError)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -3020,17 +3060,18 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		s.rejectBadParam(w, err)
 		return
 	}
-	ids, err := engine.GetGmailIDsByFilter(r.Context(), filter)
+	targets, err := engine.GetDeletionTargetsByFilter(r.Context(), filter)
 	if err != nil {
 		s.logger.Error("gmail id filter query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		return
 	}
-	if ids == nil {
-		ids = []string{}
+	if targets == nil {
+		targets = []query.DeletionTarget{}
 	}
-
-	writeJSON(w, http.StatusOK, GmailIDsResponse{GmailIDs: ids})
+	writeJSON(w, http.StatusOK, GmailIDsResponse{
+		GmailIDs: deletion.SourceMessageIDs(targets), Targets: targets,
+	})
 }
 
 func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {

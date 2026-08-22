@@ -83,7 +83,7 @@ var propertyHandling = map[string]Handling{
 }
 
 var parameterHandling = preservedHandling(
-	"LANGUAGE", "VALUE", "PREF", "ALTID", "PID", "TYPE", "MEDIATYPE",
+	"LANGUAGE", "VALUE", "PREF", "ALTID", "PID", parameterTypeName, "MEDIATYPE",
 	"CALSCALE", "SORT-AS", "GEO", "TZ", "INDEX", "LEVEL", "GROUP", "CC",
 	"AUTHOR", "AUTHOR-NAME", "CREATED", "DERIVED", "LABEL", "PHONETIC",
 	"PROP-ID", "SCRIPT", "SERVICE-TYPE", "USERNAME", "JSPTR", "JSCOMPS",

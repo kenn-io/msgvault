@@ -61,6 +61,7 @@ type CreateAttributeDefinitionRequest struct {
 	DisplayOrder  int64                   `json:"display_order,omitempty"`
 	IsRequired    bool                    `json:"is_required,omitempty"`
 	IsSearchable  bool                    `json:"is_searchable,omitempty"`
+	IsSensitive   bool                    `json:"is_sensitive,omitempty"`
 	IsAudited     bool                    `json:"is_audited,omitempty"`
 	Options       *store.AttributeOptions `json:"options,omitempty"`
 	VCardProperty *string                 `json:"vcard_property,omitempty"`
@@ -80,7 +81,8 @@ func (r CreateAttributeDefinitionRequest) StoreInput(
 		RecordTarget: r.RecordTarget, Cardinality: store.AttributeCardinality(r.Cardinality),
 		DisplayOrder: r.DisplayOrder, IsRequired: r.IsRequired,
 		Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true,
-		APIMutable: true, IsSearchable: r.IsSearchable, IsAudited: r.IsAudited,
+		APIMutable: true, IsSearchable: r.IsSearchable, IsSensitive: r.IsSensitive,
+		IsAudited:   r.IsAudited,
 		IsDeletable: true, Options: r.Options, VCardProperty: r.VCardProperty,
 	}
 }
@@ -90,6 +92,7 @@ type PatchAttributeDefinitionRequest struct {
 	Label        *string `json:"label,omitempty"`
 	Description  *string `json:"description,omitempty" nullable:"true"`
 	DisplayOrder *int64  `json:"display_order,omitempty"`
+	IsSensitive  *bool   `json:"is_sensitive,omitempty"`
 	IsActive     *bool   `json:"is_active,omitempty"`
 }
 
@@ -233,7 +236,8 @@ func (s *Server) handlePatchAttributeDefinition(w http.ResponseWriter, r *http.R
 		return
 	}
 	update := store.AttributeDefinitionUpdate{
-		Label: request.Label, DisplayOrder: request.DisplayOrder, IsActive: request.IsActive,
+		Label: request.Label, DisplayOrder: request.DisplayOrder,
+		IsSensitive: request.IsSensitive, IsActive: request.IsActive,
 	}
 	if raw, present := fields["description"]; present {
 		description := request.Description

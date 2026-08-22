@@ -310,7 +310,7 @@ func (s *Store) RecordContactObservationContext(
 				profileEnvelopeWriteColumns+`, created_at, updated_at
 			) VALUES (
 				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 				`+s.dialect.Now()+`, `+s.dialect.Now()+`
 			) RETURNING id`, args...).Scan(&id); err != nil {
 				return fmt.Errorf("record participant contact observation: %w", err)
@@ -719,7 +719,7 @@ const participantObservationSelect = `SELECT
 	o.observed_at,
 	o.pref, o.ordinal, o.type_label, o.type_tokens, o.vcard_property,
 	o.vcard_group, o.vcard_prop_id, o.vcard_pid, o.vcard_altid, o.source,
-	o.source_ref, o.confidence, o.active_from, o.active_until,
+	o.source_ref, o.source_resource_uid, o.confidence, o.active_from, o.active_until,
 	o.created_at, o.updated_at, o.superseded_at
 	FROM participant_contact_observations o
 	LEFT JOIN communication_services cs ON cs.id = o.service_id`

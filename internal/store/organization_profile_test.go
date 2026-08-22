@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -157,6 +158,142 @@ func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
 			}},
 		})
 	require.ErrorIs(err, store.ErrInvalidProvenance)
+}
+
+func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+		Name: "Example Org", Kind: store.OrganizationKindCompany,
+	})
+	requirements.NoError(err)
+
+	categories := make([]store.OrganizationCategoryInput, store.MaxOrganizationProfileValues)
+	for i := range categories {
+		categories[i] = store.OrganizationCategoryInput{
+			Category: "category-" + strconv.Itoa(i),
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		}
+	}
+	input := store.OrganizationProfileInput{Categories: categories}
+	first, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision, input)
+	requirements.NoError(err)
+	requirements.Len(first.Categories, store.MaxOrganizationProfileValues)
+
+	second, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, first.Organization.Revision, input)
+	requirements.NoError(err)
+	requirements.Len(second.Categories, store.MaxOrganizationProfileValues)
+	for i := range first.Categories {
+		assertions.Equal(first.Categories[i].Envelope.ID, second.Categories[i].Envelope.ID)
+	}
+
+	oversized := append([]store.OrganizationCategoryInput(nil), categories...)
+	oversized = append(oversized, store.OrganizationCategoryInput{
+		Category: "one-too-many",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	_, err = st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, second.Organization.Revision,
+		store.OrganizationProfileInput{Categories: oversized})
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
+
+	unchanged, err := st.GetOrganizationContext(ctx, organization.ID)
+	requirements.NoError(err)
+	assertions.Equal(second.Organization.Revision, unchanged.Revision)
+}
+
+func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+		Name: "Example Org", Kind: store.OrganizationKindCompany,
+	})
+	requirements.NoError(err)
+
+	shared := make([]byte, store.MaxPersonMediaBytes)
+	media := make([]store.OrganizationMediaInput, 0, 5)
+	for i := range 4 {
+		ordinal := i
+		media = append(media, store.OrganizationMediaInput{
+			MediaKind: store.PersonMediaPhoto,
+			Data:      shared,
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceUser, Ordinal: &ordinal,
+			},
+		})
+	}
+	media = append(media, store.OrganizationMediaInput{
+		MediaKind: store.PersonMediaPhoto,
+		Data:      []byte{1},
+		Envelope: store.ValueEnvelopeInput{
+			Source: store.ProvenanceUser, Ordinal: new(4),
+		},
+	})
+
+	_, err = st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision,
+		store.OrganizationProfileInput{Media: media})
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
+
+	unchanged, err := st.GetOrganizationContext(ctx, organization.ID)
+	requirements.NoError(err)
+	assertions.Equal(organization.Revision, unchanged.Revision)
+}
+
+func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+		Name: "Example Org", Kind: store.OrganizationKindCompany,
+	})
+	requirements.NoError(err)
+
+	data := make([]byte, 256<<10)
+	first, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision,
+		store.OrganizationProfileInput{Media: []store.OrganizationMediaInput{{
+			MediaKind: store.PersonMediaLogo,
+			Data:      data,
+			Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		}}})
+	requirements.NoError(err)
+	requirements.Len(first.Media, 1)
+	requirements.NotNil(first.Media[0].ContentHash)
+
+	copyCount := int(store.MaxOrganizationProfileMediaBytes/int64(len(data))) + 1
+	media := make([]store.OrganizationMediaInput, copyCount)
+	for i := range media {
+		ordinal := i
+		media[i] = store.OrganizationMediaInput{
+			MediaKind:   store.PersonMediaLogo,
+			ContentHash: first.Media[0].ContentHash,
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceUser, Ordinal: &ordinal,
+			},
+		}
+	}
+
+	_, err = st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, first.Organization.Revision,
+		store.OrganizationProfileInput{Media: media})
+	requirements.ErrorIs(err, store.ErrOrganizationProfileTooLarge)
+
+	unchanged, err := st.GetOrganizationProfileContext(ctx, organization.ID, false)
+	requirements.NoError(err)
+	requirements.Len(unchanged.Media, 1)
+	assertions.Equal(first.Organization.Revision, unchanged.Organization.Revision)
+	stored, _, err := st.ReadOrganizationMediaDataContext(
+		ctx, organization.ID, unchanged.Media[0].Envelope.ID)
+	requirements.NoError(err)
+	assertions.Equal(data, stored)
 }
 
 func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testing.T) {

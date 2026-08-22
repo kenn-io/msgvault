@@ -105,7 +105,9 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		}
 		var updatedID int64
 		err := tx.QueryRowContext(ctx, `UPDATE persons
-			SET revision = revision + 1, updated_at = `+s.dialect.Now()+`
+			SET revision = revision + 1,
+			    vcard_projection_revision = vcard_projection_revision + 1,
+			    updated_at = `+s.dialect.Now()+`
 			WHERE id = ? AND revision = ? RETURNING id`,
 			personID, expectedRevision,
 		).Scan(&updatedID)

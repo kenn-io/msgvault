@@ -4,13 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -307,6 +312,77 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	assert.Equal(0, attachmentCount)
 }
 
+// TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement guards the ordering
+// hazard inside persistMessage: inline hosted-content markers are written
+// first and carry the raw Graph URL as their storage path, so the link
+// attachment replacement that runs afterwards must not treat them as stale
+// links. Losing the marker loses the recorded skip and makes the next sync
+// re-fetch media the size cap already excluded.
+func TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	hostedFetches := 0
+	serverURL := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+			hostedFetches++
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("12345678901"))
+		case r.URL.Path == "/me/chats":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:marker@thread.v2","chatType":"oneOnOne","topic":"DM"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			body := `<div><img src="` + serverURL + `/chats/19:marker@thread.v2/messages/m1/hostedContents/1/$value"></div>`
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z",
+				"body":{"contentType":"html","content":` + jsonString(t, body) + `},
+				"attachments":[{"id":"a1","contentType":"reference","name":"spec.pdf","contentUrl":"https://example.com/spec.pdf"}]}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	opts := ImportOptions{
+		Email: "me@example.com", AttachmentsDir: t.TempDir(), Full: true,
+		MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 10},
+	}
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.EqualValues(1, sum.InlineImagesSkipped)
+	require.Equal(1, hostedFetches)
+
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(1, hostedFetches,
+		"the surviving oversize marker must keep the second sync from re-fetching")
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
+		chatSourceMessageID("19:marker@thread.v2", "m1")).Scan(&messageID))
+	markerID := "teams:inline:/chats/19:marker@thread.v2/messages/m1/hostedContents/1/$value"
+	markers, err := st.MessageTeamsInlineAttachments(messageID)
+	require.NoError(err)
+	require.Contains(markers, markerID)
+	assert.Equal(attachmentpolicy.StateSkipped, markers[markerID].State)
+	assert.Equal(attachmentpolicy.SkipSizeCap, markers[markerID].SkipReason)
+	assert.Greater(markers[markerID].Size, 10, "the observed oversize must survive the link replacement")
+
+	var linkRows int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM attachments WHERE message_id = ? AND storage_path = ?
+	`), messageID, "https://example.com/spec.pdf").Scan(&linkRows))
+	assert.Equal(1, linkRows, "the link attachment must still be recorded")
+}
+
 func jsonString(t *testing.T, s string) string {
 	t.Helper()
 
@@ -386,6 +462,147 @@ func TestBackfillInlineMedia(t *testing.T) {
 	).Scan(&hasAttachments, &messageAttachmentCount))
 	assert.True(hasAttachments, "backfill should refresh the message attachment flag")
 	assert.Equal(1, messageAttachmentCount, "backfill should refresh the message attachment count")
+}
+
+func TestBackfillInlineMediaPolicySkipsChannelWithoutFetch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("must not download"))
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(src.ID, "channel-1", "channel", "Channel")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: src.ID,
+		SourceMessageID: "channel-message-1", MessageType: "teams",
+	})
+	require.NoError(err)
+	bodyHTML := `<img src="` + srv.URL + `/v1.0/teams/t/channels/c/messages/m/hostedContents/1/$value">`
+	require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: bodyHTML, Valid: true}))
+	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50)
+	imp := NewImporter(st, client)
+
+	sum, err := imp.BackfillInlineMedia(context.Background(), ImportOptions{
+		Email: "me@example.com", AttachmentsDir: t.TempDir(),
+		MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect, MaxBytes: 100 << 20},
+	})
+	require.NoError(err)
+	assert.EqualValues(1, sum.InlineImagesSkipped)
+	assert.Zero(sum.InlineImagesCopied)
+	assert.Zero(requests)
+
+	var state, reason string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?
+	`), messageID).Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
+}
+
+func TestBackfillInlineMediaPreservesLegacyStoredMediaUntilReplacementSucceeds(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		policy     attachmentpolicy.Policy
+	}{
+		{
+			name:   "policy exclusion",
+			policy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeNone},
+		},
+		{
+			name:       "transient fetch failure",
+			statusCode: http.StatusServiceUnavailable,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer srv.Close()
+
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("teams", "me@example.com")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversationWithType(src.ID, "chat-legacy", "direct_chat", "Chat")
+			require.NoError(err)
+			messageID, err := st.UpsertMessage(&store.Message{
+				ConversationID: conversationID, SourceID: src.ID,
+				SourceMessageID: "message-legacy", MessageType: "teams",
+			})
+			require.NoError(err)
+			bodyHTML := `<img src="` + srv.URL + `/v1.0/chats/c/messages/m/hostedContents/1/$value">`
+			require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: bodyHTML, Valid: true}))
+			require.NoError(st.UpsertAttachment(messageID, "", "", "legacy/inline.png", "legacy-inline-hash", 12))
+
+			imp := NewImporter(st, NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50))
+			_, err = imp.BackfillInlineMedia(t.Context(), ImportOptions{
+				Email: "me@example.com", AttachmentsDir: t.TempDir(), MediaPolicy: tc.policy,
+			})
+			require.NoError(err)
+
+			var legacyCount int
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COUNT(*) FROM attachments
+				WHERE message_id = ? AND content_hash = 'legacy-inline-hash'
+			`), messageID).Scan(&legacyCount))
+			assert.Equal(1, legacyCount, "legacy stored media must survive until a replacement is archived")
+		})
+	}
+}
+
+func TestBackfillInlineMediaRecordsStreamedOversizeForRetryPolicy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("12345678901"))
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(src.ID, "chat-1", "direct_chat", "Chat")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: src.ID,
+		SourceMessageID: "message-1", MessageType: "teams",
+	})
+	require.NoError(err)
+	bodyHTML := `<img src="` + srv.URL + `/v1.0/chats/c/messages/m/hostedContents/1/$value">`
+	require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: bodyHTML, Valid: true}))
+	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50)
+	imp := NewImporter(st, client)
+	opts := ImportOptions{
+		Email: "me@example.com", AttachmentsDir: t.TempDir(), OnlyIncomplete: true,
+		MediaPolicy: attachmentpolicy.Policy{MaxBytes: 10},
+	}
+
+	sum, err := imp.BackfillInlineMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.InlineImagesSkipped)
+	assert.Zero(sum.InlineImagesCopied)
+	var size int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT size FROM attachments WHERE message_id = ?
+	`), messageID).Scan(&size))
+	assert.Greater(size, int64(10))
+	second, err := imp.BackfillInlineMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(second.MessagesProcessed)
+	assert.Equal(1, requests)
 }
 
 // TestHostedFetchPath verifies that an absolute Graph hostedContents URL is
@@ -678,6 +895,465 @@ func TestImportChannelsEndToEnd(t *testing.T) {
 	prev, _ := st.GetLastSuccessfulSync(src.ID)
 	state, _ := LoadSyncState(prev.CursorAfter.String)
 	assert.Contains(state.ChannelDelta("team1/chanA"), "token=next")
+}
+
+// TestChannelMediaPolicyUsesTeamParticipantCount verifies that channel imports
+// evaluate media_max_participants against the team's membership. Channels
+// carried no participant count at all, so the threshold silently never applied
+// to them — the largest conversations in an archive. Membership is also
+// persisted, so a later backfill or purge reads the same count.
+func TestChannelMediaPolicyUsesTeamParticipantCount(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		membersStatus    int
+		maxParticipants  int
+		wantState        string
+		wantReason       string
+		wantFetches      int
+		wantParticipants int
+		wantErrors       int64
+	}{
+		{
+			name: "team over the limit skips media", maxParticipants: 2,
+			wantState:  string(attachmentpolicy.StateSkipped),
+			wantReason: string(attachmentpolicy.SkipParticipantThreshold),
+			// The team's three members are still archived on the channel.
+			wantParticipants: 3,
+		},
+		{
+			name: "team within the limit stores media", maxParticipants: 5,
+			wantState: string(attachmentpolicy.StateStored), wantFetches: 1,
+			wantParticipants: 3,
+		},
+		{
+			name: "unknown membership fails closed", membersStatus: http.StatusInternalServerError,
+			maxParticipants: 2,
+			wantState:       string(attachmentpolicy.StateSkipped),
+			wantReason:      string(attachmentpolicy.SkipParticipantThreshold),
+			wantErrors:      1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			hostedFetches := 0
+			serverURL := ""
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+					hostedFetches++
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write([]byte("PNGDATA"))
+				case strings.HasSuffix(r.URL.Path, "/members"):
+					if tc.membersStatus != 0 {
+						w.Header().Set("Retry-After", "0")
+						http.Error(w, "members unavailable", tc.membersStatus)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[
+						{"id":"mem1","userId":"aad-alice","email":"alice@example.com","displayName":"Alice"},
+						{"id":"mem2","userId":"aad-bob","email":"bob@example.com","displayName":"Bob"},
+						{"id":"mem3","userId":"aad-carol","email":"carol@example.com","displayName":"Carol"}
+					]}`))
+				case r.URL.Path == "/me/chats":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case r.URL.Path == "/me/joinedTeams":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General","membershipType":"standard"}]}`))
+				case strings.Contains(r.URL.Path, "/replies"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+					w.Header().Set("Content-Type", "application/json")
+					body := `<div><img src="` + serverURL + `/teams/team1/channels/chanA/messages/c1/hostedContents/1/$value"></div>`
+					_, _ = w.Write([]byte(`{"value":[{"id":"c1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z",` +
+						`"body":{"contentType":"html","content":` + jsonString(t, body) + `}}],"@odata.deltaLink":"` + serverURL + `/delta?token=next"}`))
+				case strings.HasSuffix(r.URL.Path, "/messages"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				default:
+					http.Error(w, "404", http.StatusNotFound)
+				}
+			}))
+			serverURL = srv.URL
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+
+			imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+			sum, err := imp.Import(t.Context(), ImportOptions{
+				Email: "me@example.com", IncludeChannels: true, AttachmentsDir: t.TempDir(),
+				MediaPolicy: attachmentpolicy.Policy{
+					Scope: attachmentpolicy.ScopeAll, MaxParticipants: tc.maxParticipants,
+					MaxBytes: 100 << 20,
+				},
+			})
+			require.NoError(err)
+			assert.Equal(tc.wantErrors, sum.Errors)
+			assert.Equal(tc.wantFetches, hostedFetches)
+
+			var state, reason, contentHash string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, ''),
+				       COALESCE(a.content_hash, '')
+				FROM attachments a JOIN messages m ON m.id = a.message_id
+				WHERE m.source_message_id = ?
+			`), channelSourceMessageID("team1", "chanA", "c1")).Scan(&state, &reason, &contentHash))
+			assert.Equal(tc.wantState, state)
+			assert.Equal(tc.wantReason, reason)
+			if tc.wantState == string(attachmentpolicy.StateStored) {
+				assert.NotEmpty(contentHash)
+			} else {
+				assert.Empty(contentHash)
+			}
+
+			var participantCount int
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
+			`), "team1/chanA").Scan(&participantCount))
+			assert.Equal(tc.wantParticipants, participantCount,
+				"channel membership must be archived so backfill and purge see the same count")
+		})
+	}
+}
+
+// privateChannelGraph is a fake Graph server for a team whose single channel is
+// private: a three-member team roster, a one-member channel roster, and one
+// channel message carrying inline hosted content. The channel roster is
+// unreadable until channelRosterReadable is set, so a test can fail the roster
+// during sync and repair it before a backfill.
+type privateChannelGraph struct {
+	channelRosterReadable bool
+	hostedFetches         int
+	teamRosterReads       int
+	url                   string
+}
+
+func newPrivateChannelGraph(t *testing.T) *privateChannelGraph {
+	t.Helper()
+
+	g := &privateChannelGraph{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+			g.hostedFetches++
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("PNGDATA"))
+		case strings.Contains(r.URL.Path, "/channels/") && strings.HasSuffix(r.URL.Path, "/members"):
+			if !g.channelRosterReadable {
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "channel members unavailable", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"mem1","userId":"aad-alice","email":"alice@example.com","displayName":"Alice"}
+			]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			g.teamRosterReads++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"mem1","userId":"aad-alice","email":"alice@example.com","displayName":"Alice"},
+				{"id":"mem2","userId":"aad-bob","email":"bob@example.com","displayName":"Bob"},
+				{"id":"mem3","userId":"aad-carol","email":"carol@example.com","displayName":"Carol"}
+			]}`))
+		case r.URL.Path == "/me/chats":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/channels"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"Secret","membershipType":"private"}]}`))
+		case strings.Contains(r.URL.Path, "/replies"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+			w.Header().Set("Content-Type", "application/json")
+			body := `<div><img src="` + g.url + `/teams/team1/channels/chanA/messages/c1/hostedContents/1/$value"></div>`
+			_, _ = w.Write([]byte(`{"value":[{"id":"c1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z",` +
+				`"body":{"contentType":"html","content":` + jsonString(t, body) + `}}],"@odata.deltaLink":"` + g.url + `/delta?token=next"}`))
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	g.url = srv.URL
+	t.Cleanup(srv.Close)
+	return g
+}
+
+// channelMediaState returns the archived download outcome and participant count
+// for the fixture channel message.
+func channelMediaState(t *testing.T, st *store.Store) (state, reason string, participants int) {
+	t.Helper()
+
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, '')
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?
+	`), channelSourceMessageID("team1", "chanA", "c1")).Scan(&state, &reason))
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
+	`), "team1/chanA").Scan(&participants))
+	return state, reason, participants
+}
+
+// TestPrivateChannelMediaPolicyUsesChannelRoster pins the roster a private
+// channel is evaluated against. Private and shared channels carry membership of
+// their own, so inheriting the team roster both overstates a small private
+// channel (excluding media it should keep) and understates a private channel in
+// a small team. The fixture is deliberately contradictory: the team is over the
+// limit while the channel is under it.
+func TestPrivateChannelMediaPolicyUsesChannelRoster(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		channelRosterReadable bool
+		wantState             string
+		wantReason            string
+		wantFetches           int
+		wantParticipants      int
+		wantErrors            int64
+	}{
+		{
+			name: "channel roster under the limit stores media", channelRosterReadable: true,
+			wantState: string(attachmentpolicy.StateStored), wantFetches: 1,
+			wantParticipants: 1,
+		},
+		{
+			name:       "unreadable channel roster fails closed",
+			wantState:  string(attachmentpolicy.StateSkipped),
+			wantReason: string(attachmentpolicy.SkipParticipantThreshold),
+			wantErrors: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			graph := newPrivateChannelGraph(t)
+			graph.channelRosterReadable = tc.channelRosterReadable
+			st := testutil.NewTestStore(t)
+
+			imp := NewImporter(st, NewClient(graph.url, func(context.Context) (string, error) { return "t", nil }, 50))
+			sum, err := imp.Import(t.Context(), ImportOptions{
+				Email: "me@example.com", IncludeChannels: true, AttachmentsDir: t.TempDir(),
+				MediaPolicy: attachmentpolicy.Policy{
+					Scope: attachmentpolicy.ScopeAll, MaxParticipants: 2, MaxBytes: 100 << 20,
+				},
+			})
+			require.NoError(err)
+			assert.Equal(tc.wantErrors, sum.Errors)
+			assert.Equal(tc.wantFetches, graph.hostedFetches)
+			assert.Zero(graph.teamRosterReads,
+				"a team of only private channels never needs its team roster resolved")
+
+			state, reason, participants := channelMediaState(t, st)
+			assert.Equal(tc.wantState, state)
+			assert.Equal(tc.wantReason, reason)
+			assert.Equal(tc.wantParticipants, participants,
+				"the channel's own membership is what purge and later runs must read")
+		})
+	}
+}
+
+// TestBackfillPrivateChannelMediaRefreshesChannelRoster is the backfill half of
+// TestPrivateChannelMediaPolicyUsesChannelRoster: a channel whose own roster was
+// unreadable during sync must be re-resolved from the channel, not from the
+// team it hangs off — the team roster here would exclude the media.
+func TestBackfillPrivateChannelMediaRefreshesChannelRoster(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	graph := newPrivateChannelGraph(t)
+	st := testutil.NewTestStore(t)
+	attachmentsDir := t.TempDir()
+	policy := attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: 2, MaxBytes: 100 << 20,
+	}
+
+	imp := NewImporter(st, NewClient(graph.url, func(context.Context) (string, error) { return "t", nil }, 50))
+	syncSum, err := imp.Import(t.Context(), ImportOptions{
+		Email: "me@example.com", IncludeChannels: true,
+		AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+	})
+	require.NoError(err)
+	require.EqualValues(1, syncSum.Errors, "the unreadable channel roster is counted once")
+	require.Zero(graph.hostedFetches, "sync must fail closed while membership is unknown")
+
+	graph.channelRosterReadable = true
+	sum, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
+		Email: "me@example.com", AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+	})
+	require.NoError(err)
+	assert.Equal(1, graph.hostedFetches,
+		"the channel's own roster is under the limit the team roster exceeds")
+	assert.EqualValues(1, sum.InlineImagesCopied)
+	assert.Zero(sum.Errors)
+
+	state, reason, participants := channelMediaState(t, st)
+	assert.Equal(string(attachmentpolicy.StateStored), state)
+	assert.Empty(reason)
+	assert.Equal(1, participants)
+}
+
+// TestBackfillChannelMediaRefreshesUnknownTeamMembership covers the durable
+// half of the channel participant threshold. Sync fails closed on an unreadable
+// roster using a count that only lives in memory, so the channel is archived
+// with no members; the backfill then reads that archived zero. Unless it
+// re-resolves the roster first, the zero reads as "small conversation" and the
+// media the threshold excluded gets downloaded after all.
+func TestBackfillChannelMediaRefreshesUnknownTeamMembership(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		rosterReadable   bool
+		maxParticipants  int
+		wantFetches      int
+		wantCopied       int64
+		wantSkipped      int64
+		wantErrors       int64
+		wantState        string
+		wantReason       string
+		wantParticipants int
+	}{
+		{
+			name:           "refreshed roster within the limit stores media",
+			rosterReadable: true, maxParticipants: 5,
+			wantFetches: 1, wantCopied: 1,
+			wantState:        string(attachmentpolicy.StateStored),
+			wantParticipants: 3,
+		},
+		{
+			name:            "roster still unreadable stays skipped",
+			maxParticipants: 5,
+			wantSkipped:     1, wantErrors: 1,
+			wantState:  string(attachmentpolicy.StateSkipped),
+			wantReason: string(attachmentpolicy.SkipParticipantThreshold),
+		},
+		{
+			name:           "refreshed roster over the limit stays skipped",
+			rosterReadable: true, maxParticipants: 2,
+			wantSkipped: 1,
+			wantState:   string(attachmentpolicy.StateSkipped),
+			wantReason:  string(attachmentpolicy.SkipParticipantThreshold),
+			// The roster is archived even when it excludes the media, so
+			// purge and later runs evaluate the same membership.
+			wantParticipants: 3,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			hostedFetches := 0
+			rosterReadable := false
+			serverURL := ""
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+					hostedFetches++
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write([]byte("PNGDATA"))
+				case strings.HasSuffix(r.URL.Path, "/members"):
+					if !rosterReadable {
+						w.Header().Set("Retry-After", "0")
+						http.Error(w, "members unavailable", http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[
+						{"id":"mem1","userId":"aad-alice","email":"alice@example.com","displayName":"Alice"},
+						{"id":"mem2","userId":"aad-bob","email":"bob@example.com","displayName":"Bob"},
+						{"id":"mem3","userId":"aad-carol","email":"carol@example.com","displayName":"Carol"}
+					]}`))
+				case r.URL.Path == "/me/chats":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case r.URL.Path == "/me/joinedTeams":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General","membershipType":"standard"}]}`))
+				case strings.Contains(r.URL.Path, "/replies"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+					w.Header().Set("Content-Type", "application/json")
+					body := `<div><img src="` + serverURL + `/teams/team1/channels/chanA/messages/c1/hostedContents/1/$value"></div>`
+					_, _ = w.Write([]byte(`{"value":[{"id":"c1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z",` +
+						`"body":{"contentType":"html","content":` + jsonString(t, body) + `}}],"@odata.deltaLink":"` + serverURL + `/delta?token=next"}`))
+				case strings.HasSuffix(r.URL.Path, "/messages"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				default:
+					http.Error(w, "404", http.StatusNotFound)
+				}
+			}))
+			serverURL = srv.URL
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			attachmentsDir := t.TempDir()
+
+			archivedParticipants := func() int {
+				var count int
+				require.NoError(st.DB().QueryRow(st.Rebind(`
+					SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
+				`), "team1/chanA").Scan(&count))
+				return count
+			}
+
+			imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+			policy := attachmentpolicy.Policy{
+				Scope: attachmentpolicy.ScopeAll, MaxParticipants: tc.maxParticipants,
+				MaxBytes: 100 << 20,
+			}
+			syncSum, err := imp.Import(t.Context(), ImportOptions{
+				Email: "me@example.com", IncludeChannels: true,
+				AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+			})
+			require.NoError(err)
+			require.EqualValues(1, syncSum.Errors, "the unreadable roster is counted once")
+			require.Zero(hostedFetches, "sync must fail closed while membership is unknown")
+			require.Zero(archivedParticipants(), "sync could not archive the roster")
+
+			rosterReadable = tc.rosterReadable
+			sum, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
+				Email: "me@example.com", AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+			})
+			require.NoError(err)
+			assert.Equal(tc.wantFetches, hostedFetches)
+			assert.Equal(tc.wantCopied, sum.InlineImagesCopied)
+			assert.Equal(tc.wantSkipped, sum.InlineImagesSkipped)
+			assert.Equal(tc.wantErrors, sum.Errors)
+
+			var state, reason, contentHash string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, ''),
+				       COALESCE(a.content_hash, '')
+				FROM attachments a JOIN messages m ON m.id = a.message_id
+				WHERE m.source_message_id = ?
+			`), channelSourceMessageID("team1", "chanA", "c1")).Scan(&state, &reason, &contentHash))
+			assert.Equal(tc.wantState, state)
+			assert.Equal(tc.wantReason, reason)
+			if tc.wantState == string(attachmentpolicy.StateStored) {
+				assert.NotEmpty(contentHash)
+			} else {
+				assert.Empty(contentHash)
+			}
+
+			assert.Equal(tc.wantParticipants, archivedParticipants(),
+				"a roster resolved during backfill must be archived for purge and later runs")
+		})
+	}
 }
 
 func TestLimitedChannelImportDoesNotAdvanceDelta(t *testing.T) {
@@ -1620,4 +2296,529 @@ func TestDuplicateMentionDedup(t *testing.T) {
         WHERE mr.message_id = ? AND mr.recipient_type = 'mention' AND p.email_address = 'bob@x.com'
     `), msgID).Scan(&mentionCount))
 	assert.Equal(1, mentionCount, "duplicate @mention should produce exactly one mention row")
+}
+
+// graphMembersJSON renders a Graph member collection of the given size.
+func graphMembersJSON(size int) string {
+	members := make([]string, 0, size)
+	for i := 1; i <= size; i++ {
+		members = append(members, fmt.Sprintf(
+			`{"id":"mem%d","userId":"aad-user%d","email":"user%d@example.com","displayName":"User %d"}`,
+			i, i, i, i))
+	}
+	return `{"value":[` + strings.Join(members, ",") + `]}`
+}
+
+// chatRosterGraph is a fake Graph server for one group chat whose single
+// message carries inline hosted content. The test controls the roster it
+// serves: rosterFails makes the members call fail, and rosterSize sets how
+// many members a successful call reports.
+type chatRosterGraph struct {
+	rosterFails   bool
+	rosterSize    int
+	hostedFetches int
+	url           string
+}
+
+const rosterChatID = "19:media@thread.v2"
+
+func newChatRosterGraph(t *testing.T, rosterSize int) *chatRosterGraph {
+	t.Helper()
+
+	g := &chatRosterGraph{rosterSize: rosterSize}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+			g.hostedFetches++
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("PNGDATA"))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			if g.rosterFails {
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "members unavailable", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(graphMembersJSON(g.rosterSize)))
+		case r.URL.Path == "/me/chats":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"` + rosterChatID + `","chatType":"group","topic":"Media"}]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			body := `<div><img src="` + g.url + `/chats/` + rosterChatID + `/messages/m1/hostedContents/1/$value"></div>`
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z",` +
+				`"lastModifiedDateTime":"2025-01-01T00:00:00Z","body":{"contentType":"html","content":` +
+				jsonString(t, body) + `}}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	g.url = srv.URL
+	t.Cleanup(srv.Close)
+	return g
+}
+
+// chatMediaState returns the archived download outcome of the fixture chat
+// message's inline hosted content.
+func chatMediaState(t *testing.T, st *store.Store) (state, reason string) {
+	t.Helper()
+
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, '')
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?
+	`), chatSourceMessageID(rosterChatID, "m1")).Scan(&state, &reason))
+	return state, reason
+}
+
+// chatMembershipRecord returns the roster the fixture chat's provider metadata
+// records: the exact member count, and whether the roster is marked unreadable.
+func chatMembershipRecord(t *testing.T, st *store.Store) (count int, unknown bool) {
+	t.Helper()
+
+	var metadata string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(metadata AS TEXT), '') FROM conversations
+		WHERE source_conversation_id = ?
+	`), rosterChatID).Scan(&metadata))
+	if metadata == "" {
+		return 0, false
+	}
+	var record struct {
+		MemberCount        int  `json:"member_count"`
+		MemberCountUnknown bool `json:"member_count_unknown"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(metadata), &record))
+	return record.MemberCount, record.MemberCountUnknown
+}
+
+// TestChatMediaPolicyFailsClosedOnUnreadableRoster covers a chat whose member
+// listing fails: the participant threshold cannot be evaluated, so media must
+// not be downloaded as if the chat were small — and the failure must be
+// archived, since a backfill reads the archive rather than the run's memory.
+// Both backfill modes must still reach the message: the archived unknown
+// roster decides the download, not whether the message is worth revisiting.
+func TestChatMediaPolicyFailsClosedOnUnreadableRoster(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		onlyIncomplete bool
+	}{
+		{name: "full backfill"},
+		{name: "incomplete-only backfill", onlyIncomplete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			graph := newChatRosterGraph(t, 3)
+			graph.rosterFails = true
+			st := testutil.NewTestStore(t)
+			attachmentsDir := t.TempDir()
+			policy := attachmentpolicy.Policy{
+				Scope: attachmentpolicy.ScopeAll, MaxParticipants: 5, MaxBytes: 100 << 20,
+			}
+
+			imp := NewImporter(st, NewClient(graph.url,
+				func(context.Context) (string, error) { return "t", nil }, 50))
+			sum, err := imp.Import(t.Context(), ImportOptions{
+				Email: "me@example.com", AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+			})
+			require.NoError(err)
+			require.EqualValues(1, sum.Errors, "the unreadable roster is counted once")
+			assert.Zero(graph.hostedFetches,
+				"an unreadable roster must not read as a chat under the limit")
+
+			state, reason := chatMediaState(t, st)
+			assert.Equal(string(attachmentpolicy.StateSkipped), state)
+			assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+			count, unknown := chatMembershipRecord(t, st)
+			assert.True(unknown, "an unreadable roster must be archived, not left absent")
+			assert.Zero(count)
+
+			// The backfill re-resolves what the sync could not read, and
+			// archives the count purge and later runs evaluate.
+			graph.rosterFails = false
+			backfill, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
+				Email: "me@example.com", AttachmentsDir: attachmentsDir,
+				MediaPolicy: policy, OnlyIncomplete: tc.onlyIncomplete,
+			})
+			require.NoError(err)
+			assert.EqualValues(1, backfill.InlineImagesCopied)
+			assert.Zero(backfill.Errors)
+
+			state, reason = chatMediaState(t, st)
+			assert.Equal(string(attachmentpolicy.StateStored), state)
+			assert.Empty(reason)
+			count, unknown = chatMembershipRecord(t, st)
+			assert.Equal(3, count)
+			assert.False(unknown)
+		})
+	}
+}
+
+// TestChatMediaPolicyReresolvesRosterAfterLaterOutage covers a roster that
+// was read once and then could not be read again. The archived count is kept
+// for reference, but the roster is unresolved: the backfill must re-resolve it
+// rather than trust the stale count, stay closed while the read keeps failing,
+// and release the media once a read succeeds and shows the chat under the
+// limit — without waiting for another sync to notice the shrink.
+func TestChatMediaPolicyReresolvesRosterAfterLaterOutage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	graph := newChatRosterGraph(t, 6)
+	st := testutil.NewTestStore(t)
+	attachmentsDir := t.TempDir()
+	policy := attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: 4, MaxBytes: 100 << 20,
+	}
+	opts := ImportOptions{
+		Email: "me@example.com", AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+	}
+	imp := NewImporter(st, NewClient(graph.url, func(context.Context) (string, error) { return "t", nil }, 50))
+
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Zero(graph.hostedFetches)
+	count, unknown := chatMembershipRecord(t, st)
+	require.Equal(6, count)
+	require.False(unknown)
+
+	graph.rosterFails = true
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.Errors, "the unreadable roster is counted once")
+	count, unknown = chatMembershipRecord(t, st)
+	assert.Equal(6, count, "the count read earlier stays for reference")
+	assert.True(unknown, "a later failed read must be archived, not hidden behind the earlier count")
+
+	// While the roster stays unreadable the backfill re-resolves it, fails
+	// closed again, and downloads nothing.
+	backfill, err := imp.BackfillInlineMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(backfill.InlineImagesCopied)
+	assert.Zero(graph.hostedFetches, "a stale count must not admit media while the roster is unresolved")
+	state, reason := chatMediaState(t, st)
+	assert.Equal(string(attachmentpolicy.StateSkipped), state)
+	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+	count, unknown = chatMembershipRecord(t, st)
+	assert.Equal(6, count)
+	assert.True(unknown)
+
+	// A readable roster resolves it, and the shrunken chat's media is released.
+	graph.rosterFails = false
+	graph.rosterSize = 3
+	backfill, err = imp.BackfillInlineMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, backfill.InlineImagesCopied)
+	assert.Zero(backfill.Errors)
+	state, reason = chatMediaState(t, st)
+	assert.Equal(string(attachmentpolicy.StateStored), state)
+	assert.Empty(reason)
+	count, unknown = chatMembershipRecord(t, st)
+	assert.Equal(3, count)
+	assert.False(unknown)
+}
+
+// TestChatMediaPolicyFollowsRosterShrink pins the direction the archived
+// membership must be able to move. Participant rows only ever accumulate, so a
+// conversation whose roster drops below the threshold would stay excluded from
+// media forever if policy kept reading them.
+func TestChatMediaPolicyFollowsRosterShrink(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	graph := newChatRosterGraph(t, 6)
+	st := testutil.NewTestStore(t)
+	attachmentsDir := t.TempDir()
+	policy := attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: 4, MaxBytes: 100 << 20,
+	}
+	opts := ImportOptions{
+		Email: "me@example.com", AttachmentsDir: attachmentsDir, MediaPolicy: policy,
+	}
+
+	imp := NewImporter(st, NewClient(graph.url, func(context.Context) (string, error) { return "t", nil }, 50))
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Zero(graph.hostedFetches)
+	state, reason := chatMediaState(t, st)
+	require.Equal(string(attachmentpolicy.StateSkipped), state)
+	require.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
+	count, _ := chatMembershipRecord(t, st)
+	require.Equal(6, count)
+
+	graph.rosterSize = 2
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(1, graph.hostedFetches)
+	state, reason = chatMediaState(t, st)
+	assert.Equal(string(attachmentpolicy.StateStored), state)
+	assert.Empty(reason)
+
+	count, unknown := chatMembershipRecord(t, st)
+	assert.Equal(2, count, "the archived roster must follow the chat's current membership")
+	assert.False(unknown)
+	var accumulatedParticipants int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
+	`), rosterChatID).Scan(&accumulatedParticipants))
+	assert.Equal(6, accumulatedParticipants, "the participant rows keep every member ever seen")
+
+	messageID := messageIDBySourceMessageID(t, st, chatSourceMessageID(rosterChatID, "m1"))
+	conversation, err := st.AttachmentConversation(messageID)
+	require.NoError(err)
+	assert.Equal(2, conversation.ParticipantCount,
+		"purge and backfill evaluate the roster, not the accumulated rows")
+}
+
+// messageIDBySourceMessageID resolves an archived message's internal ID.
+func messageIDBySourceMessageID(t *testing.T, st *store.Store, sourceMessageID string) int64 {
+	t.Helper()
+
+	var messageID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&messageID))
+	return messageID
+}
+
+// A message can share the exact lastModifiedDateTime of the stored cursor.
+// Graph only supports an exclusive "gt" filter on that property and its
+// timestamps are millisecond-resolution, so without a backwards overlap such a
+// message would be filtered out on every subsequent sync and lost permanently.
+//
+// Unlike a mock that merely echoes $filter back, this server applies the
+// filter, so the test fails if the overlap is removed.
+func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	const tieTS = "2026-01-01T00:00:00.123Z"
+	tie, err := time.Parse(time.RFC3339Nano, tieTS)
+	require.NoError(err)
+
+	var secondSync atomic.Bool
+	var filters graphFilterFake
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:tie@thread.v2","chatType":"oneOnOne","topic":"Tie"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			// m2 lands after the first sync, sharing m1's exact timestamp.
+			ids := []string{"tm1"}
+			if secondSync.Load() {
+				ids = append(ids, "tm2")
+			}
+			cutoff, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+			if !ok {
+				return
+			}
+			var out []string
+			if cutoff == nil || tie.After(*cutoff) { // exactly what Graph does for "gt"
+				for _, id := range ids {
+					out = append(out, `{"id":"`+id+`","createdDateTime":"`+tieTS+
+						`","lastModifiedDateTime":"`+tieTS+
+						`","body":{"contentType":"text","content":"`+id+`"}}`)
+				}
+			}
+			_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	opts := ImportOptions{Email: "me@example.com", IncludeChannels: false}
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.EqualValues(1, sum.MessagesAdded, "first sync stores tm1")
+
+	// The cursor is now exactly tieTS, the timestamp tm2 also carries.
+	secondSync.Store(true)
+	sum, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(2, sum.MessagesProcessed, "second sync re-reads tm1 and recovers tm2")
+	assert.EqualValues(1, sum.MessagesAdded,
+		"only tm2 is new; the re-read of tm1 must not be counted as added")
+
+	filters.check(t)
+
+	var got []string
+	rows, err := st.DB().Query(`SELECT source_message_id FROM messages WHERE message_type='teams' ORDER BY source_message_id`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		require.NoError(rows.Scan(&id))
+		got = append(got, id)
+	}
+	require.NoError(rows.Err())
+	assert.Len(got, 2, "both messages persisted, no duplicate from the overlap re-read")
+}
+
+// graphFilterFake applies a Graph `$filter` inside a test double the way the
+// service does. A filter Graph would reject is answered 400 and recorded for
+// the test body to assert on rather than failed on the spot: a require inside
+// an HTTP handler aborts the server goroutine, not the test.
+type graphFilterFake struct {
+	mu  sync.Mutex
+	err error
+}
+
+// cutoff extracts the timestamp from a "lastModifiedDateTime gt <ts>" filter,
+// returning a nil cutoff when there is no filter. It rejects any other operator
+// the way Graph does. The bool reports whether the handler should carry on.
+func (g *graphFilterFake) cutoff(w http.ResponseWriter, filter string) (*time.Time, bool) {
+	if filter == "" {
+		return nil, true
+	}
+	const prefix = "lastModifiedDateTime gt "
+	if !strings.HasPrefix(filter, prefix) {
+		g.reject(w, fmt.Errorf("graph rejects any operator but gt/lt on lastModifiedDateTime; got %q", filter))
+		return nil, false
+	}
+	ts, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(filter, prefix))
+	if err != nil {
+		g.reject(w, fmt.Errorf("malformed $filter timestamp in %q: %w", filter, err))
+		return nil, false
+	}
+	return &ts, true
+}
+
+// reject records the first bad filter and answers the way Graph would.
+func (g *graphFilterFake) reject(w http.ResponseWriter, err error) {
+	g.mu.Lock()
+	if g.err == nil {
+		g.err = err
+	}
+	g.mu.Unlock()
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+// check fails the test if the fake ever saw a filter Graph would have rejected.
+func (g *graphFilterFake) check(t *testing.T) {
+	t.Helper()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	require.NoError(t, g.err)
+}
+
+// roborev raised that the overlap is fetched under opts.Limit, so preexisting
+// boundary messages can exhaust the cap before a newly arrived tied message is
+// returned. That is real, but it is not data loss: a truncated read never
+// advances the cursor (see the truncated check in syncChats), so the tie stays
+// in range and any unlimited run recovers it.
+//
+// Tied messages have no deterministic secondary ordering, so the fake returns
+// them in a fixed order to make the truncation deterministic; the assertions
+// below do not depend on which tied message the cap happens to admit.
+func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	const tieTS = "2026-01-01T00:00:00.123Z"
+	const chatID = "19:tielimit@thread.v2"
+	tie, err := time.Parse(time.RFC3339Nano, tieTS)
+	require.NoError(err)
+
+	var lateArrived atomic.Bool
+	var filters graphFilterFake
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"` + chatID + `","chatType":"oneOnOne","topic":"TieLimit"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			ids := []string{"ta1", "ta2"}
+			if lateArrived.Load() {
+				ids = append(ids, "tlate")
+			}
+			cutoff, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+			if !ok {
+				return
+			}
+			var out []string
+			if cutoff == nil || tie.After(*cutoff) {
+				for _, id := range ids {
+					out = append(out, `{"id":"`+id+`","createdDateTime":"`+tieTS+
+						`","lastModifiedDateTime":"`+tieTS+
+						`","body":{"contentType":"text","content":"`+id+`"}}`)
+				}
+			}
+			_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	base := ImportOptions{Email: "me@example.com", IncludeChannels: false}
+
+	_, err = imp.Import(context.Background(), base)
+	require.NoError(err)
+	require.Equal(2, teamsMessageCount(t, st), "first sync archives both tied messages")
+
+	// A third message arrives sharing the cursor timestamp; the cap is smaller
+	// than the number of tied messages now in range.
+	lateArrived.Store(true)
+	limited := base
+	limited.Limit = 1
+	for i := range 3 {
+		_, lerr := imp.Import(context.Background(), limited)
+		require.NoErrorf(lerr, "limited sync %d", i)
+	}
+
+	// Guard against the test going vacuous: the cap must actually be deferring
+	// the late message, otherwise the assertions below prove nothing.
+	require.Equal(2, teamsMessageCount(t, st),
+		"the cap should still be deferring the late tied message at this point")
+
+	// That deferral is fine. What must hold is that the cursor did not move
+	// past the deferred message.
+	cursor := chatCursorAfterLastSync(t, st, chatID)
+	require.NotEmpty(cursor, "cursor exists after the unlimited first sync")
+	parsed, perr := time.Parse(time.RFC3339Nano, cursor)
+	require.NoError(perr)
+	assert.False(parsed.After(tie),
+		"a capped run must not advance the cursor past the tied timestamp (cursor=%s)", cursor)
+
+	// Therefore an unlimited run still recovers it: nothing was lost.
+	_, err = imp.Import(context.Background(), base)
+	require.NoError(err)
+	assert.Equal(3, teamsMessageCount(t, st),
+		"an unlimited sync recovers the late tied message the cap had deferred")
+
+	filters.check(t)
+}
+
+func teamsMessageCount(t *testing.T, st *store.Store) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&n))
+	return n
+}
+
+func chatCursorAfterLastSync(t *testing.T, st *store.Store, chatID string) string {
+	t.Helper()
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(t, err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(t, err)
+	require.True(t, run.CursorAfter.Valid)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(t, err)
+	return state.ChatCursor(chatID)
 }

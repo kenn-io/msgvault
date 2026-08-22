@@ -11,12 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	internalmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const sourceTypeTeams = "teams"
+
+// conversationTypeChannel is the archived conversation type for team channels.
+// Channel conversation keys are "<teamID>/<channelID>".
+const conversationTypeChannel = "channel"
 
 // recipientRef is a resolved participant ID + display name for a conversation member.
 type recipientRef struct {
@@ -115,13 +120,29 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 
 	each := imp.store.ForEachTeamsHostedContentBody
 	if opts.OnlyIncomplete {
-		each = imp.store.ForEachTeamsIncompleteHostedContentBody
+		each = func(sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
+			return imp.store.ForEachTeamsIncompleteHostedContentBody(sourceID, opts.MediaPolicy, fn)
+		}
 	}
+	resolver := newRosterResolver(imp)
 	err = each(src.ID, func(messageID int64, bodyHTML string) error {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
-		if imp.downloadInlineImages(ctx, messageID, bodyHTML, opts.AttachmentsDir, sum) {
+		itemOpts := opts
+		membership, convErr := imp.store.AttachmentConversationMembership(messageID)
+		if convErr != nil {
+			return convErr
+		}
+		conversation := membership.Conversation
+		if !membership.RosterArchived && opts.MediaPolicy.MaxParticipants > 0 {
+			// No roster was archived for this conversation — the sync could not
+			// read one, or it predates the record — so the threshold has nothing
+			// authoritative to evaluate until this run resolves it.
+			conversation.ParticipantCount = imp.refreshMembership(ctx, messageID, opts, resolver, sum)
+		}
+		itemOpts.MediaConversation = conversation
+		if imp.downloadInlineImages(ctx, messageID, bodyHTML, itemOpts, sum) {
 			if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
 				sum.Errors++
 			}
@@ -135,6 +156,31 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 	})
 	sum.Duration = time.Since(start)
 	return sum, err
+}
+
+// chatCursorOverlap widens the incremental chat window backwards before
+// querying. Graph only accepts an exclusive "gt" filter on
+// lastModifiedDateTime, so a message sharing the cursor's exact timestamp
+// would be skipped forever; Graph timestamps are millisecond-resolution, so
+// such collisions are possible. Re-reading a small overlap costs a handful of
+// messages per chat and is free of side effects: persistence upserts on
+// (source_id, source_message_id), and maxTime is seeded from the stored cursor
+// so a re-read of older messages cannot move it backwards.
+const chatCursorOverlap = time.Second
+
+// chatQuerySince rewinds a stored chat cursor by chatCursorOverlap. An empty
+// or unparseable cursor is passed through untouched, so a first sync stays
+// unfiltered and a malformed cursor degrades to the previous behavior rather
+// than dropping the filter entirely.
+func chatQuerySince(cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339Nano, cursor)
+	if err != nil {
+		return cursor
+	}
+	return t.Add(-chatCursorOverlap).Format(time.RFC3339Nano)
 }
 
 func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts ImportOptions, state *SyncState, sum *ImportSummary) error {
@@ -155,6 +201,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Member fetch failure is non-fatal; we proceed with empty toRecips
 		// rather than aborting the chat import.
 		members, merr := imp.client.ListChatMembers(ctx, ch.ID)
+		// Only the roster's size and read outcome matter to media policy; the
+		// members are resolved below, where their display names are kept too.
+		roster := &memberRoster{memberCount: len(members), err: merr}
 		chatComplete := true
 		var toRecips []recipientRef
 		if merr == nil {
@@ -173,9 +222,15 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			chatComplete = false
 			sum.Errors++
 		}
+		imp.recordRosterOutcome(convID, roster, sum)
+		chatOpts := opts
+		chatOpts.MediaConversation = attachmentpolicy.Conversation{
+			Type:             conversationType(ch.ChatType),
+			ParticipantCount: roster.policyCount(opts.MediaPolicy),
+		}
 
 		since := state.ChatCursor(ch.ID)
-		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, since, opts.Limit)
+		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, chatQuerySince(since), opts.Limit)
 		if err != nil {
 			sum.Errors++
 			continue
@@ -184,6 +239,23 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		if since != "" {
 			maxTime, _ = time.Parse(time.RFC3339Nano, since)
 		}
+		// The overlap window deliberately re-reads messages at the cursor
+		// boundary, so "persisted" no longer implies "new". Resolve which of
+		// these IDs the archive already holds, so MessagesAdded stays a count
+		// of genuinely new messages. Identity is the only reliable test here:
+		// a message sharing the cursor timestamp may be a boundary re-read or
+		// the very tie the overlap exists to recover. On error, fall back to
+		// counting every persist, matching the pre-overlap behavior.
+		var preexisting map[string]int64
+		if since != "" && len(msgs) > 0 {
+			ids := make([]string, 0, len(msgs))
+			for i := range msgs {
+				ids = append(ids, chatSourceMessageID(ch.ID, msgs[i].ID))
+			}
+			if found, eerr := imp.store.MessageExistsBatch(sourceID, ids); eerr == nil {
+				preexisting = found
+			}
+		}
 		var convCount int
 		var persistedIDs []int64
 		for i := range msgs {
@@ -191,7 +263,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				break
 			}
 			gm := &msgs[i]
-			messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, chatSourceMessageID(ch.ID, gm.ID), gm, opts, sum, toRecips)
+			messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, chatSourceMessageID(ch.ID, gm.ID), gm, chatOpts, sum, toRecips)
 			if perr != nil {
 				return perr
 			}
@@ -199,7 +271,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				persistedIDs = append(persistedIDs, messageID)
 			}
 			if added {
-				sum.MessagesAdded++
+				if _, seen := preexisting[chatSourceMessageID(ch.ID, gm.ID)]; !seen {
+					sum.MessagesAdded++
+				}
 			}
 			sum.MessagesProcessed++
 			convCount++
@@ -249,16 +323,52 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			sum.Errors++
 			continue
 		}
+		// Standard channels inherit the team roster, so resolve it once per
+		// team — lazily, since a team of only private channels never needs it —
+		// and mirror it onto every channel conversation the way chats persist
+		// their members. Media policy needs the count, and backfill/purge read
+		// it back from the archived participant rows.
+		var teamMembers *memberRoster
+		teamRoster := func() *memberRoster {
+			if teamMembers == nil {
+				teamMembers = imp.resolveTeamRoster(ctx, team.ID)
+				if teamMembers.err != nil && opts.MediaPolicy.MaxParticipants > 0 {
+					// The roster is unknown, so the threshold cannot be
+					// evaluated. Count the failure and fail closed below rather
+					// than treat an unreadable team as a small one.
+					sum.Errors++
+				}
+			}
+			return teamMembers
+		}
 		for _, ch := range channels {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Private and shared channels are governed by their own membership,
+			// which can be far smaller — or larger — than the team's, so the
+			// team roster is resolved only for channels that inherit it.
+			var roster *memberRoster
+			if channelHasOwnRoster(ch.MembershipType) {
+				roster = imp.resolveChannelRoster(ctx, team.ID, ch.ID)
+				if roster.err != nil && opts.MediaPolicy.MaxParticipants > 0 {
+					sum.Errors++
+				}
+			} else {
+				roster = teamRoster()
+			}
 			key := team.ID + "/" + ch.ID
 			title := team.DisplayName + " / " + ch.DisplayName
-			convID, err := imp.store.EnsureConversationWithType(sourceID, key, "channel", title)
+			convID, err := imp.store.EnsureConversationWithType(sourceID, key, conversationTypeChannel, title)
 			if err != nil {
 				return err
 			}
+			for _, pid := range roster.participantIDs {
+				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
+					sum.Errors++
+				}
+			}
+			imp.recordRosterOutcome(convID, roster, sum)
 
 			prevDelta := state.ChannelDelta(key)
 			var newDelta string
@@ -408,12 +518,17 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			var toLink []ChatMessage
 			convCount := 0
 			var persistedIDs []int64
+			channelOpts := opts
+			channelOpts.MediaConversation = attachmentpolicy.Conversation{
+				Type:             conversationTypeChannel,
+				ParticipantCount: roster.policyCount(opts.MediaPolicy),
+			}
 			for i := range collected {
 				if opts.Limit > 0 && convCount >= opts.Limit {
 					break
 				}
 				gm := &collected[i]
-				messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, channelSourceMessageID(team.ID, ch.ID, gm.ID), gm, opts, sum, nil)
+				messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, channelSourceMessageID(team.ID, ch.ID, gm.ID), gm, channelOpts, sum, nil)
 				if perr != nil {
 					return perr
 				}
@@ -467,6 +582,235 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 	return nil
 }
 
+// memberRoster is a membership as resolved from Graph: the raw member count
+// media policy evaluates, and the participant IDs to archive on the
+// conversations it governs. A non-nil err means the roster could not be read,
+// which callers must treat as unknown membership rather than as an empty one.
+type memberRoster struct {
+	participantIDs []int64
+	memberCount    int
+	err            error
+}
+
+// policyCount is the participant count media policy evaluates this roster
+// against. A roster that could not be read must not pass as a conversation
+// under the threshold, so it fails closed while a limit is configured; the
+// skips that follow are retryable once the roster becomes readable.
+func (r *memberRoster) policyCount(policy attachmentpolicy.Policy) int {
+	if r.err != nil && policy.MaxParticipants > 0 {
+		return policy.MaxParticipants + 1
+	}
+	return r.memberCount
+}
+
+// recordRosterOutcome archives the membership that later runs evaluate media
+// policy against: the exact size of a roster that was read, or an explicit
+// unknown marker when it could not be. Backfill and purge read this record
+// rather than the archived participant rows, which accumulate every member
+// ever seen and therefore never shrink when someone leaves.
+func (imp *Importer) recordRosterOutcome(convID int64, roster *memberRoster, sum *ImportSummary) {
+	var err error
+	if roster.err != nil {
+		err = imp.store.MarkConversationMemberCountUnknown(convID)
+	} else {
+		err = imp.store.SetConversationMemberCount(convID, roster.memberCount)
+	}
+	if err != nil {
+		sum.Errors++
+	}
+}
+
+// channelHasOwnRoster reports whether a channel's membership is separate from
+// its team's. Standard channels inherit the team roster; private and shared
+// channels have their own.
+func channelHasOwnRoster(membershipType string) bool {
+	switch strings.ToLower(membershipType) {
+	case "private", "shared":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveTeamRoster fetches a team's members and resolves them to participants.
+func (imp *Importer) resolveTeamRoster(ctx context.Context, teamID string) *memberRoster {
+	members, err := imp.client.ListTeamMembers(ctx, teamID)
+	if err != nil {
+		return &memberRoster{err: err}
+	}
+	return imp.resolveRosterMembers(ctx, members)
+}
+
+// resolveChannelRoster fetches the members of a private or shared channel.
+func (imp *Importer) resolveChannelRoster(ctx context.Context, teamID, channelID string) *memberRoster {
+	members, err := imp.client.ListChannelMembers(ctx, teamID, channelID)
+	if err != nil {
+		return &memberRoster{err: err}
+	}
+	return imp.resolveRosterMembers(ctx, members)
+}
+
+// resolveChatRoster fetches a chat's members.
+func (imp *Importer) resolveChatRoster(ctx context.Context, chatID string) *memberRoster {
+	members, err := imp.client.ListChatMembers(ctx, chatID)
+	if err != nil {
+		return &memberRoster{err: err}
+	}
+	return imp.resolveRosterMembers(ctx, members)
+}
+
+func (imp *Importer) resolveRosterMembers(ctx context.Context, members []ChatMember) *memberRoster {
+	roster := &memberRoster{
+		participantIDs: make([]int64, 0, len(members)),
+		memberCount:    len(members),
+	}
+	for _, m := range members {
+		pid, rerr := imp.res.resolveMember(ctx, m)
+		if rerr != nil || pid == 0 {
+			continue
+		}
+		roster.participantIDs = append(roster.participantIDs, pid)
+	}
+	return roster
+}
+
+// teamChannels is one team's channel list, which decides whether a channel is
+// governed by its own roster or by the team's.
+type teamChannels struct {
+	membershipTypes map[string]string
+	err             error
+}
+
+// rosterResolver memoizes the Graph reads a media backfill needs to re-resolve
+// channel membership: each team's channel list, and each roster it then fetches
+// (keyed by team ID, or by "<teamID>/<channelID>" for private and shared
+// channels). Every failure is counted once, when it is first observed.
+type rosterResolver struct {
+	imp      *Importer
+	channels map[string]*teamChannels
+	rosters  map[string]*memberRoster
+}
+
+func newRosterResolver(imp *Importer) *rosterResolver {
+	return &rosterResolver{
+		imp:      imp,
+		channels: map[string]*teamChannels{},
+		rosters:  map[string]*memberRoster{},
+	}
+}
+
+// forConversation returns the roster governing one archived conversation:
+// a chat's own members, or — for a "<teamID>/<channelID>" key — whichever of
+// the channel's or its team's roster governs it.
+func (r *rosterResolver) forConversation(
+	ctx context.Context, ref store.MessageConversationRef, sum *ImportSummary,
+) *memberRoster {
+	if ref.Type != conversationTypeChannel {
+		return r.cached("chat/"+ref.SourceConversationID, sum, func() *memberRoster {
+			return r.imp.resolveChatRoster(ctx, ref.SourceConversationID)
+		})
+	}
+	teamID, channelID, ok := strings.Cut(ref.SourceConversationID, "/")
+	if !ok || teamID == "" || channelID == "" {
+		// Not a "<teamID>/<channelID>" key, so there is no roster to fetch.
+		return &memberRoster{err: fmt.Errorf(
+			"channel conversation %q carries no team/channel key", ref.SourceConversationID)}
+	}
+	return r.forChannel(ctx, teamID, channelID, sum)
+}
+
+// forChannel returns the roster governing one channel.
+func (r *rosterResolver) forChannel(ctx context.Context, teamID, channelID string, sum *ImportSummary) *memberRoster {
+	channels, cached := r.channels[teamID]
+	if !cached {
+		channels = r.imp.listTeamChannels(ctx, teamID)
+		r.channels[teamID] = channels
+		if channels.err != nil {
+			sum.Errors++
+		}
+	}
+	if channels.err != nil {
+		// Without the channel list there is no way to tell which roster
+		// governs this channel, so membership stays unknown.
+		return &memberRoster{err: channels.err}
+	}
+	membershipType, listed := channels.membershipTypes[channelID]
+	if !listed {
+		// The channel is no longer visible in Graph. A shared channel can hold
+		// members the team does not, so the team roster is not a safe stand-in.
+		return &memberRoster{err: fmt.Errorf("channel %s is not listed in team %s", channelID, teamID)}
+	}
+	if channelHasOwnRoster(membershipType) {
+		return r.cached(teamID+"/"+channelID, sum, func() *memberRoster {
+			return r.imp.resolveChannelRoster(ctx, teamID, channelID)
+		})
+	}
+	return r.cached(teamID, sum, func() *memberRoster {
+		return r.imp.resolveTeamRoster(ctx, teamID)
+	})
+}
+
+func (r *rosterResolver) cached(key string, sum *ImportSummary, resolve func() *memberRoster) *memberRoster {
+	if roster, ok := r.rosters[key]; ok {
+		return roster
+	}
+	roster := resolve()
+	r.rosters[key] = roster
+	if roster.err != nil {
+		sum.Errors++
+	}
+	return roster
+}
+
+// listTeamChannels reads a team's channels and indexes their membership types.
+func (imp *Importer) listTeamChannels(ctx context.Context, teamID string) *teamChannels {
+	channels, err := imp.client.ListChannels(ctx, teamID)
+	if err != nil {
+		return &teamChannels{err: err}
+	}
+	membershipTypes := make(map[string]string, len(channels))
+	for _, ch := range channels {
+		membershipTypes[ch.ID] = ch.MembershipType
+	}
+	return &teamChannels{membershipTypes: membershipTypes}
+}
+
+// refreshMembership re-resolves the roster of a conversation whose membership
+// sync could not archive, and returns the participant count to evaluate media
+// policy against. Sync fails closed on an unreadable roster using a count that
+// only lives in memory, so the conversation is archived without one; read back
+// as-is, the participant rows — which hold senders and every member ever seen —
+// would relax the participant threshold and admit exactly the media it
+// excluded. A roster that is still unreadable fails closed the same way sync
+// does, and either outcome is archived so the next run starts from it.
+func (imp *Importer) refreshMembership(
+	ctx context.Context, messageID int64, opts ImportOptions,
+	resolver *rosterResolver, sum *ImportSummary,
+) int {
+	unknownMembership := opts.MediaPolicy.MaxParticipants + 1
+	ref, err := imp.store.MessageConversation(messageID)
+	if err != nil {
+		sum.Errors++
+		return unknownMembership
+	}
+	roster := resolver.forConversation(ctx, ref, sum)
+	imp.recordRosterOutcome(ref.ConversationID, roster, sum)
+	if roster.err != nil {
+		return unknownMembership
+	}
+	for _, pid := range roster.participantIDs {
+		if cerr := imp.store.EnsureConversationParticipant(ref.ConversationID, pid, "member"); cerr != nil {
+			sum.Errors++
+		}
+	}
+	// Keep the conversation's own stats in step with the refreshed roster; the
+	// archived record above is what policy evaluates.
+	if rerr := imp.store.RecomputeConversationStatsForMessage(messageID); rerr != nil {
+		sum.Errors++
+	}
+	return roster.memberCount
+}
+
 // persistMessage writes a single message via the granular store path.
 // Returns the internal message ID and true if persisted (best-effort; UpsertMessage upserts).
 func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64, sourceMessageID string, gm *ChatMessage, opts ImportOptions, sum *ImportSummary, toRecips []recipientRef) (int64, bool, error) {
@@ -505,7 +849,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, bodyHTML); err != nil {
 		return 0, false, err
 	}
-	inlineImagesChanged := imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts.AttachmentsDir, sum)
+	inlineImagesChanged := imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts, sum)
 	// Archive the exact original message JSON. gm.Raw is captured verbatim at
 	// decode time (ChatMessage.UnmarshalJSON), so it preserves every Graph field
 	// including ones we do not model; fall back to re-marshalling only if a
@@ -723,21 +1067,31 @@ func hostedFetchPath(baseURL, rawURL string) string {
 // set. If any current hosted image cannot be fetched, existing rows are
 // preserved so a transient Graph failure does not erase already-downloaded
 // media.
-func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, bodyHTML, attachmentsDir string, sum *ImportSummary) bool {
+func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, bodyHTML string, opts ImportOptions, sum *ImportSummary) bool {
 	raws := hostedRe.FindAllString(bodyHTML, -1)
 	if len(raws) == 0 {
-		if err := imp.store.ReplaceMessageInlineAttachments(messageID, nil); err != nil {
+		if err := imp.store.ReplaceMessageInlineAttachments(messageID, nil, false); err != nil {
 			sum.Errors++
 			return false
 		}
 		return true
 	}
-	if attachmentsDir == "" {
+	existing, err := imp.store.MessageTeamsInlineAttachments(messageID)
+	if err != nil {
+		sum.Errors++
 		return false
 	}
+	policy := opts.MediaPolicy
+	maxBytes := policy.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 100 << 20
+	}
+	policy.MaxBytes = maxBytes
 
 	seen := make(map[string]struct{}, len(raws))
 	refs := make([]store.AttachmentRef, 0, len(raws))
+	var copied int64
+	replacementComplete := true
 	for _, raw := range raws {
 		if _, ok := seen[raw]; ok {
 			continue
@@ -752,35 +1106,77 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 			sum.Errors++
 			return false
 		}
-		data, derr := imp.client.GetRaw(ctx, fetchPath)
+		sourceAttachmentID := "teams:inline:" + fetchPath
+		if previous, ok := existing[sourceAttachmentID]; ok && previous.ContentHash != "" {
+			refs = append(refs, previous)
+			continue
+		}
+		marker := store.AttachmentRef{
+			StoragePath: raw, SourceAttachmentID: sourceAttachmentID,
+			State: attachmentpolicy.StatePending,
+		}
+		if previous, ok := existing[sourceAttachmentID]; ok && previous.Size > marker.Size {
+			marker.Size = previous.Size
+		}
+		if opts.AttachmentsDir == "" {
+			replacementComplete = false
+			refs = append(refs, marker)
+			continue
+		}
+		if reason := policy.Evaluate(opts.MediaConversation, int64(marker.Size)); reason != "" {
+			replacementComplete = false
+			marker.State = attachmentpolicy.StateSkipped
+			marker.SkipReason = reason
+			refs = append(refs, marker)
+			sum.InlineImagesSkipped++
+			continue
+		}
+		data, derr := imp.client.GetRawLimited(ctx, fetchPath, maxBytes)
 		if derr != nil || len(data) == 0 {
-			sum.Errors++
-			return false
+			replacementComplete = false
+			if errors.Is(derr, ErrMediaTooLarge) {
+				marker.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(marker.Size))
+				marker.State = attachmentpolicy.StateSkipped
+				marker.SkipReason = attachmentpolicy.SkipSizeCap
+				sum.InlineImagesSkipped++
+			} else {
+				marker.State = attachmentpolicy.StateFailed
+				marker.SkipReason = attachmentpolicy.SkipFetchFailure
+				sum.Errors++
+			}
+			refs = append(refs, marker)
+			continue
 		}
 		att := &internalmime.Attachment{
 			Filename:    "",
 			ContentType: "",
 			Content:     data,
 		}
-		storagePath, serr := export.StoreAttachmentFile(attachmentsDir, att)
+		storagePath, serr := export.StoreAttachmentFile(opts.AttachmentsDir, att)
 		if serr != nil || storagePath == "" {
+			replacementComplete = false
+			marker.State = attachmentpolicy.StateFailed
+			marker.SkipReason = attachmentpolicy.SkipFetchFailure
+			refs = append(refs, marker)
 			sum.Errors++
-			return false
+			continue
 		}
 		refs = append(refs, store.AttachmentRef{
 			StoragePath:        storagePath,
 			ContentHash:        att.ContentHash,
 			Size:               len(data),
-			SourceAttachmentID: "teams:inline:" + fetchPath,
+			SourceAttachmentID: sourceAttachmentID,
 			Role:               store.AttachmentRoleInline,
 			RoleSource:         store.AttachmentRoleSourceImporterSemantics,
+			State:              attachmentpolicy.StateStored,
 		})
+		copied++
 	}
-	if err := imp.store.ReplaceMessageInlineAttachments(messageID, refs); err != nil {
+	if err := imp.store.ReplaceMessageInlineAttachments(messageID, refs, !replacementComplete); err != nil {
 		sum.Errors++
 		return false
 	}
-	sum.InlineImagesCopied += int64(len(refs))
+	sum.InlineImagesCopied += copied
 	return true
 }
 

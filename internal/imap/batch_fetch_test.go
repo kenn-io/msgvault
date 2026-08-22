@@ -84,12 +84,134 @@ func TestMessageIDHeaderFetchOptionsAvoidsRawMessageBody(t *testing.T) {
 	opts := messageIDHeaderFetchOptions()
 
 	assert.True(opts.UID)
+	assert.True(opts.Flags)
 	assert.False(opts.InternalDate)
 	assert.False(opts.RFC822Size)
 	require.Len(opts.BodySection, 1)
 	assert.True(opts.BodySection[0].Peek)
 	assert.Equal(imapapi.PartSpecifierHeader, opts.BodySection[0].Specifier)
 	assert.Equal([]string{"Message-ID"}, opts.BodySection[0].HeaderFields)
+}
+
+func TestRawBatchFetchRecordsMembershipBeforeDedup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
+		t,
+		map[string]int{"All Mail": 0, "Archive": 0},
+		map[string][]imapapi.MailboxAttr{"All Mail": {imapapi.MailboxAttrAll}},
+	)
+	const messageID = "membership-dedup@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "All Mail", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	client := newTestClient(t, addr)
+	require.ElementsMatch([]string{"All Mail|1", "Archive|1"}, listAllMessages(t, client))
+
+	client.mu.Lock()
+	client.observedMemberships = nil
+	var uidSet imapapi.UIDSet
+	uidSet.AddNum(1)
+	allMailSelectErr := client.selectMailbox("All Mail")
+	var allMailStoreErr error
+	if allMailSelectErr == nil {
+		_, allMailStoreErr = client.conn.Store(uidSet, &imapapi.StoreFlags{
+			Op: imapapi.StoreFlagsSet, Flags: []imapapi.Flag{imapapi.FlagSeen},
+		}, nil).Collect()
+	}
+	archiveSelectErr := client.selectMailbox("Archive")
+	var archiveStoreErr error
+	if archiveSelectErr == nil {
+		_, archiveStoreErr = client.conn.Store(uidSet, &imapapi.StoreFlags{
+			Op: imapapi.StoreFlagsSet, Flags: []imapapi.Flag{imapapi.FlagFlagged},
+		}, nil).Collect()
+	}
+	client.mu.Unlock()
+	require.NoError(allMailSelectErr)
+	require.NoError(allMailStoreErr)
+	require.NoError(archiveSelectErr)
+	require.NoError(archiveStoreErr)
+	results, err := client.GetMessagesRawBatchWithErrors(
+		context.Background(), []string{"All Mail|1", "Archive|1"})
+	require.NoError(err)
+	require.Len(results, 2)
+	require.NotNil(results[0].Message)
+	require.NotNil(results[1].Message)
+	assert.NotEmpty(results[0].Message.Raw)
+	assert.Empty(results[1].Message.Raw, "the overlapping copy is returned as a duplicate stub")
+
+	observed := client.ObservedMemberships()
+	require.Len(observed, 2, "both raw FETCH results must be recorded before deduplication")
+	assert.Equal("All Mail", observed[0].Mailbox)
+	assert.NotZero(observed[0].UIDValidity)
+	assert.Equal(uint32(1), observed[0].UID)
+	assert.Equal("All Mail|1", observed[0].SourceMessageID)
+	assert.Equal(messageID, observed[0].RFC822MessageID)
+	assert.Equal([]string{"\\Seen"}, observed[0].Flags)
+	assert.Equal("Archive", observed[1].Mailbox)
+	assert.NotZero(observed[1].UIDValidity)
+	assert.Equal(uint32(1), observed[1].UID)
+	assert.Equal("Archive|1", observed[1].SourceMessageID)
+	assert.Equal(messageID, observed[1].RFC822MessageID)
+	assert.Equal([]string{"\\Flagged"}, observed[1].Flags)
+}
+
+func TestLabelOnlyFetchRecordsCanonicalMembershipFlags(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
+	const messageID = "label-membership@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+	client := newTestClient(t, addr)
+	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
+
+	client.mu.Lock()
+	client.observedMemberships = nil
+	selectErr := client.selectMailbox("INBOX")
+	var uidSet imapapi.UIDSet
+	uidSet.AddNum(1)
+	var storeErr error
+	if selectErr == nil {
+		_, storeErr = client.conn.Store(uidSet, &imapapi.StoreFlags{
+			Op:    imapapi.StoreFlagsSet,
+			Flags: []imapapi.Flag{imapapi.FlagSeen, imapapi.FlagFlagged, "$Forwarded"},
+		}, nil).Collect()
+	}
+	client.mu.Unlock()
+	require.NoError(selectErr)
+	require.NoError(storeErr)
+
+	results, err := client.GetMessageLabelsBatch(context.Background(), []string{"INBOX|1"})
+	require.NoError(err)
+	require.Len(results, 1)
+	require.NoError(results[0].Err)
+
+	observed := client.ObservedMemberships()
+	require.Len(observed, 1)
+	assert.Equal(MembershipObservation{
+		Mailbox:         "INBOX",
+		UIDValidity:     observed[0].UIDValidity,
+		UID:             1,
+		SourceMessageID: "INBOX|1",
+		RFC822MessageID: messageID,
+		Flags:           []string{"$Forwarded", "\\Flagged", "\\Seen"},
+	}, observed[0])
+	assert.NotZero(observed[0].UIDValidity)
+}
+
+func TestObservedMembershipsReturnsDefensiveCopy(t *testing.T) {
+	client := &Client{observedMemberships: []MembershipObservation{{
+		Mailbox: "INBOX", UID: 1, Flags: []string{"\\Seen"},
+	}}}
+
+	first := client.ObservedMemberships()
+	first[0].Mailbox = "mutated"
+	first[0].Flags[0] = "mutated"
+	first = append(first, MembershipObservation{Mailbox: "extra"})
+	assert.Len(t, first, 2)
+
+	assert.Equal(t, []MembershipObservation{{
+		Mailbox: "INBOX", UID: 1, Flags: []string{"\\Seen"},
+	}}, client.ObservedMemberships())
 }
 
 func TestGetMessageLabelsBatchPreservesPerMessageMissingUID(t *testing.T) {

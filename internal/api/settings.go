@@ -110,10 +110,36 @@ var settingsCatalog = []settingDefinition{
 	intSetting("vector.embeddings.max_retries", "search", func(c *config.Config) int { return c.Vector.Embeddings.MaxRetries }),
 	intSetting("vector.embeddings.max_input_chars", "search", func(c *config.Config) int { return c.Vector.Embeddings.MaxInputChars }),
 	intSetting("vector.embeddings.eta_window", "search", func(c *config.Config) int { return c.Vector.Embeddings.ETAWindow }),
+	boolSetting("vector.people.enabled", "search", func(c *config.Config) bool { return c.Vector.People.Enabled }),
+	stringSetting("vector.people.retention_posture", "search", nil, func(c *config.Config) string {
+		return c.Vector.People.RetentionPosture
+	}),
+	stringSetting("vector.people.training_posture", "search", nil, func(c *config.Config) string {
+		return c.Vector.People.TrainingPosture
+	}),
 	stringSetting("vector.embed.schedule.cron", "search", nil, func(c *config.Config) string { return c.Vector.Embed.Schedule.Cron }),
 	boolSetting("vector.embed.schedule.run_after_sync", "search", func(c *config.Config) bool { return c.Vector.Embed.Schedule.RunAfterSync }),
 	stringArraySetting("vector.embed.scope.message_types", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.MessageTypes }),
 	stringArraySetting("vector.embed.scope.accounts", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.Accounts }),
+	boolSetting("vector.multimodal.enabled", "search", func(c *config.Config) bool { return c.Vector.Multimodal.Enabled }),
+	stringSetting("vector.multimodal.provider", "search", []string{"voyage"}, func(c *config.Config) string { return c.Vector.Multimodal.Provider }),
+	testableStringSetting("vector.multimodal.endpoint", "search", func(c *config.Config) string { return c.Vector.Multimodal.Endpoint }),
+	localOnlyStringSetting("vector.multimodal.api_key_env", "search", func(c *config.Config) string { return c.Vector.Multimodal.APIKeyEnv }),
+	localOnlyStringSetting("vector.multimodal.capabilities_file", "search", func(c *config.Config) string { return c.Vector.Multimodal.CapabilitiesFile }),
+	stringSetting("vector.multimodal.model", "search", []string{"voyage-multimodal-3.5"}, func(c *config.Config) string { return c.Vector.Multimodal.Model }),
+	intSetting("vector.multimodal.dimension", "search", func(c *config.Config) int { return c.Vector.Multimodal.Dimension }),
+	intSetting("vector.multimodal.max_context_chars", "search", func(c *config.Config) int { return c.Vector.Multimodal.MaxContextChars }),
+	// Configured (default-resolved) values, NOT the runtime-gated helpers:
+	// those return false whenever the lane is disabled, which would show
+	// default-enabled consent options as off and then silently activate
+	// them when only the parent switch is turned on.
+	boolSetting("vector.multimodal.include_images", "search", func(c *config.Config) bool { return c.Vector.Multimodal.ConfiguredImages() }),
+	boolSetting("vector.multimodal.include_animated_gifs", "search", func(c *config.Config) bool { return c.Vector.Multimodal.ConfiguredAnimatedGIFs() }),
+	boolSetting("vector.multimodal.include_video", "search", func(c *config.Config) bool { return c.Vector.Multimodal.ConfiguredVideo() }),
+	boolSetting("vector.multimodal.allow_image_queries", "search", func(c *config.Config) bool { return c.Vector.Multimodal.ConfiguredImageQueries() }),
+	stringArraySetting("vector.multimodal.scope.message_types", "search", func(c *config.Config) []string { return c.Vector.Multimodal.Scope.MessageTypes }),
+	stringSetting("vector.multimodal.schedule.cron", "search", nil, func(c *config.Config) string { return c.Vector.Multimodal.Schedule.Cron }),
+	boolSetting("vector.multimodal.schedule.run_after_sync", "search", func(c *config.Config) bool { return c.Vector.Multimodal.Schedule.RunAfterSync }),
 	intSetting("vector.search.rrf_k", "search", func(c *config.Config) int { return c.Vector.Search.RRFK }),
 	intSetting("vector.search.k_per_signal", "search", func(c *config.Config) int { return c.Vector.Search.KPerSignal }),
 	numberSetting("vector.search.subject_boost", "search", func(c *config.Config) float64 { return c.Vector.Search.SubjectBoost }),
@@ -354,6 +380,12 @@ var credentialBindings = []credentialBinding{
 		credentialKey:   "vector.embeddings.api_key_env",
 		currentEndpoint: func(c *config.Config) string { return c.Vector.Embeddings.Endpoint },
 		credentialSet:   func(c *config.Config) bool { return c.Vector.Embeddings.APIKeyEnv != "" },
+	},
+	{
+		endpointKey:     "vector.multimodal.endpoint",
+		credentialKey:   "vector.multimodal.api_key_env",
+		currentEndpoint: func(c *config.Config) string { return c.Vector.Multimodal.Endpoint },
+		credentialSet:   func(c *config.Config) bool { return c.Vector.Multimodal.APIKeyEnv != "" },
 	},
 }
 

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 // AttachmentRole is the source-authoritative role of one attachment
@@ -55,6 +57,9 @@ type AttachmentWrite struct {
 	RoleSource         AttachmentRoleSource
 	SourcePartKey      string
 	ContentID          string
+	// State and SkipReason distinguish unfinished fetches from deliberate policy exclusions.
+	State      attachmentpolicy.DownloadState
+	SkipReason attachmentpolicy.SkipReason
 }
 
 func (r AttachmentRole) valid() bool {
@@ -149,7 +154,8 @@ func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write Attachm
 				filename = ?, mime_type = ?, storage_path = ?, content_hash = ?, size = ?,
 				source_attachment_id = ?, media_type = ?, width = ?, height = ?, duration_ms = ?,
 				attachment_metadata = %s, attachment_role = ?, role_source = ?,
-				source_part_key = ?, content_id = ?
+				source_part_key = ?, content_id = ?,
+				attachment_state = ?, attachment_skip_reason = ?
 			WHERE message_id = ?
 			  AND source_part_key IS NULL
 			  AND content_hash = ?
@@ -164,6 +170,7 @@ func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write Attachm
 			nullIfZero(write.Width), nullIfZero(write.Height), nullIfZero(write.DurationMS),
 			nullIfEmpty(write.Metadata), string(write.Role), string(write.RoleSource),
 			write.SourcePartKey, nullIfEmpty(write.ContentID),
+			nullIfEmpty(string(write.State)), nullIfEmpty(string(write.SkipReason)),
 			messageID, write.ContentHash, messageID, write.SourcePartKey,
 		)
 		if err != nil {
@@ -191,12 +198,14 @@ func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write Attachm
 		string(write.RoleSource),
 		nullIfEmpty(write.SourcePartKey),
 		nullIfEmpty(write.ContentID),
+		nullIfEmpty(string(write.State)),
+		nullIfEmpty(string(write.SkipReason)),
 	}
 	const columns = `(message_id, filename, mime_type, storage_path, content_hash,
 		size, source_attachment_id, media_type, width, height, duration_ms,
 		attachment_metadata, attachment_role, role_source, source_part_key,
-		content_id, created_at)`
-	values := fmt.Sprintf(`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, %s)`,
+		content_id, attachment_state, attachment_skip_reason, created_at)`
+	values := fmt.Sprintf(`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, %s)`,
 		s.dialect.JSONBindExpr(), s.dialect.Now())
 
 	if write.SourcePartKey != "" {
@@ -218,7 +227,9 @@ func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write Attachm
 				attachment_metadata = EXCLUDED.attachment_metadata,
 				attachment_role = EXCLUDED.attachment_role,
 				role_source = EXCLUDED.role_source,
-				content_id = EXCLUDED.content_id`, args...)
+				content_id = EXCLUDED.content_id,
+				attachment_state = EXCLUDED.attachment_state,
+				attachment_skip_reason = EXCLUDED.attachment_skip_reason`, args...)
 		return err
 	}
 

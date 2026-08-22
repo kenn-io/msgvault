@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -705,13 +706,29 @@ type fakeRunner struct {
 	backstopResult embed.RunResult
 	runDoneOnce    sync.Once
 	runDone        chan struct{} // optional: closed after first RunOnce
+	onRunOnce      func(vector.GenerationID)
 	yieldCancel    context.CancelCauseFunc
 	yieldBackstop  context.CancelCauseFunc
 	yieldReclaim   context.CancelCauseFunc
+	personErr      error
+	personCalls    []vector.GenerationID
+	onPerson       func(vector.GenerationID)
 	// onBackstop, if set, is invoked from RunBackstop (after recording the
 	// call) to let tests model a side effect of the backstop pass, e.g. a
 	// straggler becoming covered. Called while r.mu is held.
 	onBackstop func()
+}
+
+func (r *fakeRunner) RunPersonsOnce(
+	_ context.Context, gen vector.GenerationID,
+) (embed.RunResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.personCalls = append(r.personCalls, gen)
+	if r.onPerson != nil && r.personErr == nil {
+		r.onPerson(gen)
+	}
+	return embed.RunResult{}, r.personErr
 }
 
 func (r *fakeRunner) ReclaimStale(ctx context.Context) (int, error) {
@@ -730,6 +747,9 @@ func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embe
 	r.mu.Lock()
 	r.runCalls++
 	r.lastRunGen = gen
+	if r.onRunOnce != nil && r.runErr == nil {
+		r.onRunOnce(gen)
+	}
 	ch := r.runDone
 	res := r.runOnceResult
 	err := r.runErr
@@ -770,6 +790,12 @@ func (r *fakeRunner) backstops() (n int, lastGen vector.GenerationID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.backstopCalls, r.lastBackstop
+}
+
+func (r *fakeRunner) persons() []vector.GenerationID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]vector.GenerationID(nil), r.personCalls...)
 }
 
 // ---------- EmbedJob tests ----------
@@ -1011,6 +1037,25 @@ func TestEmbedJob_Run_ErrorWithoutYieldLogsFailure(t *testing.T) {
 	assert.NotContains(logs.String(), "embed run complete", "failed runs must not log completion")
 }
 
+func TestEmbedJob_Run_PersonFailureStillRunsMessageBackstop(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}}
+	runner := &fakeRunner{runErr: &embed.GenerationRunError{Person: errors.New("person provider failed")}}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, BackstopInterval: time.Hour,
+		Log: slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(t.Context())
+
+	n, gen := runner.backstops()
+	assert.Equal(1, n, "person-only failure must not starve message recovery")
+	assert.Equal(vector.GenerationID(5), gen)
+	assert.Contains(logs.String(), "person embedding run failed")
+	assert.NotContains(logs.String(), "embed run failed")
+}
+
 func TestEmbedJob_MaybeRunBackstop_YieldedCleanRunDoesNotRecordCompletion(t *testing.T) {
 	assert := assert.New(t)
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -1176,6 +1221,87 @@ func TestEmbedJob_Run_PrefersBuildingOverActive(t *testing.T) {
 	assert.Equal(t, vector.GenerationID(99), gen,
 		"RunOnce gen should be building (%d) — active (%d) would strand the rebuild",
 		building.ID, backend.active.ID)
+}
+
+// TestEmbedJobRunMaintainsActivePeopleThroughoutCompatibleBuild catches the
+// scheduler dropping active-generation person creations, edits, and deletions
+// whenever a compatible message rebuild is in flight.
+func TestEmbedJobRunMaintainsActivePeopleThroughoutCompatibleBuild(t *testing.T) {
+	check := assert.New(t)
+	active := vector.Generation{ID: 5, State: vector.GenerationActive, Fingerprint: "m:768"}
+	building := &vector.Generation{ID: 99, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{active: active, building: building}
+	desired := map[int64]string{1: "rev-one", 2: "rev-two"}
+	corpora := map[vector.GenerationID]map[int64]string{
+		active.ID:   {9: "deleted"},
+		building.ID: {9: "deleted"},
+	}
+	reconcile := func(gen vector.GenerationID) {
+		corpora[gen] = maps.Clone(desired)
+	}
+	runner := &fakeRunner{
+		onPerson:  reconcile,
+		onRunOnce: reconcile,
+	}
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, Fingerprint: "m:768", BackstopInterval: -1,
+	}
+
+	job.Run(t.Context())
+	check.Equal(desired, corpora[active.ID], "active person additions and deletions")
+	check.Equal(desired, corpora[building.ID], "building person additions and deletions")
+
+	desired = map[int64]string{1: "rev-one-edited", 3: "rev-three"}
+	job.Run(t.Context())
+	check.Equal(desired, corpora[active.ID], "active person edits, additions, and deletions")
+	check.Equal(desired, corpora[building.ID], "building person edits, additions, and deletions")
+	check.Equal([]vector.GenerationID{active.ID, active.ID}, runner.persons())
+}
+
+// TestEmbedJobRunMaintainsCompatibleActivePeoplePastMismatchedBuild catches
+// the early mismatched-build return starving otherwise-compatible active
+// person upkeep.
+func TestEmbedJobRunMaintainsCompatibleActivePeoplePastMismatchedBuild(t *testing.T) {
+	active := vector.Generation{ID: 5, State: vector.GenerationActive, Fingerprint: "new:768"}
+	backend := &fakeBackend{
+		active: active,
+		building: &vector.Generation{
+			ID: 33, State: vector.GenerationBuilding, Fingerprint: "old:512",
+		},
+	}
+	runner := &fakeRunner{}
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, Fingerprint: "new:768", BackstopInterval: -1,
+	}
+
+	job.Run(t.Context())
+
+	_, buildRuns, _ := runner.calls()
+	assert.Zero(t, buildRuns, "mismatched building message work remains declined")
+	assert.Equal(t, []vector.GenerationID{active.ID}, runner.persons(),
+		"compatible active person upkeep must still run")
+}
+
+// TestEmbedJobRunActivePersonFailureDoesNotStarveCompatibleBuild catches a
+// person-only active maintenance failure aborting valid building-generation
+// message and person work.
+func TestEmbedJobRunActivePersonFailureDoesNotStarveCompatibleBuild(t *testing.T) {
+	active := vector.Generation{ID: 5, State: vector.GenerationActive, Fingerprint: "m:768"}
+	building := &vector.Generation{ID: 99, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{active: active, building: building}
+	runner := &fakeRunner{personErr: errors.New("synthetic active person failure")}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, Fingerprint: "m:768", BackstopInterval: -1,
+		Log: slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(t.Context())
+
+	_, buildRuns, buildGen := runner.calls()
+	assert.Equal(t, 1, buildRuns, "valid building pass must still run")
+	assert.Equal(t, building.ID, buildGen)
+	assert.Contains(t, logs.String(), "active person embedding run failed")
 }
 
 // TestEmbedJob_Run_ActivatesBuildingWhenDrained verifies the
@@ -1491,6 +1617,7 @@ func TestEmbedJob_Run_YieldedConvergenceStopsWithoutWarning(t *testing.T) {
 func TestEmbedJob_Run_ContextualActivationRequiresEveryConvergenceDimension(t *testing.T) {
 	complete := ConvergenceResult{
 		MessageCoverageComplete: true,
+		PersonCoverageComplete:  true,
 		LatestJournalSequence:   12,
 		ConsumedJournalSequence: 12,
 		ReconciliationComplete:  true,
@@ -1502,6 +1629,7 @@ func TestEmbedJob_Run_ContextualActivationRequiresEveryConvergenceDimension(t *t
 	}{
 		{name: "complete", want: true},
 		{name: "message coverage incomplete", mutate: func(r *ConvergenceResult) { r.MessageCoverageComplete = false }},
+		{name: "person coverage incomplete", mutate: func(r *ConvergenceResult) { r.PersonCoverageComplete = false }},
 		{name: "journal not consumed", mutate: func(r *ConvergenceResult) { r.ConsumedJournalSequence-- }},
 		{name: "reconciliation incomplete", mutate: func(r *ConvergenceResult) { r.ReconciliationComplete = false }},
 	}
@@ -1535,6 +1663,7 @@ func TestEmbedJob_Run_ContextualConvergedBuildActivatesBeforeBackstop(t *testing
 		Worker: runner, Backend: backend, Fingerprint: "m:768",
 		Convergence: &fakeConvergenceChecker{result: ConvergenceResult{
 			MessageCoverageComplete: true,
+			PersonCoverageComplete:  true,
 			LatestJournalSequence:   12,
 			ConsumedJournalSequence: 12,
 			ReconciliationComplete:  true,
@@ -1556,6 +1685,7 @@ func TestEmbedJob_Run_ContextualIncompleteBuildUsesBackstopRecovery(t *testing.T
 	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
 	checker := &fakeConvergenceChecker{result: ConvergenceResult{
 		MessageCoverageComplete: false,
+		PersonCoverageComplete:  true,
 		LatestJournalSequence:   12,
 		ConsumedJournalSequence: 12,
 		ReconciliationComplete:  true,
@@ -1583,6 +1713,7 @@ func TestEmbedJob_Run_LegacyConvergenceUsesNormalActivation(t *testing.T) {
 		Worker: &fakeRunner{}, Backend: backend, Fingerprint: "m:768",
 		Convergence: &fakeConvergenceChecker{result: ConvergenceResult{
 			MessageCoverageComplete: true,
+			PersonCoverageComplete:  true,
 			ReconciliationComplete:  true,
 		}},
 		BackstopInterval: -1,
@@ -1889,6 +2020,41 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 	assert.Equal(t, 0, run, "RunOnce calls when sync failed")
 }
 
+func TestScheduler_VisualRunAfterSyncDoesNotExtendSync(t *testing.T) {
+	requirements := require.New(t)
+	visualStarted := make(chan struct{})
+	releaseVisual := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	s.SetVisualPostSyncJob(func(context.Context) error {
+		close(visualStarted)
+		<-releaseVisual
+		return nil
+	})
+	requirements.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"))
+	s.Start()
+	t.Cleanup(func() {
+		select {
+		case <-releaseVisual:
+		default:
+			close(releaseVisual)
+		}
+		ctx := s.Stop()
+		<-ctx.Done()
+	})
+
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	select {
+	case <-visualStarted:
+	case <-time.After(time.Second):
+		requirements.Fail("visual post-sync pass did not start")
+	}
+	requirements.Eventually(func() bool {
+		statuses := s.Status()
+		return len(statuses) == 1 && !statuses[0].Running
+	}, time.Second, 5*time.Millisecond, "sync should finish while hosted visual work remains blocked")
+	close(releaseVisual)
+}
+
 func TestValidateCronExpr(t *testing.T) {
 	tests := []struct {
 		expr    string
@@ -2069,4 +2235,52 @@ func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 	for _, status := range s.Status() {
 		assert.Empty(status.LastError, "yield must not be recorded as a sync error")
 	}
+}
+
+func TestScheduler_VisualPostSyncQueuesPendingRunWhileActive(t *testing.T) {
+	requirements := require.New(t)
+	var mu sync.Mutex
+	runs := 0
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	s.SetVisualPostSyncJob(func(context.Context) error {
+		mu.Lock()
+		runs++
+		count := runs
+		mu.Unlock()
+		if count == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		return nil
+	})
+	requirements.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"))
+	s.Start()
+	t.Cleanup(func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+		ctx := s.Stop()
+		<-ctx.Done()
+	})
+
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		requirements.Fail("first visual pass did not start")
+	}
+	// A second sync completes while the first pass is still running; its
+	// changes must be processed by a queued follow-up pass, not dropped.
+	requirements.NoError(s.TriggerSync("test@gmail.com"))
+	time.Sleep(50 * time.Millisecond)
+	close(releaseFirst)
+	requirements.Eventually(func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return runs == 2
+	}, 2*time.Second, 10*time.Millisecond, "the pending pass must run after the active one finishes")
 }

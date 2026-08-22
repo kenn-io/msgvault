@@ -43,6 +43,12 @@ func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
 	if resp == nil || resp.JSON200 == nil {
 		return false, nil
 	}
+	// Newer daemons report the text lane separately: a multimodal-only
+	// daemon is vector-"ready" without serving semantic message search, so
+	// the shared status must not enable text-vector tools there.
+	if textStatus := resp.JSON200.VectorTextStatus; textStatus != nil && *textStatus != "" {
+		return *textStatus != vectorStatusDisabled, nil
+	}
 	if status := resp.JSON200.VectorStatus; status != nil && *status != "" {
 		return *status != vectorStatusDisabled, nil
 	}
@@ -50,6 +56,27 @@ func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	return resp.JSON200.VectorSearch.Enabled, nil
+}
+
+// VisualSearchAvailable reports whether the daemon's multimodal lane is
+// configured — including still-initializing — so the MCP catalog can register
+// the visual tool without a one-time readiness probe permanently omitting it
+// after a transient 503 during asynchronous vector init. Older daemons omit
+// the lane field; callers fall back to probing the visual status endpoint.
+func (c *Client) VisualSearchAvailable(ctx context.Context) (bool, bool, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetStatsResp, error) {
+		return client.GetStatsWithResponse(ctx)
+	})
+	if err != nil {
+		return false, false, err
+	}
+	if resp == nil || resp.JSON200 == nil {
+		return false, false, nil
+	}
+	if visualStatus := resp.JSON200.VectorVisualStatus; visualStatus != nil && *visualStatus != "" {
+		return *visualStatus != vectorStatusDisabled, true, nil
+	}
+	return false, false, nil
 }
 
 // vectorStatusDisabled mirrors api.VectorStatusDisabled. It is duplicated here

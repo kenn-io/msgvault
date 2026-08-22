@@ -863,6 +863,49 @@ func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
 	require.NoError(err, "MarkMessagesDeletedByGmailIDBatch(nil)")
 }
 
+func TestStore_SourceScopedRemoteIDDeletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.invalid")
+	require.NoError(err)
+	otherConversationID, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	require.NoError(err)
+
+	const remoteID = "shared-remote-id"
+	firstID := f.CreateMessage(remoteID)
+	secondID := storetest.NewMessage(other.ID, otherConversationID).WithSourceMessageID(remoteID).Create(t, f.Store)
+
+	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(f.Source.ID, false, remoteID))
+	var firstDeleted, secondDeleted sql.NullTime
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), firstID,
+	).Scan(&firstDeleted))
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), secondID,
+	).Scan(&secondDeleted))
+	assert.True(firstDeleted.Valid)
+	assert.False(secondDeleted.Valid)
+
+	require.NoError(f.Store.MarkMessagesDeletedBySourceMessageIDBatch(other.ID, []string{remoteID}))
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), secondID,
+	).Scan(&secondDeleted))
+	assert.True(secondDeleted.Valid)
+
+	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(f.Source.ID, true, remoteID))
+	var count int
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), firstID,
+	).Scan(&count))
+	assert.Zero(count)
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), secondID,
+	).Scan(&count))
+	assert.Equal(1, count)
+}
+
 func TestStore_GetMessageRaw_NotFound(t *testing.T) {
 	f := storetest.New(t)
 

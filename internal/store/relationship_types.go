@@ -426,7 +426,7 @@ func (s *Store) UpdateRelationshipTypeContext(
 		if err != nil {
 			return fmt.Errorf("reload relationship type %d: %w", id, err)
 		}
-		return nil
+		return s.bumpRelationshipTypeVCardProjectionsTx(ctx, tx, updatedID)
 	})
 	if err != nil {
 		return nil, err
@@ -471,6 +471,13 @@ func (s *Store) DeleteRelationshipTypeContext(ctx context.Context, id, expectedR
 		}
 		if inUse > 0 {
 			return fmt.Errorf("%w: id %d is used by %d relationships", ErrRelationshipTypeInUse, id, inUse)
+		}
+		// The usage check above only covers direct edges. A type that is
+		// nobody's relationship can still be the inverse a projection
+		// resolves through, so those persons are bumped here, before the
+		// DELETE clears the inverse links that name this type.
+		if err := s.bumpRelationshipTypeVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
 		}
 		result, err := tx.ExecContext(ctx,
 			`DELETE FROM relationship_types WHERE id = ? AND revision = ?`, id, expectedRevision,

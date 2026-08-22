@@ -206,6 +206,8 @@ type exploreCursor struct {
 	Request          string `json:"request"`
 	Revision         string `json:"revision"`
 	SearchRevision   string `json:"search_revision,omitempty"`
+	VisualGeneration int64  `json:"visual_generation,omitempty"`
+	VisualRevision   string `json:"visual_revision,omitempty"`
 	Snapshot         string `json:"snapshot,omitempty"`
 	IdentityRevision int64  `json:"identity_revision,omitempty"`
 

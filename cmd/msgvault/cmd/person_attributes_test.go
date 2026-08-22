@@ -94,7 +94,7 @@ func TestPersonAttributesSetCoercesScalarAndForwardsMetadata(t *testing.T) {
 			_, err := w.Write([]byte(testPersonAttributesJSON))
 			assert.NoError(err)
 		case http.MethodPut:
-			assert.Equal("/api/v1/persons/7/attributes/primary_channel", r.URL.Path)
+			assert.Equal("/api/v1/people/7/attributes/primary_channel", r.URL.Path)
 			query = r.URL.RawQuery
 			assert.NoError(json.NewDecoder(r.Body).Decode(&received))
 			_, err := w.Write([]byte(`{"dry_run":true,"value":{
@@ -164,7 +164,7 @@ func TestPersonAttributesClearForwardsOrdinalAndExpectedValueID(t *testing.T) {
 	var query string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodDelete, r.Method)
-		assert.Equal("/api/v1/persons/7/attributes/ask_me_about", r.URL.Path)
+		assert.Equal("/api/v1/people/7/attributes/ask_me_about", r.URL.Path)
 		query = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"dry_run":false,"superseded":{

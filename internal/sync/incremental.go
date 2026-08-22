@@ -42,6 +42,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
+	summary.SyncRunID = syncID
 
 	// Defer failure handling — recover from panics and return as error
 	defer func() {
@@ -78,9 +79,12 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	// owed (never succeeded, previously failed, or stale).
 	if startHistoryID >= profile.HistoryID {
 		s.logger.Info("already up to date")
-		if s.completeSyncWithoutHook(syncID, strconv.FormatUint(profile.HistoryID, 10)) {
-			s.runSuccessfulSyncHook(ctx, source, false)
+		if err := s.completeSyncWithoutHook(
+			ctx, syncID, source.ID, strconv.FormatUint(profile.HistoryID, 10),
+		); err != nil {
+			return nil, err
 		}
+		s.runSuccessfulSyncHook(ctx, source, false)
 		summary.EndTime = time.Now()
 		summary.Duration = summary.EndTime.Sub(summary.StartTime)
 		summary.FinalHistoryID = profile.HistoryID
@@ -267,12 +271,10 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			"errors", checkpoint.ErrorsCount,
 			"history_id", historyIDStr)
 	}
-	if err := s.store.UpdateSourceSyncCursor(source.ID, historyIDStr); err != nil {
-		s.logger.Warn("failed to update sync cursor", "error", err)
-	}
-
 	// Mark sync complete before running best-effort provider maintenance.
-	s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source)
+	if err := s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source); err != nil {
+		return nil, err
+	}
 
 	// Build summary
 	summary.EndTime = time.Now()

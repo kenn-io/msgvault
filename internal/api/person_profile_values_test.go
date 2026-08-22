@@ -241,9 +241,9 @@ func TestGetPersonProfileHistoryIsASeparateEndpoint(t *testing.T) {
 func TestProfileEndpointsRejectUnknownPersonAndBadID(t *testing.T) {
 	assert := assert.New(t)
 	server, _ := newProfileTestServer(t)
-	missing := doRequest(t, server, http.MethodGet, "/api/v1/persons/999999/profile", nil, nil)
+	missing := doRequest(t, server, http.MethodGet, "/api/v1/people/999999/profile", nil, nil)
 	assert.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
-	bad := doRequest(t, server, http.MethodGet, "/api/v1/persons/0/profile", nil, nil)
+	bad := doRequest(t, server, http.MethodGet, "/api/v1/people/0/profile", nil, nil)
 	assert.Equal(http.StatusBadRequest, bad.Code, bad.Body.String())
 }
 
@@ -288,10 +288,10 @@ func TestGetPersonProfileMediaContentRejectsMissingAndURIOnlyValues(t *testing.T
 		personProfileMediaContentPath(personID, media.Envelope.ID),
 		personProfileMediaContentPath(personID, media.Envelope.ID+1),
 		personProfileMediaContentPath(personID+1, media.Envelope.ID),
-		fmt.Sprintf("/api/v1/persons/%d/profile/media/0/content", personID),
+		fmt.Sprintf("/api/v1/people/%d/profile/media/0/content", personID),
 	} {
 		response := doRequest(t, server, http.MethodGet, path, nil, nil)
-		if path == fmt.Sprintf("/api/v1/persons/%d/profile/media/0/content", personID) {
+		if path == fmt.Sprintf("/api/v1/people/%d/profile/media/0/content", personID) {
 			assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 		} else {
 			assert.Equal(http.StatusNotFound, response.Code, response.Body.String())
@@ -348,12 +348,12 @@ func seedAPIPerson(t *testing.T, st *store.Store) int64 {
 }
 
 func personProfilePath(personID int64) string {
-	return fmt.Sprintf("/api/v1/persons/%d/profile", personID)
+	return fmt.Sprintf("/api/v1/people/%d/profile", personID)
 }
 
 func personProfileMediaContentPath(personID, mediaID int64) string {
 	return fmt.Sprintf(
-		"/api/v1/persons/%d/profile/media/%d/content", personID, mediaID,
+		"/api/v1/people/%d/profile/media/%d/content", personID, mediaID,
 	)
 }
 

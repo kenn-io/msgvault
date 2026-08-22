@@ -2,12 +2,45 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing.T) {
+	requirements := require.New(t)
+	db, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(db.Close()) })
+
+	_, err = db.Exec(`
+		CREATE TABLE messages AS
+		SELECT i::BIGINT AS id, 2::BIGINT AS sender_id, 700::BIGINT AS conversation_id, false AS is_from_me
+		FROM generate_series(1, 100000) rows(i);
+		CREATE TABLE conversations(id BIGINT, conversation_type VARCHAR);
+		INSERT INTO conversations VALUES (700, 'channel');
+		CREATE TABLE conversation_participants(conversation_id BIGINT, participant_id BIGINT);
+		INSERT INTO conversation_participants VALUES (700, 1);
+		CREATE TABLE message_recipients(message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR);
+		CREATE TABLE attachments(attachment_id BIGINT, message_id BIGINT);
+		INSERT INTO attachments VALUES (1, 100000);
+	`)
+	requirements.NoError(err)
+
+	ctes, args := personFileMatchCTEs(PersonFileScope{
+		ParticipantIDs: []int64{1},
+		Directions:     []PersonFileDirection{PersonFileGroup},
+	})
+	var aggregatedMessages int64
+	err = db.QueryRowContext(context.Background(),
+		"WITH "+ctes+" SELECT COUNT(*) FROM person_matches_unfiltered", args...).Scan(&aggregatedMessages)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), aggregatedMessages,
+		"role aggregation must exclude rostered channel messages without attachments")
+}
 
 func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 	assertions := assert.New(t)
@@ -52,6 +85,26 @@ func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 	assertions.Equal([]string{"Alice Example"}, file.ParticipantLabels)
 	assertions.Equal(int64(1), result.TotalCount)
 	assertions.NotEmpty(result.CacheRevision)
+}
+
+func TestSearchFilesRestrictsVisualCandidateAttachmentIDsAfterHardFilters(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "Visual candidates"})
+	b.AddAttachmentWithMIME(71, message, 10, "first.png", "image/png")
+	b.AddAttachmentWithMIME(72, message, 20, "second.pdf", "application/pdf")
+	b.AddAttachmentWithMIME(73, message, 30, "third.png", "image/png")
+
+	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+		AttachmentIDs: []int64{72, 73}, MIMEFamilies: []FileMIMEFamily{FileMIMEImage},
+		Sort: SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Files, 1)
+	assertions.Equal(int64(73), result.Files[0].ID)
+	assertions.Equal(int64(1), result.TotalCount)
 }
 
 func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
@@ -115,6 +168,300 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 	requirements.Len(grouped.Rows, 1)
 	assertions.Equal("1", grouped.Rows[0].Key)
 	assertions.Equal(int64(2), grouped.Rows[0].Count)
+}
+
+func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	person := b.AddParticipant("person@example.com", "example.com", "Person")
+	alias := b.AddParticipant("person.alias@example.net", "example.net", "Person Alias")
+	other := b.AddParticipant("other@example.org", "example.org", "Other")
+	base := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+
+	groupConversation := int64(701)
+	incoming := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: groupConversation, ConversationType: "group_chat",
+		Subject: "from person", SentAt: base, SenderID: &person,
+	})
+	b.AddFrom(incoming, person, "Person")
+	b.AddConversationParticipant(groupConversation, person)
+	b.AddConversationParticipant(groupConversation, other)
+	b.AddAttachmentWithMIME(901, incoming, 10, "from-person.png", "image/png")
+
+	outgoing := b.AddMessage(MessageOpt{
+		SourceID: source, Subject: "to person", SentAt: base.Add(-time.Hour), SenderID: &other,
+	})
+	b.AddTo(outgoing, alias, "Person Alias")
+	b.AddCc(outgoing, person, "Person")
+	b.AddRecipient(outgoing, alias, "bcc", "Person Alias")
+	b.AddAttachmentWithMIME(902, outgoing, 20, "to-person.pdf", "application/pdf")
+
+	groupOnlyConversation := int64(702)
+	groupOnly := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: groupOnlyConversation, ConversationType: "channel",
+		Subject: "group exchange", SentAt: base.Add(-2 * time.Hour), SenderID: &other,
+	})
+	b.AddConversationParticipant(groupOnlyConversation, person)
+	b.AddConversationParticipant(groupOnlyConversation, other)
+	b.AddAttachmentWithMIME(903, groupOnly, 30, "group-only.mp4", "video/mp4")
+
+	directConversation := int64(703)
+	directRosterOnly := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: directConversation, ConversationType: "direct_chat",
+		Subject: "direct roster", SentAt: base.Add(-3 * time.Hour), SenderID: &other,
+	})
+	b.AddConversationParticipant(directConversation, person)
+	b.AddAttachmentWithMIME(904, directRosterOnly, 40, "direct-roster.txt", "text/plain")
+
+	legacyConversation := int64(704)
+	legacyRosterOnly := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: legacyConversation, ConversationType: "legacy_chat",
+		Subject: "legacy roster", SentAt: base.Add(-4 * time.Hour), SenderID: &other,
+	})
+	b.AddConversationParticipant(legacyConversation, person)
+	b.AddAttachmentWithMIME(907, legacyRosterOnly, 45, "legacy-roster.txt", "text/plain")
+
+	deletedAt := base.Add(time.Hour)
+	deletedFromSource := b.AddMessage(MessageOpt{
+		SourceID: source, Subject: "deleted from source", SentAt: base.Add(time.Hour),
+		SenderID: &person, DeletedFromSourceAt: &deletedAt,
+	})
+	b.AddAttachmentWithMIME(905, deletedFromSource, 50, "deleted-source.pdf", "application/pdf")
+	internallyDeleted := b.AddMessage(MessageOpt{
+		SourceID: source, Subject: "internally deleted", SentAt: base.Add(2 * time.Hour),
+		SenderID: &person, InternalDeletedAt: &deletedAt,
+	})
+	b.AddAttachmentWithMIME(906, internallyDeleted, 60, "deleted-internal.pdf", "application/pdf")
+
+	engine := b.BuildEngine()
+	search := func(directions ...PersonFileDirection) *FileSearchResponse {
+		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
+			Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: directions},
+			Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err)
+		return result
+	}
+
+	fromPerson := search(PersonFileFromPerson)
+	requirements.Len(fromPerson.Files, 1)
+	assertions.Equal("from-person.png", fromPerson.Files[0].Filename)
+	requirements.NotNil(fromPerson.Files[0].PersonProvenance)
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person},
+		Roles:          []PersonFileRole{PersonFileRoleFrom, PersonFileRoleConversationMember},
+		Directions:     []PersonFileDirection{PersonFileFromPerson, PersonFileGroup},
+	}, fromPerson.Files[0].PersonProvenance)
+
+	toPerson := search(PersonFileToPerson)
+	requirements.Len(toPerson.Files, 2)
+	assertions.Equal([]string{"to-person.pdf", "direct-roster.txt"}, []string{
+		toPerson.Files[0].Filename, toPerson.Files[1].Filename,
+	})
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person, alias},
+		Roles:          []PersonFileRole{PersonFileRoleTo, PersonFileRoleCC, PersonFileRoleBCC},
+		Directions:     []PersonFileDirection{PersonFileToPerson},
+	}, toPerson.Files[0].PersonProvenance)
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person}, Roles: []PersonFileRole{PersonFileRoleTo},
+		Directions: []PersonFileDirection{PersonFileToPerson},
+	}, toPerson.Files[1].PersonProvenance)
+
+	group := search(PersonFileGroup)
+	requirements.Len(group.Files, 2)
+	assertions.Equal([]string{"from-person.png", "group-only.mp4"},
+		[]string{group.Files[0].Filename, group.Files[1].Filename})
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person}, Roles: []PersonFileRole{PersonFileRoleConversationMember},
+		Directions: []PersonFileDirection{PersonFileGroup},
+	}, group.Files[1].PersonProvenance)
+
+	allDirections := search(PersonFileFromPerson, PersonFileToPerson, PersonFileGroup)
+	requirements.Len(allDirections.Files, 4)
+	assertions.Equal([]int64{901, 902, 903, 904}, []int64{
+		allDirections.Files[0].ID, allDirections.Files[1].ID,
+		allDirections.Files[2].ID, allDirections.Files[3].ID,
+	})
+	assertions.Equal(int64(4), allDirections.TotalCount)
+
+	defaultScope, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
+		Person: &PersonFileScope{
+			ParticipantIDs: []int64{person, alias},
+			Directions: []PersonFileDirection{
+				PersonFileFromPerson, PersonFileToPerson, PersonFileGroup,
+			},
+			IncludeUnclassifiedRosterRows: true,
+		},
+		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(defaultScope.Files, 5)
+	assertions.Equal([]int64{901, 902, 903, 904, 907}, []int64{
+		defaultScope.Files[0].ID, defaultScope.Files[1].ID, defaultScope.Files[2].ID,
+		defaultScope.Files[3].ID, defaultScope.Files[4].ID,
+	})
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person}, Roles: []PersonFileRole{PersonFileRoleConversationMember},
+		Directions: []PersonFileDirection{PersonFileGroup},
+	}, defaultScope.Files[4].PersonProvenance)
+	assertions.Equal(int64(5), defaultScope.TotalCount)
+
+	unrestricted, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Person: &PersonFileScope{
+			ParticipantIDs: []int64{person, alias},
+			Directions:     []PersonFileDirection{PersonFileFromPerson, PersonFileToPerson, PersonFileGroup},
+		},
+		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(unrestricted.Files, 5)
+	assertions.Equal([]int64{905, 901, 902, 903, 904}, []int64{
+		unrestricted.Files[0].ID, unrestricted.Files[1].ID,
+		unrestricted.Files[2].ID, unrestricted.Files[3].ID, unrestricted.Files[4].ID,
+	})
+	assertions.Equal(int64(5), unrestricted.TotalCount)
+
+	deletedOnly, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{Deletion: DeletionDeleted}},
+		Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: []PersonFileDirection{PersonFileFromPerson}},
+		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(deletedOnly.Files, 1)
+	assertions.Equal(int64(905), deletedOnly.Files[0].ID)
+	assertions.Equal(int64(1), deletedOnly.TotalCount)
+}
+
+func TestSearchFilesPersonScopeDirectChatSenderUsesWholeCluster(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	person := b.AddParticipant("person@example.com", "example.com", "Person")
+	alias := b.AddParticipant("person.alias@example.net", "example.net", "Person Alias")
+	other := b.AddParticipant("other@example.org", "example.org", "Other")
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	nullSender := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 801, ConversationType: "direct_chat",
+		Subject: "null sender", SentAt: base,
+	})
+	b.AddFrom(nullSender, alias, "Person Alias")
+	b.AddConversationParticipant(801, person)
+	b.AddAttachmentWithMIME(1001, nullSender, 10, "null-sender.txt", "text/plain")
+
+	linkedSender := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 802, ConversationType: "direct_chat",
+		Subject: "linked sender", SentAt: base.Add(-time.Hour), SenderID: &alias,
+	})
+	b.AddConversationParticipant(802, person)
+	b.AddAttachmentWithMIME(1002, linkedSender, 20, "linked-sender.txt", "text/plain")
+
+	otherSender := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 803, ConversationType: "direct_chat",
+		Subject: "other sender", SentAt: base.Add(-2 * time.Hour), SenderID: &other,
+	})
+	b.AddConversationParticipant(803, person)
+	b.AddAttachmentWithMIME(1003, otherSender, 30, "to-person.txt", "text/plain")
+
+	authorless := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 804, ConversationType: "direct_chat",
+		Subject: "authorless", SentAt: base.Add(-3 * time.Hour), IsFromMe: false,
+	})
+	b.AddConversationParticipant(804, person)
+	b.AddAttachmentWithMIME(1004, authorless, 40, "authorless.txt", "text/plain")
+
+	engine := b.BuildEngine()
+	search := func(direction PersonFileDirection) *FileSearchResponse {
+		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
+			Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: []PersonFileDirection{direction}},
+			Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err)
+		return result
+	}
+
+	fromPerson := search(PersonFileFromPerson)
+	requirements.Len(fromPerson.Files, 2)
+	assertions.Equal([]string{"null-sender.txt", "linked-sender.txt"}, []string{
+		fromPerson.Files[0].Filename, fromPerson.Files[1].Filename,
+	})
+	for _, file := range fromPerson.Files {
+		requirements.NotNil(file.PersonProvenance)
+		assertions.Equal([]PersonFileDirection{PersonFileFromPerson}, file.PersonProvenance.Directions)
+	}
+
+	toPerson := search(PersonFileToPerson)
+	requirements.Len(toPerson.Files, 1)
+	assertions.Equal("to-person.txt", toPerson.Files[0].Filename)
+	requirements.NotNil(toPerson.Files[0].PersonProvenance)
+	assertions.Equal([]PersonFileDirection{PersonFileToPerson}, toPerson.Files[0].PersonProvenance.Directions)
+
+	unclassified, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
+		Person: &PersonFileScope{
+			ParticipantIDs: []int64{person, alias},
+			Directions: []PersonFileDirection{
+				PersonFileFromPerson, PersonFileToPerson, PersonFileGroup,
+			},
+			IncludeUnclassifiedRosterRows: true,
+		},
+		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(unclassified.Files, 4)
+	assertions.Equal([]string{"null-sender.txt", "linked-sender.txt", "to-person.txt", "authorless.txt"}, []string{
+		unclassified.Files[0].Filename, unclassified.Files[1].Filename,
+		unclassified.Files[2].Filename, unclassified.Files[3].Filename,
+	})
+	assertions.Equal(&PersonFileProvenance{
+		ParticipantIDs: []int64{person},
+		Roles:          []PersonFileRole{PersonFileRoleConversationMember},
+		Directions:     []PersonFileDirection{PersonFileGroup},
+	}, unclassified.Files[3].PersonProvenance)
+}
+
+func TestSearchFilesPersonScopeValidation(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	engine := b.BuildEngine()
+
+	tests := []struct {
+		name  string
+		scope PersonFileScope
+	}{
+		{name: "non-positive participant ID", scope: PersonFileScope{ParticipantIDs: []int64{0}, Directions: []PersonFileDirection{PersonFileFromPerson}}},
+		{name: "missing directions", scope: PersonFileScope{ParticipantIDs: []int64{1}}},
+		{name: "unknown direction", scope: PersonFileScope{ParticipantIDs: []int64{1}, Directions: []PersonFileDirection{"sideways"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := engine.SearchFiles(context.Background(), FileSearchRequest{Person: &test.scope})
+			require.ErrorIs(t, err, ErrInvalidExploreRequest)
+		})
+	}
+}
+
+func TestSearchFilesEmptyPersonPopulationReturnsNoFiles(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.test")
+	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated"})
+	b.AddAttachmentWithMIME(1, message, 10, "unrelated.pdf", "application/pdf")
+
+	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+		Person: &PersonFileScope{Directions: []PersonFileDirection{PersonFileFromPerson}},
+		Page:   PageSpec{Limit: 10},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, result.Files)
+	assert.Zero(t, result.TotalCount)
 }
 
 func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {

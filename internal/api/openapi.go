@@ -87,7 +87,8 @@ import (
 // a 400 (conversation_anchor_outside_range) rather than the default full-
 // conversation window. Additive (minor bump): omitting the params preserves
 // the existing full-conversation behavior.
-// 1.23.0 makes GET /api/v1/people/{id} cluster-aware: PersonIdentifier adds
+// 1.23.0 makes GET /api/v1/people/{id} (the analytical participant detail,
+// /api/v1/participants/{id} since 2.0.0) cluster-aware: PersonIdentifier adds
 // participant_id, and PersonSummary adds an additive cluster field
 // (canonical_id, member_ids, edges) populated only when the requested
 // participant is linked to at least one other participant. Identifiers on a
@@ -151,7 +152,7 @@ import (
 // cluster (201 on creation, 200 on idempotent re-promotion), list/get stable
 // profiles, update the display-name override and delete a profile with
 // revision-tag optimistic concurrency, and surface the covering profile on
-// the /people/{id} analytical detail.
+// the /people/{id} analytical detail (/participants/{id} since 2.0.0).
 // 1.33.0 adds provider-neutral single-meeting ingestion with strict request
 // schemas and idempotent create/update responses.
 // 1.34.0 adds GET /api/v1/messages/changes: a keyset feed over the
@@ -201,7 +202,24 @@ import (
 // 1.44.0 adds dedicated extracted-document search and status routes. Additive
 // (minor bump): existing message, file, profile, media, and activity routes are
 // unchanged.
-const APISchemaVersion = "1.44.0"
+// 2.0.0 separates observed participant analytics under /participants from
+// durable curated people under /people and removes the ambiguous old routes.
+// 2.1.0 adds portable attribute sensitivity metadata and per-person tracking,
+// and reports this version as api_schema_version on authenticated
+// /api/v1/health so remote CLI clients can verify compatibility on connect.
+// 2.2.0 adds participant-scoped file search responses and direction controls.
+// Additive (minor bump): the archive-wide file routes are unchanged.
+// 2.3.0 bounds organization profile replacements to 200 structured values and
+// 32 MiB of logical inline media, and documents the resulting 413 response.
+// 2.4.0 adds exact source selection to CLI sync and deletion transports. CLI
+// clients check this version before asking a daemon to perform a scoped sync.
+// 2.5.0 adds durable-person attachment retrieval across metadata, document,
+// and visual lanes while keeping participant references compatible.
+// 2.6.0 adds protected semantic search over durable curated people. Ranked
+// results contain only the durable person root and semantic score; person
+// projection text and raw profile details remain internal.
+// Additive (minor bump): existing person and participant routes are unchanged.
+const APISchemaVersion = "2.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -233,8 +251,19 @@ func baseOpenAPIDocument() *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
 	return doc
+}
+
+func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	response := doc.Components.Schemas.Map()["PersonSearchResponse"]
+	if response != nil && response.Properties["results"] != nil {
+		response.Properties["results"].Nullable = false
+	}
 }
 
 func hardenPersonRelationshipSchemas(doc *huma.OpenAPI) {
@@ -559,7 +588,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {
 				if schema.Properties[property] != nil {
@@ -575,6 +604,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			displayName.Extensions["x-omitempty"] = false
 			displayName.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
+	if tracking := schemas["PersonTracking"]; tracking != nil {
+		if trackedAt := tracking.Properties["tracked_at"]; trackedAt != nil {
+			if trackedAt.Extensions == nil {
+				trackedAt.Extensions = map[string]any{}
+			}
+			trackedAt.Extensions["x-omitempty"] = false
+			trackedAt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
 			}
 		}

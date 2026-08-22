@@ -29,20 +29,30 @@ type EmbedRunner interface {
 	ReclaimStale(ctx context.Context) (int, error)
 }
 
+type activePersonRunner interface {
+	RunPersonsOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
+}
+
 // ConvergenceResult is the complete activation gate for one generation.
-// Contextual modes require all three independent dimensions; legacy modes set
-// the journal and reconciliation dimensions complete by construction.
+// Every mode requires exact message and curated-person coverage. Contextual
+// modes additionally require the journal and reconciliation dimensions;
+// legacy modes set those dimensions complete by construction.
 type ConvergenceResult struct {
-	MessageCoverageComplete bool
-	MessageCoverageMissing  int64
-	LatestJournalSequence   int64
-	ConsumedJournalSequence int64
-	ReconciliationComplete  bool
+	MessageCoverageComplete  bool
+	MessageCoverageMissing   int64
+	PersonCoverageComplete   bool
+	PersonCoverageMismatched int64
+	PersonCoverageRejected   int64
+	LatestJournalSequence    int64
+	ConsumedJournalSequence  int64
+	ReconciliationComplete   bool
 }
 
 // Complete reports whether a generation is safe to activate.
 func (r ConvergenceResult) Complete() bool {
 	return r.MessageCoverageComplete &&
+		r.PersonCoverageComplete &&
+		r.PersonCoverageRejected == 0 &&
 		r.LatestJournalSequence == r.ConsumedJournalSequence &&
 		r.ReconciliationComplete
 }
@@ -225,6 +235,11 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		log.Warn("embed reclaim failed", "error", err)
 	}
 
+	j.maintainActivePeopleDuringBuild(ctx, log)
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
+
 	target, isBuilding, ok := j.pickTarget(ctx, log)
 	if !ok {
 		return
@@ -236,6 +251,12 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	// this operation boundary is authoritative.
 	if jobctx.YieldedToWaiter(ctx) {
 		return
+	}
+	if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
+		if generationErr.Person != nil {
+			log.Warn("person embedding run failed", "gen", target, "error", generationErr.Person)
+		}
+		err = generationErr.Message
 	}
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)
@@ -315,6 +336,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 				"gen", target,
 				"message_coverage_complete", state.MessageCoverageComplete,
 				"message_coverage_missing", state.MessageCoverageMissing,
+				"person_coverage_complete", state.PersonCoverageComplete,
+				"person_coverage_mismatched", state.PersonCoverageMismatched,
+				"person_coverage_rejected", state.PersonCoverageRejected,
 				"latest_journal_sequence", state.LatestJournalSequence,
 				"consumed_journal_sequence", state.ConsumedJournalSequence,
 				"reconciliation_complete", state.ReconciliationComplete)
@@ -340,6 +364,43 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		}
 	}
 	j.activateBuilding(ctx, target, contextualState, log)
+}
+
+func (j *EmbedJob) maintainActivePeopleDuringBuild(ctx context.Context, log *slog.Logger) {
+	runner, ok := j.Worker.(activePersonRunner)
+	if !ok || j.Fingerprint == "" {
+		return
+	}
+	building, err := j.Backend.BuildingGeneration(ctx)
+	if err != nil || building == nil || jobctx.YieldedToWaiter(ctx) {
+		return
+	}
+	active, err := j.Backend.ActiveGeneration(ctx)
+	if errors.Is(err, vector.ErrNoActiveGeneration) || jobctx.YieldedToWaiter(ctx) {
+		return
+	}
+	if err != nil {
+		log.Warn("active person embedding generation lookup failed", "error", err)
+		return
+	}
+	if active.Fingerprint != j.Fingerprint {
+		return
+	}
+	res, err := runner.RunPersonsOnce(ctx, active.ID)
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
+	if err != nil {
+		log.Warn("active person embedding run failed", "gen", active.ID, "error", err)
+		return
+	}
+	log.Info("active person embedding run complete",
+		"gen", active.ID,
+		"scanned", res.Claimed,
+		"succeeded", res.Succeeded,
+		"failed", res.Failed,
+		"truncated", res.Truncated,
+	)
 }
 
 func (j *EmbedJob) activateBuilding(
@@ -417,6 +478,12 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 	res, err := j.Worker.RunBackstop(ctx, gen)
 	if jobctx.YieldedToWaiter(ctx) {
 		return true
+	}
+	if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
+		if generationErr.Person != nil {
+			log.Warn("person embedding backstop failed", "gen", gen, "error", generationErr.Person)
+		}
+		err = generationErr.Message
 	}
 	if err != nil {
 		log.Warn("embed backstop failed", "gen", gen, "error", err)

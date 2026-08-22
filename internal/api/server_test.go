@@ -285,6 +285,7 @@ type mockStore struct {
 		context.Context, store.DocumentExtractionRebuild, []string, []string,
 	) (int64, error)
 	documentReconcileFunc func(context.Context) error
+	personContextFunc     func(context.Context, int64) (*store.Person, error)
 
 	// Error injection for the context-aware read paths, used to verify
 	// handlers map context deadline/cancellation to a structured 503.
@@ -329,6 +330,13 @@ func (m *mockStore) SearchDocuments(
 		return store.DocumentSearchResponse{}, nil
 	}
 	return m.documentSearchFunc(ctx, request)
+}
+
+func (m *mockStore) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
+	if m.personContextFunc == nil {
+		return nil, store.ErrPersonNotFound
+	}
+	return m.personContextFunc(ctx, id)
 }
 
 func (m *mockStore) GetDocumentIndexStatusForScope(
@@ -1323,10 +1331,13 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 
 func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
 	require := require.New(t)
+	// The timeout must be far beyond the test's cancel latency: this test
+	// proves caller CANCELLATION reaches a marked request, and a 5ms budget
+	// let slow CI runners hit the deadline before cancel() ran.
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
+		RequestTimeout: 5 * time.Second,
 	})
 
 	started := make(chan struct{})

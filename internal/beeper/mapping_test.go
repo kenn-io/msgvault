@@ -190,5 +190,8 @@ func TestConversationType(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal("direct_chat", conversationType("single"))
 	assert.Equal("group_chat", conversationType("group"))
+	assert.Equal("channel", conversationType("room"))
+	assert.Equal("channel", conversationType("space"))
+	assert.Equal("channel", conversationType("channel"))
 	assert.Equal("group_chat", conversationType("anything-else"))
 }

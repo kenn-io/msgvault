@@ -60,6 +60,14 @@ type Executor struct {
 	client   gmail.API
 	logger   *slog.Logger
 	progress Progress
+	sourceID int64
+}
+
+// WithSourceID scopes legacy version-1 manifests to the source selected by
+// the caller's ambiguity-checked planning step.
+func (e *Executor) WithSourceID(sourceID int64) *Executor {
+	e.sourceID = sourceID
+	return e
 }
 
 // NewExecutor creates a deletion executor.
@@ -113,7 +121,7 @@ const (
 // deleteOne attempts to delete a single message and updates the local database on success.
 // Returns resultSuccess (including 404/already-deleted), resultFailed for transient errors,
 // or resultFatal for scope errors that should halt execution.
-func (e *Executor) deleteOne(ctx context.Context, gmailID string, method Method) (deleteResult, error) {
+func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string, method Method) (deleteResult, error) {
 	var err error
 	if method == MethodTrash {
 		err = e.client.TrashMessage(ctx, gmailID)
@@ -125,7 +133,7 @@ func (e *Executor) deleteOne(ctx context.Context, gmailID string, method Method)
 		if err != nil {
 			e.logger.Debug("message already deleted", "gmail_id", gmailID)
 		}
-		if markErr := e.store.MarkMessageDeletedByGmailID(method == MethodDelete, gmailID); markErr != nil {
+		if markErr := e.store.MarkMessageDeletedBySourceMessageID(sourceID, method == MethodDelete, gmailID); markErr != nil {
 			e.logger.Warn("failed to mark deleted in DB", "gmail_id", gmailID, "error", markErr)
 		}
 		return resultSuccess, nil
@@ -137,6 +145,20 @@ func (e *Executor) deleteOne(ctx context.Context, gmailID string, method Method)
 
 	e.logger.Warn("failed to delete message", "gmail_id", gmailID, "error", err)
 	return resultFailed, err
+}
+
+func (e *Executor) manifestSourceID(manifest *Manifest) (int64, error) {
+	if err := manifest.ValidateVersion(); err != nil {
+		return 0, err
+	}
+	if manifest.Version == 1 {
+		return e.sourceID, nil
+	}
+	source, err := e.store.GetSourceByTypeAndIdentifier(manifest.Source.Type, manifest.Source.Identifier)
+	if err != nil {
+		return 0, fmt.Errorf("resolve manifest source: %w", err)
+	}
+	return source.ID, nil
 }
 
 // manifestCancelled reports whether the manifest was cancelled by a concurrent
@@ -290,6 +312,10 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	if err != nil {
 		return err
 	}
+	sourceID, err := e.manifestSourceID(manifest)
+	if err != nil {
+		return fmt.Errorf("validate manifest source: %w", err)
+	}
 
 	// Determine starting point
 	startIndex := 0
@@ -341,7 +367,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 			return ErrManifestCancelled
 		}
 
-		result, delErr := e.deleteOne(ctx, gmailID, opts.Method)
+		result, delErr := e.deleteOne(ctx, sourceID, gmailID, opts.Method)
 		switch result {
 		case resultSuccess:
 			succeeded++
@@ -371,7 +397,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 			return ErrManifestCancelled
 		}
 
-		result, delErr := e.deleteOne(ctx, manifest.GmailIDs[i], opts.Method)
+		result, delErr := e.deleteOne(ctx, sourceID, manifest.GmailIDs[i], opts.Method)
 		switch result {
 		case resultSuccess:
 			succeeded++
@@ -398,6 +424,10 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 	manifest, err := e.prepareExecution(manifestID, MethodDelete)
 	if err != nil {
 		return err
+	}
+	sourceID, err := e.manifestSourceID(manifest)
+	if err != nil {
+		return fmt.Errorf("validate manifest source: %w", err)
 	}
 
 	if e.manifestCancelled(manifestID) {
@@ -477,7 +507,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 				return ErrManifestCancelled
 			}
 
-			result, delErr := e.deleteOne(ctx, gmailID, MethodDelete)
+			result, delErr := e.deleteOne(ctx, sourceID, gmailID, MethodDelete)
 			switch result {
 			case resultSuccess:
 				succeeded++
@@ -535,7 +565,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 					return ErrManifestCancelled
 				}
 
-				result, delErr := e.deleteOne(ctx, gmailID, MethodDelete)
+				result, delErr := e.deleteOne(ctx, sourceID, gmailID, MethodDelete)
 				switch result {
 				case resultSuccess:
 					succeeded++
@@ -551,7 +581,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		} else {
 			succeeded += len(batch)
 			// Mark all as deleted in DB using batch update
-			if markErr := e.store.MarkMessagesDeletedByGmailIDBatch(batch); markErr != nil {
+			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(sourceID, batch); markErr != nil {
 				e.logger.Warn("failed to mark batch as deleted in DB", "count", len(batch), "error", markErr)
 			}
 		}

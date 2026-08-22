@@ -300,11 +300,11 @@ func TestDKeyWithExistingSelection(t *testing.T) {
 func TestMessageListDKeyAutoSelectsCurrentMessage(t *testing.T) {
 	model := NewBuilder().
 		WithMessages(
-			query.MessageSummary{ID: 1, SourceMessageID: "msg1", Subject: "Hello"},
-			query.MessageSummary{ID: 2, SourceMessageID: "msg2", Subject: "World"},
+			query.MessageSummary{ID: 1, SourceID: 1, SourceMessageID: "msg1", Subject: "Hello"},
+			query.MessageSummary{ID: 2, SourceID: 1, SourceMessageID: "msg2", Subject: "World"},
 		).
 		WithLevel(levelMessageList).
-		WithAccounts(query.AccountInfo{ID: 1, Identifier: "test@gmail.com"}).
+		WithAccounts(query.AccountInfo{ID: 1, SourceType: "gmail", Identifier: "test@gmail.com"}).
 		Build()
 
 	assertHasSelection(t, model, false)

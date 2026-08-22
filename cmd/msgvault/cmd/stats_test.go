@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -273,11 +274,12 @@ func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:            host,
-			runtimePort:            portText,
-			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
-			runtimeAuthFingerprint: daemonAPIKeyFingerprint(""),
-			runtimeCreateTime:      matchingProcessCreateTime(t),
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(t, err, "write daemon runtime")

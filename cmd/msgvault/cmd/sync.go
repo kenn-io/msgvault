@@ -50,6 +50,10 @@ Examples:
 }
 
 func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
+	selector, selectorSet, err := syncSourceSelector(cmd, args)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 	s, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
 		return err
@@ -86,12 +90,12 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	var imapTargets []*store.Source
 	var syncErrors []string
 
-	if len(args) == 1 {
+	if selectorSet {
 		// Resolve all sources for the identifier and route
 		// each by type, same as sync-full.
-		allMatches, lookupErr := s.GetSourcesByIdentifierOrDisplayName(args[0])
+		allMatches, legacy, lookupErr := resolveSyncSources(s, selector)
 		if lookupErr != nil {
-			return fmt.Errorf("look up source: %w", lookupErr)
+			return lookupErr
 		}
 		for _, src := range allMatches {
 			switch src.SourceType {
@@ -103,10 +107,12 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		}
 		if len(gmailTargets) == 0 && len(imapTargets) == 0 {
 			if len(allMatches) > 0 {
-				return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
+				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail and imap are supported)", syncSelectorLabel(selector))
 			}
-			// Not in DB — assume Gmail (legacy behaviour)
-			gmailTargets = []syncTarget{{email: args[0]}}
+			if legacy {
+				// Token not in DB — assume Gmail (legacy behaviour).
+				gmailTargets = []syncTarget{{email: selector.Account}}
+			}
 		}
 	} else {
 		// Discover all sources.
@@ -305,6 +311,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 }
 
 func init() {
+	syncIncrementalCmd.Flags().Int64("source-id", 0, "Exact source ID to sync")
 	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
 	syncIncrementalCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
 	rootCmd.AddCommand(syncIncrementalCmd)

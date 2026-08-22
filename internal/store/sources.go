@@ -41,6 +41,25 @@ func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, er
 	return source, nil
 }
 
+// GetSourceByTypeAndIdentifier resolves a source by its portable stable tuple.
+func (s *Store) GetSourceByTypeAndIdentifier(sourceType, identifier string) (*Source, error) {
+	row := s.db.QueryRow(`
+		SELECT id, source_type, identifier, display_name, google_user_id,
+		       last_sync_at, sync_cursor, sync_config, oauth_app,
+		       created_at, updated_at
+		FROM sources
+		WHERE source_type = ? AND identifier = ?
+	`, sourceType, identifier)
+	source, err := scanSource(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("source %s/%s: %w", sourceType, identifier, ErrSourceNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get source by type and identifier: %w", err)
+	}
+	return source, nil
+}
+
 // GetSourcesByIdentifier returns all sources matching an identifier,
 // regardless of source_type. Use this when the identifier may be
 // shared across source types (e.g., gmail + mbox import).

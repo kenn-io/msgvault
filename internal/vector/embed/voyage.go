@@ -21,6 +21,9 @@ type VoyageConfig struct {
 	Timeout    time.Duration
 	MaxRetries int
 	Limits     RequestLimits
+	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
+	// is propagated without retrying. Nil leaves the client ungated.
+	BeforeRequest BeforeRequestFunc
 }
 
 // VoyageClient calls Voyage's nested contextualized embeddings endpoint.
@@ -47,7 +50,7 @@ func NewVoyageClient(cfg VoyageConfig) *VoyageClient {
 		cfg.Limits.MaxUTF8Bytes = defaultVoyageRequestLimits.MaxUTF8Bytes
 	}
 	cfg.Limits = capVoyageRequestLimits(cfg.Limits)
-	return &VoyageClient{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}
+	return &VoyageClient{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
 }
 
 type voyageRequest struct {
@@ -190,10 +193,16 @@ func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if authorizationErr := beforeRequestCause(err); authorizationErr != nil {
+			return nil, authorizationErr
+		}
 		return nil, &retryError{err: fmt.Errorf("voyage HTTP request: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+		return nil, ErrEmbeddingProviderRedirect
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return nil, &retryError{

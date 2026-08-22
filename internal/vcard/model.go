@@ -27,22 +27,26 @@ type Card struct {
 
 // Property is one decoded vCard content line. The codec preserves property
 // order, source spelling, parameters, and RawValue, but it does not retain
-// blank logical lines, original line endings, or physical folding.
+// blank logical lines, original line endings, or physical folding. The JSON
+// form is the persisted resource metadata shape; a RawValue that is not valid
+// UTF-8 (a CHARSET-declared legacy value) travels as raw_value_base64.
+//
+//nolint:recvcheck // encoding/json requires the pointer receiver for UnmarshalJSON
 type Property struct {
-	Group        string
-	Name         string
-	OriginalName string
-	Parameters   []Parameter
-	RawValue     string
+	Group        string      `json:"group,omitempty"`
+	Name         string      `json:"name"`
+	OriginalName string      `json:"original_name,omitempty"`
+	Parameters   []Parameter `json:"parameters"`
+	RawValue     string      `json:"raw_value"`
 }
 
 // Parameter is one ordered property parameter. Bare records the legacy vCard
 // 2.1 spelling that omits the parameter name and equals sign.
 type Parameter struct {
-	Name         string
-	OriginalName string
-	Bare         bool
-	Values       []ParameterValue
+	Name         string           `json:"name"`
+	OriginalName string           `json:"original_name,omitempty"`
+	Bare         bool             `json:"bare,omitempty"`
+	Values       []ParameterValue `json:"values"`
 }
 
 // ParameterValue retains source syntax and a decoded lookup value. When
@@ -52,10 +56,10 @@ type Parameter struct {
 // RFC 6868 unescaping only when the card has exactly one supported VERSION
 // property with value 4.0; all other cards expose Raw unchanged as Decoded.
 type ParameterValue struct {
-	Raw      string
-	Decoded  string
-	Quoted   bool
-	RawValid bool
+	Raw      string `json:"raw,omitempty"`
+	Decoded  string `json:"decoded"`
+	Quoted   bool   `json:"quoted,omitempty"`
+	RawValid bool   `json:"raw_valid,omitempty"`
 }
 
 // DecodeOptions bounds decoder resource use and compatibility behavior. Its

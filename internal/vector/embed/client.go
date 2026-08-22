@@ -42,6 +42,9 @@ type Config struct {
 	// call. Defaults to 3 when zero. Only transient errors (5xx, network)
 	// are retried; 4xx responses fail immediately.
 	MaxRetries int
+	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
+	// is propagated without retrying. Nil leaves the client ungated.
+	BeforeRequest BeforeRequestFunc
 }
 
 // Client calls an OpenAI-compatible /v1/embeddings endpoint.
@@ -58,7 +61,7 @@ func NewClient(cfg Config) *Client {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
 	}
-	return &Client{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}
+	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
 }
 
 // embeddingRequest is the JSON body sent to the server.
@@ -192,10 +195,16 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if authorizationErr := beforeRequestCause(err); authorizationErr != nil {
+			return nil, authorizationErr
+		}
 		return nil, &retryError{err: fmt.Errorf("http do: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+		return nil, ErrEmbeddingProviderRedirect
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		// 429 is a transient rate-limit signal. Honor Retry-After
 		// when the server provides it so we don't thrash.

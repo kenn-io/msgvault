@@ -59,6 +59,7 @@ type Store struct {
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
 	initSchemaWindowHook             func()
+	attributeSeedReadHook            func(slug string)
 	contentChangedBackfillBatchHook  func(fromID, toID int64) error
 	backfillFTSBatchErrHook          func(fromID, toID int64) error
 	attachmentRoleRepairPreparedHook func()
@@ -1139,6 +1140,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
+		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
 	// Recovery reads only acceptances whose link transaction may not have
 	// committed. Create this after the legacy-column loop: schema.sql is

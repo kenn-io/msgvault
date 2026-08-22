@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -18,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // fakeEmbeddingsServer answers OpenAI-compatible /embeddings requests with
@@ -160,6 +164,145 @@ func TestRunEmbed_AccountScopedBuildActivatesScopedGeneration(t *testing.T) {
 	require.Error(err, "a different account scope must not resume the src-1 generation")
 	assert.Contains(err.Error(), "src-", "stored vs configured scope is visible in the error")
 	assert.Contains(err.Error(), "full-rebuild", "error points at --full-rebuild")
+}
+
+// TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion drives the
+// complete manual build path. Deleting config after the first curated-person
+// request must prevent every later person request without rolling back message
+// progress or stranding activation of the completed message generation.
+func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T) {
+	var messageRequests atomic.Int32
+	var personRequests atomic.Int32
+	var configRemoved atomic.Bool
+	removeResult := make(chan error, 1)
+	dataDir := t.TempDir()
+
+	configured := config.NewDefaultConfig()
+	configured.HomeDir = dataDir
+	configured.Data.DataDir = dataDir
+	configured.Vector.Enabled = true
+	configured.Vector.DBPath = filepath.Join(dataDir, "vectors.db")
+	configured.Vector.Embeddings.Model = "manual-live-gate-model"
+	configured.Vector.Embeddings.Dimension = 4
+	configured.Vector.Embeddings.BatchSize = 1
+	configured.Vector.Embeddings.MaxRetries = 1
+	configured.Vector.People = vector.PeopleConfig{
+		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+			return
+		}
+		for _, input := range request.Input {
+			if strings.HasPrefix(input, "Subject:") {
+				messageRequests.Add(1)
+				continue
+			}
+			personRequests.Add(1)
+			if configRemoved.CompareAndSwap(false, true) {
+				removeResult <- os.Remove(configured.ConfigFilePath())
+			}
+		}
+		data := make([]map[string]any, len(request.Input))
+		for i := range request.Input {
+			data[i] = map[string]any{"embedding": []float32{1, 0, 0, 0}, "index": i}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": data, "model": "manual-live-gate-model",
+		})
+	}))
+	t.Cleanup(provider.Close)
+	configured.Vector.Embeddings.Endpoint = provider.URL
+	withTestConfig(t, configured)
+	require.NoError(t, configured.Save())
+
+	seedTwoAccountMainDB(t, dataDir)
+	mainStore, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	require.NoError(t, err)
+	profile, err := configured.Vector.SemanticPersonEmbeddingProfile()
+	require.NoError(t, err)
+	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
+	require.NoError(t, err)
+	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
+		t.Context(), profile.Fingerprint, "test",
+	)
+	require.NoError(t, err)
+	for _, personSeed := range []struct {
+		email string
+		name  string
+	}{
+		{email: "first-curated@example.test", name: "First Curated Person"},
+		{email: "second-curated@example.test", name: "Second Curated Person"},
+	} {
+		participantID, err := mainStore.EnsureParticipantByIdentifier(
+			"email", personSeed.email, "Observed "+personSeed.name,
+		)
+		require.NoError(t, err)
+		person, _, err := mainStore.CreatePersonFromParticipantContext(t.Context(), participantID)
+		require.NoError(t, err)
+		_, err = mainStore.UpdatePersonDisplayNameContext(
+			t.Context(), person.ID, person.Revision, &personSeed.name,
+		)
+		require.NoError(t, err)
+	}
+	require.NoError(t, mainStore.Close())
+
+	oldRebuild, oldYes := embedFullRebuild, embedYes
+	oldAccounts, oldCollections := embedAccounts, embedCollections
+	oldBackstop := embedBackstop
+	t.Cleanup(func() {
+		embedFullRebuild, embedYes = oldRebuild, oldYes
+		embedAccounts, embedCollections = oldAccounts, oldCollections
+		embedBackstop = oldBackstop
+	})
+	embedFullRebuild = true
+	embedYes = true
+	embedBackstop = false
+	embedAccounts = nil
+	embedCollections = nil
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	command.SetOut(stdout)
+	command.SetErr(stderr)
+
+	err = runEmbeddingsBuildLocal(command)
+
+	require.NoError(t, err, stderr.String())
+	require.True(t, configRemoved.Load(), "precondition: first curated-person request removed config")
+	require.NoError(t, <-removeResult)
+	assert.Contains(t, stdout.String(), "Generation 1 activated.",
+		"person authorization loss must not strand completed message activation")
+
+	// A later manual resume must still process newly arrived message work from
+	// the startup configuration while the live person policy remains absent.
+	mainStore, err = store.Open(filepath.Join(dataDir, "msgvault.db"))
+	require.NoError(t, err)
+	_, err = mainStore.DB().Exec(`
+		INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type, subject)
+		VALUES (3, 1, 1, 'post-removal-message', 'email', 'post-removal message');
+		INSERT INTO message_bodies (message_id, body_text)
+		VALUES (3, 'post-removal body');`)
+	require.NoError(t, err)
+	require.NoError(t, mainStore.Close())
+	embedFullRebuild = false
+	resume := &cobra.Command{}
+	resume.SetContext(t.Context())
+	resumeOut, resumeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	resume.SetOut(resumeOut)
+	resume.SetErr(resumeErr)
+	require.NoError(t, runEmbeddingsBuildLocal(resume), resumeErr.String())
+
+	assert.Equal(t, int32(3), messageRequests.Load(),
+		"message batches must continue through the separate ungated client after config removal")
+	assert.Equal(t, int32(1), personRequests.Load(),
+		"config deletion must fence every later curated-person batch")
 }
 
 // TestRunEmbed_AccountScopedRebuildRefusesEmptyScope guards the empty-scope

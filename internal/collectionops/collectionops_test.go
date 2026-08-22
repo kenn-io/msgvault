@@ -1,6 +1,7 @@
 package collectionops
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,38 @@ import (
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestResolveAccountNumericIdentifierRemainsToken(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	numeric, err := f.Store.GetOrCreateSource("synctech-sms", "15551234567")
+	require.NoError(err)
+
+	scope, err := ResolveAccount(f.Store, "15551234567")
+	require.NoError(err)
+	require.NotNil(scope.Source)
+	assert.Equal(numeric.ID, scope.Source.ID)
+}
+
+func TestResolveAccountPreservesPrimaryThenCalendarOrdering(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	primary, err := f.Store.GetOrCreateSource("gmail", "family@example.test")
+	require.NoError(err)
+	calendar, err := f.Store.GetOrCreateSource("gcal", "family@example.test/primary")
+	require.NoError(err)
+	config, err := json.Marshal(map[string]string{"account_email": primary.Identifier})
+	require.NoError(err)
+	require.NoError(f.Store.UpdateSourceSyncConfig(calendar.ID, string(config)))
+
+	scope, err := ResolveAccount(f.Store, primary.Identifier)
+	require.NoError(err)
+	assert.Equal([]int64{primary.ID, calendar.ID}, scope.SourceIDs())
+}
 
 func TestResolveCollection(t *testing.T) {
 	t.Run("valid collection", func(t *testing.T) {

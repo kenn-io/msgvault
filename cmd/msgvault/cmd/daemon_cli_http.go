@@ -112,6 +112,9 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 
 	flags := make([]*pflag.Flag, 0)
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		if !flag.Changed {
+			return
+		}
 		if isRootPersistentFlag(cmd, flag) && !loggingPassthroughFlags[flag.Name] {
 			return
 		}

@@ -176,6 +176,27 @@ func TestMessageQueryValidation(t *testing.T) {
 	}
 }
 
+func TestClientGuildWithCountsAsksDiscordForApproximateMembership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requested := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested <- r.URL.RequestURI()
+		writeDiscordJSON(w, http.StatusOK, map[string]any{
+			"id": "201", "name": "Test Guild", "approximate_member_count": 4200,
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL+"/api/v10", "test-bot-token")
+	require.NoError(err)
+
+	guild, err := client.GuildWithCounts(context.Background(), "201")
+
+	require.NoError(err)
+	assert.Equal("/api/v10/guilds/201?with_counts=true", <-requested)
+	assert.Equal(4200, guild.ApproximateMemberCount)
+}
+
 func TestClientDecodesDiscordAPIError(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

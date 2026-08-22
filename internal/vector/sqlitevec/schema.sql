@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_gen_msg ON embeddings(generation_id, message_id);
 
+-- Person embeddings are a separate corpus. The synthetic embedding_id joins
+-- to person_vectors_vec_dN without ever entering message-owned tables.
+CREATE TABLE IF NOT EXISTS person_embeddings (
+    embedding_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_id      INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    person_id          INTEGER NOT NULL,
+    published_revision TEXT NOT NULL,
+    dimension          INTEGER NOT NULL,
+    embedded_at        INTEGER NOT NULL,
+    UNIQUE (generation_id, person_id)
+);
 CREATE TABLE IF NOT EXISTS embed_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     generation_id INTEGER NOT NULL REFERENCES index_generations(id),
@@ -128,4 +139,17 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     change_sequence INTEGER NOT NULL DEFAULT 0,
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor TEXT NOT NULL DEFAULT ''
+);
+
+-- Visual vectors remain opaque in vectors.db. Ownership, source evidence,
+-- publication state, and model inputs stay in the authoritative archive.
+-- The fixed 1,024 dimension is the voyage-multimodal-3.5 contract.
+CREATE TABLE IF NOT EXISTS visual_vectors (
+    vector_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    vector_token TEXT NOT NULL UNIQUE,
+    dimension    INTEGER NOT NULL CHECK (dimension = 1024),
+    created_at   INTEGER NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS visual_vectors_vec USING vec0(
+    embedding float[1024] distance_metric=cosine
 );

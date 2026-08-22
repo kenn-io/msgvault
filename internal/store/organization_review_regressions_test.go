@@ -181,6 +181,90 @@ func TestOrganizationProfileMatchesDurableVCardIdentityWhenBusinessValueChanges(
 	}
 }
 
+func TestOrganizationProfileScopesDuplicateValuesToVCardResources(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
+	require.NoError(err)
+
+	sourceRef := "address-book-1"
+	propID := "adr-1"
+	envelope := func(resourceUID string) store.ValueEnvelopeInput {
+		return store.ValueEnvelopeInput{
+			Source: store.ProvenanceVCardImport, SourceRef: &sourceRef,
+			SourceResourceUID: &resourceUID,
+			VCard:             store.VCardIdentity{Property: "ADR", PropID: &propID},
+		}
+	}
+	input := store.OrganizationProfileInput{Addresses: []store.OrganizationAddressInput{
+		{
+			AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example St"),
+			OriginalValue: "1 Example St", Envelope: envelope("card-1"),
+		},
+		{
+			AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example St"),
+			OriginalValue: "1 Example St", Envelope: envelope("card-2"),
+		},
+	}}
+	first, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision, input)
+	require.NoError(err)
+	require.Len(first.Addresses, 2)
+
+	firstIDs := []int64{first.Addresses[0].Envelope.ID, first.Addresses[1].Envelope.ID}
+	second, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, first.Organization.Revision, input)
+	require.NoError(err)
+	require.Len(second.Addresses, 2)
+	secondIDs := []int64{second.Addresses[0].Envelope.ID, second.Addresses[1].Envelope.ID}
+	assert.ElementsMatch(firstIDs, secondIDs)
+}
+
+func TestOrganizationProfileHistorizesSourceResourceUIDChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
+	require.NoError(err)
+
+	sourceRef := "address-book-1"
+	propID := "domain-1"
+	identifier := func(resourceUID string) store.OrganizationIdentifierInput {
+		return store.OrganizationIdentifierInput{
+			IdentifierKind: store.OrganizationIdentifierKindDomain,
+			Value:          "example.test",
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceVCardImport, SourceRef: &sourceRef,
+				SourceResourceUID: &resourceUID,
+				VCard:             store.VCardIdentity{Property: "EMAIL", PropID: &propID},
+			},
+		}
+	}
+	first, err := st.ReplaceOrganizationProfileContext(ctx, organization.ID, organization.Revision,
+		store.OrganizationProfileInput{Identifiers: []store.OrganizationIdentifierInput{
+			identifier("card-1"),
+		}})
+	require.NoError(err)
+	require.Len(first.Identifiers, 1)
+
+	second, err := st.ReplaceOrganizationProfileContext(ctx, organization.ID, first.Organization.Revision,
+		store.OrganizationProfileInput{Identifiers: []store.OrganizationIdentifierInput{
+			identifier("card-2"),
+		}})
+	require.NoError(err)
+	require.Len(second.Identifiers, 1)
+	assert.NotEqual(first.Identifiers[0].Envelope.ID, second.Identifiers[0].Envelope.ID)
+	require.NotNil(second.Identifiers[0].Envelope.SourceResourceUID)
+	assert.Equal("card-2", *second.Identifiers[0].Envelope.SourceResourceUID)
+
+	history, err := st.GetOrganizationProfileContext(ctx, organization.ID, true)
+	require.NoError(err)
+	require.Len(history.Identifiers, 2)
+}
+
 func TestMergeOrganizationsLocksBothRootsInStableOrder(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

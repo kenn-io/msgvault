@@ -61,6 +61,49 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert.Equal("sync warning\n", stderr.String())
 }
 
+func TestSyncSourceIDUsesConfiguredRemoteHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.4.0"}`))
+			return
+		}
+		assert.Equal(t, "42", r.URL.Query().Get("source_id"))
+		assert.Empty(t, r.URL.Query().Get("email"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	}))
+	t.Cleanup(server.Close)
+	configureRemoteSyncTest(t, server.URL)
+	resetSyncFullFlagsForTest(t)
+
+	cmd := &cobra.Command{Use: syncIncrementalCmd.Use, Args: syncIncrementalCmd.Args, RunE: syncIncrementalCmd.RunE}
+	cmd.Flags().Int64("source-id", 0, "Exact source ID")
+	cmd.SetArgs([]string{"--source-id", "42"})
+	require.NoError(t, cmd.Execute())
+}
+
+func TestSyncSourceIDSelectorValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "explicit zero", args: []string{"--source-id", "0"}, want: "positive"},
+		{name: "token plus ID", args: []string{"alice@example.test", "--source-id", "42"}, want: "mutually exclusive"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: syncIncrementalCmd.Use, Args: syncIncrementalCmd.Args, RunE: syncIncrementalCmd.RunE}
+			cmd.Flags().Int64("source-id", 0, "Exact source ID")
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestSyncFullUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert := assert.New(t)
 
@@ -254,7 +297,7 @@ func TestPreflightReauth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			managers := map[string]*mockReauthorizer{"": tt.manager}
-			err := preflightReauth(context.Background(), tt.config(managers), "")
+			err := preflightReauth(context.Background(), tt.config(managers), "", 0)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -276,9 +319,23 @@ func TestPreflightReauth_SpecificEmail(t *testing.T) {
 		preflightAccount{Email: "bob@example.com", OAuthApp: "bob-app"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "bob@example.com"))
+	require.NoError(t, preflightReauth(context.Background(), c, "bob@example.com", 0))
 	assert.Equal(t, 0, alice.authorizeCount, "alice must not be re-authorized")
 	assert.Equal(t, 1, bob.authorizeCount, "bob must be re-authorized")
+}
+
+func TestPreflightReauth_SourceIDTargetsOneDuplicateAccount(t *testing.T) {
+	first := newExpiredPreflightManager()
+	second := newExpiredPreflightManager()
+	managers := map[string]*mockReauthorizer{"first-app": first, "second-app": second}
+	c := basePreflight(managers,
+		preflightAccount{ID: 41, Email: "shared@example.com", OAuthApp: "first-app"},
+		preflightAccount{ID: 42, Email: "shared@example.com", OAuthApp: "second-app"},
+	)
+
+	require.NoError(t, preflightReauth(context.Background(), c, "", 42))
+	assert.Equal(t, 0, first.authorizeCount)
+	assert.Equal(t, 1, second.authorizeCount)
 }
 
 // TestPreflightReauth_IMAPRequestSkips verifies a request for a non-Gmail
@@ -288,7 +345,7 @@ func TestPreflightReauth_IMAPRequestSkips(t *testing.T) {
 	managers := map[string]*mockReauthorizer{"": gmailMgr}
 	c := basePreflight(managers, preflightAccount{Email: "alice@example.com"})
 
-	require.NoError(t, preflightReauth(context.Background(), c, "imap-user@example.com"))
+	require.NoError(t, preflightReauth(context.Background(), c, "imap-user@example.com", 0))
 	assert.Equal(t, 0, gmailMgr.authorizeCount, "no reauth for non-Gmail request")
 }
 
@@ -304,7 +361,7 @@ func TestPreflightReauth_DisplayName(t *testing.T) {
 		preflightAccount{Email: "bob@example.com", DisplayName: "Personal", OAuthApp: "personal-app"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "Work Gmail"))
+	require.NoError(t, preflightReauth(context.Background(), c, "Work Gmail", 0))
 	assert.Equal(t, 1, work.authorizeCount, "display-name match must be re-authorized")
 	assert.Equal(t, 0, personal.authorizeCount, "non-matching account untouched")
 }
@@ -318,7 +375,7 @@ func TestPreflightReauth_NoMatch(t *testing.T) {
 		preflightAccount{Email: "alice@example.com", DisplayName: "Work Gmail"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "Nonexistent"))
+	require.NoError(t, preflightReauth(context.Background(), c, "Nonexistent", 0))
 	assert.Equal(t, 0, mgr.authorizeCount, "no reauth when nothing matches")
 }
 

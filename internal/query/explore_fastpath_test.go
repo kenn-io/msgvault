@@ -268,6 +268,30 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 		{name: "no matches", request: FileSearchRequest{
 			FilenameQuery: "does-not-exist", Page: PageSpec{Limit: 50},
 		}},
+		{name: "person listing", request: FileSearchRequest{
+			Person: &PersonFileScope{
+				ParticipantIDs: []int64{ids.alice},
+				Directions: []PersonFileDirection{
+					PersonFileFromPerson, PersonFileToPerson, PersonFileGroup,
+				},
+			},
+			Page: PageSpec{Limit: 50},
+		}},
+		{name: "person small page", request: FileSearchRequest{
+			Person: &PersonFileScope{
+				ParticipantIDs: []int64{ids.alice},
+				Directions:     []PersonFileDirection{PersonFileFromPerson},
+			},
+			Page: PageSpec{Limit: 1},
+		}},
+		{name: "person source-deleted listing", request: FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{Deletion: DeletionDeleted}},
+			Person: &PersonFileScope{
+				ParticipantIDs: []int64{ids.alice},
+				Directions:     []PersonFileDirection{PersonFileFromPerson},
+			},
+			Page: PageSpec{Limit: 50},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

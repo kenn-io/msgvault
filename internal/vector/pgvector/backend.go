@@ -173,6 +173,9 @@ func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, f
 	if err := EnsureVectorIndex(ctx, b.db, dim); err != nil {
 		return 0, err
 	}
+	if err := EnsurePersonVectorIndex(ctx, b.db, dim); err != nil {
+		return 0, err
+	}
 	fp := fingerprint
 	if fp == "" {
 		fp = fmt.Sprintf("%s:%d", model, dim)
@@ -437,6 +440,10 @@ func (b *Backend) activateGeneration(
 			`DELETE FROM embeddings WHERE generation_id = $1`, demoted.Int64); err != nil {
 			return fmt.Errorf("delete retired generation %d embeddings: %w", demoted.Int64, err)
 		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM person_embeddings WHERE generation_id = $1`, demoted.Int64); err != nil {
+			return fmt.Errorf("delete retired generation %d person embeddings: %w", demoted.Int64, err)
+		}
 	}
 	// The promote re-checks the coverage gate IN the same tx as the flip
 	// (unless force): refuse to activate while any live message still needs
@@ -586,6 +593,10 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE generation_id = $1`, int64(gen)); err != nil {
 		return fmt.Errorf("delete retired generation %d embeddings: %w", gen, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM person_embeddings WHERE generation_id = $1`, int64(gen)); err != nil {
+		return fmt.Errorf("delete retired generation %d person embeddings: %w", gen, err)
 	}
 	// Scan-and-fill has no per-generation queue to reap.
 	if err := tx.Commit(); err != nil {

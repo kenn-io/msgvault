@@ -216,7 +216,7 @@ export class RelationshipsController {
     };
     return request.kind === 'domains'
       ? this.client.POST('/api/v1/domains/search', { body, signal })
-      : this.client.POST('/api/v1/people/search', { body, signal });
+      : this.client.POST('/api/v1/participants/search', { body, signal });
   }
 
   private applyListResponse(
@@ -310,10 +310,10 @@ export class RelationshipsController {
       // contextual /summary carries the header metrics so they agree with the
       // filtered timeline and files below instead of the whole archive.
       const [personResponse, , summaryResponse] = await Promise.all([
-        this.client.GET('/api/v1/people/{id}', { params: { path: { id } }, signal }),
+        this.client.GET('/api/v1/participants/{id}', { params: { path: { id } }, signal }),
         this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal),
         hasActiveFilters(context)
-          ? this.client.POST('/api/v1/people/{id}/summary', { params: { path: { id } }, body: context, signal })
+          ? this.client.POST('/api/v1/participants/{id}/summary', { params: { path: { id } }, body: context, signal })
           : undefined
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;

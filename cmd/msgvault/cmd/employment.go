@@ -195,7 +195,7 @@ var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment 
 	if id <= 0 {
 		kind := "organization"
 		if personSet {
-			kind = "person"
+			kind = personValue
 		}
 		return usageErr(cmd, fmt.Errorf("%s ID must be a positive integer", kind))
 	}

@@ -1,13 +1,17 @@
 <script lang="ts">
   import { Button, SearchInput, virtualSlice } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import { analyticalAuthority } from '../../explore/authority';
-  import type { ExploreCacheUnavailable, ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort } from '../../explore/models';
+  import type {
+    ExploreCacheUnavailable, ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort,
+    PersonFileDirection, PersonFileSearchResponse, PersonFileSearchRow
+  } from '../../explore/models';
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import FileViewer from './FileViewer.svelte';
+  import PersonMediaGallery from './PersonMediaGallery.svelte';
 
   type IdentityFileScope =
     | { kind: 'person'; id: number }
@@ -19,14 +23,25 @@
     activeKey: string | null;
   }
 
+  type WorkspaceFileRow = FileSearchRow | PersonFileSearchRow;
+
+  const ALL_MIME_FAMILIES: FileMIMEFamily[] = [
+    'image', 'pdf', 'audio', 'video', 'text', 'document', 'archive', 'other'
+  ];
+  const PERSON_MEDIA_FAMILIES: FileMIMEFamily[] = ['image', 'video'];
+  const PERSON_FILE_FAMILIES: FileMIMEFamily[] = ['pdf', 'audio', 'text', 'document', 'archive', 'other'];
+
   interface Props {
     client: APIClient;
     predicate: ExplorePredicate;
     identityScope?: IdentityFileScope;
     expectedAuthority?: string;
+    embedded?: boolean;
     sort: FileSearchSort;
     filenameQuery?: string;
     mimeFamilies?: FileMIMEFamily[];
+    personPresentation?: 'media' | 'files';
+    personDirections?: PersonFileDirection[];
     activeKey?: string | null;
     selectedKey?: string | null;
     restorationEpoch?: number;
@@ -35,6 +50,8 @@
     onSelectedKey?: (key: string | null) => void;
     onFilenameQueryChange?: (query: string) => void;
     onMIMEFamiliesChange?: (families: FileMIMEFamily[]) => void;
+    onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
+    onPersonDirectionsChange?: (directions: PersonFileDirection[]) => void;
     onRestorationComplete?: (epoch: number) => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
@@ -45,9 +62,12 @@
     predicate,
     identityScope = undefined,
     expectedAuthority = undefined,
+    embedded = false,
     sort,
     filenameQuery = '',
     mimeFamilies = [],
+    personPresentation: providedPersonPresentation = 'files',
+    personDirections: providedPersonDirections = ['from_person'],
     activeKey: providedActiveKey = null,
     selectedKey = null,
     restorationEpoch = undefined,
@@ -56,6 +76,8 @@
     onSelectedKey = undefined,
     onFilenameQueryChange = undefined,
     onMIMEFamiliesChange = undefined,
+    onPersonPresentationChange = undefined,
+    onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined
@@ -64,7 +86,7 @@
   const geometry = new RowGeometry();
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
-  let rows = $state<FileSearchRow[]>([]);
+  let rows = $state<WorkspaceFileRow[]>([]);
   let totalCount = $state(0);
   let nextCursor = $state<string>();
   let loading = $state(false);
@@ -77,7 +99,7 @@
   let viewport = $state(360);
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
-  let viewerFile = $state<FileSearchRow>();
+  let viewerFile = $state<WorkspaceFileRow>();
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
   let controller: AbortController | undefined;
@@ -89,6 +111,23 @@
   let requestSignature = '';
   let previousRowHeight = untrack(() => rowHeight);
   let pendingRestoration = $state<PendingRestoration>();
+	let hostedVisualSearch = $state(false);
+	let visualQuery = $state('');
+	let visualQueryDraft = $state('');
+	let visualQueryDebounce: ReturnType<typeof setTimeout> | undefined;
+	// Each committed visual query is a billable hosted embedding request, so
+	// keystrokes edit a local draft and commit only after a typing pause.
+	function commitVisualQuery(value: string) {
+		visualQueryDraft = value;
+		if (value) removeVisualImage();
+		clearTimeout(visualQueryDebounce);
+		visualQueryDebounce = setTimeout(() => {
+			visualQuery = visualQueryDraft.trim();
+		}, 600);
+	}
+	let visualImageBase64 = $state('');
+	let visualImageName = $state('');
+	let visualImageRevision = $state(0);
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -96,9 +135,30 @@
   // when the epoch is acknowledged or the request signature changes.
   let unacknowledgedRestorationEpoch: number | undefined;
   let previousSelectedKey = untrack(() => selectedKey);
+  let personPresentation = $state<'media' | 'files'>(untrack(() => providedPersonPresentation));
+  let personDirections = $state<PersonFileDirection[]>(untrack(() => providedPersonDirections));
+  const personScoped = $derived(identityScope?.kind === 'person');
+  const visibleMIMEFamilies = $derived(personScoped
+    ? (personPresentation === 'media' ? PERSON_MEDIA_FAMILIES : PERSON_FILE_FAMILIES)
+    : ALL_MIME_FAMILIES);
+  const effectiveMIMEFamilies = $derived.by(() => {
+    if (!personScoped) return mimeFamilies;
+    const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
+    return selected.length > 0 ? selected : visibleMIMEFamilies;
+  });
+  const mediaRows = $derived(rows as PersonFileSearchRow[]);
+
+  $effect(() => { personPresentation = providedPersonPresentation; });
+  $effect(() => { personDirections = providedPersonDirections; });
 
   $effect(() => {
-    const signature = JSON.stringify({ predicate, identityScope, expectedAuthority, sort, filenameQuery, mimeFamilies, restorationEpoch });
+    const signature = JSON.stringify({
+      predicate, identityScope, expectedAuthority, sort, filenameQuery,
+      mimeFamilies: effectiveMIMEFamilies,
+      directions: personScoped ? personDirections : undefined,
+      personPresentation: personScoped ? personPresentation : undefined,
+      restorationEpoch, hostedVisualSearch, visualQuery, visualImageName, visualImageRevision
+    });
     signature;
     if (signature === requestSignature) return;
     const isInitialLoad = requestSignature === '';
@@ -205,14 +265,17 @@
     ));
   });
 
-  onMount(() => {
-    if (grid) viewport = measuredViewport(grid);
-    if (!grid || typeof ResizeObserver === 'undefined') return;
+  $effect(() => {
+    const element = grid;
+    const header = headerElement;
+    if (!element || !header) return;
+    viewport = measuredViewport(element, header);
+    if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (grid) viewport = measuredViewport(grid);
+      viewport = measuredViewport(element, header);
     });
-    observer.observe(grid);
-    if (headerElement) observer.observe(headerElement);
+    observer.observe(element);
+    observer.observe(header);
     return () => observer.disconnect();
   });
   onDestroy(() => {
@@ -263,14 +326,17 @@
     const body = {
       predicate: requestPredicate, sort, limit: 500,
       ...(filenameQuery ? { filename_query: filenameQuery } : {}),
-      ...(mimeFamilies.length ? { mime_families: mimeFamilies } : {}),
+      ...(hostedVisualSearch && visualQuery.trim() ? { visual_query: visualQuery.trim() } : {}),
+      ...(hostedVisualSearch && visualImageBase64 ? { visual_image_base64: visualImageBase64 } : {}),
+      ...(effectiveMIMEFamilies.length ? { mime_families: effectiveMIMEFamilies } : {}),
       ...(cursor ? { cursor } : {})
     };
     let searchResponse;
     try {
       searchResponse = identityScope?.kind === 'person'
-        ? await client.POST('/api/v1/people/{id}/files/search', {
-            params: { path: { id: identityScope.id } }, body, signal
+        ? await client.POST('/api/v1/participants/{id}/files/search', {
+            params: { path: { id: identityScope.id } },
+            body: { ...body, directions: personDirections }, signal
           })
         : identityScope?.kind === 'domain'
           ? await client.POST('/api/v1/domains/{domain}/files/search', {
@@ -319,7 +385,7 @@
       else error = message;
       return false;
     }
-    const result = data as FileSearchResponse;
+    const result = data as FileSearchResponse | PersonFileSearchResponse;
     const authority = analyticalAuthority(result);
     if (!cursor) {
       if (expectedAuthority && authority !== expectedAuthority) {
@@ -452,9 +518,30 @@
   }
 
   function toggleMIME(family: FileMIMEFamily): void {
-    onMIMEFamiliesChange?.(mimeFamilies.includes(family)
-      ? mimeFamilies.filter((value) => value !== family)
-      : [...mimeFamilies, family]);
+    const selected = personScoped ? effectiveMIMEFamilies : mimeFamilies;
+    if (selected.includes(family) && personScoped && selected.length === 1) return;
+    onMIMEFamiliesChange?.(selected.includes(family)
+      ? selected.filter((value) => value !== family)
+      : [...selected, family]);
+  }
+
+  function togglePersonDirection(direction: PersonFileDirection): void {
+    if (personDirections.includes(direction)) {
+      if (personDirections.length === 1) return;
+      personDirections = personDirections.filter((value) => value !== direction);
+      onPersonDirectionsChange?.(personDirections);
+      return;
+    }
+    const order: PersonFileDirection[] = ['from_person', 'to_person', 'group'];
+    personDirections = order.filter((value) => value === direction || personDirections.includes(value));
+    onPersonDirectionsChange?.(personDirections);
+  }
+
+  function choosePersonPresentation(presentation: 'media' | 'files'): void {
+    if (personPresentation === presentation) return;
+    personPresentation = presentation;
+    onPersonPresentationChange?.(presentation);
+    onMIMEFamiliesChange?.([]);
   }
 
   function chooseSort(field: FileSearchSort['field']): void {
@@ -462,11 +549,11 @@
     onSortChange?.({ field, direction });
   }
 
-  function rowID(row: FileSearchRow): string {
+  function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
 
-  function open(row: FileSearchRow, returnFocus: HTMLElement | undefined = grid): void {
+  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
@@ -484,15 +571,15 @@
     activeKey = row.key;
     onActiveKey?.(row.key);
     const top = next * height;
-    const visibleHeight = grid ? measuredViewport(grid) : viewport;
+    const visibleHeight = grid && headerElement ? measuredViewport(grid, headerElement) : viewport;
     if (grid && top < grid.scrollTop) grid.scrollTop = top;
     else if (grid && top + height > grid.scrollTop + visibleHeight) grid.scrollTop = top + height - visibleHeight;
   }
 
-  function measuredViewport(element: HTMLDivElement): number {
+  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement): number {
     return tableViewportHeight(
       element.clientHeight,
-      headerElement?.offsetHeight || 34,
+      header.offsetHeight || 34,
       window.innerHeight
     );
   }
@@ -533,15 +620,87 @@
     if (!slice) return;
     if (nextCursor && !loadingMore && slice.end >= rows.length - OVERSCAN) void loadMore();
   }
+
+	async function chooseVisualImage(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		if (file.size > 20 * 1024 * 1024) {
+			error = 'Visual query images must be 20 MiB or smaller.';
+			input.value = '';
+			return;
+		}
+		const dataURL = await new Promise<string>((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onerror = () => reject(reader.error ?? new Error('Could not read the query image.'));
+			reader.onload = () => resolve(String(reader.result));
+			reader.readAsDataURL(file);
+		});
+		visualQuery = '';
+		visualImageName = file.name;
+		visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
+		visualImageRevision += 1;
+		clearTimeout(visualQueryDebounce);
+		visualQueryDraft = '';
+	}
+
+	function removeVisualImage(): void {
+		if (!visualImageBase64 && !visualImageName) return;
+		visualImageBase64 = '';
+		visualImageName = '';
+		visualImageRevision += 1;
+	}
 </script>
 
-<main class="files-workspace" aria-label="Files">
+<svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
   <header class="workspace-header">
-    <div><h1>Files</h1></div>
-    <span aria-live="polite">{totalCount.toLocaleString()} files</span>
+    <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
+    <span aria-live="polite">{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span>
   </header>
 
   <div class="file-controls" aria-label="File filters">
+    {#if personScoped}
+      <div class="presentation-controls" aria-label="Attachment presentation">
+        <button
+          type="button"
+          aria-label="Media view"
+          aria-pressed={personPresentation === 'media'}
+          onclick={() => choosePersonPresentation('media')}
+        >Media</button>
+        <button
+          type="button"
+          aria-label="Files view"
+          aria-pressed={personPresentation === 'files'}
+          onclick={() => choosePersonPresentation('files')}
+        >Files</button>
+      </div>
+      <div class="direction-controls" aria-label="Relationship directions">
+        <label>
+          <input
+            type="checkbox"
+            checked={personDirections.includes('from_person')}
+            onchange={() => togglePersonDirection('from_person')}
+          />
+          From them
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={personDirections.includes('to_person')}
+            onchange={() => togglePersonDirection('to_person')}
+          />
+          To them
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={personDirections.includes('group')}
+            onchange={() => togglePersonDirection('group')}
+          />
+          Group conversations
+        </label>
+      </div>
+    {/if}
     <label>
       Filename
       <SearchInput
@@ -551,13 +710,37 @@
         oninput={(value) => onFilenameQueryChange?.(value)}
       />
     </label>
+		<label>
+			<input type="checkbox" bind:checked={hostedVisualSearch} />
+			Hosted visual search
+		</label>
+		{#if hostedVisualSearch}
+			<label>
+				Visual query
+				<SearchInput
+					value={visualQueryDraft}
+					ariaLabel="Search attachment pixels"
+					placeholder="Describe what is visible"
+					oninput={commitVisualQuery}
+				/>
+			</label>
+			<label>
+				Query image
+				<input type="file" accept="image/jpeg,image/png,image/webp" onchange={(event) => void chooseVisualImage(event)} />
+			</label>
+			{#if visualImageName}
+				<span>{visualImageName}</span>
+				<Button size="sm" surface="outline" label="Remove query image" onclick={removeVisualImage} />
+			{/if}
+			<span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
+		{/if}
     <div class="mime-controls" aria-label="MIME families">
-      {#each ['image', 'pdf', 'audio', 'video', 'text', 'document', 'archive', 'other'] as family}
+      {#each visibleMIMEFamilies as family}
         <label>
           <input
             type="checkbox"
-            checked={mimeFamilies.includes(family as FileMIMEFamily)}
-            onchange={() => toggleMIME(family as FileMIMEFamily)}
+            checked={effectiveMIMEFamilies.includes(family)}
+            onchange={() => toggleMIME(family)}
           />
           {family}
         </label>
@@ -565,6 +748,20 @@
     </div>
   </div>
 
+  {#if personScoped && personPresentation === 'media'}
+    <PersonMediaGallery
+      {client}
+      rows={mediaRows}
+      {loading}
+      {loadingMore}
+      hasMore={Boolean(nextCursor)}
+      error={unavailable?.message || error}
+      {pageError}
+      onOpen={(row, returnFocus) => open(row, returnFocus)}
+      onLoadMore={() => { void loadMore(); }}
+      onReload={reloadListing}
+    />
+  {:else}
   <section class="files-table" aria-label="Files table">
     <div
       class="files-grid"
@@ -572,18 +769,19 @@
       role="grid"
       aria-label="Files results"
       aria-rowcount={accessibilityRowCount}
-      aria-colcount="8"
+      aria-colcount={personScoped ? 9 : 8}
       aria-busy={loading || loadingMore || pendingRestoration !== undefined || (restorationEpoch !== undefined && rowHeight === undefined)}
       aria-activedescendant={renderedActiveRow ? rowID(renderedActiveRow) : undefined}
       tabindex="0"
       onkeydown={handleKeydown}
       onscroll={handleScroll}
     >
-      <div class="table-header" bind:this={headerElement} role="row">
+      <div class="table-header" class:person-columns={personScoped} bind:this={headerElement} role="row">
         <span role="columnheader"><button type="button" aria-label="Sort by date" onclick={() => chooseSort('occurred_at')}>Date</button></span>
         <span role="columnheader"><button type="button" aria-label="Sort by filename" onclick={() => chooseSort('filename')}>Filename</button></span>
         <span role="columnheader">Type</span>
         <span role="columnheader"><button type="button" aria-label="Sort by size" onclick={() => chooseSort('size')}>Size</button></span>
+        {#if personScoped}<span role="columnheader">Relationship</span>{/if}
         <span role="columnheader">People / domain</span>
         <span role="columnheader">Source</span>
         <span role="columnheader">Containing item</span>
@@ -591,17 +789,17 @@
       </div>
       <div class="table-body" role="rowgroup">
         {#if unavailable?.readiness === 'building'}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="status">Preparing analytical cache…</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Preparing analytical cache…</div></div></div>
         {:else if unavailable}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable.message}</span></div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable.message}</span></div></div></div>
         {:else if error && rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="alert">{error}</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="alert">{error}</div></div></div>
         {:else if loading && rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="status">Loading files…</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Loading files…</div></div></div>
         {:else if rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice">No files match this view.</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice">No files match this view.</div></div></div>
         {:else if !slice || rowHeight === undefined}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="notice" role="status">Preparing files layout…</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Preparing files layout…</div></div></div>
         {:else}
         <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
           <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
@@ -612,6 +810,7 @@
               <div
                 id={rowID(row)}
                 class="data-row"
+                class:person-columns={personScoped}
                 class:data-row--active={index === activeIndex}
                 role="row"
                 tabindex="-1"
@@ -624,9 +823,13 @@
                 }}
               >
                 <span role="gridcell"><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span>
-                <span role="gridcell"><strong>{row.filename || '(unnamed)'}</strong></span>
+				<span role="gridcell">
+					<strong>{row.filename || '(unnamed)'}</strong>
+					{#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
+				</span>
                 <span role="gridcell">{row.mime_type || row.mime_family}</span>
                 <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
+                {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
                 <span role="gridcell">{people(row)}</span>
                 <span role="gridcell">{row.source_identifier}</span>
                 <span role="gridcell">{row.containing_title || row.entry_key}</span>
@@ -640,29 +843,30 @@
           <!-- Pagination that cannot continue (results changed underneath the
                cursor) stays visible next to the rows already loaded; Reload
                restarts the listing from page one. -->
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
             <span>{error}</span>
             <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
           </div></div></div>
         {/if}
         {#if pageError}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
             <span>{pageError}</span>
             <Button size="sm" surface="outline" label="Retry loading more files" onclick={() => void loadMore()} />
           </div></div></div>
         {/if}
-        {#if loadingMore}<div role="row"><div role="gridcell" aria-colspan="8"><div class="progress" role="status">Loading more…</div></div></div>{/if}
+        {#if loadingMore}<div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="progress" role="status">Loading more…</div></div></div>{/if}
         {#if pendingViewerState === 'pending'}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="progress" role="status">Opening file…</div></div></div>
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="progress" role="status">Opening file…</div></div></div>
         {:else if pendingViewerState === 'missing'}
-          <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
+          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
             <span>The selected file is not in the current results.</span>
           </div></div></div>
         {/if}
       </div>
     </div>
   </section>
-</main>
+  {/if}
+</svelte:element>
 
 {#if viewerFile}
   <FileViewer
@@ -690,6 +894,18 @@
     const domains = row.participant_domains ?? [];
     return [...labels, ...domains].join(', ') || '—';
   }
+  function relationship(row: FileSearchRow | PersonFileSearchRow): string {
+    const provenance = (row as Partial<PersonFileSearchRow>).person_provenance;
+    if (!provenance) return '—';
+    const labels: string[] = [];
+    if (provenance.directions?.includes('from_person')) labels.push('From them');
+    if (provenance.directions?.includes('to_person')) {
+      const roles = (provenance.roles ?? []).filter((role) => role === 'to' || role === 'cc' || role === 'bcc');
+      labels.push(`To them${roles.length ? ` (${roles.join(', ')})` : ''}`);
+    }
+    if (provenance.directions?.includes('group')) labels.push('Group conversation');
+    return labels.join(' · ') || '—';
+  }
   function availability(row: FileSearchRow): string {
     if (row.content_state === 'local_content') return 'Local content';
     if (row.content_state === 'missing_blob') return 'Missing blob';
@@ -703,11 +919,17 @@
   .workspace-header { display: flex; align-items: baseline; justify-content: space-between; }
   h1 { margin: 0; font-family: var(--font-sans); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.2; }
   .workspace-header span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .file-controls, .mime-controls { display: flex; align-items: center; gap: var(--space-3); }
+  .file-controls, .mime-controls, .direction-controls, .presentation-controls { display: flex; align-items: center; gap: var(--space-3); }
   .file-controls { flex-wrap: wrap; }
   .file-controls label { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .presentation-controls { padding: 2px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+  .presentation-controls button { padding: var(--space-1) var(--space-2); border: 0; border-radius: calc(var(--radius-sm) - 2px); background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--font-size-xs); }
+  .presentation-controls button[aria-pressed='true'] { background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-primary); }
+  .hosted-disclosure { color: var(--text-muted); font-size: var(--font-size-2xs); }
+  .data-row small { display: block; color: var(--text-muted); font-size: var(--font-size-2xs); }
   .files-table { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .table-header, .data-row { display: grid; grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(160px, 1.3fr) 105px; align-items: center; }
+  .table-header.person-columns, .data-row.person-columns { grid-template-columns: 112px minmax(150px, 1.5fr) minmax(110px, 1fr) 82px minmax(150px, 1.2fr) minmax(130px, 1.1fr) minmax(120px, 1fr) minmax(150px, 1.2fr) 105px; }
   .files-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; outline: none; }
   .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
   .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }

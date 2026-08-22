@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -200,6 +201,7 @@ func TestDecodeAndMapRetainsUnknownAttachmentAndEmbedFields(t *testing.T) {
 		Filename: "diagram.png", MimeType: "image/png", Size: 4096,
 		StoragePath:        "https://cdn.discordapp.com/attachments/800/asset-1/diagram.png",
 		SourceAttachmentID: "discord:asset-1", MediaType: "image", Width: 640, Height: 480,
+		State: attachmentpolicy.StatePending,
 	}}, got.Attachments)
 	assert.Contains(got.BodyText, "release details")
 	assert.Contains(got.BodyText, "Release 2.0")
@@ -302,11 +304,13 @@ func TestMapDiscordAttachments(t *testing.T) {
 			Filename: "image.png", MimeType: "image/png", Size: 4096,
 			StoragePath:        "https://cdn.discordapp.com/attachments/1/a1/image.png",
 			SourceAttachmentID: "discord:a1", MediaType: "image", Width: 640, Height: 480,
+			State: attachmentpolicy.StatePending,
 		},
 		{
 			Filename: "voice.ogg", MimeType: "audio/ogg", Size: 8192,
 			StoragePath:        "https://cdn.discordapp.com/attachments/1/a2/voice.ogg",
 			SourceAttachmentID: "discord:a2", MediaType: "audio", DurationMS: 1250,
+			State: attachmentpolicy.StatePending,
 		},
 	}, got)
 

@@ -96,6 +96,15 @@ func (s *Store) SetInitSchemaWindowHookForTest(fn func()) func() {
 	return func() { s.initSchemaWindowHook = nil }
 }
 
+// SetAttributeSeedReadHookForTest installs a hook after both identities for a
+// seeded definition have been read but before reconciliation starts. Tests use
+// it to make two real callers enter the same missing-seed race. Returns a
+// restore func that clears the hook.
+func (s *Store) SetAttributeSeedReadHookForTest(fn func(slug string)) func() {
+	s.attributeSeedReadHook = fn
+	return func() { s.attributeSeedReadHook = nil }
+}
+
 // SetAttachmentRoleRepairPreparedHookForTest installs a hook after historical
 // MIME evidence has been prepared but before the repair transaction begins.
 // Tests use it to reproduce a concurrent resync that changes attachment bytes.

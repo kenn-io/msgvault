@@ -6,11 +6,13 @@ import (
 	"fmt"
 )
 
-var requiredPointerValidators = [][2]string{
-	{"FileMetadataResponse", "Filename"},
-	{"FileMetadataResponse", "MimeType"},
-	{"FileSearchRow", "Filename"},
-	{"FileSearchRow", "MimeType"},
+var requiredPointerValidators = [][3]string{
+	{"FileMetadataResponse", "Filename", "f"},
+	{"FileMetadataResponse", "MimeType", "f"},
+	{"FileSearchRow", "Filename", "f"},
+	{"FileSearchRow", "MimeType", "f"},
+	{"PersonFileSearchRow", "Filename", "p"},
+	{"PersonFileSearchRow", "MimeType", "p"},
 }
 
 // RewriteGeneratedValidators preserves required-but-empty string fields as
@@ -35,8 +37,8 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		}
 	}
 	for _, target := range requiredPointerValidators {
-		typeName, field := target[0], target[1]
-		startMarker := []byte("func (f " + typeName + ") Validate() error {")
+		typeName, field, receiver := target[0], target[1], target[2]
+		startMarker := []byte("func (" + receiver + " " + typeName + ") Validate() error {")
 		start := bytes.Index(result, startMarker)
 		if start < 0 {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
@@ -47,8 +49,8 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		}
 		end := start + endOffset
 		validator := result[start:end]
-		guarded := []byte("\tif f." + field + " != nil {\n\t\tif err := typesValidator.Var(f." + field + ", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
-		required := []byte("\tif err := typesValidator.Var(f." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
+		guarded := []byte("\tif " + receiver + "." + field + " != nil {\n\t\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
+		required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
 		switch {
 		case bytes.Contains(validator, guarded):
 			rewritten := bytes.Replace(validator, guarded, required, 1)

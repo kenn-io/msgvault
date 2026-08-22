@@ -5,9 +5,13 @@
 package vector
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,6 +55,24 @@ const preprocessVersion = 1
 // splits the result into MaxInputChars-bounded chunks via ChunkText).
 const embedPolicyVersion = 1
 
+const (
+	defaultMultimodalEndpoint           = "https://api.voyageai.com/v1"
+	multimodalProviderAPIVersion        = 1
+	multimodalRoleMapVersion            = 1
+	multimodalSignatureAllowlistVersion = 1
+	multimodalContextPolicyVersion      = 1
+	multimodalInputPolicyVersion        = 1
+	// v2: eligibility moved to docbank media detection plus per-capability
+	// probed upload authority; still GIFs became independently eligible.
+	multimodalEligibilityPolicyVersion = 2
+
+	// Animated GIFs stay off unless the operator both opts in and supplies a
+	// manifest whose probe authorized them.
+	multimodalAnimatedGIFDefault = false
+)
+
+var environmentVariableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // Config is the top-level vector-search configuration, loaded from the
 // [vector] TOML table.
 type Config struct {
@@ -61,6 +83,8 @@ type Config struct {
 	Preprocess PreprocessConfig `toml:"preprocess"`
 	Search     SearchConfig     `toml:"search"`
 	Embed      EmbedConfig      `toml:"embed"`
+	Multimodal MultimodalConfig `toml:"multimodal"`
+	People     PeopleConfig     `toml:"people"`
 
 	// SkipExtensionCreate skips the `CREATE EXTENSION IF NOT EXISTS
 	// vector` step on the pgvector backend while still letting Migrate
@@ -69,6 +93,90 @@ type Config struct {
 	// an administrator and the msgvault role lacks the superuser privilege
 	// CREATE EXTENSION requires. Ignored on the sqlite-vec backend.
 	SkipExtensionCreate bool `toml:"skip_extension_create"`
+}
+
+// MultimodalConfig is an independently enabled hosted visual-embedding lane.
+// Pointer booleans preserve the difference between an omitted option (use the
+// checked-in capability default) and an explicit operator opt-out.
+type MultimodalConfig struct {
+	Enabled   bool   `toml:"enabled"`
+	Provider  string `toml:"provider"`
+	Endpoint  string `toml:"endpoint"`
+	APIKeyEnv string `toml:"api_key_env"`
+	Model     string `toml:"model"`
+	Dimension int    `toml:"dimension"`
+	// CapabilitiesFile is the operator-probed Voyage capability manifest.
+	// Uploads fail closed without it.
+	CapabilitiesFile    string              `toml:"capabilities_file"`
+	MaxContextChars     int                 `toml:"max_context_chars"`
+	IncludeImages       *bool               `toml:"include_images"`
+	IncludeAnimatedGIFs *bool               `toml:"include_animated_gifs"`
+	IncludeVideo        *bool               `toml:"include_video"`
+	AllowImageQueries   *bool               `toml:"allow_image_queries"`
+	Scope               EmbedScopeConfig    `toml:"scope"`
+	Schedule            EmbedScheduleConfig `toml:"schedule"`
+}
+
+func configuredBool(value *bool, defaultValue bool) bool {
+	if value == nil {
+		return defaultValue
+	}
+	return *value
+}
+
+// ConfiguredImages and its siblings report the configured (default-resolved)
+// consent values independent of Multimodal.Enabled, for settings surfaces
+// that must show what WOULD take effect when the lane is enabled. Runtime
+// gating uses ImagesEnabled and friends, which also require Enabled.
+func (m MultimodalConfig) ConfiguredImages() bool       { return m.configuredImages() }
+func (m MultimodalConfig) ConfiguredAnimatedGIFs() bool { return m.configuredAnimatedGIFs() }
+func (m MultimodalConfig) ConfiguredVideo() bool        { return m.configuredVideo() }
+func (m MultimodalConfig) ConfiguredImageQueries() bool { return m.configuredImageQueries() }
+
+func (m MultimodalConfig) configuredImages() bool {
+	return configuredBool(m.IncludeImages, true)
+}
+
+func (m MultimodalConfig) configuredAnimatedGIFs() bool {
+	return configuredBool(m.IncludeAnimatedGIFs, multimodalAnimatedGIFDefault)
+}
+
+func (m MultimodalConfig) configuredVideo() bool {
+	return configuredBool(m.IncludeVideo, true)
+}
+
+func (m MultimodalConfig) configuredImageQueries() bool {
+	return configuredBool(m.AllowImageQueries, true)
+}
+
+// ImagesEnabled reports effective runtime consent for still-image documents.
+func (m MultimodalConfig) ImagesEnabled() bool {
+	return m.Enabled && m.configuredImages()
+}
+
+// AnimatedGIFsEnabled reports effective runtime consent for animated GIFs.
+func (m MultimodalConfig) AnimatedGIFsEnabled() bool {
+	return m.Enabled && m.configuredAnimatedGIFs()
+}
+
+// VideoEnabled reports effective runtime consent for direct video documents.
+func (m MultimodalConfig) VideoEnabled() bool {
+	return m.Enabled && m.configuredVideo()
+}
+
+// ImageQueriesEnabled reports effective runtime consent for image queries.
+func (m MultimodalConfig) ImageQueriesEnabled() bool {
+	return m.Enabled && m.configuredImageQueries()
+}
+
+// APIKey resolves the configured key without making its presence an
+// enablement signal. Callers must pass the independent enablement and consent
+// gates before using the returned value.
+func (m MultimodalConfig) APIKey() string {
+	if m.APIKeyEnv == "" {
+		return ""
+	}
+	return lookupEnv(m.APIKeyEnv)
 }
 
 // EmbeddingsConfig configures the external embedding endpoint used to convert
@@ -296,6 +404,10 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // so two cap values produce two different embedding layouts and must
 // not share one generation.
 //
+// Person renderer policy is deliberately excluded: it is part of every
+// person document revision, so changing it rebuilds only the bounded person
+// corpus instead of forcing a paid full-message generation rebuild.
+//
 // embed_policy (the embedPolicyVersion constant) covers worker-side
 // changes that shift the vector layout for the same Preprocess output
 // — most notably the switch from one-vector-per-message-with-truncation
@@ -304,7 +416,8 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // would silently accept new chunked entries from an upgraded worker.
 func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
-		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
+		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars,
+		embedPolicyVersion)
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {
 		fp = fmt.Sprintf("%s:a%s:v%d", fp, APIFormatVoyageContextual, contextPolicyVersion)
 	}
@@ -314,9 +427,52 @@ func (c *Config) GenerationFingerprint() string {
 	return fp
 }
 
-// Validate returns a descriptive error if the config is unusable.
-// Only called when Enabled is true; disabled configs are not checked.
+// AnyLaneEnabled reports whether either the ordinary text-vector lane or the
+// independently consented multimodal lane requires vector infrastructure.
+func (c *Config) AnyLaneEnabled() bool {
+	return c.Enabled || c.Multimodal.Enabled
+}
+
+// MultimodalGenerationFingerprint identifies only model-input policy. It
+// deliberately excludes the API-key environment variable, schedules, and the
+// enabled switch so operational changes cannot force a paid rebuild. Provider
+// API shape, normalized destination, model, media/context policy, and scope all
+// participate.
+func (c *Config) MultimodalGenerationFingerprint() string {
+	endpoint, err := normalizedMultimodalEndpoint(c.Multimodal.Endpoint)
+	if err != nil {
+		endpoint = strings.TrimSpace(c.Multimodal.Endpoint)
+	}
+	segments := []string{
+		fmt.Sprintf("provider-api-v%d", multimodalProviderAPIVersion),
+		strings.ToLower(strings.TrimSpace(c.Multimodal.Provider)),
+		endpoint,
+		strings.TrimSpace(c.Multimodal.Model),
+		strconv.Itoa(c.Multimodal.Dimension),
+		fmt.Sprintf("role-map-v%d", multimodalRoleMapVersion),
+		fmt.Sprintf("signature-allowlist-v%d", multimodalSignatureAllowlistVersion),
+		fmt.Sprintf("preprocess-v%d", preprocessVersion),
+		fmt.Sprintf("context-v%d", multimodalContextPolicyVersion),
+		strconv.Itoa(c.Multimodal.MaxContextChars),
+		fmt.Sprintf("input-v%d", multimodalInputPolicyVersion),
+		fmt.Sprintf("eligibility-v%d", multimodalEligibilityPolicyVersion),
+		strconv.FormatBool(c.Multimodal.configuredImages()),
+		strconv.FormatBool(c.Multimodal.configuredAnimatedGIFs()),
+		strconv.FormatBool(c.Multimodal.configuredVideo()),
+		strconv.FormatBool(c.Multimodal.configuredImageQueries()),
+		c.Multimodal.Scope.BuildScope().Fingerprint(),
+	}
+	digest := sha256.Sum256([]byte(strings.Join(segments, "\x1f")))
+	return "visual-v1-" + hex.EncodeToString(digest[:])
+}
+
+// Validate returns a descriptive error if an enabled vector lane is unusable.
+// Disabled lane-specific settings are retained without activating or
+// validating hosted work.
 func (c *Config) Validate() error {
+	if !c.AnyLaneEnabled() {
+		return nil
+	}
 	// The concrete backend is selected at the command layer from the
 	// database DSN (SQLite → sqlite-vec, PostgreSQL → pgvector); this
 	// field is a declared marker, not the selector. Accept either known
@@ -325,6 +481,14 @@ func (c *Config) Validate() error {
 	case "sqlite-vec", "pgvector":
 	default:
 		return fmt.Errorf("vector.backend: unknown backend %q (supported: \"sqlite-vec\", \"pgvector\")", c.Backend)
+	}
+	if c.Multimodal.Enabled {
+		if err := c.Multimodal.validate(); err != nil {
+			return err
+		}
+	}
+	if !c.Enabled {
+		return nil
 	}
 	switch c.Embeddings.EffectiveAPIFormat() {
 	case APIFormatOpenAI, APIFormatVoyageContextual:
@@ -353,7 +517,75 @@ func (c *Config) Validate() error {
 	if c.Embeddings.BatchSize <= 0 {
 		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", c.Embeddings.BatchSize)
 	}
+	if c.People.Enabled {
+		if _, err := c.SemanticPersonEmbeddingProfile(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// Validate checks the multimodal lane settings without requiring the lane to
+// be enabled. The capability probe runs before enablement and must confirm
+// the provider and pinned destination before it reads or sends a credential.
+func (m MultimodalConfig) Validate() error { return m.validate() }
+
+func (m MultimodalConfig) validate() error {
+	if m.Provider != "voyage" {
+		return fmt.Errorf("vector.multimodal.provider: must be %q, got %q", "voyage", m.Provider)
+	}
+	normalizedEndpoint, err := normalizedMultimodalEndpoint(m.Endpoint)
+	if err != nil {
+		return fmt.Errorf("vector.multimodal.endpoint: %w", err)
+	}
+	if normalizedEndpoint != defaultMultimodalEndpoint {
+		// The docbank transport pins the provider endpoint into the policy
+		// identity that capability manifests and consent cover. A proxy or
+		// alternate origin configured here would be silently ignored, so it
+		// is refused instead.
+		return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
+			defaultMultimodalEndpoint, m.Endpoint)
+	}
+	if m.APIKeyEnv == "" || !environmentVariableName.MatchString(m.APIKeyEnv) {
+		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
+	}
+	if m.Model != "voyage-multimodal-3.5" {
+		return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)
+	}
+	if m.Dimension != 1024 {
+		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
+	}
+	if m.MaxContextChars <= 0 {
+		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
+	}
+	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
+		return errors.New("vector.multimodal: at least one document media type must be enabled")
+	}
+	// Animated GIFs are an image subtype: the runtime media policy only
+	// admits animated media when still images are enabled, so an
+	// animated-only lane would reject every attachment yet still activate.
+	if m.configuredAnimatedGIFs() && !m.configuredImages() {
+		return errors.New("vector.multimodal.include_animated_gifs: requires include_images = true")
+	}
+	return nil
+}
+
+func normalizedMultimodalEndpoint(endpoint string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("must be an HTTPS URL with a host (got %q)", endpoint)
+	}
+	if strings.ToLower(u.Scheme) != "https" {
+		return "", fmt.Errorf("must use HTTPS (got %q)", endpoint)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("must not contain credentials, query parameters, or a fragment (got %q)", endpoint)
+	}
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	if path != "/v1" {
+		return "", fmt.Errorf("must end at the provider API root /v1 (got %q)", endpoint)
+	}
+	return "https://" + strings.ToLower(u.Host) + path, nil
 }
 
 // ApplyDefaults fills in sensible defaults for any zero-valued fields.
@@ -389,6 +621,29 @@ func (c *Config) ApplyDefaults() {
 	if c.Search.MaxPageSizeHybrid == nil {
 		v := 50
 		c.Search.MaxPageSizeHybrid = &v
+	}
+	c.Multimodal.Provider = strings.ToLower(strings.TrimSpace(c.Multimodal.Provider))
+	if c.Multimodal.Provider == "" {
+		c.Multimodal.Provider = "voyage"
+	}
+	c.Multimodal.Endpoint = strings.TrimSpace(c.Multimodal.Endpoint)
+	if c.Multimodal.Endpoint == "" {
+		c.Multimodal.Endpoint = defaultMultimodalEndpoint
+	}
+	c.Multimodal.APIKeyEnv = strings.TrimSpace(c.Multimodal.APIKeyEnv)
+	endpointIdentity, endpointErr := normalizedMultimodalEndpoint(c.Multimodal.Endpoint)
+	if c.Multimodal.APIKeyEnv == "" && endpointErr == nil && endpointIdentity == defaultMultimodalEndpoint {
+		c.Multimodal.APIKeyEnv = "VOYAGE_API_KEY"
+	}
+	c.Multimodal.Model = strings.TrimSpace(c.Multimodal.Model)
+	if c.Multimodal.Model == "" {
+		c.Multimodal.Model = "voyage-multimodal-3.5"
+	}
+	if c.Multimodal.Dimension == 0 {
+		c.Multimodal.Dimension = 1024
+	}
+	if c.Multimodal.MaxContextChars == 0 {
+		c.Multimodal.MaxContextChars = 4000
 	}
 	// Preprocess booleans are *bool so unset (nil) means "default true"
 	// without overwriting an explicit false from the config file. The

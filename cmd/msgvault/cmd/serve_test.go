@@ -1042,21 +1042,24 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBOpenFailureMarksIntentFailed(t *
 }
 
 func TestOpenDaemonAnalyticsEngineSQLLeavesExplicitIntentUnconsumed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineSQL
 	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
-		require.FailNow(t, "SQL engine must leave cache intent for the HTTP path")
+		require.FailNow("SQL engine must leave cache intent for the HTTP path")
 		return nil
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
 		context.Background(), c, s, startupCacheBuildIntentDefault,
 	)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = engine.Close() }()
 
-	assert.Equal(t, api.AnalyticsModeSQL, mode)
-	assert.Equal(t, startupCacheBuildOutcomeUnconsumed, outcome)
+	assert.Equal(api.AnalyticsModeSQL, mode)
+	assert.Equal(startupCacheBuildOutcomeUnconsumed, outcome)
 }
 
 func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
@@ -1242,6 +1245,17 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 	)
 }
 
+func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
+	assert.Equal(t,
+		[]string{"sync", "--source-id", "42"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{SourceID: 42, SourceIDSet: true}),
+	)
+	assert.Equal(t,
+		[]string{"sync-full", "--source-id", "42"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, SourceID: 42, SourceIDSet: true}),
+	)
+}
+
 func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1409,11 +1423,16 @@ func TestRepackAttachmentsParentArgsAllowed(t *testing.T) {
 func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 	tests := []struct {
 		name           string
+		args           []string
 		predecessorErr error
 		wantRemoved    bool
 	}{
-		{name: "successful removal", wantRemoved: true},
-		{name: "failed removal", predecessorErr: errors.New("remove failed")},
+		{name: "successful account removal", args: []string{"remove-account", "alice@example.com", "--yes"}, wantRemoved: true},
+		{name: "failed account removal", args: []string{"remove-account", "alice@example.com", "--yes"}, predecessorErr: errors.New("remove failed")},
+		{name: "successful excluded media purge", args: []string{"purge-excluded-media", "--yes"}, wantRemoved: true},
+		{name: "dry run is not a removal", args: []string{"purge-excluded-media", "--dry-run"}},
+		{name: "unconfirmed purge is not a removal", args: []string{"purge-excluded-media"}},
+		{name: "failed excluded media purge", args: []string{"purge-excluded-media", "--yes"}, predecessorErr: errors.New("purge failed")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1426,7 +1445,7 @@ func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 
 			err := adapter.runCLICommandWithRunner(
 				context.Background(),
-				api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
+				api.CLIRunRequest{Args: tt.args},
 				nil,
 				func(context.Context, []string, map[string]string, string, func(string, string) error) error {
 					runnerCalls++
@@ -1916,6 +1935,26 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	got, err = findScheduledSyncSources(s, "Shared Guild")
 	require.NoError(err, "do not resolve Discord source by display name")
 	assert.Empty(got, "duplicate guild display names must not select an arbitrary source")
+}
+
+func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
+	oldConfig := cfg
+	t.Cleanup(func() { cfg = oldConfig })
+	enabled := true
+	cfg = &config.Config{
+		Data: config.DataConfig{DataDir: t.TempDir()},
+		Teams: config.TeamsConfig{
+			MediaScope: "direct",
+			AccountsConfig: map[string]config.MediaAccountConfig{
+				"user@example.com": {Media: &enabled, MaxMediaMB: 7},
+			},
+		},
+	}
+
+	opts := scheduledTeamsImportOptions("user@example.com")
+	assert.Equal(t, cfg.Teams.MediaPolicy("user@example.com"), opts.MediaPolicy)
+	assert.Equal(t, cfg.AttachmentsDir(), opts.AttachmentsDir)
+	assert.True(t, opts.IncludeChannels)
 }
 
 func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) {

@@ -274,7 +274,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := precheckVectorFeatures(dbPath); err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
-	if !cfg.Vector.Enabled {
+	if !cfg.Vector.AnyLaneEnabled() {
 		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
 	}
 
@@ -557,7 +557,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BlobStore:                     blobStore,
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
-	if cfg.Vector.Enabled {
+	if cfg.Vector.AnyLaneEnabled() {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
@@ -616,7 +616,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		vectorInit = startVectorInit(
 			ctx, s, dbPath,
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
-			apiServer, sched,
+			apiServer, sched, blobStore,
 		)
 
 		fmt.Printf("msgvault daemon started\n")
@@ -1107,6 +1107,7 @@ var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
@@ -1420,6 +1421,9 @@ func emitFolderArgs(args []string, flag string, values []string) []string {
 func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	if req.Full {
 		args := []string{"sync-full"}
+		if req.SourceIDSet {
+			args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+		}
 		if req.Query != "" {
 			args = append(args, "--query", req.Query)
 		}
@@ -1443,6 +1447,9 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		return args
 	}
 	args := []string{syncIncrementalCmd.Name()}
+	if req.SourceIDSet {
+		args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+	}
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
@@ -1543,7 +1550,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return nil
 	}
 	if !attachmentProducingCommand(req.Args) {
-		if len(req.Args) == 0 || req.Args[0] != removeAccountCommandName {
+		if !attachmentRemovalCommand(req.Args) {
 			return runSubprocess(ctx)
 		}
 		emitWarning := func(message string) error {
@@ -1568,6 +1575,29 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		runSubprocess,
 		emitWarning,
 	)
+}
+
+func attachmentRemovalCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == removeAccountCommandName {
+		return true
+	}
+	if args[0] != purgeExcludedMediaCommandName {
+		return false
+	}
+	confirmed := false
+	for _, arg := range args[1:] {
+		switch arg {
+		case "--dry-run", "--dry-run=true":
+			return false
+		case purgeExcludedMediaYesFlag, "-y", purgeExcludedMediaYesFlag + "=true", "--" + purgeExcludedMediaConfirmedFlag,
+			"--" + purgeExcludedMediaConfirmedFlag + "=true":
+			confirmed = true
+		}
+	}
+	return confirmed
 }
 
 // repackAttachmentsParentArgsAllowed accepts only root logging flags that
@@ -2006,6 +2036,18 @@ func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
 
 func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	return a.store.GetPersonContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetPersonTrackingContext(
+	ctx context.Context, id int64,
+) (*store.PersonTracking, error) {
+	return a.store.GetPersonTrackingContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) SetPersonTrackingContext(
+	ctx context.Context, id int64, tracked bool,
+) (*store.PersonTracking, error) {
+	return a.store.SetPersonTrackingContext(ctx, id, tracked)
 }
 
 func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Person, error) {
@@ -2663,7 +2705,6 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
 	imapOpts := imapFolderStateOptions(s, src, false)
-	imapOpts = append(imapOpts, imapFolderStateSaveOption(s, src))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -2699,7 +2740,9 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	if err != nil {
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
 	}
-	saveIMAPFolderStates(s, src, apiClient, summary, 0)
+	if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
+		return nil, fmt.Errorf("save IMAP incremental state: %w", err)
+	}
 	return summary, nil
 }
 
@@ -2729,11 +2772,16 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		qps = 5
 	}
 	client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
-	opts := teams.ImportOptions{
-		Email:           email,
-		AttachmentsDir:  cfg.AttachmentsDir(),
-		IncludeChannels: true,
-	}
+	opts := scheduledTeamsImportOptions(email)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err
+}
+
+func scheduledTeamsImportOptions(email string) teams.ImportOptions {
+	return teams.ImportOptions{
+		Email:           email,
+		AttachmentsDir:  cfg.AttachmentsDir(),
+		MediaPolicy:     cfg.Teams.MediaPolicy(email),
+		IncludeChannels: true,
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
@@ -36,6 +37,9 @@ var (
 	ErrMediaRefresh = errors.New("discord attachment URL refresh failed")
 	// ErrMediaUnrecoverable means the source message or stable attachment is gone.
 	ErrMediaUnrecoverable = errors.New("discord attachment is no longer recoverable")
+	// ErrGuildMembershipUnknown classifies a guild whose membership Discord
+	// answered without an approximate member count.
+	ErrGuildMembershipUnknown = errors.New("discord guild membership count is unavailable")
 )
 
 const mediaHTTPTimeout = 60 * time.Second
@@ -47,6 +51,7 @@ type MediaOutcome string
 const (
 	MediaDownloaded    MediaOutcome = "downloaded"
 	MediaPending       MediaOutcome = "pending"
+	MediaSkipped       MediaOutcome = "skipped"
 	MediaUnrecoverable MediaOutcome = "unrecoverable"
 )
 
@@ -64,6 +69,37 @@ type MediaResult struct {
 	Items []MediaItemResult
 }
 
+// GuildParticipantFloor resolves the guild-wide membership that media policy
+// must evaluate every conversation in a guild against. Discord populates
+// Channel.MemberCount for threads only — and stops counting those at 50 — so an
+// ordinary guild channel carries no membership of its own and a participant
+// threshold applied to it alone would never exclude anything. The guild's
+// approximate member count is the conservative ceiling for every container
+// inside it, and Discord serves it without the privileged gateway intent that
+// enumerating the roster would need.
+//
+// Membership that cannot be read is not membership under the limit: an
+// unreadable count returns MaxParticipants+1 alongside the error so callers
+// fail closed, which stays retryable because a later run re-evaluates the
+// policy. Callers with no participant limit configured get zero and no request.
+func GuildParticipantFloor(
+	ctx context.Context, api API, guildID string, policy attachmentpolicy.Policy,
+) (int, error) {
+	if policy.MaxParticipants <= 0 {
+		return 0, nil
+	}
+	guild, err := api.GuildWithCounts(ctx, guildID)
+	if err != nil {
+		return policy.MaxParticipants + 1, err
+	}
+	if guild.ApproximateMemberCount <= 0 {
+		// Every guild holds at least the archiving bot, so a zero count is an
+		// absent count rather than an empty guild.
+		return policy.MaxParticipants + 1, fmt.Errorf("discord guild %s: %w", guildID, ErrGuildMembershipUnknown)
+	}
+	return guild.ApproximateMemberCount, nil
+}
+
 // MediaArchiver persists Discord attachment markers and best-effort binary
 // content. Its production URL policy is fixed rather than caller-configurable.
 type MediaArchiver struct {
@@ -74,6 +110,17 @@ type MediaArchiver struct {
 	httpClient          *http.Client
 	allowedOrigins      map[string]struct{}
 	storeAttachmentFile func(string, *mime.Attachment) (string, error)
+	policy              attachmentpolicy.Policy
+	conversation        attachmentpolicy.Conversation
+}
+
+// SetPolicy applies the resolved account policy and normalized conversation.
+func (m *MediaArchiver) SetPolicy(policy attachmentpolicy.Policy, conversation attachmentpolicy.Conversation) {
+	m.policy = policy
+	m.conversation = conversation
+	if policy.MaxBytes > 0 {
+		m.maxBytes = policy.MaxBytes
+	}
 }
 
 // NewMediaArchiver constructs the production attachment boundary. A nonpositive
@@ -195,16 +242,31 @@ func (m *MediaArchiver) persistAttachments(
 		remainingRefs = remainingRefs[1:]
 		item := attachmentWork{attachment: attachment, ref: ref, download: true, report: true}
 		if previous, ok := existing[ref.SourceAttachmentID]; ok {
+			if previous.Size > ref.Size {
+				ref.Size = previous.Size
+			}
 			if store.IsDiscordAttachmentDownloaded(previous) {
 				ref.StoragePath = previous.StoragePath
 				ref.ContentHash = previous.ContentHash
 				ref.Role = store.AttachmentRoleStandalone
 				ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
+				ref.State = attachmentpolicy.StateStored
+				ref.SkipReason = ""
 				item.download = false
 				item.report = retryExisting
 			} else if !retryExisting {
+				ref.State = previous.State
+				ref.SkipReason = previous.SkipReason
 				item.download = false
 				item.report = false
+			}
+		}
+		if item.download {
+			if reason := m.policy.Evaluate(m.conversation, int64(ref.Size)); reason != "" {
+				ref.State = attachmentpolicy.StateSkipped
+				ref.SkipReason = reason
+				item.download = false
+				item.report = true
 			}
 		}
 		work = append(work, item)
@@ -220,13 +282,28 @@ func (m *MediaArchiver) persistAttachments(
 		}
 		item := MediaItemResult{SourceAttachmentID: pending.ref.SourceAttachmentID}
 		if !pending.download {
-			item.Outcome = MediaDownloaded
+			if pending.ref.State == attachmentpolicy.StateSkipped {
+				item.Outcome = MediaSkipped
+			} else {
+				item.Outcome = MediaDownloaded
+			}
 			result.Items = append(result.Items, item)
 			continue
 		}
 		stored, downloadErr := m.downloadAttachment(ctx, pending.attachment, *pending.ref)
 		if downloadErr != nil {
+			*pending.ref = stored
+			pending.ref.State = attachmentpolicy.StateFailed
+			pending.ref.SkipReason = attachmentpolicy.SkipFetchFailure
 			item.Outcome = MediaPending
+			if errors.Is(downloadErr, ErrMediaTooLarge) {
+				pending.ref.State = attachmentpolicy.StateSkipped
+				pending.ref.SkipReason = attachmentpolicy.SkipSizeCap
+				item.Outcome = MediaSkipped
+			}
+			if replaceErr := m.replaceMetadata(messageID, refs); replaceErr != nil {
+				return result, replaceErr
+			}
 			item.Err = downloadErr
 			result.Items = append(result.Items, item)
 			continue
@@ -261,50 +338,107 @@ func (m *MediaArchiver) BackfillMessage(
 	if err != nil {
 		return MediaResult{}, fmt.Errorf("load pending Discord attachment metadata: %w", err)
 	}
-	pendingIDs := make([]string, 0, len(existing))
-	for sourceAttachmentID, ref := range existing {
-		if !store.IsDiscordAttachmentDownloaded(ref) {
-			pendingIDs = append(pendingIDs, sourceAttachmentID)
+	refs := attachmentRefsInOrder(existing)
+	refIndex := make(map[string]int, len(refs))
+	retryIDs := make([]string, 0, len(refs))
+	result := MediaResult{Items: make([]MediaItemResult, 0, len(refs))}
+	metadataChanged := false
+	for i := range refs {
+		refIndex[refs[i].SourceAttachmentID] = i
+		if store.IsDiscordAttachmentDownloaded(refs[i]) {
+			continue
+		}
+		if reason := m.policy.Evaluate(m.conversation, int64(refs[i].Size)); reason != "" {
+			if refs[i].State != attachmentpolicy.StateSkipped || refs[i].SkipReason != reason {
+				refs[i].State = attachmentpolicy.StateSkipped
+				refs[i].SkipReason = reason
+				metadataChanged = true
+			}
+			item := MediaItemResult{
+				SourceAttachmentID: refs[i].SourceAttachmentID, Outcome: MediaSkipped,
+			}
+			if reason == attachmentpolicy.SkipSizeCap {
+				item.Err = ErrMediaTooLarge
+			}
+			result.Items = append(result.Items, item)
+			continue
+		}
+		retryIDs = append(retryIDs, refs[i].SourceAttachmentID)
+	}
+	if metadataChanged {
+		if err := m.replaceMetadata(messageID, refs); err != nil {
+			return MediaResult{}, err
+		}
+		for _, ref := range refs {
+			existing[ref.SourceAttachmentID] = ref
 		}
 	}
-	sort.Strings(pendingIDs)
-	if len(pendingIDs) == 0 {
-		return MediaResult{}, nil
+	if len(retryIDs) == 0 {
+		return result, nil
 	}
 	if m.api == nil {
-		return pendingRefreshResults(pendingIDs, ErrMediaRefresh), nil
+		if err := m.markFailed(messageID, existing, retryIDs); err != nil {
+			return MediaResult{}, err
+		}
+		pending := pendingRefreshResults(retryIDs, ErrMediaRefresh)
+		result.Items = append(result.Items, pending.Items...)
+		return result, nil
 	}
 
 	message, refreshErr := m.api.Message(ctx, channelID, sourceMessageID)
 	if refreshErr != nil {
 		var apiErr *APIError
 		if errors.As(refreshErr, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			return unrecoverableResults(pendingIDs), nil
+			unrecoverable := unrecoverableResults(retryIDs)
+			result.Items = append(result.Items, unrecoverable.Items...)
+			return result, nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return pendingRefreshResults(
-				pendingIDs, fmt.Errorf("%w: %w", ErrMediaRefresh, ctxErr),
-			), nil
+			pending := pendingRefreshResults(
+				retryIDs, fmt.Errorf("%w: %w", ErrMediaRefresh, ctxErr),
+			)
+			result.Items = append(result.Items, pending.Items...)
+			return result, nil
 		}
-		return pendingRefreshResults(pendingIDs, ErrMediaRefresh), nil
+		if err := m.markFailed(messageID, existing, retryIDs); err != nil {
+			return MediaResult{}, err
+		}
+		pending := pendingRefreshResults(retryIDs, ErrMediaRefresh)
+		result.Items = append(result.Items, pending.Items...)
+		return result, nil
 	}
 
 	fresh := make(map[string]Attachment, len(message.Attachments))
 	for _, attachment := range message.Attachments {
 		fresh["discord:"+attachment.ID] = attachment
 	}
-	refs := attachmentRefsInOrder(existing)
-	refIndex := make(map[string]int, len(refs))
-	for i := range refs {
-		refIndex[refs[i].SourceAttachmentID] = i
-	}
 	matched := false
-	for _, sourceAttachmentID := range pendingIDs {
+	downloadIDs := make([]string, 0, len(retryIDs))
+	for _, sourceAttachmentID := range retryIDs {
 		attachment, ok := fresh[sourceAttachmentID]
 		if !ok {
+			result.Items = append(result.Items, MediaItemResult{
+				SourceAttachmentID: sourceAttachmentID,
+				Outcome:            MediaUnrecoverable,
+				Err:                ErrMediaUnrecoverable,
+			})
 			continue
 		}
-		refs[refIndex[sourceAttachmentID]] = mapAttachments([]Attachment{attachment})[0]
+		ref := mapAttachments([]Attachment{attachment})[0]
+		if reason := m.policy.Evaluate(m.conversation, attachment.Size); reason != "" {
+			ref.State = attachmentpolicy.StateSkipped
+			ref.SkipReason = reason
+			item := MediaItemResult{
+				SourceAttachmentID: sourceAttachmentID, Outcome: MediaSkipped,
+			}
+			if reason == attachmentpolicy.SkipSizeCap {
+				item.Err = ErrMediaTooLarge
+			}
+			result.Items = append(result.Items, item)
+		} else {
+			downloadIDs = append(downloadIDs, sourceAttachmentID)
+		}
+		refs[refIndex[sourceAttachmentID]] = ref
 		matched = true
 	}
 	// Persist refreshed provenance before using any new signed URL. Missing
@@ -315,23 +449,26 @@ func (m *MediaArchiver) BackfillMessage(
 		}
 	}
 
-	result := MediaResult{Items: make([]MediaItemResult, 0, len(pendingIDs))}
-	for _, sourceAttachmentID := range pendingIDs {
-		attachment, ok := fresh[sourceAttachmentID]
-		if !ok {
-			result.Items = append(result.Items, MediaItemResult{
-				SourceAttachmentID: sourceAttachmentID,
-				Outcome:            MediaUnrecoverable,
-				Err:                ErrMediaUnrecoverable,
-			})
-			continue
-		}
+	for _, sourceAttachmentID := range downloadIDs {
+		attachment := fresh[sourceAttachmentID]
 		idx := refIndex[sourceAttachmentID]
 		stored, downloadErr := m.downloadAttachment(ctx, attachment, refs[idx])
 		if downloadErr != nil {
+			refs[idx] = stored
+			refs[idx].State = attachmentpolicy.StateFailed
+			refs[idx].SkipReason = attachmentpolicy.SkipFetchFailure
+			outcome := MediaPending
+			if errors.Is(downloadErr, ErrMediaTooLarge) {
+				refs[idx].State = attachmentpolicy.StateSkipped
+				refs[idx].SkipReason = attachmentpolicy.SkipSizeCap
+				outcome = MediaSkipped
+			}
+			if err := m.replaceMetadata(messageID, refs); err != nil {
+				return result, err
+			}
 			result.Items = append(result.Items, MediaItemResult{
 				SourceAttachmentID: sourceAttachmentID,
-				Outcome:            MediaPending,
+				Outcome:            outcome,
 				Err:                downloadErr,
 			})
 			continue
@@ -359,6 +496,24 @@ func (m *MediaArchiver) BackfillMessage(
 		})
 	}
 	return result, nil
+}
+
+func (m *MediaArchiver) markFailed(
+	messageID int64, existing map[string]store.AttachmentRef, sourceAttachmentIDs []string,
+) error {
+	refs := attachmentRefsInOrder(existing)
+	wanted := make(map[string]struct{}, len(sourceAttachmentIDs))
+	for _, sourceAttachmentID := range sourceAttachmentIDs {
+		wanted[sourceAttachmentID] = struct{}{}
+	}
+	for i := range refs {
+		if _, ok := wanted[refs[i].SourceAttachmentID]; !ok || store.IsDiscordAttachmentDownloaded(refs[i]) {
+			continue
+		}
+		refs[i].State = attachmentpolicy.StateFailed
+		refs[i].SkipReason = attachmentpolicy.SkipFetchFailure
+	}
+	return m.replaceMetadata(messageID, refs)
 }
 
 func pendingRefreshResults(sourceAttachmentIDs []string, err error) MediaResult {
@@ -412,6 +567,7 @@ func (m *MediaArchiver) downloadAttachment(
 	ctx context.Context, attachment Attachment, marker store.AttachmentRef,
 ) (store.AttachmentRef, error) {
 	if attachment.Size > m.maxBytes {
+		marker.Size = attachmentpolicy.OversizeMarkerSize(m.maxBytes, attachment.Size)
 		return marker, ErrMediaTooLarge
 	}
 	requestURL, err := m.validateMediaURL(attachment.URL, attachment.ID, attachment.Ephemeral)
@@ -440,6 +596,7 @@ func (m *MediaArchiver) downloadAttachment(
 		return marker, fmt.Errorf("%w: HTTP %d", ErrMediaDownload, response.StatusCode)
 	}
 	if response.ContentLength > m.maxBytes {
+		marker.Size = attachmentpolicy.OversizeMarkerSize(m.maxBytes, response.ContentLength)
 		return marker, ErrMediaTooLarge
 	}
 
@@ -460,6 +617,7 @@ func (m *MediaArchiver) downloadAttachment(
 	}
 	if written > m.maxBytes {
 		_ = temporary.Close()
+		marker.Size = attachmentpolicy.OversizeMarkerSize(m.maxBytes, written)
 		return marker, ErrMediaTooLarge
 	}
 	if err := temporary.Close(); err != nil {
@@ -492,6 +650,8 @@ func (m *MediaArchiver) downloadAttachment(
 	marker.Size = len(content)
 	marker.Role = store.AttachmentRoleStandalone
 	marker.RoleSource = store.AttachmentRoleSourceProviderExplicit
+	marker.State = attachmentpolicy.StateStored
+	marker.SkipReason = ""
 	return marker, nil
 }
 

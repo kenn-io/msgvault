@@ -34,7 +34,7 @@ func TestStoreAPIAdapterServesActivityRoute(t *testing.T) {
 	})
 	request := httptest.NewRequest(
 		http.MethodGet,
-		fmt.Sprintf("/api/v1/persons/%d/contact-state", person.ID),
+		fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID),
 		nil,
 	)
 	response := httptest.NewRecorder()

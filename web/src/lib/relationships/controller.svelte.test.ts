@@ -102,12 +102,12 @@ describe('RelationshipsController.loadList', () => {
     });
   });
 
-  it('searches via /api/v1/people/search once the query is non-empty, finding any person ranked or not', async () => {
+  it('searches via /api/v1/participants/search once the query is non-empty, finding any person ranked or not', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      if (pathOf(request) === '/api/v1/people/search') {
+      if (pathOf(request) === '/api/v1/participants/search') {
         return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
       }
       throw new Error(`unexpected path ${pathOf(request)}`);
@@ -152,7 +152,7 @@ describe('RelationshipsController.loadList', () => {
           rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
         });
       }
-      if (path === '/api/v1/people/search') {
+      if (path === '/api/v1/participants/search') {
         return Response.json({ error: 'internal_error', message: 'search boom' }, { status: 500 });
       }
       throw new Error(`unexpected path ${path}`);
@@ -199,7 +199,7 @@ describe('RelationshipsController.loadList', () => {
           rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
         });
       }
-      if (path === '/api/v1/people/search') {
+      if (path === '/api/v1/participants/search') {
         return new Promise<Response>((resolve) => { resolveSearch = resolve; });
       }
       throw new Error(`unexpected path ${path}`);
@@ -268,7 +268,7 @@ describe('RelationshipsController.loadList', () => {
       if (path === '/api/v1/relationships') {
         return new Promise<Response>((_resolve, reject) => { rejectStale = reject; });
       }
-      if (path === '/api/v1/people/search') {
+      if (path === '/api/v1/participants/search') {
         return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
       }
       throw new Error(`unexpected path ${path}`);
@@ -425,7 +425,7 @@ describe('RelationshipsController.loadMoreList', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      if (pathOf(request) !== '/api/v1/people/search') throw new Error(`unexpected path ${pathOf(request)}`);
+      if (pathOf(request) !== '/api/v1/participants/search') throw new Error(`unexpected path ${pathOf(request)}`);
       const body = (await request.clone().json()) as { cursor?: string };
       if (body.cursor === undefined) {
         return Response.json({
@@ -460,7 +460,7 @@ describe('RelationshipsController.loadMoreList', () => {
           cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'ranked-page-2'
         });
       }
-      if (path === '/api/v1/people/search') {
+      if (path === '/api/v1/participants/search') {
         return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
       }
       throw new Error(`unexpected path ${path}`);
@@ -496,7 +496,7 @@ describe('RelationshipsController.loadMoreList', () => {
         }
         return new Promise<Response>((resolve) => { resolveStalePage = resolve; });
       }
-      if (path === '/api/v1/people/search') {
+      if (path === '/api/v1/participants/search') {
         return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
       }
       throw new Error(`unexpected path ${path}`);
@@ -666,11 +666,11 @@ describe('RelationshipsController text-query consistency', () => {
       if (path === '/api/v1/relationships') {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', identity_revision: 1 });
       }
-      if (path === '/api/v1/people/search' || path === '/api/v1/domains/search') {
+      if (path === '/api/v1/participants/search' || path === '/api/v1/domains/search') {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
       }
-      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(person(12));
-      if (path === '/api/v1/people/12/summary') {
+      if (path === '/api/v1/participants/12' && request.method === 'GET') return Response.json(person(12));
+      if (path === '/api/v1/participants/12/summary') {
         return Response.json({ summary: person(12), cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/relationships/12/timeline') {
@@ -703,8 +703,8 @@ describe('RelationshipsController text-query consistency', () => {
       '/api/v1/domains/example.com/summary',
       '/api/v1/domains/example.com/timeline',
       '/api/v1/domains/search',
-      '/api/v1/people/12/summary',
-      '/api/v1/people/search',
+      '/api/v1/participants/12/summary',
+      '/api/v1/participants/search',
       '/api/v1/relationships',
       '/api/v1/relationships/12/timeline'
     ]);
@@ -737,7 +737,7 @@ describe('RelationshipsController.openTarget', () => {
         error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
         readiness: 'building', recovery_action: ''
       }, { status: 503 });
-      if (path === '/api/v1/people/12') return Response.json(person(12));
+      if (path === '/api/v1/participants/12') return Response.json(person(12));
       if (path === '/api/v1/relationships/12/timeline') {
         return Response.json({
           canonical_id: 12, identity_revision: 3, rows: [timelineRow('recovered')],
@@ -755,7 +755,7 @@ describe('RelationshipsController.openTarget', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => expect(controller.detail).toEqual(person(12)));
     expect(controller.timelineRows).toEqual([timelineRow('recovered')]);
-    expect(calls.get('/api/v1/people/12')).toBe(2);
+    expect(calls.get('/api/v1/participants/12')).toBe(2);
     expect(calls.get('/api/v1/relationships/12/timeline')).toBe(2);
 
     controller.destroy();
@@ -768,8 +768,8 @@ describe('RelationshipsController.openTarget', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(person(12));
-      if (path === '/api/v1/people/12/summary') {
+      if (path === '/api/v1/participants/12' && request.method === 'GET') return Response.json(person(12));
+      if (path === '/api/v1/participants/12/summary') {
         return Response.json({ summary: person(12), cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/relationships/12/timeline') {
@@ -842,13 +842,13 @@ describe('RelationshipsController.openTarget', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') {
         return new Promise<Response>((resolve) => { resolveFirstPerson = resolve; });
       }
       if (path === '/api/v1/relationships/1/timeline') {
         return Response.json({ canonical_id: 1, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       }
-      if (path === '/api/v1/people/2' && request.method === 'GET') return Response.json(person(2));
+      if (path === '/api/v1/participants/2' && request.method === 'GET') return Response.json(person(2));
       if (path === '/api/v1/relationships/2/timeline') {
         return Response.json({
           canonical_id: 2, identity_revision: 5, rows: [timelineRow('t2')], total_count: 1, cache_revision: 'cache-rel'
@@ -900,8 +900,8 @@ describe('RelationshipsController filtered header metrics', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
-      if (path === '/api/v1/people/12/summary') {
+      if (path === '/api/v1/participants/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/participants/12/summary') {
         return Response.json({ summary: filteredPersonSummary(12), cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/relationships/12/timeline') {
@@ -920,7 +920,7 @@ describe('RelationshipsController filtered header metrics', () => {
     expect(detail.cluster).toEqual(clusterPerson(12).cluster);
     expect(detail.identifiers).toEqual(clusterPerson(12).identifiers);
     expect(controller.timelineError).toBeNull();
-    const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/people/12/summary');
+    const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/participants/12/summary');
     await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });
   });
 
@@ -963,7 +963,7 @@ describe('RelationshipsController filtered header metrics', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/participants/12' && request.method === 'GET') return Response.json(clusterPerson(12));
       if (path === '/api/v1/relationships/12/timeline') {
         return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       }
@@ -990,8 +990,8 @@ describe('RelationshipsController filtered header metrics', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
-      if (path === '/api/v1/people/12/summary') {
+      if (path === '/api/v1/participants/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/participants/12/summary') {
         return Response.json({ error: 'internal_error', message: 'summary boom' }, { status: 500 });
       }
       if (path === '/api/v1/relationships/12/timeline') {
@@ -1012,15 +1012,15 @@ describe('RelationshipsController filtered header metrics', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(clusterPerson(1));
-      if (path === '/api/v1/people/1/summary') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(clusterPerson(1));
+      if (path === '/api/v1/participants/1/summary') {
         return new Promise<Response>((resolve) => { resolveStaleSummary = resolve; });
       }
       if (path === '/api/v1/relationships/1/timeline') {
         return Response.json({ canonical_id: 1, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       }
-      if (path === '/api/v1/people/2' && request.method === 'GET') return Response.json(clusterPerson(2));
-      if (path === '/api/v1/people/2/summary') {
+      if (path === '/api/v1/participants/2' && request.method === 'GET') return Response.json(clusterPerson(2));
+      if (path === '/api/v1/participants/2/summary') {
         return Response.json({ summary: filteredPersonSummary(2), cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/relationships/2/timeline') {
@@ -1053,7 +1053,7 @@ describe('RelationshipsController.loadMoreTimeline', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(person(1));
       if (path === '/api/v1/relationships/1/timeline') {
         timelineCalls += 1;
         const body = (await request.clone().json()) as { cursor?: string };
@@ -1094,8 +1094,8 @@ describe('RelationshipsController.loadMoreTimeline', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
-      if (path === '/api/v1/people/2' && request.method === 'GET') return Response.json(person(2));
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/participants/2' && request.method === 'GET') return Response.json(person(2));
       if (path === '/api/v1/relationships/1/timeline') {
         timelineCalls += 1;
         const body = (await request.clone().json()) as { cursor?: string };
@@ -1131,7 +1131,7 @@ describe('RelationshipsController.loadMoreTimeline', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(person(1));
       if (path === '/api/v1/relationships/1/timeline') {
         const body = (await request.clone().json()) as { cursor?: string };
         if (body.cursor === undefined) {
@@ -1176,7 +1176,7 @@ describe('RelationshipsController.loadMoreTimeline', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(person(1));
       if (path === '/api/v1/relationships/1/timeline') {
         const body = (await request.clone().json()) as { cursor?: string };
         if (body.cursor === undefined) {
@@ -1301,7 +1301,7 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') {
         personCalls += 1;
         return Response.json(person(1));
       }
@@ -1329,7 +1329,7 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') {
         personCalls += 1;
         return Response.json(person(1));
       }
@@ -1361,7 +1361,7 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
           rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
         });
       }
-      if (path === '/api/v1/people/1' && request.method === 'GET') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') {
         personCalls += 1;
         return Response.json(person(1));
       }
@@ -1399,7 +1399,7 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') {
+      if (path === '/api/v1/participants/1' && request.method === 'GET') {
         personCalls += 1;
         return Response.json(person(1));
       }
@@ -1471,7 +1471,7 @@ describe('RelationshipsController.clearTarget', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/participants/1' && request.method === 'GET') return Response.json(person(1));
       if (path === '/api/v1/relationships/1/timeline') {
         return new Promise<Response>((resolve) => { resolveTimeline = resolve; });
       }

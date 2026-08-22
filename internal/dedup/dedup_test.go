@@ -248,6 +248,9 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	require.NoError(err, "ListPending")
 	require.Len(pending, 1, "pending")
 	assert.Equal([]string{"g-2"}, pending[0].GmailIDs, "manifest GmailIDs")
+	assert.Equal(2, pending[0].Version)
+	require.NotNil(pending[0].Source)
+	assert.Equal(deletion.SourceReference{ID: gmail.ID, Type: "gmail", Identifier: "test@example.com"}, *pending[0].Source)
 
 	restored, stillExec, err := eng.Undo("batch-opt")
 	require.NoError(err, "Undo")
@@ -256,6 +259,44 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	pending, err = mgr.ListPending()
 	require.NoError(err, "ListPending after undo")
 	assert.Empty(pending, "pending after undo")
+}
+
+func TestEngine_OptIn_RejectsMissingSourceIdentifierBeforeMerge(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	source := f.Source
+
+	winnerID := addMessage(t, st, source, "g-1", "rfc-missing-source", false)
+	loserID := addMessage(t, st, source, "g-2", "rfc-missing-source", false)
+	deletionsDir := filepath.Join(t.TempDir(), "deletions")
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs:           []int64{source.ID},
+		Account:                    "Work",
+		DeleteDupsFromSourceServer: true,
+		DeletionsDir:               deletionsDir,
+	}, nil)
+
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1)
+	group := &report.Groups[0]
+	for i := range group.Messages {
+		if i != group.Survivor {
+			group.Messages[i].SourceIdentifier = ""
+		}
+	}
+
+	_, err = eng.Execute(context.Background(), report, "batch-missing-source")
+	require.ErrorContains(err, "has no source identifier")
+	assertSoftDeleted(t, st, winnerID, false)
+	assertSoftDeleted(t, st, loserID, false)
+
+	mgr, err := deletion.NewManager(deletionsDir)
+	require.NoError(err, "NewManager")
+	pending, err := mgr.ListPending()
+	require.NoError(err, "ListPending")
+	assert.Empty(t, pending)
 }
 
 func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
@@ -574,10 +615,11 @@ func addMessageWithFrom(
 	srcMsgID, rfc822ID, fromEmail string,
 ) int64 {
 	t.Helper()
+	require := require.New(t)
 	convID, err := st.EnsureConversation(
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
-	require.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -589,12 +631,11 @@ func addMessageWithFrom(
 		IsFromMe:     false, // no is_from_me so MatchedIdentity is the deciding signal
 		SizeEstimate: 1000,
 	})
-	require.NoError(t, err, "UpsertMessage")
+	require.NoError(err, "UpsertMessage")
 	if fromEmail != "" {
 		pid, pErr := st.EnsureParticipant(fromEmail, "", "")
-		require.NoError(t, pErr, "EnsureParticipant")
-		require.NoError(t,
-			st.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{""}),
+		require.NoError(pErr, "EnsureParticipant")
+		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{""}),
 			"ReplaceMessageRecipients",
 		)
 	}

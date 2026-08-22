@@ -95,18 +95,18 @@ export async function installMixedArchive(page: Page) {
     canonical_id: 12, identity_revision: 1, cache_revision: 'mixed-100k',
     rows: [fixture.logicalRows[0]], total_count: 1
   } }));
-  await page.route('**/api/v1/people/search', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/participants/search', (route) => route.fulfill({ json: {
     rows: [archivePerson], total_count: 1, cache_revision: 'mixed-100k', search_provenance: {}
   } }));
-  await page.route('**/api/v1/people/12', (route) => route.fulfill({ json: archivePerson }));
-  await page.route('**/api/v1/people/12/summary', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/participants/12', (route) => route.fulfill({ json: archivePerson }));
+  await page.route('**/api/v1/participants/12/summary', (route) => route.fulfill({ json: {
     summary: archivePerson, cache_revision: 'mixed-100k', search_provenance: {}
   } }));
-  await page.route('**/api/v1/people/12/timeline', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/participants/12/timeline', (route) => route.fulfill({ json: {
     rows: [fixture.logicalRows[0]], total_count: 1,
     cache_revision: 'mixed-100k', search_provenance: {}
   } }));
-  await page.route('**/api/v1/people/12/files/search', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/participants/12/files/search', (route) => route.fulfill({ json: {
     files: [], total_count: 0, cache_revision: 'mixed-100k', search_provenance: {}
   } }));
   await page.route('**/api/v1/domains/search', (route) => route.fulfill({ json: {

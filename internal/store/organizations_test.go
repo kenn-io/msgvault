@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -445,4 +447,68 @@ func TestMergeRetiresLosingProfileValuesAndAttributes(t *testing.T) {
 	err = st.DeletePersonContext(ctx, contact.ID, contact.Revision)
 	require.NoError(err,
 		"a superseded reference on a merged redirect must not block person deletion")
+}
+
+// TestOrganizationReplacementRetriesEmploymentDeadlock forces the lock cycle
+// between organization replacement (organization row, then the rows of the
+// people employed there) and an employment write (person row, then the
+// employer row). The blocker plays the employment writer: it holds the person
+// and asks for the organization once the replacement is parked on the person.
+// PostgreSQL's detector aborts one side; the replacement has to absorb that
+// and finish once the blocker lets go.
+func TestOrganizationReplacementRetriesEmploymentDeadlock(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks are required for the replacement retry regression")
+	}
+	cases := []struct {
+		name    string
+		replace func(ctx context.Context, organization *store.Organization) error
+	}{{
+		name: "root fields",
+		replace: func(ctx context.Context, organization *store.Organization) error {
+			_, err := st.ReplaceOrganizationContext(ctx, organization.ID, organization.Revision,
+				store.OrganizationInput{Name: "Example Group", Kind: store.OrganizationKindCompany}, false)
+			return err
+		},
+	}, {
+		name: "profile",
+		replace: func(ctx context.Context, organization *store.Organization) error {
+			_, err := st.ReplaceOrganizationProfileContext(ctx, organization.ID, organization.Revision,
+				store.OrganizationProfileInput{
+					Media: []store.OrganizationMediaInput{{
+						MediaKind: store.PersonMediaLogo,
+						URI:       new("https://example.test/logo.png"),
+						Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+					}},
+				})
+			return err
+		},
+	}}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			t.Cleanup(cancel)
+			organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+				Name: fmt.Sprintf("Example Org %d", i), Kind: store.OrganizationKindCompany,
+			})
+			require.NoError(err)
+			person := createEnvelopePerson(t, st, fmt.Sprintf("employee%d@example.com", i))
+			_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{
+				PersonID: person.ID, OrganizationID: organization.ID,
+				Title: new("Engineer"), Source: store.ProvenanceUser,
+			})
+			require.NoError(err)
+
+			replaceErr := forcePostgreSQLDeadlock(ctx, t, st,
+				postgreSQLRowLock{table: "persons", id: person.ID},
+				postgreSQLRowLock{table: "organizations", id: organization.ID},
+				func(ctx context.Context) error { return tc.replace(ctx, organization) })
+			require.NoError(replaceErr, "organization replacement must retry a transient PostgreSQL deadlock")
+			replaced, err := st.GetOrganizationContext(ctx, organization.ID)
+			require.NoError(err)
+			require.Equal(organization.Revision+1, replaced.Revision)
+		})
+	}
 }

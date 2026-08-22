@@ -90,12 +90,16 @@ func (e *ControllerTestEnv) StageForDeletion(args stageArgs) *deletion.Manifest 
 	if granularity == 0 {
 		granularity = query.TimeYear
 	}
+	accounts := args.accounts
+	if accounts == nil {
+		accounts = []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "test@gmail.com"}}
+	}
 	manifest, err := e.Ctrl.StageForDeletion(DeletionContext{
 		AggregateSelection: args.aggregates,
 		MessageSelection:   args.selection,
 		AggregateViewType:  args.view,
 		AccountFilter:      args.accountID,
-		Accounts:           args.accounts,
+		Accounts:           accounts,
 		TimeGranularity:    granularity,
 		Messages:           args.messages,
 		DrillFilter:        args.drillFilter,
@@ -105,10 +109,13 @@ func (e *ControllerTestEnv) StageForDeletion(args stageArgs) *deletion.Manifest 
 }
 
 func msgSummary(id int64, sourceID string) query.MessageSummary {
-	return query.MessageSummary{ID: id, SourceMessageID: sourceID}
+	return query.MessageSummary{ID: id, SourceID: 1, SourceMessageID: sourceID}
 }
 
 func TestStageForDeletion_FromAggregateSelection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	env := newTestEnv(t, "gid1", "gid2", "gid3")
 
 	manifest := env.StageForDeletion(stageArgs{
@@ -116,9 +123,24 @@ func TestStageForDeletion_FromAggregateSelection(t *testing.T) {
 		view:       query.ViewSenders,
 	})
 
-	assert.Len(t, manifest.GmailIDs, 3)
-	assert.Equal(t, []string{"alice@example.com"}, manifest.Filters.Senders)
-	assert.Equal(t, "tui", manifest.CreatedBy)
+	assert.Len(manifest.GmailIDs, 3)
+	assert.Equal(2, manifest.Version)
+	require.NotNil(manifest.Source)
+	assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "test@gmail.com"}, *manifest.Source)
+	assert.Equal([]string{"alice@example.com"}, manifest.Filters.Senders)
+	assert.Equal("tui", manifest.CreatedBy)
+}
+
+func TestStageForDeletionRejectsMultipleSources(t *testing.T) {
+	engine := &querytest.MockEngine{DeletionTargets: []query.DeletionTarget{
+		{MessageID: 1, SourceID: 1, SourceType: "gmail", SourceIdentifier: "one@example.invalid", SourceMessageID: "gm-1"},
+		{MessageID: 2, SourceID: 2, SourceType: "gmail", SourceIdentifier: "two@example.invalid", SourceMessageID: "gm-2"},
+	}}
+	controller := NewActionController(engine, t.TempDir(), nil)
+	_, err := controller.StageForDeletion(DeletionContext{
+		AggregateSelection: map[string]bool{"example.invalid": true}, AggregateViewType: query.ViewDomains,
+	})
+	require.ErrorContains(t, err, "press 'a' to filter by account")
 }
 
 func TestStageForDeletion_StoresFullDescription(t *testing.T) {
@@ -236,9 +258,12 @@ func TestStageForDeletion_DrillFilterApplied(t *testing.T) {
 	// select "2024-01". The filter should include both sender AND time period.
 	var capturedFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 			capturedFilter = f
-			return []string{"gid1", "gid2"}, nil
+			return []query.DeletionTarget{
+				{MessageID: 1, SourceID: 1, SourceType: "gmail", SourceIdentifier: "test@gmail.com", SourceMessageID: "gid1"},
+				{MessageID: 2, SourceID: 1, SourceType: "gmail", SourceIdentifier: "test@gmail.com", SourceMessageID: "gid2"},
+			}, nil
 		},
 	}
 	env := NewControllerTestEnv(t, engine)
@@ -263,9 +288,12 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 	// Without drill filter, only the aggregate selection filter is applied.
 	var capturedFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 			capturedFilter = f
-			return []string{"gid1"}, nil
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 1, SourceType: "gmail",
+				SourceIdentifier: "test@gmail.com", SourceMessageID: "gid1",
+			}}, nil
 		},
 	}
 	env := NewControllerTestEnv(t, engine)

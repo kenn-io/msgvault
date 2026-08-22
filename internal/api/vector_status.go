@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // VectorStatus describes the daemon's vector-search subsystem state. The
@@ -29,19 +30,51 @@ const (
 	VectorStatusStale VectorStatus = "stale"
 )
 
-// SetVectorFeatures installs the vector components into a running server.
-// The serve daemon calls this from its background init goroutine once
-// migrations and the embed_gen backfill complete.
-func (s *Server) SetVectorFeatures(engine *hybrid.Engine, backend vector.Backend, cfg vector.Config) {
+// SetVectorFeatures atomically installs every vector search component before
+// publishing ready. The daemon uses this path so a request can never observe
+// ready vector status before semantic person search exists.
+func (s *Server) SetVectorFeatures(
+	engine *hybrid.Engine,
+	personEngine PersonSearchEngine,
+	backend vector.Backend,
+	cfg vector.Config,
+) {
 	s.vectorMu.Lock()
 	defer s.vectorMu.Unlock()
 	s.hybridEngine = engine
+	s.personSearchEngine = personEngine
 	s.backend = backend
 	s.vectorCfg = cfg
 	s.vectorStatus = VectorStatusReady
 	s.vectorErr = ""
 	s.vectorStaleLatch = false
 	s.vectorFreshNextCheck = time.Time{}
+}
+
+func (s *Server) SetVisualSearch(service *visual.SearchService) {
+	s.vectorMu.Lock()
+	s.visualSearch = service
+	if !s.vectorCfg.Enabled && service != nil {
+		s.vectorStatus = VectorStatusReady
+		s.vectorErr = ""
+	}
+	s.vectorMu.Unlock()
+}
+
+func (s *Server) SetVisualOperations(
+	build func(context.Context) error,
+	run func(context.Context) error,
+	retry func(context.Context, int64, string) error,
+	status func(context.Context, bool) (visual.Status, error),
+	retire func(context.Context) error,
+) {
+	s.vectorMu.Lock()
+	s.visualBuild = build
+	s.visualRun = run
+	s.visualRetry = retry
+	s.visualStatus = status
+	s.visualRetire = retire
+	s.vectorMu.Unlock()
 }
 
 // SetVectorInitError marks the vector subsystem as failed. The daemon keeps
@@ -283,6 +316,12 @@ func (s *Server) vectorComponents() (*hybrid.Engine, vector.Backend, vector.Conf
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()
 	return s.hybridEngine, s.backend, s.vectorCfg
+}
+
+func (s *Server) personSearchComponent() PersonSearchEngine {
+	s.vectorMu.RLock()
+	defer s.vectorMu.RUnlock()
+	return s.personSearchEngine
 }
 
 // writeVectorUnavailable reports why vector search cannot serve a request

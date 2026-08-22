@@ -18,20 +18,12 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-type gmailIDsByMessageIDsResolver interface {
-	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
-}
-
-type accountsByGmailIDsResolver interface {
-	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
-}
-
 // TestQueryEngine_PostgresPortability exercises the three SQL shapes
 // the external review flagged as failing on PostgreSQL:
 //
 //   - Aggregate uses `FROM ( … ) AS agg` (PG rejects unaliased derived
 //     tables in FROM).
-//   - GetGmailIDsByFilter avoids SELECT DISTINCT entirely (PG rejects
+//   - GetDeletionTargetsByFilter avoids SELECT DISTINCT entirely (PG rejects
 //     DISTINCT when ORDER BY references columns missing from SELECT).
 //   - ListMessages sorts via expressions that textually match the
 //     SELECT list (PG enforces this for SELECT DISTINCT).
@@ -95,11 +87,11 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		require.NotEmpty(rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
 	})
 
-	// (2) GetGmailIDsByFilter — must not error from a SELECT DISTINCT +
+	// (2) GetDeletionTargetsByFilter — must not error from a SELECT DISTINCT +
 	// ORDER BY collision on PG. Use a label filter to exercise the
 	// previously-multiplying join (now an EXISTS subquery).
 	t.Run("gmail_ids_by_filter_label", func(t *testing.T) {
-		ids, err := eng.GetGmailIDsByFilter(ctx, query.MessageFilter{
+		targets, err := eng.GetDeletionTargetsByFilter(ctx, query.MessageFilter{
 			SourceID: &src.ID,
 			Label:    "Important",
 			Sorting: query.MessageSorting{
@@ -107,7 +99,12 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 				Direction: query.SortDesc,
 			},
 		})
-		require.NoError(err, "GetGmailIDsByFilter")
+
+		require.NoError(err, "GetDeletionTargetsByFilter")
+		ids := make([]string, len(targets))
+		for i := range targets {
+			ids[i] = targets[i].SourceMessageID
+		}
 		assert.Len(t, ids, 4, "label join must not multiply")
 		// Confirm no duplicates after dropping DISTINCT — every message
 		// row should appear exactly once because the label filter is an
@@ -145,34 +142,6 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			assert.Len(t, msgs, 4, "ListMessages %s", sort.name)
 		})
 	}
-}
-
-func TestNewEnginePostgresSatisfiesGmailIDsByMessageIDsResolver(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	st := testutil.NewTestStore(t)
-	eng := query.NewEngine(st.DB(), true)
-
-	resolver, ok := eng.(gmailIDsByMessageIDsResolver)
-	require.True(ok, "PostgreSQL engine should expose the deletion message-id resolver")
-	ids, err := resolver.GetGmailIDsByMessageIDs(context.Background(), nil)
-	require.NoError(err, "empty input should not need a backend query")
-	assert.Empty(ids)
-}
-
-func TestNewEnginePostgresSatisfiesAccountsByGmailIDsResolver(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	st := testutil.NewTestStore(t)
-	eng := query.NewEngine(st.DB(), true)
-
-	resolver, ok := eng.(accountsByGmailIDsResolver)
-	require.True(ok, "PostgreSQL engine should expose the deletion account resolver")
-	accounts, err := resolver.GetAccountsByGmailIDs(context.Background(), nil)
-	require.NoError(err, "empty input should not need a backend query")
-	assert.Empty(accounts)
 }
 
 func TestNewEnginePostgresSatisfiesMessageBodySearcher(t *testing.T) {

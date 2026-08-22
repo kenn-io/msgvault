@@ -185,7 +185,7 @@ func TestEmploymentListPrintsHistoryAndProjection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/persons/3/employments", r.URL.Path)
+		assert.Equal("/api/v1/people/3/employments", r.URL.Path)
 		assert.Contains(r.URL.RawQuery, "current_only=false")
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"employments":[{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","is_current":true,"is_primary":true,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"},{"id":8,"person_id":3,"organization_id":5,"title":"Junior Engineer","start_date":{"year":2015},"end_date":{"year":2018,"month":6},"is_current":false,"is_primary":false,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}],"projection":{"employment_id":9,"organization_id":4,"organization_name":"Example Org","title":"Staff Engineer","role":"Engineering","department":"Archive Platform","vcard":{"org":["Example Org","Archive Platform"],"title":"Staff Engineer","role":"Engineering"}}}`))

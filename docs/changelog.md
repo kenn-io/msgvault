@@ -7,7 +7,43 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+**Breaking changes**
+
+- The HTTP API separates observed participant analytics from durable curated
+  people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
+  current unreleased API schema is 2.4.0. The
+  analytical routes formerly under `/api/v1/people/*` (search, detail,
+  summary, timeline, files) now live under `/api/v1/participants/*`, and the
+  durable person routes formerly under `/api/v1/persons/*` now live under
+  `/api/v1/people/*`. The old paths are removed, not aliased: `/api/v1/people`
+  changed meaning, so an alias would silently serve differently shaped data.
+  The CLI and daemon refuse to interoperate across the 1.x/2.x schema
+  boundary with a clear error — upgrade both together. This covers configured
+  remotes too: the daemon reports `api_schema_version` on authenticated
+  `/api/v1/health`, and a CLI in remote mode verifies it on connect,
+  rejecting daemons that predate schema 2.0.
+
+- Deletion staging now requires every selected message to belong to one exact
+  source. TUI and MCP selections that span accounts are rejected instead of
+  creating a manifest that could mark or delete the wrong account's messages.
+  In the TUI, press `a` to filter by account before staging again; MCP callers
+  should pass `account` or stage each source separately.
+
 **Features**
+
+- Exact source selection is available through `--source-id` on `sync`,
+  `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
+  Account arguments continue to accept identifiers and display names, while
+  destructive commands reject ambiguous tokens. Version-2 deletion manifests
+  and staging responses preserve the source type and identifier so execution
+  remains scoped when two source types share the same identifier.
+
+- Person profile catalog and tracking foundation: eleven reconciled system
+  profile attributes (location, birthplace, membership, religion, politics,
+  personality, pets, interests, favorites) with portable `is_sensitive`
+  metadata, plus `msgvault person track|untrack` and
+  `/api/v1/people/{id}/tracking` to opt a durable person into future profile
+  maintenance.
 
 - Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
   keeps the daemon's scheduled embeds within the listed accounts, and

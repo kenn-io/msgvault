@@ -247,6 +247,22 @@ type ChunkScoringBackend interface {
 	ScoreMessageChunks(ctx context.Context, gen GenerationID, messageID int64, queryVec []float32) ([]ChunkHit, error)
 }
 
+// PersonBackend is the separate person-owned vector capability. Person IDs
+// never enter the message-owned Backend methods or result types.
+type PersonBackend interface {
+	PersonCoverageCounter
+	UpsertPersons(ctx context.Context, gen GenerationID, persons []PersonEmbedding) error
+	ListPersonRevisions(ctx context.Context, gen GenerationID) (map[int64]string, error)
+	DeletePersonsNotIn(ctx context.Context, gen GenerationID, currentPersonIDs []int64) error
+	SearchPeople(ctx context.Context, gen GenerationID, queryVec []float32, k int) ([]PersonHit, error)
+}
+
+// PersonCoverageCounter reports terminal person publications that have no
+// searchable vector for a generation.
+type PersonCoverageCounter interface {
+	CountRejectedPersons(ctx context.Context, gen GenerationID) (int64, error)
+}
+
 // Stats reports the size of one generation (or 0 for totals).
 type Stats struct {
 	EmbeddingCount int64

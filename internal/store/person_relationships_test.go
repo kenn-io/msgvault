@@ -316,8 +316,8 @@ func TestPersonRelationshipConstraintsAndColumnParity(t *testing.T) {
 	}
 	for table, want := range map[string][]string{
 		"relationship_types":          {"color", "created_at", "description", "forward_label", "icon", "id", "inverse_type_id", "is_canonical", "is_deletable", "is_symmetric", "ownership", "reverse_label", "revision", "slug", "universal_id", "updated_at", "vcard_related_type"},
-		"person_relationships":        {"confidence", "created_at", "created_by", "end_day", "end_month", "end_year", "id", "notes", "relationship_type_id", "revision", "source", "source_person_id", "source_ref", "start_day", "start_month", "start_year", "status", "target_person_id", "updated_at", "updated_by", "vcard_altid", "vcard_group", "vcard_pid", "vcard_prop_id", "vcard_property"},
-		"person_relationship_reviews": {"accepted_relationship_id", "created_at", "created_by", "id", "matched_person_id", "person_id", "raw_related_type", "raw_related_value", "reviewed_at", "reviewed_by", "source", "source_ref", "status", "updated_at", "value_kind", "vcard_altid", "vcard_group", "vcard_pid", "vcard_prop_id", "vcard_property"},
+		"person_relationships":        {"confidence", "created_at", "created_by", "end_day", "end_month", "end_year", "id", "notes", "relationship_type_id", "revision", "source", "source_person_id", "source_ref", "source_resource_uid", "start_day", "start_month", "start_year", "status", "target_person_id", "updated_at", "updated_by", "vcard_altid", "vcard_group", "vcard_pid", "vcard_prop_id", "vcard_property"},
+		"person_relationship_reviews": {"accepted_relationship_id", "created_at", "created_by", "id", "matched_person_id", "person_id", "raw_related_type", "raw_related_value", "reviewed_at", "reviewed_by", "source", "source_ref", "source_resource_uid", "status", "updated_at", "value_kind", "vcard_altid", "vcard_group", "vcard_pid", "vcard_prop_id", "vcard_property"},
 	} {
 		assert.Equal(want, columnsForTable(table))
 	}

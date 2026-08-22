@@ -454,6 +454,8 @@ type CLICacheBuildEvent struct {
 type CLISyncRequest struct {
 	Full        bool
 	Email       string
+	SourceID    int64
+	SourceIDSet bool
 	Query       string
 	NoResume    bool
 	Before      string
@@ -535,6 +537,7 @@ type CLIDeleteStagedPlanRequest struct {
 	DryRun              bool   `json:"dry_run,omitempty"`
 	List                bool   `json:"list,omitempty"`
 	Account             string `json:"account,omitempty"`
+	SourceID            *int64 `json:"source_id,omitempty"`
 	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitempty"`
 }
 
@@ -545,6 +548,7 @@ type CLIDeleteStagedPlanResponse struct {
 	ConfirmationMode          string   `json:"confirmation_mode,omitempty"`
 	PlannedBatchIDs           []string `json:"planned_batch_ids,omitempty"`
 	PlanFingerprint           string   `json:"plan_fingerprint,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
 	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitempty"`
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
@@ -1050,6 +1054,32 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		Before: values.Get("before"),
 		After:  values.Get("after"),
 	}
+	if rawSourceID, sourceIDSet := values["source_id"]; sourceIDSet {
+		if len(rawSourceID) != 1 {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_id",
+				"source_id must be specified exactly once",
+			)
+		}
+		sourceID, err := strconv.ParseInt(rawSourceID[0], 10, 64)
+		if err != nil || sourceID <= 0 {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_id",
+				"source_id must be a positive integer",
+			)
+		}
+		if req.Email != "" {
+			return CLISyncRequest{}, newAPIHTTPError(
+				http.StatusBadRequest,
+				"invalid_source_selector",
+				"email and source_id are mutually exclusive",
+			)
+		}
+		req.SourceID = sourceID
+		req.SourceIDSet = true
+	}
 	for _, v := range values["folder"] {
 		if v != "" {
 			req.Folders = append(req.Folders, v)
@@ -1343,18 +1373,23 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 	if manifest.Version == 0 {
 		manifest.Version = 1
 	}
+	if err := manifest.ValidateVersion(); err != nil {
+		return newAPIHTTPError(http.StatusBadRequest, "invalid_manifest_version", err.Error())
+	}
 	if manifest.CreatedBy == "" {
 		manifest.CreatedBy = "cli"
 	}
 	return nil
 }
 
+const cliRunPersonCommand = "person"
+
 // cliRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
-// alone; command groups whose subcommand matters (currently "backup" and
-// "documents") are checked against args[1] as well. Backup admits only the
-// frozen create path, while documents admits only mutations that must run
-// under the daemon's writer lock.
+// alone; command groups whose subcommand matters are checked against their
+// nested command path. Backup admits only the frozen create path, documents
+// admits only mutations that must run under the daemon's writer lock, and
+// person admits only the provider consent boundary.
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -1368,6 +1403,17 @@ func cliRunCommandAllowed(args []string) bool {
 		}
 		switch args[1] {
 		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+			return true
+		default:
+			return false
+		}
+	}
+	if args[0] == cliRunPersonCommand {
+		if len(args) < 3 || args[1] != "provider" {
+			return false
+		}
+		switch args[2] {
+		case "status", "consent", "revoke", "check":
 			return true
 		default:
 			return false
@@ -1411,6 +1457,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"list-folders",
 		"logs",
 		"pack-attachments",
+		"purge-excluded-media",
 		"repair-dates",
 		"repack-attachments",
 		"remove-account",
@@ -1463,6 +1510,7 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 	for _, keyEnv := range []string{
 		s.cfg.Vector.Embeddings.APIKeyEnv,
 		s.cfg.Attachments.Documents.APIKeyEnv,
+		s.cfg.People.Sweep.Provider.APIKeyEnv,
 	} {
 		if keyEnv != "" && name == keyEnv {
 			return true

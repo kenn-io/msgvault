@@ -49,6 +49,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
@@ -265,6 +266,8 @@ func TestMarkedCLIScopedStatsCancellationInterruptsStore(t *testing.T) {
 
 func testMarkedCLIStatsCancellationInterruptsStore(t *testing.T, target string, scoped bool) {
 	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
 
 	callStarted := make(chan struct{})
 	callReturned := make(chan struct{})
@@ -326,32 +329,32 @@ func testMarkedCLIStatsCancellationInterruptsStore(t *testing.T, target string, 
 		select {
 		case <-handlerDone:
 		case <-time.After(time.Second):
-			assert.Fail(t, "CLI stats handler did not finish during cleanup")
+			assert.Fail("CLI stats handler did not finish during cleanup")
 		}
 	})
 
 	select {
 	case <-callStarted:
 	case <-time.After(time.Second):
-		require.FailNow(t, "CLI stats store call did not start")
+		require.FailNow("CLI stats store call did not start")
 	}
 	cancel()
 
 	select {
 	case <-callReturned:
 	case <-time.After(time.Second):
-		require.FailNow(t, "CLI stats store call continued after marked request cancellation")
+		require.FailNow("CLI stats store call continued after marked request cancellation")
 	}
 	select {
 	case <-handlerDone:
 	case <-time.After(time.Second):
-		require.FailNow(t, "CLI stats handler did not return after store cancellation")
+		require.FailNow("CLI stats handler did not return after store cancellation")
 	}
 
-	require.Equal(t, http.StatusServiceUnavailable, resp.Code, "status (body: %s)", resp.Body.String())
+	require.Equal(http.StatusServiceUnavailable, resp.Code, "status (body: %s)", resp.Body.String())
 	var errResp ErrorResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errResp), "decode error response")
-	assert.Equal(t, "query_canceled", errResp.Error, "error code")
+	require.NoError(json.NewDecoder(resp.Body).Decode(&errResp), "decode error response")
+	assert.Equal("query_canceled", errResp.Error, "error code")
 }
 
 func TestHandleCLICreateDeletionManifest(t *testing.T) {
@@ -946,6 +949,41 @@ func TestHandleCLISyncAcceptsFolderFilters(t *testing.T) {
 	}, gotReq)
 }
 
+func TestHandleCLISyncParsesExactSourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var gotReq CLISyncRequest
+	st := &mockStore{
+		syncFunc: func(_ context.Context, req CLISyncRequest, _ func(CLISyncEvent) error) error {
+			gotReq = req
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/sync?source_id=42")
+	requireNDJSONResponse(t, resp)
+	assert.Equal(int64(42), gotReq.SourceID)
+	assert.True(gotReq.SourceIDSet)
+	events := decodeNDJSONEvents[map[string]any](t, resp.Body)
+	require.Len(events, 1)
+	assert.Equal(cliStreamEventTypeComplete, events[0]["type"])
+	assert.NotContains(events[0], "applied_source_id")
+}
+
+func TestHandleCLISyncRejectsInvalidSourceID(t *testing.T) {
+	srv := newCLIHandlerTestServer(&mockStore{})
+	for _, path := range []string{
+		"/api/v1/cli/sync?source_id=0",
+		"/api/v1/cli/sync?source_id=wat",
+		"/api/v1/cli/sync?source_id=42&email=alice@example.test",
+	} {
+		resp := servePOSTTestRequest(srv, path)
+		assert.Equal(t, http.StatusBadRequest, resp.Code, "path: %s", path)
+	}
+}
+
 func TestHandleCLIVerifyStreamsOutput(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1376,7 +1414,7 @@ func TestHandleCLIDeleteStagedPlanReturnsPrompt(t *testing.T) {
 	}
 	srv := newCLIHandlerTestServer(st)
 
-	body := strings.NewReader(`{"batch_id":"batch-123","permanent":false,"yes":false,"dry_run":false,"list":false,"account":"alice@example.com","remote_delete_enabled":true}`)
+	body := strings.NewReader(`{"batch_id":"batch-123","permanent":false,"yes":false,"dry_run":false,"list":false,"account":"alice@example.com","source_id":42,"remote_delete_enabled":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/delete-staged/plan", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -1386,6 +1424,7 @@ func TestHandleCLIDeleteStagedPlanReturnsPrompt(t *testing.T) {
 	assert.Equal(CLIDeleteStagedPlanRequest{
 		BatchID:             "batch-123",
 		Account:             "alice@example.com",
+		SourceID:            func() *int64 { value := int64(42); return &value }(),
 		RemoteDeleteEnabled: true,
 	}, gotReq, "plan request")
 
@@ -1548,6 +1587,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"backup unknown subcommand rejected", []string{"backup", "restore"}, false},
 		{"logs still allowed", []string{"logs"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
+		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
@@ -2702,6 +2742,40 @@ func TestHandleCLIUpdateAccountDisplayName(t *testing.T) {
 	assert.Equal("Work", updated.DisplayName.String, "stored display name")
 }
 
+func TestHandleCLIUpdateAccountTargetsExactSourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	first, err := st.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	second, err := st.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/account",
+		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"display_name":"Primary"}`, first.ID)),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	updated, err := st.GetSourceByID(first.ID)
+	require.NoError(err)
+	assert.Equal("Primary", updated.DisplayName.String)
+	untouched, err := st.GetSourceByID(second.ID)
+	require.NoError(err)
+	assert.False(untouched.DisplayName.Valid)
+}
+
 func TestHandleCLIUpdateAccountResolvesCurrentDisplayName(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2933,17 +3007,18 @@ func TestHandleCLIAttachmentReturnsContentAddressedBytes(t *testing.T) {
 // require.New(t)/assert.New(t) bound to the subtest's own *testing.T.
 func buildTestPack(t *testing.T, attachmentsDir string, content []byte) store.PackIndexEntry {
 	t.Helper()
+	require := require.New(t)
 	staging := t.TempDir()
 	w, err := pack.NewWriter(staging, pack.WriterOptions{})
-	require.NoError(t, err, "NewWriter")
+	require.NoError(err, "NewWriter")
 	_, err = w.Append(content)
-	require.NoError(t, err, "Append")
+	require.NoError(err, "Append")
 	packID := w.ID()
 	final := filepath.Join(attachmentsDir, "packs", packID[:2], packID+packstore.PackExt)
-	require.NoError(t, os.MkdirAll(filepath.Dir(final), 0o700), "create pack dir")
+	require.NoError(os.MkdirAll(filepath.Dir(final), 0o700), "create pack dir")
 	sealed, err := w.Seal(final)
-	require.NoError(t, err, "Seal")
-	require.Len(t, sealed, 1, "sealed entries")
+	require.NoError(err, "Seal")
+	require.Len(sealed, 1, "sealed entries")
 
 	return store.PackIndexEntry{
 		BlobHash:  sealed[0].ID.String(),
@@ -4741,9 +4816,12 @@ func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
 	assert := assert.New(t)
 	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		GetGmailIDsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]string, error) {
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
 			gotFilter = filter
-			return []string{"gm-1", "gm-2"}, nil
+			return []query.DeletionTarget{
+				{MessageID: 1, SourceID: 1, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-1"},
+				{MessageID: 2, SourceID: 1, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-2"},
+			}, nil
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
@@ -6694,6 +6772,7 @@ type fakeVectorBackend struct {
 	searchLimit   int
 	chunkHits     map[int64][]vector.ChunkHit
 	chunkScoreIDs []int64
+	rejected      int64
 }
 
 func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
@@ -6745,6 +6824,9 @@ func (f *fakeVectorBackend) ResetWatermarkBelow(_ context.Context, _ int64) erro
 func (f *fakeVectorBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, errors.New("not implemented")
 }
+func (f *fakeVectorBackend) CountRejectedPersons(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return f.rejected, nil
+}
 func (f *fakeVectorBackend) Close() error { return nil }
 
 func TestHandleStats_VectorDisabled(t *testing.T) {
@@ -6776,7 +6858,8 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 			Fingerprint: "nomic-embed:768",
 			State:       vector.GenerationActive,
 		},
-		stats: vector.Stats{EmbeddingCount: 100, PendingCount: 7, StorageBytes: 4096},
+		stats:    vector.Stats{EmbeddingCount: 100, PendingCount: 7, StorageBytes: 4096},
+		rejected: 3,
 	}
 
 	store := &mockStore{
@@ -6813,6 +6896,7 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 
 	assert.Equal(true, vs["enabled"], "enabled")
 	assert.InDelta(float64(7), vs["missing_embeddings_total"], 1e-9, "missing_embeddings_total")
+	assert.InDelta(float64(3), vs["person_coverage_rejected"], 1e-9, "person_coverage_rejected")
 
 	active, ok := vs["active_generation"].(map[string]any)
 	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
@@ -7432,4 +7516,36 @@ func TestHandleGetMessage_ExposesAttachmentContentHash(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	require.Len(resp.Attachments, 1, "attachments")
 	assert.Equal(hash, resp.Attachments[0]["content_hash"], "content_hash")
+}
+
+// TestStatsReportsTextLaneSeparatelyFromMultimodal verifies a multimodal-only
+// daemon does not advertise text-vector capability: the shared status is
+// ready (the visual lane works), but vector_text_status is disabled so MCP
+// text-tool registration can consult the lane that actually backs it.
+func TestStatsReportsTextLaneSeparatelyFromMultimodal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &mockStore{},
+		Logger: testLogger(),
+	})
+	srv.SetVectorFeatures(nil, nil, nil, vector.Config{Multimodal: vector.MultimodalConfig{Enabled: true}})
+	srv.SetVisualSearch(&visual.SearchService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		VectorStatus       string `json:"vector_status"`
+		VectorTextStatus   string `json:"vector_text_status"`
+		VectorVisualStatus string `json:"vector_visual_status"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("ready", resp.VectorStatus)
+	assert.Equal("disabled", resp.VectorTextStatus,
+		"a multimodal-only daemon must not advertise text-vector capability")
+	assert.Equal("ready", resp.VectorVisualStatus,
+		"the visual lane reports its own readiness for MCP capability probes")
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -348,7 +349,7 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	if err != nil {
 		return nil, err
 	}
-	toRecipients, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
+	toRecipients, participantCount, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
 	if err != nil {
 		return nil, err
 	}
@@ -358,6 +359,9 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 		channelID: c.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, toRecipients: toRecipients,
 		membershipReady: !c.IsMpim || toRecipients != nil,
+	}
+	cc.opts.MediaConversation = attachmentpolicy.Conversation{
+		Type: conversationType(c), ParticipantCount: participantCount,
 	}
 	// MPIM membership defines every message's "to" snapshot. A failed
 	// members call must hold both history and reply debt so the retry can
@@ -413,10 +417,25 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	return cc, nil
 }
 
-// ensureMembership records the conversation's member list. Channel failures
-// are isolated from message archiving, while MPIM callers hold progress
-// because membership defines their per-message recipient snapshot.
-func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, error) {
+// unknownMembershipCount is the participant count an unreadable members
+// listing evaluates as. Unknown membership must not pass as a conversation
+// under the threshold, so it fails closed while a limit is configured; the
+// skips that follow are retryable once the listing can be read again.
+func unknownMembershipCount(policy attachmentpolicy.Policy) int {
+	if policy.MaxParticipants > 0 {
+		return policy.MaxParticipants + 1
+	}
+	return 0
+}
+
+// ensureMembership records the conversation's member list and returns the
+// participant count media policy evaluates it against. Channel failures are
+// isolated from message archiving, while MPIM callers hold progress because
+// membership defines their per-message recipient snapshot. The roster size is
+// also archived on the conversation: a media backfill re-reads the archive
+// rather than the workspace, so an unreadable listing has to be
+// distinguishable there from a conversation with few members.
+func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, int, error) {
 	var members []store.ConversationParticipantRef
 	directRecipients := make([]messageRecipient, 0)
 	add := func(userID string) error {
@@ -434,22 +453,23 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 	}
 	if c.IsIM {
 		if err := add(c.User); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if err := add(opts.UserID); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	} else {
 		if err := imp.client.AllMembers(ctx, c.ID, add); err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, 0, ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
 				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				// Known-gone is distinct from a transient outage. Let the
 				// history path confirm/record the gone conversation rather
-				// than parking it forever as missing membership.
-				return []messageRecipient{}, nil
+				// than parking it forever as missing membership; whatever
+				// roster earlier runs archived is the last one there was.
+				return []messageRecipient{}, 0, nil
 			}
 			// Isolated (message archiving proceeds) but honest: a members
 			// listing outage is a fetch failure and the run must report
@@ -457,13 +477,22 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return nil, nil
+			// Store failures stay fatal here (see processMessage): the archived
+			// roster decides later downloads, so failing to record the outage
+			// would silently restore the fail-open behavior.
+			if merr := imp.store.MarkConversationMemberCountUnknown(convID); merr != nil {
+				return nil, 0, merr
+			}
+			return nil, unknownMembershipCount(opts.MediaPolicy), nil
 		}
 	}
 	if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return directRecipients, nil
+	if err := imp.store.SetConversationMemberCount(convID, len(members)); err != nil {
+		return nil, 0, err
+	}
+	return directRecipients, len(members), nil
 }
 
 // walkWindow walks one pinned window of the conversation's top-level
@@ -1266,10 +1295,10 @@ func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, ki
 	})
 }
 
-// BackfillMedia retries pending Slack file downloads for one workspace:
-// every message that still has a pending marker is re-read from the archived
-// raw JSON and its files re-persisted. Idempotent (content-addressed
-// storage, replace-by-prefix rows).
+// BackfillMedia retries eligible Slack file downloads for one workspace:
+// messages with unfinished work, plus exclusions now allowed by current
+// policy, are re-read from archived JSON and re-persisted. Idempotent
+// (content-addressed storage, replace-by-prefix rows).
 func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*ImportSummary, error) {
 	// An explicit media backfill IS the download request. NoMedia means
 	// "defer downloads, leave pending markers for backfill-slack-media" —
@@ -1278,6 +1307,13 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// configuration ([slack].media = false) whose documented workflow
 	// depends on this command.
 	opts.NoMedia = false
+	// [slack].media = false defers downloads the same way --no-media does; an
+	// explicit backfill is the download request for both. Account-level
+	// opt-outs (SkipAccountPolicy) and scope/participant/size rules still
+	// apply.
+	if opts.MediaPolicy.DisabledReason == attachmentpolicy.SkipPolicyScope {
+		opts.MediaPolicy.DisabledReason = ""
+	}
 	start := imp.now()
 	if opts.AttachmentsDir == "" {
 		return nil, errors.New("attachments dir required")
@@ -1312,7 +1348,14 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		return sum, err
 	}
 
-	pending, err := imp.store.ListSlackPendingAttachmentMessages(src.ID)
+	policy := opts.MediaPolicy
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = opts.MaxMediaBytes
+	}
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = defaultMaxMediaBytes
+	}
+	pending, err := imp.store.ListSlackRetryableAttachmentMessages(src.ID, policy)
 	if err != nil {
 		return sum, err
 	}
@@ -1342,7 +1385,11 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 			sum.AttachmentsPending += imp.pendingMarkerCount(item.MessageID)
 			continue
 		}
-		if err = imp.persistFiles(ctx, syncID, item.MessageID, &m, opts, sum); err != nil {
+		itemOpts := opts
+		itemOpts.MediaConversation = attachmentpolicy.Conversation{
+			Type: item.ConversationType, ParticipantCount: item.ParticipantCount,
+		}
+		if err = imp.persistFiles(ctx, syncID, item.MessageID, &m, itemOpts, sum); err != nil {
 			return sum, err
 		}
 		sum.MessagesProcessed++

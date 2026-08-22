@@ -1548,6 +1548,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/multimodal/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Consent and run one bounded visual attachment embedding pass */
+        post: operations["startVisualAttachmentBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire the visual attachment generation */
+        post: operations["retireVisualAttachmentGeneration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry one visual attachment owner */
+        post: operations["retryVisualAttachmentOwner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume one bounded visual attachment embedding pass */
+        post: operations["resumeVisualAttachmentBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multimodal/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get visual attachment embedding status */
+        get: operations["getVisualAttachmentStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations": {
         parameters: {
             query?: never;
@@ -1679,7 +1764,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replace organization profile collections */
+        /**
+         * Replace organization profile collections
+         * @description Replaces all structured organization profile collections with at most 200 total values.
+         */
         put: operations["putOrganizationProfile"];
         post?: never;
         delete?: never;
@@ -1708,6 +1796,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/participants/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search observed participant clusters */
+        post: operations["searchParticipants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one observed participant cluster */
+        get: operations["getParticipant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}/files/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search one participant cluster's analytical files */
+        post: operations["searchParticipantFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get one participant cluster's contextual analytical summary */
+        post: operations["getParticipantContextSummary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get one participant cluster's canonical activity timeline */
+        post: operations["getParticipantTimeline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List durable person profiles
+         * @description Durable people are curated profiles; /api/v1/participants exposes observed analytical groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small.
+         */
+        get: operations["listPeople"];
+        put?: never;
+        /**
+         * Promote a participant cluster to a durable person
+         * @description Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
+         */
+        post: operations["createPerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/search": {
         parameters: {
             query?: never;
@@ -1717,7 +1914,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Search analytical people */
+        /**
+         * Search durable people semantically
+         * @description Searches only the curated person vector corpus and returns durable person roots in relevance order.
+         */
         post: operations["searchPeople"];
         delete?: never;
         options?: never;
@@ -1732,8 +1932,116 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one analytical person */
-        get: operations["getPerson"];
+        /** Get a durable person profile */
+        get: operations["getPersonProfile"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a durable person profile
+         * @description Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID.
+         */
+        delete: operations["deletePerson"];
+        options?: never;
+        head?: never;
+        /** Update a durable person's display name */
+        patch: operations["patchPerson"];
+        trace?: never;
+    };
+    "/api/v1/people/{id}/attributes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a person's typed attributes */
+        get: operations["listPersonAttributes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/attributes/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a person's attribute value */
+        put: operations["setPersonAttribute"];
+        post?: never;
+        /** Supersede a person's attribute value */
+        delete: operations["clearPersonAttribute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/contact-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get computed contact state for a person */
+        get: operations["getPersonContactState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List calendar days intersecting a person */
+        get: operations["listPersonActivityDays"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one person's activity and notes for a day */
+        get: operations["getPersonActivityDay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/employments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a person's employment history */
+        get: operations["listPersonEmployments"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1751,7 +2059,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Search one person's analytical files */
+        /** Search one durable person's analytical files */
         post: operations["searchPersonFiles"];
         delete?: never;
         options?: never;
@@ -1759,34 +2067,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/people/{id}/summary": {
+    "/api/v1/people/{id}/profile": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a person's current structured profile
+         * @description Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
+         */
+        get: operations["getPersonStructuredProfile"];
         put?: never;
-        /** Get one person's contextual analytical summary */
-        post: operations["getPersonContextSummary"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Atomically patch a person's structured profile
+         * @description Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
+         */
+        patch: operations["patchPersonStructuredProfile"];
+        trace?: never;
+    };
+    "/api/v1/people/{id}/profile/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a person's structured profile history
+         * @description Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
+         */
+        get: operations["getPersonProfileHistory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/people/{id}/timeline": {
+    "/api/v1/people/{id}/profile/media/{media_id}/content": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Download stored inline content for one person profile media value
+         * @description Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
+         */
+        get: operations["getPersonProfileMediaContent"];
         put?: never;
-        /** Get one person's canonical activity timeline */
-        post: operations["getPersonTimeline"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one person's relationships */
+        get: operations["listPersonRelationships"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/tracking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a person's tracking state */
+        get: operations["getPersonTracking"];
+        /** Replace a person's tracking state */
+        put: operations["setPersonTracking"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1844,236 +2217,6 @@ export interface paths {
         head?: never;
         /** End a relationship or replace its notes */
         patch: operations["patchPersonRelationship"];
-        trace?: never;
-    };
-    "/api/v1/persons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List durable person profiles
-         * @description Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small.
-         */
-        get: operations["listPersons"];
-        put?: never;
-        /**
-         * Promote a participant cluster to a durable person
-         * @description Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
-         */
-        post: operations["createPerson"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a durable person profile */
-        get: operations["getPersonProfile"];
-        put?: never;
-        post?: never;
-        /**
-         * Delete a durable person profile
-         * @description Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID.
-         */
-        delete: operations["deletePerson"];
-        options?: never;
-        head?: never;
-        /** Update a durable person's display name */
-        patch: operations["patchPerson"];
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/attributes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List a person's typed attributes */
-        get: operations["listPersonAttributes"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/attributes/{slug}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Set a person's attribute value */
-        put: operations["setPersonAttribute"];
-        post?: never;
-        /** Supersede a person's attribute value */
-        delete: operations["clearPersonAttribute"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/contact-state": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get computed contact state for a person */
-        get: operations["getPersonContactState"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/days": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List calendar days intersecting a person */
-        get: operations["listPersonActivityDays"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/days/{date}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one person's activity and notes for a day */
-        get: operations["getPersonActivityDay"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/employments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List a person's employment history */
-        get: operations["listPersonEmployments"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get a person's current structured profile
-         * @description Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
-         */
-        get: operations["getPersonStructuredProfile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Atomically patch a person's structured profile
-         * @description Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
-         */
-        patch: operations["patchPersonStructuredProfile"];
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/profile/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get a person's structured profile history
-         * @description Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
-         */
-        get: operations["getPersonProfileHistory"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/profile/media/{media_id}/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Download stored inline content for one person profile media value
-         * @description Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
-         */
-        get: operations["getPersonProfileMediaContent"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/persons/{id}/relationships": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List one person's relationships */
-        get: operations["listPersonRelationships"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v1/query": {
@@ -2229,6 +2372,23 @@ export interface paths {
         get: operations["searchMessages"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search/attachments/visual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search visual attachment content */
+        post: operations["searchVisualAttachments"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2650,6 +2810,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        AttachmentSearchResult: {
+            /** Format: int64 */
+            attachment_id: number;
+            blob_hash: string;
+            /** Format: int64 */
+            conversation_id: number;
+            filename: string;
+            /** Format: int64 */
+            message_id: number;
+            mime_type: string;
+            person_provenance?: components["schemas"]["Provenance"];
+            /** Format: int64 */
+            rank: number;
+            /** Format: double */
+            score: number;
+            /** Format: date-time */
+            sent_at: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: int64 */
+            source_id: number;
+            source_message_id: string;
+        } & {
+            [key: string]: unknown;
+        };
         AttributeChoice: {
             label: string;
             value: string;
@@ -2672,6 +2857,7 @@ export interface components {
             is_deletable: boolean;
             is_required: boolean;
             is_searchable: boolean;
+            is_sensitive: boolean;
             label: string;
             object_type: string;
             options?: components["schemas"]["AttributeOptions"];
@@ -2807,6 +2993,8 @@ export interface components {
             list?: boolean;
             permanent?: boolean;
             remote_delete_enabled?: boolean;
+            /** Format: int64 */
+            source_id?: number;
             yes?: boolean;
         };
         CLIDeleteStagedPlanResponse: {
@@ -2818,6 +3006,8 @@ export interface components {
             plan_fingerprint?: string;
             planned_batch_ids?: string[] | null;
             remote_delete_env_var?: string;
+            /** Format: int64 */
+            resolved_source_id?: number;
             scope_escalation_account?: string;
             scope_escalation_body_lines?: string[] | null;
             scope_escalation_cancel_hint?: string;
@@ -3290,6 +3480,7 @@ export interface components {
             is_audited?: boolean;
             is_required?: boolean;
             is_searchable?: boolean;
+            is_sensitive?: boolean;
             label: string;
             /** @enum {string} */
             object_type: "person" | "organization";
@@ -3431,6 +3622,7 @@ export interface components {
             id: string;
             /** Format: int64 */
             message_count: number;
+            source?: components["schemas"]["SourceReference"];
             status: string;
             summary?: components["schemas"]["Summary"];
         } & {
@@ -3445,6 +3637,17 @@ export interface components {
             /** Format: int64 */
             message_count: number;
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DeletionTarget: {
+            /** Format: int64 */
+            message_id: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_message_id: string;
+            source_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -3578,6 +3781,8 @@ export interface components {
             /** Format: int64 */
             chunk_ordinal: number;
             containing_title?: string;
+            /** Format: int64 */
+            conversation_id: number;
             excerpt: string;
             extraction_id: string;
             filename?: string;
@@ -3595,15 +3800,19 @@ export interface components {
             message_id: number;
             mime_type?: string;
             model: string;
+            /** Format: date-time */
+            occurred_at?: string;
             occurrence_key: string;
             /** Format: int64 */
             other_live_copies: number;
+            person_provenance?: components["schemas"]["Provenance"];
             profile_id: string;
             provider: string;
             /** Format: int64 */
             rank: number;
             /** Format: int64 */
             source_id: number;
+            source_message_id?: string;
             source_part_key?: string;
             truncated: boolean;
         } & {
@@ -3642,6 +3851,13 @@ export interface components {
             /** Format: int64 */
             person_count: number;
             source_counts: components["schemas"]["SourceCount"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        DuplicateCostRisk: {
+            at_least_once: boolean;
+            detail: string;
+            provider_idempotent: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -4017,6 +4233,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        FileSearchExplain: {
+            /** Format: int64 */
+            filename_rank?: number;
+            /** Format: double */
+            rrf: number;
+            /** Format: int64 */
+            visual_rank?: number;
+        } & {
+            [key: string]: unknown;
+        };
         FileSearchHTTPRequest: {
             cursor?: string;
             filename_query?: string;
@@ -4025,6 +4251,8 @@ export interface components {
             mime_families?: string[] | null;
             predicate: components["schemas"]["ExploreHTTPRequest"];
             sort: components["schemas"]["FileSearchSort"];
+            visual_image_base64?: string;
+            visual_query?: string;
         };
         FileSearchHTTPResponse: {
             cache_revision: string;
@@ -4058,6 +4286,7 @@ export interface components {
             participant_domains?: string[] | null;
             participant_ids?: number[] | null;
             participant_labels?: string[] | null;
+            search_explain?: components["schemas"]["FileSearchExplain"];
             /** Format: int64 */
             size_bytes: number;
             /** Format: int64 */
@@ -4092,6 +4321,23 @@ export interface components {
             sender_domains?: string[] | null;
             senders?: string[] | null;
         };
+        FormatCoverage: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            current: number;
+            /** Format: int64 */
+            eligible: number;
+            mime_type: string;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale: number;
+            /** Format: int64 */
+            terminal: number;
+        } & {
+            [key: string]: unknown;
+        };
         GenerationSummary: {
             activated_at?: string;
             /** Format: int64 */
@@ -4108,11 +4354,13 @@ export interface components {
         };
         GmailIDsResponse: {
             gmail_ids: string[] | null;
+            targets?: components["schemas"]["DeletionTarget"][] | null;
         } & {
             [key: string]: unknown;
         };
         HealthResponse: {
             analytics_engine?: string;
+            api_schema_version?: string;
             operation?: components["schemas"]["OperationHealth"];
             status: string;
             vector?: components["schemas"]["VectorHealth"];
@@ -4332,6 +4580,7 @@ export interface components {
             gmail_ids: string[] | null;
             id: string;
             raw_filter?: unknown;
+            source?: components["schemas"]["SourceReference"];
             status: string;
             summary?: components["schemas"]["Summary"];
             /** Format: int64 */
@@ -4855,11 +5104,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        ParticipantContextSummaryHTTPResponse: {
+            cache_revision: string;
+            candidate_snapshot_id?: string;
+            search_provenance: components["schemas"]["SearchProvenance"];
+            summary: components["schemas"]["PersonSummary"];
+        } & {
+            [key: string]: unknown;
+        };
+        ParticipantSearchHTTPResponse: {
+            cache_revision: string;
+            candidate_snapshot_id?: string;
+            next_cursor?: string;
+            rows: components["schemas"]["PersonSummary"][] | null;
+            search_provenance: components["schemas"]["SearchProvenance"];
+            /** Format: int64 */
+            total_count: number;
+        } & {
+            [key: string]: unknown;
+        };
         PatchAttributeDefinitionRequest: {
             description?: string | null;
             /** Format: int64 */
             display_order?: number;
             is_active?: boolean;
+            is_sensitive?: boolean;
             label?: string;
         };
         PatchPersonRelationshipRequest: {
@@ -4883,6 +5152,11 @@ export interface components {
             name?: string;
             /** Format: int64 */
             schema_version?: number;
+        };
+        PeopleResponse: {
+            people: components["schemas"]["Person"][] | null;
+        } & {
+            [key: string]: unknown;
         };
         Person: {
             /** Format: date-time */
@@ -5056,14 +5330,6 @@ export interface components {
             add?: components["schemas"]["PersonContactPointInputRequest"][] | null;
             supersede?: number[] | null;
         };
-        PersonContextSummaryHTTPResponse: {
-            cache_revision: string;
-            candidate_snapshot_id?: string;
-            search_provenance: components["schemas"]["SearchProvenance"];
-            summary: components["schemas"]["PersonSummary"];
-        } & {
-            [key: string]: unknown;
-        };
         PersonDate: {
             calendar_scale?: string;
             date: components["schemas"]["PartialDate"];
@@ -5120,6 +5386,68 @@ export interface components {
             person_id: number;
             /** Format: int64 */
             total_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFileProvenance: {
+            directions: ("from_person" | "to_person" | "group")[] | null;
+            participant_ids: number[] | null;
+            roles: ("from" | "to" | "cc" | "bcc" | "conversation_member")[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFileSearchHTTPRequest: {
+            cursor?: string;
+            directions?: ("from_person" | "to_person" | "group")[] | null;
+            filename_query?: string;
+            /** Format: int64 */
+            limit?: number;
+            mime_families?: string[] | null;
+            predicate: components["schemas"]["ExploreHTTPRequest"];
+            sort: components["schemas"]["FileSearchSort"];
+            visual_image_base64?: string;
+            visual_query?: string;
+        };
+        PersonFileSearchHTTPResponse: {
+            cache_revision: string;
+            candidate_snapshot_id?: string;
+            files: components["schemas"]["PersonFileSearchRow"][] | null;
+            next_cursor?: string;
+            search_provenance: components["schemas"]["SearchProvenance"];
+            /** Format: int64 */
+            total_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFileSearchRow: {
+            containing_title: string;
+            content_available: boolean;
+            /** @enum {string} */
+            content_state: "metadata_only" | "url_only" | "missing_blob" | "local_content";
+            /** Format: int64 */
+            conversation_id: number;
+            entry_key: string;
+            filename: string;
+            /** Format: int64 */
+            id: number;
+            key: string;
+            /** Format: int64 */
+            message_id: number;
+            mime_family: string;
+            mime_type: string;
+            /** Format: date-time */
+            occurred_at: string;
+            participant_domains?: string[] | null;
+            participant_ids?: number[] | null;
+            participant_labels?: string[] | null;
+            person_provenance: components["schemas"]["PersonFileProvenance"];
+            search_explain?: components["schemas"]["FileSearchExplain"];
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -5257,6 +5585,7 @@ export interface components {
             /** Format: int64 */
             source_person_id: number;
             source_ref?: string;
+            source_resource_uid?: string;
             start_date?: components["schemas"]["PartialDate"];
             status: string;
             /** Format: int64 */
@@ -5285,14 +5614,23 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        PersonSearchHTTPResponse: {
-            cache_revision: string;
-            candidate_snapshot_id?: string;
-            next_cursor?: string;
-            rows: components["schemas"]["PersonSummary"][] | null;
-            search_provenance: components["schemas"]["SearchProvenance"];
-            /** Format: int64 */
-            total_count: number;
+        PersonSearchRequest: {
+            /**
+             * Format: int64
+             * @default 20
+             */
+            limit: number;
+            query: string;
+        };
+        PersonSearchResponse: {
+            results: components["schemas"]["PersonSearchResult"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonSearchResult: {
+            person: components["schemas"]["Person"];
+            /** Format: double */
+            score: number;
         } & {
             [key: string]: unknown;
         };
@@ -5318,8 +5656,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        PersonsResponse: {
-            persons: components["schemas"]["Person"][] | null;
+        PersonTracking: {
+            /** Format: int64 */
+            person_id: number;
+            tracked: boolean;
+            /** Format: date-time */
+            tracked_at: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -5339,6 +5681,27 @@ export interface components {
             total: number;
         } & {
             [key: string]: unknown;
+        };
+        Provenance: {
+            directions: ("from_person" | "to_person" | "group")[] | null;
+            participant_ids: number[] | null;
+            roles: ("from" | "to" | "cc" | "bcc" | "conversation_member")[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ProviderUsage: {
+            /** Format: double */
+            billed_units: number;
+            /** Format: int64 */
+            input_bytes: number;
+            /** Format: int64 */
+            requests: number;
+            usage_available: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        PutPersonTrackingRequest: {
+            tracked: boolean;
         };
         QueryRequest: {
             sql: string;
@@ -5376,6 +5739,7 @@ export interface components {
             reviewed_by?: string;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             status: string;
             /** Format: date-time */
             updated_at: string;
@@ -5607,6 +5971,17 @@ export interface components {
             /** Format: int64 */
             vector_generation?: number;
         };
+        SearchResponse: {
+            /** Format: int64 */
+            generation_id: number;
+            model: string;
+            next_cursor?: string;
+            query_mode: string;
+            results: components["schemas"]["AttachmentSearchResult"][] | null;
+            usage: components["schemas"]["Usage"];
+        } & {
+            [key: string]: unknown;
+        };
         SearchResult: {
             messages: components["schemas"]["MessageSummary"][] | null;
             /** Format: int64 */
@@ -5764,6 +6139,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        SourceReference: {
+            /** Format: int64 */
+            id: number;
+            identifier: string;
+            type: string;
+        };
         SourceStatus: {
             active_sync: components["schemas"]["SyncRunStatus"] | null;
             can_sync: boolean;
@@ -5819,6 +6200,7 @@ export interface components {
             /** Format: int64 */
             message_count: number;
             sample_gmail_ids?: string[] | null;
+            source?: components["schemas"]["SourceReference"];
             status?: string;
         } & {
             [key: string]: unknown;
@@ -5842,6 +6224,8 @@ export interface components {
             total_threads: number;
             vector_search?: components["schemas"]["StatsView"];
             vector_status?: string;
+            vector_text_status?: string;
+            vector_visual_status?: string;
         } & {
             [key: string]: unknown;
         };
@@ -5851,6 +6235,47 @@ export interface components {
             enabled: boolean;
             /** Format: int64 */
             missing_embeddings_total: number;
+            /** Format: int64 */
+            person_coverage_rejected: number;
+        } & {
+            [key: string]: unknown;
+        };
+        Status: {
+            /** Format: int64 */
+            active_leases: number;
+            /** Format: int64 */
+            converged: number;
+            /** Format: double */
+            convergence_ratio: number;
+            /** Format: int64 */
+            convergence_total: number;
+            /** Format: int64 */
+            current: number;
+            duplicate_cost: components["schemas"]["DuplicateCostRisk"];
+            /** Format: int64 */
+            eligible: number;
+            formats: components["schemas"]["FormatCoverage"][] | null;
+            generation: components["schemas"]["VisualGeneration"];
+            /** Format: int64 */
+            journal_cursor: number;
+            /** Format: int64 */
+            journal_high_water: number;
+            /** Format: int64 */
+            journal_lag: number;
+            reconciliation_complete: boolean;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale: number;
+            /** Format: int64 */
+            terminal: number;
+            /** Format: int64 */
+            tombstoned: number;
+            /** Format: int64 */
+            unavailable: number;
+            /** Format: int64 */
+            unknown_role: number;
+            usage: components["schemas"]["ProviderUsage"];
         } & {
             [key: string]: unknown;
         };
@@ -6089,12 +6514,22 @@ export interface components {
             text: string;
         };
         UpdateRequest: {
+            account?: string;
             display_name: string;
-            email: string;
+            email?: string;
+            /** Format: int64 */
+            source_id?: number;
         };
         UpdateResult: {
             display_name: string;
             email: string;
+        } & {
+            [key: string]: unknown;
+        };
+        Usage: {
+            available: boolean;
+            /** Format: int64 */
+            total_tokens: number;
         } & {
             [key: string]: unknown;
         };
@@ -6122,6 +6557,7 @@ export interface components {
             pref?: number;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             /** Format: date-time */
             superseded_at?: string;
             type_label?: string;
@@ -6145,6 +6581,7 @@ export interface components {
             pref?: number;
             source: string;
             source_ref?: string;
+            source_resource_uid?: string;
             type_label?: string;
             type_tokens?: string[] | null;
             vcard?: components["schemas"]["VCardIdentity"];
@@ -6154,6 +6591,54 @@ export interface components {
             status: string;
         } & {
             [key: string]: unknown;
+        };
+        VisualBuildRequest: {
+            consent: boolean;
+        };
+        VisualGeneration: {
+            consent_policy_fingerprint?: string;
+            consented: boolean;
+            /** Format: int64 */
+            dimension: number;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            model: string;
+            /** Format: int64 */
+            source_fence: number;
+            state: string;
+        } & {
+            [key: string]: unknown;
+        };
+        VisualRetireRequest: {
+            /** Format: int64 */
+            generation_id: number;
+        };
+        VisualRetryRequest: {
+            blob_hash: string;
+            /** Format: int64 */
+            message_id: number;
+        };
+        VisualTextSearchRequest: {
+            after?: string;
+            before?: string;
+            cursor?: string;
+            directions?: string[] | null;
+            filename?: string;
+            /** Format: int64 */
+            limit?: number;
+            /** Format: int64 */
+            message_id?: number;
+            mime_prefix?: string;
+            /** Format: int64 */
+            participant_id?: number;
+            /** Format: int64 */
+            person_id?: number;
+            /** Format: int64 */
+            sender_person_id?: number;
+            /** Format: int64 */
+            source_id?: number;
+            text: string;
         };
     };
     responses: never;
@@ -8503,6 +8988,8 @@ export interface operations {
             query?: {
                 /** @description Account email or display name to sync */
                 email?: string;
+                /** @description Exact source ID to sync */
+                source_id?: number;
                 /** @description IMAP folder names to include (repeatable) */
                 folder?: string[];
                 /** @description IMAP folder names to exclude (repeatable) */
@@ -8539,6 +9026,8 @@ export interface operations {
             query?: {
                 /** @description Account email or display name to sync */
                 email?: string;
+                /** @description Exact source ID to sync */
+                source_id?: number;
                 /** @description Gmail search query */
                 query?: string;
                 /** @description Only messages on or after this YYYY-MM-DD date */
@@ -9360,6 +9849,16 @@ export interface operations {
                 attachment_id?: number;
                 /** @description Exact containing message ID */
                 message_id?: number;
+                /** @description Durable person ID */
+                person_id?: number;
+                /** @description Observed participant ID; translated through its durable person when bound */
+                participant_id?: number;
+                /** @description Person relation; repeat or comma-separate from_person, to_person, or group */
+                direction?: string[];
+                /** @description Only messages on or after an RFC3339 or YYYY-MM-DD date */
+                after?: string;
+                /** @description Only messages before an RFC3339 or YYYY-MM-DD date */
+                before?: string;
                 /** @description Maximum results to return (default 20, max 100) */
                 limit?: number;
                 /** @description Opaque cursor from the previous document search page */
@@ -9391,6 +9890,15 @@ export interface operations {
             };
             /** @description Error */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11672,6 +12180,159 @@ export interface operations {
             };
         };
     };
+    startVisualAttachmentBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retireVisualAttachmentGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retryVisualAttachmentOwner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resumeVisualAttachmentBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getVisualAttachmentStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listOrganizations: {
         parameters: {
             query?: {
@@ -12501,6 +13162,15 @@ export interface operations {
                 };
             };
             /** @description Error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
             428: {
                 headers: {
                     [name: string]: unknown;
@@ -12608,7 +13278,7 @@ export interface operations {
             };
         };
     };
-    searchPeople: {
+    searchParticipants: {
         parameters: {
             query?: never;
             header?: never;
@@ -12627,7 +13297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PersonSearchHTTPResponse"];
+                    "application/json": components["schemas"]["ParticipantSearchHTTPResponse"];
                 };
             };
             /** @description Error */
@@ -12668,12 +13338,12 @@ export interface operations {
             };
         };
     };
-    getPerson: {
+    getParticipant: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Durable participant ID */
+                /** @description Observed participant cluster member ID */
                 id: number;
             };
             cookie?: never;
@@ -12709,19 +13379,19 @@ export interface operations {
             };
         };
     };
-    searchPersonFiles: {
+    searchParticipantFiles: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Durable participant ID */
+                /** @description Observed participant cluster member ID */
                 id: number;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FileSearchHTTPRequest"];
+                "application/json": components["schemas"]["PersonFileSearchHTTPRequest"];
             };
         };
         responses: {
@@ -12731,7 +13401,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileSearchHTTPResponse"];
+                    "application/json": components["schemas"]["PersonFileSearchHTTPResponse"];
                 };
             };
             /** @description Error */
@@ -12744,7 +13414,25 @@ export interface operations {
                 };
             };
             /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12772,12 +13460,12 @@ export interface operations {
             };
         };
     };
-    getPersonContextSummary: {
+    getParticipantContextSummary: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Durable participant ID */
+                /** @description Observed participant cluster member ID */
                 id: number;
             };
             cookie?: never;
@@ -12794,7 +13482,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PersonContextSummaryHTTPResponse"];
+                    "application/json": components["schemas"]["ParticipantContextSummaryHTTPResponse"];
                 };
             };
             /** @description Error */
@@ -12835,12 +13523,12 @@ export interface operations {
             };
         };
     };
-    getPersonTimeline: {
+    getParticipantTimeline: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Durable participant ID */
+                /** @description Observed participant cluster member ID */
                 id: number;
             };
             cookie?: never;
@@ -12898,346 +13586,7 @@ export interface operations {
             };
         };
     };
-    listPersonRelationshipReviews: {
-        parameters: {
-            query?: {
-                status?: "pending" | "accepted" | "rejected";
-                person_id?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RelationshipReviewsResponse"];
-                };
-            };
-            /** @description Error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    createPersonRelationship: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreatePersonRelationshipRequest"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    /** @description Strong person relationship revision tag for optimistic concurrency */
-                    ETag?: string;
-                    /** @description Created person relationship */
-                    Location?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonRelationship"];
-                };
-            };
-            /** @description Error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getPersonRelationship: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Person relationship ID */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    /** @description Strong person relationship revision tag for optimistic concurrency */
-                    ETag?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonRelationship"];
-                };
-            };
-            /** @description Error */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    deletePersonRelationship: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Strong ETag returned by the latest person relationship read */
-                "If-Match": string;
-            };
-            path: {
-                /** @description Person relationship ID */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No Content */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            428: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    patchPersonRelationship: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Strong ETag returned by the latest person relationship read */
-                "If-Match": string;
-            };
-            path: {
-                /** @description Person relationship ID */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PatchPersonRelationshipRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    /** @description Strong person relationship revision tag for optimistic concurrency */
-                    ETag?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonRelationship"];
-                };
-            };
-            /** @description Error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            428: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    listPersons: {
+    listPeople: {
         parameters: {
             query?: never;
             header?: never;
@@ -13252,7 +13601,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PersonsResponse"];
+                    "application/json": components["schemas"]["PeopleResponse"];
                 };
             };
             /** @description Error */
@@ -13317,6 +13666,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchPeople: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonSearchResponse"];
                 };
             };
             /** @description Error */
@@ -14117,6 +14508,87 @@ export interface operations {
             };
         };
     };
+    searchPersonFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonFileSearchHTTPRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFileSearchHTTPResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getPersonStructuredProfile: {
         parameters: {
             query?: never;
@@ -14436,6 +14908,458 @@ export interface operations {
             };
             /** @description Error */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonTracking"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setPersonTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPersonTrackingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonTracking"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonRelationshipReviews: {
+        parameters: {
+            query?: {
+                status?: "pending" | "accepted" | "rejected";
+                person_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipReviewsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createPersonRelationship: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePersonRelationshipRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Created person relationship */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonRelationship: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deletePersonRelationship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person relationship read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchPersonRelationship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person relationship read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchPersonRelationshipRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15330,6 +16254,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResult"] | components["schemas"]["HybridSearchResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchVisualAttachments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisualTextSearchRequest"];
+                "multipart/form-data": {
+                    after?: string;
+                    before?: string;
+                    cursor?: string;
+                    direction?: ("from_person" | "to_person" | "group")[];
+                    filename?: string;
+                    /**
+                     * Format: binary
+                     * @description Query image (JPEG, PNG, WebP, or still GIF)
+                     */
+                    image: string;
+                    limit?: string;
+                    message_id?: string;
+                    mime_prefix?: string;
+                    participant_id?: string;
+                    person_id?: string;
+                    sender_person_id?: string;
+                    source_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

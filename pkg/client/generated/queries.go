@@ -212,6 +212,9 @@ type SyncCLIQuery struct {
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
 
+	// SourceID Exact source ID to sync
+	SourceID *int64 `json:"source_id,omitempty"`
+
 	// Folder IMAP folder names to include (repeatable)
 	Folder []string `json:"folder,omitempty"`
 
@@ -222,6 +225,9 @@ type SyncCLIQuery struct {
 type SyncFullCLIQuery struct {
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
+
+	// SourceID Exact source ID to sync
+	SourceID *int64 `json:"source_id,omitempty"`
 
 	// Query Gmail search query
 	Query *string `json:"query,omitempty"`
@@ -338,6 +344,21 @@ type SearchDocumentsQuery struct {
 
 	// MessageID Exact containing message ID
 	MessageID *int64 `json:"message_id,omitempty"`
+
+	// PersonID Durable person ID
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// ParticipantID Observed participant ID; translated through its durable person when bound
+	ParticipantID *int64 `json:"participant_id,omitempty"`
+
+	// Direction Person relation; repeat or comma-separate from_person, to_person, or group
+	Direction []string `json:"direction,omitempty"`
+
+	// After Only messages on or after an RFC3339 or YYYY-MM-DD date
+	After *string `json:"after,omitempty"`
+
+	// Before Only messages before an RFC3339 or YYYY-MM-DD date
+	Before *string `json:"before,omitempty"`
 
 	// Limit Maximum results to return (default 20, max 100)
 	Limit *int64 `json:"limit,omitempty"`
@@ -581,26 +602,6 @@ type ListOrganizationEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
-type ListPersonRelationshipReviewsQuery struct {
-	Status   *ListPersonRelationshipReviewsQueryStatus `json:"status,omitempty"`
-	PersonID *int64                                    `json:"person_id,omitempty"`
-}
-
-func (l ListPersonRelationshipReviewsQuery) Validate() error {
-	var errors runtime.ValidationErrors
-	if l.Status != nil {
-		if v, ok := any(l.Status).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Status", err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
 type ListPersonAttributesQuery struct {
 	// History Include superseded values
 	History *bool `json:"history,omitempty"`
@@ -674,6 +675,26 @@ type ListPersonEmploymentsQuery struct {
 
 type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
+}
+
+type ListPersonRelationshipReviewsQuery struct {
+	Status   *ListPersonRelationshipReviewsQueryStatus `json:"status,omitempty"`
+	PersonID *int64                                    `json:"person_id,omitempty"`
+}
+
+func (l ListPersonRelationshipReviewsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if l.Status != nil {
+		if v, ok := any(l.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SearchMessagesQuery struct {

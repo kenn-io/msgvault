@@ -127,7 +127,7 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	addErrorResponses(api, primary.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, primary, s.handleSetPrimaryEmployment)
 
-	personEmployments := rawAPIV1Operation("listPersonEmployments", http.MethodGet, "/persons/{id}/employments", "List a person's employment history")
+	personEmployments := rawAPIV1Operation("listPersonEmployments", http.MethodGet, "/people/{id}/employments", "List a person's employment history")
 	personEmployments.Parameters = append(personEmployments.Parameters, pathIntegerParam("Person ID"))
 	personEmployments.Parameters = append(personEmployments.Parameters, employmentListParameters()...)
 	personEmployments.Responses = jsonResponsesFor[EmploymentsResponse](api)

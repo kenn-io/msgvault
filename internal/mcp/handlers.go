@@ -15,6 +15,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/personscope"
+	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -22,6 +24,8 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -100,23 +104,152 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	engine           query.Engine
-	attachmentsDir   string
-	attachmentReader AttachmentReader
-	manifestSaver    DeletionManifestSaver
-	hybridSearcher   HybridSearcher
-	similarSearcher  SimilarSearcher
-	dataDir          string
-	documentSearcher DocumentSearcher
+	engine             query.Engine
+	attachmentsDir     string
+	attachmentReader   AttachmentReader
+	manifestSaver      DeletionManifestSaver
+	hybridSearcher     HybridSearcher
+	similarSearcher    SimilarSearcher
+	dataDir            string
+	documentSearcher   DocumentSearcher
+	personFileSearcher PersonFileSearcher
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
 	// a vector_not_enabled error. backend is additionally required by
 	// the find_similar_messages handler to load seed vectors and
 	// resolve the active generation.
-	hybridEngine *hybrid.Engine
-	vectorCfg    vector.Config
-	backend      vector.Backend
+	hybridEngine   *hybrid.Engine
+	vectorCfg      vector.Config
+	backend        vector.Backend
+	visualSearcher VisualSearcher
+}
+
+type VisualSearcher interface {
+	SearchVisualAttachments(ctx context.Context, request VisualSearchRequest) (*visual.SearchResponse, error)
+}
+
+type VisualSearchRequest struct {
+	Text           string
+	Image          []byte
+	Limit          int
+	Cursor         string
+	SenderPersonID int64
+	PersonID       int64
+	ParticipantID  int64
+	Directions     []personscope.Direction
+	SourceID       int64
+	MessageID      int64
+	Filename       string
+	MIMEPrefix     string
+	After, Before  *time.Time
+}
+
+func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if h.visualSearcher == nil {
+		return toolErrorResult("visual_search_not_ready: visual attachment search is unavailable"), nil
+	}
+	args := req.GetArguments()
+	text, _ := args["text"].(string)
+	imageBase64, _ := args["image_base64"].(string)
+	if (strings.TrimSpace(text) == "") == (imageBase64 == "") {
+		return toolErrorResult("invalid_visual_query: provide exactly one of text or image_base64"), nil
+	}
+	limit := 20
+	if raw, ok := args["limit"].(float64); ok {
+		if raw < 1 || raw > 100 || raw != math.Trunc(raw) {
+			return toolErrorResult("invalid_limit: limit must be between 1 and 100"), nil
+		}
+		limit = int(raw)
+	}
+	senderPersonID := int64(0)
+	if raw, ok := args["sender_person_id"].(float64); ok {
+		if raw < 1 || raw > math.MaxInt64 || raw != math.Trunc(raw) {
+			return toolErrorResult("invalid_sender_person_id: sender_person_id must be positive"), nil
+		}
+		senderPersonID = int64(raw)
+	}
+	parsePositiveID := func(name string) (int64, *toolResult) {
+		raw, exists := args[name].(float64)
+		if !exists {
+			return 0, nil
+		}
+		if raw < 1 || raw > math.MaxInt64 || raw != math.Trunc(raw) {
+			return 0, toolErrorResult("invalid_" + name + ": " + name + " must be positive")
+		}
+		return int64(raw), nil
+	}
+	sourceID, toolErr := parsePositiveID("source_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	messageID, toolErr := parsePositiveID("message_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	personID, toolErr := parsePositiveID("person_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	participantID, toolErr := parsePositiveID("participant_id")
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+		for i, raw := range rawDirections {
+			directions[i] = personscope.Direction(raw)
+		}
+		if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+	}
+	if senderPersonID > 0 && (personID > 0 || participantID > 0 || len(directions) > 0) {
+		return toolErrorResult("sender_person_id cannot be combined with person_id, participant_id, or directions"), nil
+	}
+	if personID > 0 && participantID > 0 {
+		return toolErrorResult("person_id and participant_id are mutually exclusive"), nil
+	}
+	if len(directions) > 0 && personID == 0 && participantID == 0 {
+		return toolErrorResult("directions require person_id or participant_id"), nil
+	}
+	cursor, _ := args["cursor"].(string)
+	filename, _ := args["filename"].(string)
+	mimePrefix, _ := args["mime_prefix"].(string)
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
+	var image []byte
+	if imageBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(imageBase64)
+		if err != nil || int64(len(decoded)) > visual.MaxQueryImageBytes {
+			return toolErrorResult("invalid_visual_query: image_base64 is invalid or too large"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		}
+		image = decoded
+	}
+	response, err := h.visualSearcher.SearchVisualAttachments(ctx, VisualSearchRequest{
+		Text: text, Image: image, Limit: limit, Cursor: cursor, SenderPersonID: senderPersonID,
+		PersonID: personID, ParticipantID: participantID, Directions: directions,
+		SourceID: sourceID, MessageID: messageID, Filename: filename, MIMEPrefix: mimePrefix,
+		After: after, Before: before,
+	})
+	if err != nil {
+		return toolErrorResult("visual_search_failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	}
+	return jsonResult(response)
 }
 
 // DocumentSearcher runs the dedicated extracted-document retrieval contract.
@@ -124,6 +257,94 @@ type handlers struct {
 // process out of the archive database.
 type DocumentSearcher interface {
 	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
+}
+
+type PersonFileSearcher interface {
+	SearchPersonFiles(ctx context.Context, request PersonFileSearchRequest) (generated.PersonFileSearchHTTPResponse, error)
+}
+
+type PersonFileSearchRequest struct {
+	PersonID     int64
+	Directions   []personscope.Direction
+	After        *time.Time
+	Before       *time.Time
+	Filename     string
+	MIMEFamilies []query.FileMIMEFamily
+	Limit        int
+	Cursor       string
+}
+
+func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if h.personFileSearcher == nil {
+		return toolErrorResult("person_file_search_unavailable: person file search is not configured"), nil
+	}
+	args := req.GetArguments()
+	personID, err := getIDArg(args, "person_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+	}
+	for i, raw := range rawDirections {
+		directions[i] = personscope.Direction(raw)
+	}
+	normalizedDirections, _, err := personresolver.NormalizeDirections(directions)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if len(directions) > 0 {
+		directions = normalizedDirections
+	}
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
+	rawFamilies, err := stringArrayArg(args, "mime_families")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	families := make([]query.FileMIMEFamily, len(rawFamilies))
+	for i, raw := range rawFamilies {
+		family := query.FileMIMEFamily(strings.ToLower(strings.TrimSpace(raw)))
+		switch family {
+		case query.FileMIMEImage, query.FileMIMEPDF, query.FileMIMEAudio, query.FileMIMEVideo,
+			query.FileMIMEText, query.FileMIMEDocument, query.FileMIMEArchive, query.FileMIMEOther:
+			families[i] = family
+		default:
+			return toolErrorResult(fmt.Sprintf("unknown file MIME family %q", raw)), nil
+		}
+	}
+	limit := 100
+	if _, found := args["limit"]; found {
+		parsed, parseErr := positiveInt64Arg(args, "limit")
+		if parseErr != nil || parsed > 100 {
+			return toolErrorResult("limit must be an integer between 1 and 100"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		}
+		limit = int(parsed)
+	}
+	filename, _ := args["filename"].(string)
+	cursor, _ := args["cursor"].(string)
+	response, err := h.personFileSearcher.SearchPersonFiles(ctx, PersonFileSearchRequest{
+		PersonID: personID, Directions: directions, After: after, Before: before,
+		Filename: strings.TrimSpace(filename), MIMEFamilies: families, Limit: limit, Cursor: cursor,
+	})
+	if err != nil {
+		return toolErrorResult("person file search failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	}
+	return jsonResult(response)
 }
 
 // AttachmentReader fetches content-addressed attachment bytes. It is optional:
@@ -326,10 +547,18 @@ func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, er
 	if err != nil {
 		return nil, newInternalError("list accounts", err)
 	}
+	var matched *int64
 	for _, acc := range accounts {
 		if acc.Identifier == account {
-			return &acc.ID, nil
+			if matched != nil {
+				return nil, &expectedHandlerError{message: "account matches multiple sources: " + account}
+			}
+			id := acc.ID
+			matched = &id
 		}
+	}
+	if matched != nil {
+		return matched, nil
 	}
 	return nil, &expectedHandlerError{message: "account not found: " + account}
 }
@@ -461,6 +690,45 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	personID, err := positiveInt64Arg(args, "person_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	participantID, err := positiveInt64Arg(args, "participant_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if personID > 0 && participantID > 0 {
+		return toolErrorResult("person_id and participant_id are mutually exclusive"), nil
+	}
+	rawDirections, err := stringArrayArg(args, "directions")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if len(rawDirections) > 0 && personID == 0 && participantID == 0 {
+		return toolErrorResult("directions require person_id or participant_id"), nil
+	}
+	var directions []personscope.Direction
+	if len(rawDirections) > 0 {
+		directions = make([]personscope.Direction, len(rawDirections))
+		for i, raw := range rawDirections {
+			directions[i] = personscope.Direction(raw)
+		}
+		if _, _, err := personresolver.NormalizeDirections(directions); err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+	}
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if after != nil && before != nil && !after.Before(*before) {
+		return toolErrorResult("invalid date range: after must be before before"), nil
+	}
 	limit := 20
 	if _, found := args["limit"]; found {
 		parsedLimit, parseErr := positiveInt64Arg(args, "limit")
@@ -475,7 +743,9 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	cursor, _ := args["cursor"].(string)
 	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
 		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
-		AttachmentID: attachmentID, MessageID: messageID, PageSize: limit, Cursor: cursor,
+		AttachmentID: attachmentID, MessageID: messageID,
+		PersonID: personID, ParticipantID: participantID, Directions: directions,
+		After: after, Before: before, PageSize: limit, Cursor: cursor,
 	})
 	if err != nil {
 		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil
@@ -1748,7 +2018,7 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 		return nil, newInternalError("aggregate messages", err)
 	}
 
-	return jsonResult(aggregateResponse(rows))
+	return jsonResult(aggregateResponse{Data: nonNilSlice(rows)})
 }
 
 // limitArg extracts a non-negative integer limit from a map, with a default.
@@ -1885,7 +2155,16 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
-	var gmailIDs []string
+	accounts, err := h.engine.ListAccounts(ctx)
+	if err != nil {
+		return dependencyError("list deletion sources", err)
+	}
+	accountsByID := make(map[int64]query.AccountInfo, len(accounts))
+	for _, info := range accounts {
+		accountsByID[info.ID] = info
+	}
+
+	var targets []query.DeletionTarget
 	var description string
 
 	if hasQuery {
@@ -1914,7 +2193,20 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 
 		for _, msg := range results {
-			gmailIDs = append(gmailIDs, msg.SourceMessageID)
+			if msg.SourceID <= 0 {
+				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+			}
+			info, ok := accountsByID[msg.SourceID]
+			if !ok {
+				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+			}
+			if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
+				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
+			}
+			targets = append(targets, query.DeletionTarget{
+				MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
+				SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
+			})
 		}
 		description = "query: " + queryStr
 		if len(description) > 50 {
@@ -1936,7 +2228,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 
 		var err error
-		gmailIDs, err = h.engine.GetGmailIDsByFilter(ctx, filter)
+		targets, err = h.engine.GetDeletionTargetsByFilter(ctx, filter)
 		if err != nil {
 			return nil, newInternalError("filter messages for deletion", err)
 		}
@@ -1967,15 +2259,26 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 	}
 
-	if len(gmailIDs) == 0 {
+	if len(targets) == 0 {
 		return toolErrorResult("no messages match the specified criteria"), nil
 	}
+	source, sourceErr := deletion.SourceReferenceForTargets(targets)
+	if errors.Is(sourceErr, deletion.ErrMultipleDeletionSources) {
+		return toolErrorResult("selected messages span multiple sources; set account or stage each source separately"), nil
+	}
+	if errors.Is(sourceErr, deletion.ErrIncompleteDeletionSource) {
+		return toolErrorResult("selected message has incomplete source metadata"), nil
+	}
+	if sourceErr != nil {
+		return toolErrorResult(sourceErr.Error()), nil
+	}
+	gmailIDs := deletion.SourceMessageIDs(targets)
 
-	manifest := deletion.NewManifest(description, gmailIDs)
+	manifest := deletion.NewManifestForSource(description, gmailIDs, source)
 	manifest.CreatedBy = "mcp"
 
 	// Set filter metadata for execution
-	manifest.Filters.Account = account
+	manifest.Filters.Account = source.Identifier
 	if fromStr != "" {
 		manifest.Filters.Senders = []string{fromStr}
 	}
@@ -2056,5 +2359,12 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return nil, newInternalError("search messages by domain", err)
 	}
 
-	return jsonResult(searchByDomainsResponse(results))
+	return jsonResult(searchByDomainsResponse{Data: nonNilSlice(results)})
+}
+
+func nonNilSlice[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
 }

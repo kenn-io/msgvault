@@ -158,7 +158,7 @@ func (s *Store) addPersonNameTx(
 		profileEnvelopeWriteColumns+`, created_at, updated_at
 	) VALUES (
 		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		`+s.dialect.Now()+`, `+s.dialect.Now()+`
 	) RETURNING id`, args...).Scan(&id); err != nil {
 		return nil, fmt.Errorf("add person name: %w", err)
@@ -205,7 +205,7 @@ const personNameSelect = `SELECT
 	secondary_surname, generation, language, script, phonetic_system,
 	phonetic_script, sort_as, is_derived, original_value,
 	pref, ordinal, type_label, type_tokens, vcard_property, vcard_group,
-	vcard_prop_id, vcard_pid, vcard_altid, source, source_ref, confidence,
+	vcard_prop_id, vcard_pid, vcard_altid, source, source_ref, source_resource_uid, confidence,
 	active_from, active_until, created_at, updated_at, superseded_at
 	FROM person_names`
 

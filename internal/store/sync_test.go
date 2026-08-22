@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -127,6 +128,60 @@ func TestStore_GetLatestSync(t *testing.T) {
 	require.NotNil(run, "expected sync run")
 	assert.Equal(secondID, run.ID, "ID")
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
+}
+
+func TestStore_CompleteSyncRejectsSupersededRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	oldID := f.StartSync()
+	newID := f.StartSync()
+
+	err := f.Store.CompleteSync(oldID, "stale-cursor")
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+
+	var status string
+	var cursorAfter sql.NullString
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT status, cursor_after FROM sync_runs WHERE id = ?
+	`), oldID).Scan(&status, &cursorAfter))
+	assert.Equal(store.SyncStatusFailed, status)
+	assert.False(cursorAfter.Valid)
+
+	run, err := f.Store.GetActiveSync(f.Source.ID)
+	require.NoError(err)
+	assert.Equal(newID, run.ID)
+}
+
+func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	require.NoError(f.Store.UpdateSourceSyncCursor(f.Source.ID, "baseline-cursor"))
+
+	oldID := f.StartSync()
+	newID := f.StartSync()
+
+	err := f.Store.CompleteSyncAndUpdateSourceCursorContext(
+		t.Context(), oldID, f.Source.ID, "stale-cursor",
+	)
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+
+	source, err := f.Store.GetSourceByID(f.Source.ID)
+	require.NoError(err)
+	assert.Equal("baseline-cursor", source.SyncCursor.String)
+
+	require.NoError(f.Store.CompleteSyncAndUpdateSourceCursorContext(
+		t.Context(), newID, f.Source.ID, "fresh-cursor",
+	))
+	source, err = f.Store.GetSourceByID(f.Source.ID)
+	require.NoError(err)
+	assert.Equal("fresh-cursor", source.SyncCursor.String)
+	run, err := f.Store.GetLatestSync(f.Source.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, run.Status)
+	assert.Equal("fresh-cursor", run.CursorAfter.String)
 }
 
 func TestStore_GetLatestCheckpointedSyncFallsBackPastUncheckpointedRun(t *testing.T) {

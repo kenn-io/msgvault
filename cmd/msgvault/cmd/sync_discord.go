@@ -83,12 +83,7 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		if importErr != nil {
 			return importErr
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Discord sync complete: %s\n", label)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Containers processed: %d\n", summary.ContainersProcessed)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages added: %d\n", summary.MessagesAdded)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages updated: %d\n", summary.MessagesUpdated)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Media downloaded: %d\n", summary.MediaDownloaded)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Media pending: %d\n", summary.MediaPending)
+		writeDiscordSyncSummary(cmd.OutOrStdout(), label, summary)
 		return nil
 	})
 	if anyWrites {
@@ -97,6 +92,16 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		}
 	}
 	return runErr
+}
+
+func writeDiscordSyncSummary(out io.Writer, label string, summary *discord.ImportSummary) {
+	_, _ = fmt.Fprintf(out, "Discord sync complete: %s\n", label)
+	_, _ = fmt.Fprintf(out, "  Containers processed: %d\n", summary.ContainersProcessed)
+	_, _ = fmt.Fprintf(out, "  Messages added: %d\n", summary.MessagesAdded)
+	_, _ = fmt.Fprintf(out, "  Messages updated: %d\n", summary.MessagesUpdated)
+	_, _ = fmt.Fprintf(out, "  Media downloaded: %d\n", summary.MediaDownloaded)
+	_, _ = fmt.Fprintf(out, "  Media pending: %d\n", summary.MediaPending)
+	_, _ = fmt.Fprintf(out, "  Media skipped by policy: %d\n", summary.MediaSkipped)
 }
 
 func writeDiscordSyncIssues(out io.Writer, summary *discord.ImportSummary) {
@@ -108,6 +113,8 @@ func writeDiscordSyncIssues(out io.Writer, summary *discord.ImportSummary) {
 		switch issue.Scope {
 		case discord.CatalogScopeGuildChannels:
 			label = "Guild channel catalog unavailable"
+		case discord.CatalogScopeGuildMembers:
+			label = "Guild membership unavailable"
 		case discord.CatalogScopeActiveThreads:
 			label = "Active thread catalog unavailable"
 		case discord.CatalogScopePublicArchive:

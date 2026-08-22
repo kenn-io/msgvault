@@ -17,10 +17,12 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
@@ -307,7 +309,7 @@ func (s FastmailSource) Selector() (identityops.SourceSelector, error) {
 	case s.SourceID > 0 && account != "":
 		return identityops.SourceSelector{}, errors.New("account and source_id are mutually exclusive")
 	case s.SourceID > 0:
-		return identityops.SourceSelector{SourceID: s.SourceID}, nil
+		return identityops.SourceSelector{SourceID: s.SourceID, SourceIDSet: true}, nil
 	case account == "":
 		return identityops.SourceSelector{}, errors.New("account or source_id is required")
 	default:
@@ -324,23 +326,39 @@ type BackupConfig struct {
 }
 
 const (
+	DefaultChatMaxMediaBytes       int64         = 100 << 20
 	DefaultDiscordMaxMediaBytes    int64         = 50 << 20
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
 )
 
+// MediaAccountConfig overrides attachment download settings for one provider
+// account. Pointer booleans distinguish an omitted value from explicit false.
+type MediaAccountConfig struct {
+	Media      *bool `toml:"media"`
+	MaxMediaMB int   `toml:"max_media_mb"`
+}
+
 // DiscordConfig holds provider-wide Discord import settings and optional
 // per-guild message-container filters.
+//
+//nolint:recvcheck // ApplyDefaults mutates; MediaPolicy keeps the value receiver shared by the sibling provider configs
 type DiscordConfig struct {
-	MaxMediaBytes    int64                         `toml:"max_media_bytes"`
-	EditRescanWindow time.Duration                 `toml:"edit_rescan_window"`
-	Guilds           map[string]DiscordGuildConfig `toml:"guilds"`
+	MaxMediaBytes        int64                         `toml:"max_media_bytes"`
+	Media                *bool                         `toml:"media"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	EditRescanWindow     time.Duration                 `toml:"edit_rescan_window"`
+	Guilds               map[string]DiscordGuildConfig `toml:"guilds"`
 }
 
 // DiscordGuildConfig filters channels, threads, and forum posts for one guild.
 // Empty Include means every accessible message container is eligible.
 type DiscordGuildConfig struct {
-	Include []string `toml:"include"`
-	Exclude []string `toml:"exclude"`
+	Include    []string `toml:"include"`
+	Exclude    []string `toml:"exclude"`
+	Media      *bool    `toml:"media"`
+	MaxMediaMB int      `toml:"max_media_mb"`
 }
 
 // ApplyDefaults restores Discord provider defaults for omitted or zero-valued
@@ -393,6 +411,8 @@ type Config struct {
 	Discord      DiscordConfig                   `toml:"discord"`
 	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity     ActivityConfig                  `toml:"activity"`
+	People       peoplesweep.PeopleConfig        `toml:"people"`
+	Teams        TeamsConfig                     `toml:"teams"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -651,6 +671,7 @@ func NewDefaultConfig() *Config {
 	cfg.Web.ApplyDefaults()
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
+	cfg.People.Sweep.ApplyDefaults()
 	return cfg
 }
 
@@ -727,13 +748,25 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
-	if _, err := toml.Decode(string(content), cfg); err != nil {
+	// Multimodal defaults depend on the decoded credential destination. Reset
+	// the pre-filled section so changing endpoint cannot silently carry the
+	// default Voyage key environment name to another origin.
+	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	metadata, err := toml.Decode(string(content), cfg)
+	if err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
 			strings.Contains(err.Error(), "hexadecimal digits after") {
 			return nil, fmt.Errorf("decode config: %w -- hint: Windows paths in TOML must use "+
 				"forward slashes (C:/Games/msgvault) or single quotes ('C:\\Games\\msgvault')", err)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	if cfg.People.Sweep.Provider.AllowAnonymous &&
+		!metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
+		// The default authenticated credential is loaded before TOML decoding.
+		// Anonymous loopback mode instead defaults to no credential, while an
+		// explicitly configured key remains visible to validation and is rejected.
+		cfg.People.Sweep.Provider.APIKeyEnv = ""
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
@@ -745,6 +778,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
+	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
@@ -760,6 +794,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
+		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
@@ -776,6 +811,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Attachments.Documents.ApplyDefaults()
 	if err := cfg.Attachments.Documents.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Vector.AnyLaneEnabled() {
+		if err := cfg.Vector.Validate(); err != nil {
+			return nil, fmt.Errorf("vector config: %w", err)
+		}
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
@@ -798,7 +838,13 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
 	}
+	if err := cfg.People.Sweep.Validate(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Backup.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMediaPolicies(); err != nil {
 		return nil, err
 	}
 	cfg.applySynctechSMSDefaults()
@@ -1168,6 +1214,12 @@ type BeeperConfig struct {
 	Media *bool `toml:"media"`
 	// MaxMediaMB caps individual attachment downloads in MiB (0 = 100).
 	MaxMediaMB int `toml:"max_media_mb"`
+	// MediaScope is all, direct, or none (empty = all).
+	MediaScope string `toml:"media_scope"`
+	// MediaMaxParticipants caps eligible conversation membership (0 = no cap).
+	MediaMaxParticipants int `toml:"media_max_participants"`
+	// AccountsConfig holds per-Beeper-account media overrides.
+	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).
@@ -1187,6 +1239,21 @@ type SlackConfig struct {
 	Media *bool `toml:"media"`
 	// MaxMediaMB caps individual file downloads in MiB (0 = 100).
 	MaxMediaMB int `toml:"max_media_mb"`
+	// MediaScope is all, direct, or none (empty = all).
+	MediaScope string `toml:"media_scope"`
+	// MediaMaxParticipants caps eligible conversation membership (0 = no cap).
+	MediaMaxParticipants int `toml:"media_max_participants"`
+	// AccountsConfig holds per-workspace media overrides keyed by team ID.
+	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
+}
+
+// TeamsConfig configures provider-wide and per-account Teams media policy.
+type TeamsConfig struct {
+	Media                *bool                         `toml:"media"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
 // MediaEnabled reports whether file download is on (default true).
@@ -1213,6 +1280,126 @@ func (b BeeperConfig) MaxMediaBytes() int64 {
 		return int64(b.MaxMediaMB) << 20
 	}
 	return 100 << 20
+}
+
+// MediaPolicy resolves Beeper provider settings and an account override.
+func (b BeeperConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
+	account, ok := b.AccountsConfig[accountID]
+	return resolveMediaPolicy(b.Media, b.MediaScope, b.MediaMaxParticipants,
+		b.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
+// MediaPolicy resolves Slack provider settings and a workspace override.
+func (s SlackConfig) MediaPolicy(teamID string) attachmentpolicy.Policy {
+	account, ok := s.AccountsConfig[teamID]
+	return resolveMediaPolicy(s.Media, s.MediaScope, s.MediaMaxParticipants,
+		s.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
+// MediaPolicy resolves Discord provider settings and a guild override.
+func (d DiscordConfig) MediaPolicy(guildID string) attachmentpolicy.Policy {
+	guild, ok := d.Guilds[guildID]
+	account := MediaAccountConfig{Media: guild.Media, MaxMediaMB: guild.MaxMediaMB}
+	defaultBytes := d.MaxMediaBytes
+	if defaultBytes <= 0 {
+		defaultBytes = DefaultDiscordMaxMediaBytes
+	}
+	return resolveMediaPolicy(d.Media, d.MediaScope, d.MediaMaxParticipants,
+		d.MaxMediaMB, defaultBytes, account, ok)
+}
+
+// MediaPolicy resolves Teams provider settings and an email-account override.
+func (t TeamsConfig) MediaPolicy(email string) attachmentpolicy.Policy {
+	account, ok := t.AccountsConfig[email]
+	return resolveMediaPolicy(t.Media, t.MediaScope, t.MediaMaxParticipants,
+		t.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
+func resolveMediaPolicy(
+	providerMedia *bool,
+	scope string,
+	maxParticipants, providerMaxMB int,
+	defaultMaxBytes int64,
+	account MediaAccountConfig,
+	hasAccount bool,
+) attachmentpolicy.Policy {
+	resolvedScope := attachmentpolicy.Scope(scope)
+	if resolvedScope == "" {
+		resolvedScope = attachmentpolicy.ScopeAll
+	}
+	maxBytes := defaultMaxBytes
+	if providerMaxMB > 0 {
+		maxBytes = int64(providerMaxMB) << 20
+	}
+	disabled := attachmentpolicy.SkipReason("")
+	if providerMedia != nil && !*providerMedia {
+		disabled = attachmentpolicy.SkipPolicyScope
+	}
+	if hasAccount {
+		if account.MaxMediaMB > 0 {
+			maxBytes = int64(account.MaxMediaMB) << 20
+		}
+		if account.Media != nil {
+			if *account.Media {
+				disabled = ""
+			} else {
+				disabled = attachmentpolicy.SkipAccountPolicy
+			}
+		}
+	}
+	return attachmentpolicy.Policy{
+		Scope: resolvedScope, MaxParticipants: maxParticipants,
+		MaxBytes: maxBytes, DisabledReason: disabled,
+	}
+}
+
+func (c *Config) validateMediaPolicies() error {
+	providers := []struct {
+		name            string
+		policy          attachmentpolicy.Policy
+		providerMaxMB   int
+		accountMaxMedia map[string]int
+	}{
+		{name: "beeper", policy: c.Beeper.MediaPolicy(""), providerMaxMB: c.Beeper.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
+		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
+		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
+			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
+		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
+	}
+	for _, provider := range providers {
+		if provider.providerMaxMB < 0 {
+			return fmt.Errorf("invalid [%s] max_media_mb %d: must be zero or positive", provider.name, provider.providerMaxMB)
+		}
+		if err := provider.policy.Validate(); err != nil {
+			return fmt.Errorf("invalid [%s] attachment policy: %w", provider.name, err)
+		}
+		for account, maxMediaMB := range provider.accountMaxMedia {
+			if maxMediaMB < 0 {
+				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be zero or positive",
+					provider.name, account, maxMediaMB)
+			}
+		}
+	}
+	return nil
+}
+
+func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {
+	maximums := make(map[string]int, len(accounts))
+	for account, cfg := range accounts {
+		maximums[account] = cfg.MaxMediaMB
+	}
+	return maximums
+}
+
+func discordGuildMaximums(guilds map[string]DiscordGuildConfig) map[string]int {
+	maximums := make(map[string]int, len(guilds))
+	for guild, cfg := range guilds {
+		maximums[guild] = cfg.MaxMediaMB
+	}
+	return maximums
 }
 
 // AccountIncluded reports whether a Beeper accountID passes the

@@ -243,7 +243,7 @@ var personRelationshipListCmd = &cobra.Command{
 	Short: "List one person's relationships from that person's side",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		personID, err := positivePersonCLIArg(cmd, args[0], "person")
+		personID, err := positivePersonCLIArg(cmd, args[0], personValue)
 		if err != nil {
 			return err
 		}

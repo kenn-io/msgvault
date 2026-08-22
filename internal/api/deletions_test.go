@@ -116,11 +116,13 @@ func TestStageDeletionLegacyFilterIsDryRunOnly(t *testing.T) {
 	st := &deletionMockStore{}
 	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 			gotFilter = f
-			return []string{"gm-1", "gm-2"}, nil
+			return []query.DeletionTarget{
+				{MessageID: 1, SourceID: 7, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-1"},
+				{MessageID: 2, SourceID: 7, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-2"},
+			}, nil
 		},
-		GmailAccounts: []string{"user@example.com"},
 	}
 	srv := newDeletionTestServer(t, st, engine)
 
@@ -155,11 +157,13 @@ func TestStageDeletionLegacyExplicitMessageIDsRemainCompatible(t *testing.T) {
 
 	st := &deletionMockStore{}
 	engine := &querytest.MockEngine{
-		GetGmailIDsByMessageIDsFunc: func(_ context.Context, ids []int64) ([]string, error) {
+		GetDeletionTargetsByMessageIDsFunc: func(_ context.Context, ids []int64) ([]query.DeletionTarget, error) {
 			assert.Equal([]int64{7, 8}, ids)
-			return []string{"gm-2", "gm-3"}, nil
+			return []query.DeletionTarget{
+				{MessageID: 7, SourceID: 9, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-2"},
+				{MessageID: 8, SourceID: 9, SourceType: "gmail", SourceIdentifier: "user@example.com", SourceMessageID: "gm-3"},
+			}, nil
 		},
-		GmailAccounts: []string{"user@example.com"},
 	}
 	srv := newDeletionTestServer(t, st, engine)
 
@@ -189,12 +193,10 @@ func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
 	assert := assert.New(t)
 
 	st := &deletionMockStore{}
-	var gotGmailIDs []string
 	engine := &querytest.MockEngine{
-		GmailIDs: []string{"gm-1", "gm-2"},
-		GetAccountsByGmailIDsFunc: func(_ context.Context, gmailIDs []string) ([]string, error) {
-			gotGmailIDs = gmailIDs
-			return []string{"a@example.com", "b@example.com"}, nil
+		DeletionTargets: []query.DeletionTarget{
+			{MessageID: 1, SourceID: 10, SourceType: "gmail", SourceIdentifier: "a@example.invalid", SourceMessageID: "gm-1"},
+			{MessageID: 2, SourceID: 20, SourceType: "gmail", SourceIdentifier: "b@example.invalid", SourceMessageID: "gm-2"},
 		},
 	}
 	srv := newDeletionTestServer(t, st, engine)
@@ -205,9 +207,8 @@ func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
 		w := postDeletions(t, srv, body)
 		assert.Equal(http.StatusBadRequest, w.Code, "body %s -> status", body)
 		assert.Contains(w.Body.String(), "multi_account_selection", "body %s -> error code", body)
-		assert.Contains(w.Body.String(), "a@example.com, b@example.com", "body %s -> accounts listed", body)
+		assert.Contains(w.Body.String(), "multiple sources", "body %s -> guidance", body)
 	}
-	assert.Equal([]string{"gm-1", "gm-2"}, gotGmailIDs, "resolution queried with staged IDs")
 	assert.Empty(st.saved, "nothing staged across accounts")
 }
 
@@ -220,7 +221,10 @@ func TestStageDeletionDryRun(t *testing.T) {
 	for i := range ids {
 		ids[i] = "gm-" + string(rune('a'+i))
 	}
-	engine := &querytest.MockEngine{GmailIDs: ids, GmailAccounts: []string{"user@example.com"}}
+	engine := &querytest.MockEngine{
+		GmailIDs: ids,
+		Accounts: []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "user@example.com"}},
+	}
 	srv := newDeletionTestServer(t, st, engine)
 
 	w := postDeletions(t, srv, `{"filter": {"domain": "example.com"}, "dry_run": true}`)
@@ -231,6 +235,8 @@ func TestStageDeletionDryRun(t *testing.T) {
 	assert.True(resp.DryRun)
 	assert.Equal(25, resp.MessageCount)
 	assert.Equal("user@example.com", resp.Account, "dry run reports the account")
+	require.NotNil(resp.Source)
+	assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "user@example.com"}, *resp.Source)
 	assert.Len(resp.SampleGmailIDs, 10, "sample capped at 10")
 	assert.Empty(resp.ID, "dry run stages nothing")
 	assert.Empty(st.saved, "dry run writes nothing")
@@ -417,7 +423,7 @@ func TestStageDeletionRejectsEmptyFilter(t *testing.T) {
 func TestStageDeletionNoMatches(t *testing.T) {
 	st := &deletionMockStore{}
 	engine := &querytest.MockEngine{
-		GetGmailIDsByFilterFunc: func(_ context.Context, _ query.MessageFilter) ([]string, error) {
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, _ query.MessageFilter) ([]query.DeletionTarget, error) {
 			return nil, nil
 		},
 	}
@@ -509,9 +515,10 @@ func TestGetDeletionReturnsManifestLifecycleDetail(t *testing.T) {
 	assertions := assert.New(t)
 	completedAt := time.Date(2026, 7, 1, 13, 0, 0, 0, time.UTC)
 	manifest := &deletion.Manifest{
-		ID: "batch-1", Status: deletion.StatusFailed, CreatedAt: completedAt.Add(-time.Hour),
+		Version: 2, ID: "batch-1", Status: deletion.StatusFailed, CreatedAt: completedAt.Add(-time.Hour),
 		CreatedBy: "api", Description: "reviewed batch", GmailIDs: []string{"gm-1", "gm-2"},
 		Filters: deletion.Filters{Account: "user@example.com"},
+		Source:  &deletion.SourceReference{ID: 42, Type: "gmail", Identifier: "user@example.com"},
 		Execution: &deletion.Execution{StartedAt: completedAt.Add(-time.Minute), CompletedAt: &completedAt,
 			Method: deletion.MethodTrash, Succeeded: 1, Failed: 1, FailedIDs: []string{"gm-2"}},
 	}
@@ -529,6 +536,8 @@ func TestGetDeletionReturnsManifestLifecycleDetail(t *testing.T) {
 	assertions.Equal("failed", detail.Status)
 	assertions.Equal("user@example.com", detail.Account)
 	assertions.Equal(2, detail.MessageCount)
+	requirements.NotNil(detail.Source)
+	assertions.Equal(*manifest.Source, *detail.Source)
 	requirements.NotNil(detail.Execution)
 	assertions.Equal(1, detail.Execution.Failed)
 	assertions.Equal([]string{"gm-2"}, detail.Execution.FailedIDs)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,12 +14,12 @@ func newBackfillSlackMediaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-slack-media [team-id]",
 		Short: "Retry pending Slack file downloads",
-		Long: `Retry pending Slack file downloads.
+		Long: `Retry eligible Slack file downloads.
 
-Files that failed to download during sync (outages, size caps since raised)
-leave pending markers. This command re-reads the archived message JSON and
-retries the downloads. Idempotent: already-downloaded files are never
-re-fetched.
+This command retries unfinished downloads and policy exclusions that are now
+allowed, such as files whose configured size cap was raised. It re-reads the
+archived message JSON and retries eligible downloads. Already-downloaded files
+are never re-fetched.
 
 Examples:
   msgvault backfill-slack-media
@@ -69,8 +70,7 @@ Examples:
 					runErrors = append(runErrors, fmt.Errorf("%s: %w", teamID, berr))
 					continue
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s done in %s: %d messages, %d downloaded, %d still pending\n",
-					teamID, sum.Duration.Round(time.Second), sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending)
+				writeSlackMediaBackfillSummary(cmd.OutOrStdout(), teamID, sum)
 			}
 			return slackMediaBackfillExit(
 				ctx.Err(),
@@ -80,6 +80,12 @@ Examples:
 		},
 	}
 	return cmd
+}
+
+func writeSlackMediaBackfillSummary(out io.Writer, teamID string, sum *slack.ImportSummary) {
+	_, _ = fmt.Fprintf(out, "%s done in %s: %d messages, %d downloaded, %d still pending, %d skipped by policy\n",
+		teamID, sum.Duration.Round(time.Second), sum.MessagesProcessed, sum.AttachmentsDownloaded,
+		sum.AttachmentsPending, sum.AttachmentsSkipped)
 }
 
 func slackMediaBackfillExit(ctxErr error, runErrors []error, cacheErr error) error {

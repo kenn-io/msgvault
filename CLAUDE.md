@@ -171,8 +171,9 @@ extension and the `pgvector` build tag.
 There are two PostgreSQL configurations to cover: the pgvector build
 (`make test-pg`) and the shipped build, which has no pgvector tag
 (`make test-pg-shipped`). Run `make test-pg-both` rather than both of those —
-the tag changes the test binary of only nine packages, so the second full
-run would reprove the first. Fixtures build their schemas in concurrent
+the tag changes the test binary of only the packages listed in
+`PG_SHIPPED_ONLY_PKGS` in the Makefile, so the second full run would reprove
+the first. Fixtures build their schemas in concurrent
 batches (`internal/testutil/pg_warm_pool.go`) rather than one at a time: a
 fixture that finds the buffer empty builds several and the next few claim
 theirs for free. All of that happens inside the claiming fixture's own setup —

@@ -14,7 +14,7 @@ import (
 var profileEnvelopeColumnNames = []string{
 	"pref", "ordinal", "type_label", "type_tokens",
 	"vcard_property", "vcard_group", "vcard_prop_id", "vcard_pid", "vcard_altid",
-	"source", "source_ref", "confidence",
+	"source", "source_ref", "source_resource_uid", "confidence",
 	"active_from", "active_until",
 	"created_at", "updated_at", "superseded_at",
 }

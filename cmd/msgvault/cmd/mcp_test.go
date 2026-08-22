@@ -57,6 +57,10 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	require := require.New(t)
 
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/multimodal/status" {
+			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
+			return
+		}
 		assert.Equal("/api/v1/stats", r.URL.Path)
 		assert.Equal("daemon-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
@@ -135,6 +139,7 @@ func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *
 	assert.NotNil(opts.AttachmentReader, "attachment reader")
 	assert.NotNil(opts.ManifestSaver, "manifest saver")
 	assert.NotNil(opts.DocumentSearcher, "document searcher")
+	assert.NotNil(opts.PersonFileSearcher, "person file searcher")
 	assert.Nil(opts.HybridSearcher, "hybrid searcher")
 	assert.Nil(opts.SimilarSearcher, "similar searcher")
 }
@@ -149,6 +154,9 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 	var manifestRequests atomic.Int32
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/multimodal/status":
+			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
+			return
 		case "/api/v1/stats":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -215,6 +223,12 @@ func newMCPStatsDaemonClient(t *testing.T, statsJSON string) *daemonclient.Clien
 	t.Helper()
 
 	return newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		// Registration also probes the daemon's multimodal status; these
+		// fixtures model a daemon without the visual lane.
+		if r.URL.Path == "/api/v1/multimodal/status" {
+			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
+			return
+		}
 		assert.Equal(t, "/api/v1/stats", r.URL.Path, "path")
 		assert.Equal(t, "key", r.Header.Get("X-Api-Key"), "api key")
 		w.Header().Set("Content-Type", "application/json")

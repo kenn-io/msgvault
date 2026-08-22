@@ -11,6 +11,8 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -30,6 +32,43 @@ type catalogCapabilities struct {
 	vectorInMessage bool
 	similarMessages bool
 	documentSearch  bool
+	visualSearch    bool
+}
+
+func visualSearchAvailable(capabilities catalogCapabilities) bool {
+	return capabilities.visualSearch
+}
+
+func searchVisualAttachmentsDefinition() toolDefinition {
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
+	definition := readDefinition(
+		ToolSearchVisualAttachments,
+		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance.",
+		closedObject(map[string]*jsonschema.Schema{
+			"text":             stringSchema("Natural-language visual query"),
+			"image_base64":     stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
+			"limit":            nonNegativeIntegerSchema("Maximum results (1-100, default 20)", 20),
+			"sender_person_id": safeIDSchema("Legacy alias for person_id with from_person direction"),
+			"person_id":        safeIDSchema("Only attachments related to this durable person ID"),
+			"participant_id":   safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Items: direction,
+			},
+			"source_id":   safeIDSchema("Only attachments from this source ID"),
+			"message_id":  safeIDSchema("Only attachments owned by this message ID"),
+			"filename":    stringSchema("Case-insensitive filename substring filter"),
+			"mime_prefix": stringSchema("Case-insensitive MIME prefix filter, such as image/"),
+			"cursor":      stringSchema("Opaque next_cursor from the previous response"),
+			"after":       stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before":      stringSchema("Only messages before YYYY-MM-DD"),
+		}),
+		outputSchemaFor[visual.SearchResponse](),
+		(*handlers).searchVisualAttachments,
+	)
+	definition.availability = visualSearchAvailable
+	return definition
 }
 
 type catalogToolHandler func(*handlers, context.Context, toolRequest) (*toolResult, error)
@@ -67,24 +106,26 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
 		documentSearch:  opts.DocumentSearcher != nil,
+		visualSearch:    opts.VisualSearcher != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only sixteen possible capability keys, which also keeps the
-// shared SDK cache boundary fixed.
+// request. There are only thirty-two possible capability keys, which also keeps
+// the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 16)
-	for mask := range 16 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 32)
+	for mask := range 32 {
 		capabilities := catalogCapabilities{
-			semanticSearch:  mask&0b1000 != 0,
-			vectorInMessage: mask&0b0100 != 0,
-			similarMessages: mask&0b0010 != 0,
-			documentSearch:  mask&0b0001 != 0,
+			semanticSearch:  mask&0b10000 != 0,
+			vectorInMessage: mask&0b01000 != 0,
+			similarMessages: mask&0b00100 != 0,
+			documentSearch:  mask&0b00010 != 0,
+			visualSearch:    mask&0b00001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
@@ -110,6 +151,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),
 		searchMetadataDefinition(nil),
+		searchPersonFilesDefinition(nil),
+		searchVisualAttachmentsDefinition(),
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 	}
@@ -264,6 +307,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 	semantic.Schema = ""
 	return &jsonschema.Schema{
 		Schema: schema202012,
+		Type:   "object",
 		OneOf:  []*jsonschema.Schema{metadata, semantic},
 	}
 }
@@ -541,7 +585,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolAggregate,
 		"Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
-			"Returns a JSON array of objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
+			"Returns an object with a data array containing objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
 		closedObject(map[string]*jsonschema.Schema{
 			"group_by": stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", "sender", "recipient", "domain", "label", "time"),
 			"account":  accountProperty(),
@@ -557,7 +601,8 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
-		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Useful for finding all communication with a company regardless of direction.",
+		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. "+
+			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
 		closedObject(map[string]*jsonschema.Schema{
 			"domains": stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
 			"limit":   nonNegativeIntegerSchema("Maximum results to return (default 100)", 100),
@@ -612,6 +657,8 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
 	limit.Default = json.RawMessage("20")
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
 	definition := readDefinition(
 		ToolSearchDocuments,
 		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
@@ -625,10 +672,18 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 				Type: "array", Description: "Optional containing message type scope",
 				Items: stringSchema("Containing message type"),
 			},
-			"attachment_id": safeIDSchema("Optional exact attachment occurrence ID"),
-			"message_id":    safeIDSchema("Optional exact containing message ID"),
-			"limit":         limit,
-			"cursor":        stringSchema("Opaque cursor from the previous page"),
+			"attachment_id":  safeIDSchema("Optional exact attachment occurrence ID"),
+			"message_id":     safeIDSchema("Optional exact containing message ID"),
+			"person_id":      safeIDSchema("Optional durable person ID"),
+			"participant_id": safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Items: direction,
+			},
+			"after":  stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before": stringSchema("Only messages before YYYY-MM-DD"),
+			"limit":  limit,
+			"cursor": stringSchema("Opaque cursor from the previous page"),
 		}, "query"),
 		outputSchemaFor[store.DocumentSearchResponse](),
 		(*handlers).searchDocuments,
@@ -637,13 +692,48 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	return definition
 }
 
+func searchPersonFilesDefinition(_ *handlers) toolDefinition {
+	limit := boundedIntegerSchema("Maximum metadata results to return (default 100, max 100)", 1, 100)
+	limit.Default = json.RawMessage("100")
+	direction := stringSchema("How the owning message relates to the person",
+		"from_person", "to_person", "group")
+	mimeFamily := stringSchema("Stable MIME family",
+		"image", "pdf", "audio", "video", "text", "document", "archive", "other")
+	return readDefinition(
+		ToolSearchPersonFiles,
+		"Search authoritative attachment metadata for one durable person. Results preserve exact attachment occurrence, owning message, conversation, source, matched participant, role, and direction provenance.",
+		closedObject(map[string]*jsonschema.Schema{
+			"person_id": safeIDSchema("Durable person ID"),
+			"directions": {
+				Type: "array", Description: "Optional union of from_person, to_person, and group",
+				Items: direction,
+			},
+			"after":    stringSchema("Only messages on or after YYYY-MM-DD"),
+			"before":   stringSchema("Only messages before YYYY-MM-DD"),
+			"filename": stringSchema("Case-insensitive filename substring filter"),
+			"mime_families": {
+				Type: "array", Description: "Optional stable MIME-family filter",
+				Items: mimeFamily,
+			},
+			"limit":  limit,
+			"cursor": stringSchema("Opaque cursor from the previous metadata page"),
+		}, "person_id"),
+		outputSchemaFor[generated.PersonFileSearchHTTPResponse](),
+		(*handlers).searchPersonFiles,
+	)
+}
+
 // The following named response types make every catalog output schema visible
 // without changing existing JSON field names.
 type searchMetadataResponse paginatedResponse[query.MessageSummary]
 type searchInMessageResponse paginatedResponse[messageMatch]
 type listMessagesResponse paginatedResponse[query.MessageSummary]
-type aggregateResponse []query.AggregateRow
-type searchByDomainsResponse []query.MessageSummary
+type aggregateResponse struct {
+	Data []query.AggregateRow `json:"data"`
+}
+type searchByDomainsResponse struct {
+	Data []query.MessageSummary `json:"data"`
+}
 
 type getAttachmentResponse struct {
 	Filename string `json:"filename"`

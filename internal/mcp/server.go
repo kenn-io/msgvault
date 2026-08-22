@@ -18,25 +18,28 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // Tool name constants.
 const (
-	ToolSearchMessages         = "search_messages"
-	ToolSearchMetadata         = "search_metadata"
-	ToolSearchMessageBodies    = "search_message_bodies"
-	ToolSemanticSearchMessages = "semantic_search_messages"
-	ToolGetMessage             = "get_message"
-	ToolGetAttachment          = "get_attachment"
-	ToolExportAttachment       = "export_attachment"
-	ToolListMessages           = "list_messages"
-	ToolGetStats               = "get_stats"
-	ToolAggregate              = "aggregate"
-	ToolStageDeletion          = "stage_deletion"
-	ToolSearchByDomains        = "search_by_domains"
-	ToolFindSimilarMessages    = "find_similar_messages"
-	ToolSearchInMessage        = "search_in_message"
-	ToolSearchDocuments        = "search_document_attachments"
+	ToolSearchMessages          = "search_messages"
+	ToolSearchMetadata          = "search_metadata"
+	ToolSearchMessageBodies     = "search_message_bodies"
+	ToolSemanticSearchMessages  = "semantic_search_messages"
+	ToolGetMessage              = "get_message"
+	ToolGetAttachment           = "get_attachment"
+	ToolExportAttachment        = "export_attachment"
+	ToolListMessages            = "list_messages"
+	ToolGetStats                = "get_stats"
+	ToolAggregate               = "aggregate"
+	ToolStageDeletion           = "stage_deletion"
+	ToolSearchByDomains         = "search_by_domains"
+	ToolFindSimilarMessages     = "find_similar_messages"
+	ToolSearchVisualAttachments = "search_visual_attachments"
+	ToolSearchInMessage         = "search_in_message"
+	ToolSearchDocuments         = "search_document_attachments"
+	ToolSearchPersonFiles       = "search_person_files"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -51,14 +54,15 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	Engine           query.Engine
-	AttachmentsDir   string
-	AttachmentReader AttachmentReader
-	ManifestSaver    DeletionManifestSaver
-	HybridSearcher   HybridSearcher
-	SimilarSearcher  SimilarSearcher
-	DataDir          string
-	DocumentSearcher DocumentSearcher
+	Engine             query.Engine
+	AttachmentsDir     string
+	AttachmentReader   AttachmentReader
+	ManifestSaver      DeletionManifestSaver
+	HybridSearcher     HybridSearcher
+	SimilarSearcher    SimilarSearcher
+	DataDir            string
+	DocumentSearcher   DocumentSearcher
+	PersonFileSearcher PersonFileSearcher
 
 	// HybridEngine is optional. When nil, semantic_search_messages rejects
 	// vector/hybrid searches with a vector_not_enabled error.
@@ -70,7 +74,8 @@ type ServeOptions struct {
 	VectorCfg vector.Config
 	// Backend is optional. When nil, find_similar_messages rejects all
 	// calls with a vector_not_enabled error.
-	Backend vector.Backend
+	Backend        vector.Backend
+	VisualSearcher VisualSearcher
 }
 
 type HTTPOptions struct {
@@ -177,17 +182,19 @@ func newMCPServerWithPolicy(
 	)
 
 	h := &handlers{
-		engine:           opts.Engine,
-		attachmentsDir:   opts.AttachmentsDir,
-		attachmentReader: opts.AttachmentReader,
-		manifestSaver:    opts.ManifestSaver,
-		hybridSearcher:   opts.HybridSearcher,
-		similarSearcher:  opts.SimilarSearcher,
-		dataDir:          opts.DataDir,
-		documentSearcher: opts.DocumentSearcher,
-		hybridEngine:     opts.HybridEngine,
-		vectorCfg:        opts.VectorCfg,
-		backend:          opts.Backend,
+		engine:             opts.Engine,
+		attachmentsDir:     opts.AttachmentsDir,
+		attachmentReader:   opts.AttachmentReader,
+		manifestSaver:      opts.ManifestSaver,
+		hybridSearcher:     opts.HybridSearcher,
+		similarSearcher:    opts.SimilarSearcher,
+		dataDir:            opts.DataDir,
+		documentSearcher:   opts.DocumentSearcher,
+		personFileSearcher: opts.PersonFileSearcher,
+		hybridEngine:       opts.HybridEngine,
+		vectorCfg:          opts.VectorCfg,
+		backend:            opts.Backend,
+		visualSearcher:     opts.VisualSearcher,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -268,7 +275,12 @@ func newMCPHTTPServerWithPolicy(
 			Stateless:                    true,
 			JSONResponse:                 true,
 			PropagateRequestCancellation: true,
-			MaxRequestBodyBytes:          1 << 20,
+			// The visual search tool carries a query image of up to
+			// visual.MaxQueryImageBytes as base64 inside the JSON-RPC body;
+			// a smaller cap rejects valid images at the transport before the
+			// handler can see them. 2 MiB covers every other tool's payload
+			// plus the JSON envelope.
+			MaxRequestBodyBytes: (visual.MaxQueryImageBytes*4)/3 + 2<<20,
 		},
 	)
 	mux := http.NewServeMux()

@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 type fixedFileBlobStore struct{ content []byte }
@@ -69,6 +70,30 @@ type fileCatalogStore struct {
 	files      map[int64]store.FileMetadata
 	batchCalls int
 	batchIDs   []int64
+}
+
+type clusterFileCatalogStore struct {
+	*store.Store
+
+	files map[int64]store.FileMetadata
+}
+
+func (s *clusterFileCatalogStore) GetFileMetadata(_ context.Context, id int64) (*store.FileMetadata, error) {
+	file, ok := s.files[id]
+	if !ok {
+		return nil, nil //nolint:nilnil // not-found is the expected catalog contract
+	}
+	return &file, nil
+}
+
+func (s *clusterFileCatalogStore) GetFileMetadataBatch(_ context.Context, ids []int64) (map[int64]store.FileMetadata, error) {
+	result := make(map[int64]store.FileMetadata, len(ids))
+	for _, id := range ids {
+		if file, ok := s.files[id]; ok {
+			result[id] = file
+		}
+	}
+	return result, nil
 }
 
 func (s *fileCatalogStore) GetFileMetadata(_ context.Context, id int64) (*store.FileMetadata, error) {
@@ -249,7 +274,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	})
 	search := func(participantID int64) {
 		request := httptest.NewRequest(http.MethodPost,
-			fmt.Sprintf("/api/v1/people/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
+			fmt.Sprintf("/api/v1/participants/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
@@ -257,16 +282,178 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	search(primary)
-	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"a linked participant's files search must scope to every cluster member")
+	assertions.Equal([]query.PersonFileDirection{
+		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+	}, engine.request.Person.Directions)
+	assertions.True(engine.request.Person.IncludeUnclassifiedRosterRows,
+		"an omitted direction preserves roster-only rows from unclassified conversations")
+	assertions.Empty(engine.request.Explore.Context.ParticipantIDs,
+		"the exact person scope must not degrade into the broad participant filter")
 
 	search(secondary)
-	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"any cluster member resolves the same scope")
 
+	_, err = st.UnlinkParticipants(primary, secondary)
+	requirements.NoError(err)
+	search(primary)
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]int64{primary}, engine.request.Person.ParticipantIDs,
+		"splitting identities updates gallery membership without moving files")
+
 	search(solo)
-	assertions.Equal([]int64{solo}, engine.request.Explore.Context.ParticipantIDs,
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]int64{solo}, engine.request.Person.ParticipantIDs,
 		"an unlinked participant stays scoped to its own ID")
+}
+
+func TestPersonFilesSearchUsesOnePopulationForDurableAndParticipantReferences(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("scope-primary@example.test", "Primary", "example.test")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("scope-secondary@example.test", "Secondary", "example.test")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+	person, created, err := st.CreatePersonFromParticipant(primary)
+	requirements.NoError(err)
+	requirements.True(created)
+	_, err = st.UnlinkParticipants(primary, secondary)
+	requirements.NoError(err)
+
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{}, TotalCount: 0, CacheRevision: "cache-person-files",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	search := func(path string) []int64 {
+		response := postExploreJSON(t, srv, path, `{"predicate":{},"directions":["from_person"]}`)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		requirements.NotNil(engine.request.Person)
+		return append([]int64(nil), engine.request.Person.ParticipantIDs...)
+	}
+
+	durableIDs := search(fmt.Sprintf("/api/v1/people/%d/files/search", person.ID))
+	participantIDs := search(fmt.Sprintf("/api/v1/participants/%d/files/search", primary))
+	assertions.Equal([]int64{primary, secondary}, durableIDs,
+		"a durable person keeps every explicit binding after its observed cluster splits")
+	assertions.Equal(durableIDs, participantIDs,
+		"a bound participant translates through the durable root instead of silently narrowing")
+}
+
+func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	requirements.NoError(err)
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	provenance := &query.PersonFileProvenance{
+		ParticipantIDs: []int64{person},
+		Roles: []query.PersonFileRole{
+			query.PersonFileRoleFrom, query.PersonFileRoleConversationMember,
+		},
+		Directions: []query.PersonFileDirection{query.PersonFileFromPerson, query.PersonFileGroup},
+	}
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{{
+			ID: 17, Key: "file:17", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
+			OccurredAt: now, Filename: "photo.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
+			PersonProvenance: provenance,
+		}},
+		TotalCount: 1, CacheRevision: "cache-person-files",
+	}}
+	catalog := &clusterFileCatalogStore{Store: st, files: map[int64]store.FileMetadata{
+		17: {ID: 17, MessageID: 11, ConversationID: 21, Filename: "photo.png", MimeType: "image/png"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  catalog, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person), `{
+			"predicate":{},"directions":["group","from_person","group","to_person"]
+		}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NotNil(engine.request.Person)
+	assertions.Equal([]query.PersonFileDirection{
+		query.PersonFileFromPerson, query.PersonFileToPerson, query.PersonFileGroup,
+	}, engine.request.Person.Directions)
+	assertions.False(engine.request.Person.IncludeUnclassifiedRosterRows,
+		"explicit directions retain their exact typed scope")
+
+	var body PersonFileSearchHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Files, 1)
+	assertions.Equal(*provenance, body.Files[0].PersonProvenance)
+	assertions.Equal(int64(17), body.Files[0].ID)
+
+	generic := postExploreJSON(t, srv, "/api/v1/files/search", `{"predicate":{}}`)
+	requirements.Equal(http.StatusOK, generic.Code, generic.Body.String())
+	assertions.NotContains(generic.Body.String(), "person_provenance",
+		"archive-wide files keep their existing response contract")
+}
+
+func TestPersonFilesSearchRejectsInvalidDirections(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st,
+		Engine: &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{}},
+		Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person),
+		`{"predicate":{},"directions":["sideways"]}`)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "invalid_person_file_directions")
+}
+
+func TestPersonFilesCursorBindsDirectionsAndResolvedCluster(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	requirements.NoError(err)
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files:      []query.FileRow{{ID: 1, PersonProvenance: &query.PersonFileProvenance{}}},
+		TotalCount: 2, CacheRevision: "cache-person-files",
+	}}
+	catalog := &clusterFileCatalogStore{Store: st, files: map[int64]store.FileMetadata{
+		1: {ID: 1},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  catalog, Engine: engine, Logger: testLogger(),
+	})
+	path := fmt.Sprintf("/api/v1/participants/%d/files/search", person)
+
+	firstResponse := postExploreJSON(t, srv, path,
+		`{"predicate":{},"directions":["from_person"],"limit":1}`)
+	requirements.Equal(http.StatusOK, firstResponse.Code, firstResponse.Body.String())
+	var first PersonFileSearchHTTPResponse
+	requirements.NoError(json.Unmarshal(firstResponse.Body.Bytes(), &first))
+	requirements.NotEmpty(first.NextCursor)
+
+	sameResponse := postExploreJSON(t, srv, path, fmt.Sprintf(
+		`{"predicate":{},"directions":["from_person"],"limit":1,"cursor":%q}`, first.NextCursor))
+	requirements.Equal(http.StatusOK, sameResponse.Code, sameResponse.Body.String())
+	assert.Equal(t, query.PageSpec{Limit: 1, Offset: 1}, engine.request.Page)
+
+	changedResponse := postExploreJSON(t, srv, path, fmt.Sprintf(
+		`{"predicate":{},"directions":["to_person"],"limit":1,"cursor":%q}`, first.NextCursor))
+	assert.Equal(t, http.StatusBadRequest, changedResponse.Code, changedResponse.Body.String())
+	assert.Contains(t, changedResponse.Body.String(), "invalid_cursor")
 }
 
 func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T) {
@@ -754,4 +941,70 @@ func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) 
 		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
 	require.NoError(t, err, "look up attachment for message %d", messageID)
 	return id
+}
+
+func TestParticipantFileSearchAcceptsVisualQueryFields(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	person, err := st.EnsureParticipant("visual-person@example.com", "Visual Person", "example.com")
+	require.NoError(err)
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{}, TotalCount: 0, CacheRevision: "cache-files",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	// The web Files workspace sends the same visual fields to the person
+	// scope as to the global one; strict decoding must accept them. Visual
+	// search is not initialized here, so the request reports 503 rather
+	// than 400 unknown-field.
+	request := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/v1/participants/%d/files/search", person),
+		bytes.NewBufferString(`{"predicate":{},"visual_query":"red bicycle"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Contains(response.Body.String(), "visual_search_not_ready")
+}
+
+func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: &querytest.MockEngine{}, Logger: testLogger(),
+	})
+	srv.SetVisualOperations(nil, nil, nil,
+		func(context.Context, bool) (visual.Status, error) { return visual.Status{}, nil }, nil)
+	router := srv.Router()
+	get := func(origin string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status?coverage=1", nil)
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	// An ambient cross-origin GET on a keyless loopback daemon must not be
+	// able to trigger an archive-wide coverage scan.
+	response := get("https://evil.example")
+	require.Equal(http.StatusForbidden, response.Code, response.Body.String())
+	require.Contains(response.Body.String(), "cross_origin_loopback")
+
+	// Same-origin requests scan, and the dedicated limiter (burst 1) rejects
+	// an immediate repeat even though the scan mutex is free again.
+	response = get("")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	response = get("")
+	require.Equal(http.StatusTooManyRequests, response.Code, response.Body.String())
+
+	// The light status path stays unmetered.
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status", nil)
+	light := httptest.NewRecorder()
+	router.ServeHTTP(light, request)
+	require.Equal(http.StatusOK, light.Code, light.Body.String())
 }

@@ -156,7 +156,7 @@ func TestFastmailSourceSelector(t *testing.T) {
 		{
 			name:   "source ID",
 			source: FastmailSource{SourceID: 14},
-			want:   identityops.SourceSelector{SourceID: 14},
+			want:   identityops.SourceSelector{SourceID: 14, SourceIDSet: true},
 		},
 		{
 			name:    "missing selector",

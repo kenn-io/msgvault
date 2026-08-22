@@ -11,7 +11,33 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/vector"
 )
+
+type requestConsentState struct{ active atomic.Bool }
+
+func (s *requestConsentState) HasActivePersonSemanticEmbeddingConsent(
+	context.Context, string,
+) (bool, error) {
+	return s.active.Load(), nil
+}
+
+func newSemanticRequestGate(endpoint string) (*requestConsentState, vector.SemanticPersonEmbeddingGate) {
+	consent := &requestConsentState{}
+	consent.active.Store(true)
+	config := vector.Config{
+		Enabled: true,
+		Embeddings: vector.EmbeddingsConfig{
+			Endpoint: endpoint, Model: "m", Dimension: 1,
+		},
+		People: vector.PeopleConfig{
+			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		},
+	}
+	return consent, vector.NewExactSemanticPersonEmbeddingGate(
+		func() (vector.Config, error) { return config, nil }, consent,
+	)
+}
 
 // writeEmbeddings writes an OpenAI-compatible embeddings response using the
 // provided vectors. It panics on encoding failure; that never happens for
@@ -79,6 +105,184 @@ func TestClient_EmbedQueryUsesSingleInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"find this"}}, *calls)
 	assert.Equal(t, []float32{1}, got)
+}
+
+// TestClientBeforeRequestFencesEveryRetryAttempt catches a consent check that
+// runs once around the logical embedding operation instead of immediately
+// before every real HTTP attempt. Query retries are included because curated
+// person search uses the same provider client surface as document embedding.
+func TestClientBeforeRequestFencesEveryRetryAttempt(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(context.Context, *Client) error
+	}{
+		{
+			name: "documents",
+			run: func(ctx context.Context, client *Client) error {
+				_, err := client.EmbedDocuments(ctx, []DocumentInput{{Chunks: []string{"curated person"}}})
+				return err
+			},
+		},
+		{
+			name: "query",
+			run: func(ctx context.Context, client *Client) error {
+				_, err := client.EmbedQuery(ctx, "curated person query")
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			consent, gate := newSemanticRequestGate("https://embedding.example.test/v1")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				consent.active.Store(false)
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "rate limited", http.StatusTooManyRequests)
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewClient(Config{
+				Endpoint: server.URL, Model: "m", Dimension: 1, MaxRetries: 3,
+				BeforeRequest: gate.Check,
+			})
+
+			err := test.run(t.Context(), client)
+
+			require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+			assert.Equal(t, int32(1), requests.Load(),
+				"revocation after the first 429 must fence the retry")
+		})
+	}
+}
+
+// TestClientBeforeRequestRejectsProviderRedirects catches gated person clients
+// that let net/http replay a document or query body to a provider-selected URL.
+func TestClientBeforeRequestRejectsProviderRedirects(t *testing.T) {
+	operations := []struct {
+		name string
+		run  func(context.Context, *Client) error
+	}{
+		{
+			name: "documents",
+			run: func(ctx context.Context, client *Client) error {
+				_, err := client.EmbedDocuments(ctx, []DocumentInput{{Chunks: []string{"curated person"}}})
+				return err
+			},
+		},
+		{
+			name: "query",
+			run: func(ctx context.Context, client *Client) error {
+				_, err := client.EmbedQuery(ctx, "curated person query")
+				return err
+			},
+		},
+	}
+	statuses := []struct {
+		name string
+		code int
+	}{
+		{name: "307", code: http.StatusTemporaryRedirect},
+		{name: "308", code: http.StatusPermanentRedirect},
+	}
+	destinations := []struct {
+		name        string
+		crossOrigin bool
+	}{
+		{name: "same_origin"},
+		{name: "cross_origin", crossOrigin: true},
+	}
+
+	for _, operation := range operations {
+		for _, status := range statuses {
+			for _, destination := range destinations {
+				t.Run(operation.name+"/"+status.name+"/"+destination.name, func(t *testing.T) {
+					var originRequests atomic.Int32
+					var targetRequests atomic.Int32
+					redirectLocation := "/redirected"
+					if destination.crossOrigin {
+						target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							targetRequests.Add(1)
+							writeEmbeddings(t, w, [][]float32{{1}})
+						}))
+						t.Cleanup(target.Close)
+						redirectLocation = target.URL + "/redirected"
+					}
+					origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						switch r.URL.Path {
+						case "/embeddings":
+							originRequests.Add(1)
+							w.Header().Set("Location", redirectLocation)
+							w.WriteHeader(status.code)
+						case "/redirected":
+							targetRequests.Add(1)
+							writeEmbeddings(t, w, [][]float32{{1}})
+						default:
+							http.NotFound(w, r)
+						}
+					}))
+					t.Cleanup(origin.Close)
+					_, gate := newSemanticRequestGate("https://embedding.example.test/v1")
+					client := NewClient(Config{
+						Endpoint: origin.URL, Model: "m", Dimension: 1, MaxRetries: 3,
+						BeforeRequest: gate.Check,
+					})
+
+					err := operation.run(t.Context(), client)
+
+					assert := assert.New(t)
+					require.ErrorIs(t, err, ErrEmbeddingProviderRedirect)
+					assert.Equal("embedding provider redirects are not allowed", err.Error())
+					assert.Equal(int32(1), originRequests.Load(), "redirect responses must not be retried")
+					assert.Zero(targetRequests.Load(), "person text must not reach the redirect target")
+				})
+			}
+		}
+	}
+}
+
+// TestClientWithoutBeforeRequestFollowsProviderRedirects protects the message
+// client composition, which intentionally retains net/http's redirect behavior.
+func TestClientWithoutBeforeRequestFollowsProviderRedirects(t *testing.T) {
+	for _, status := range []struct {
+		name string
+		code int
+	}{
+		{name: "307", code: http.StatusTemporaryRedirect},
+		{name: "308", code: http.StatusPermanentRedirect},
+	} {
+		t.Run(status.name, func(t *testing.T) {
+			var originRequests atomic.Int32
+			var targetRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/embeddings":
+					originRequests.Add(1)
+					w.Header().Set("Location", "/redirected")
+					w.WriteHeader(status.code)
+				case "/redirected":
+					targetRequests.Add(1)
+					request := decodeRequest(t, r)
+					assert.Equal(t, []string{"message text"}, request.Input)
+					writeEmbeddings(t, w, [][]float32{{1}})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := NewClient(Config{
+				Endpoint: server.URL, Model: "m", Dimension: 1, MaxRetries: 1,
+			})
+
+			vector, err := client.EmbedQuery(t.Context(), "message text")
+
+			assert := assert.New(t)
+			require.NoError(t, err)
+			assert.Equal([]float32{1}, vector)
+			assert.Equal(int32(1), originRequests.Load())
+			assert.Equal(int32(1), targetRequests.Load())
+		})
+	}
 }
 
 func TestClient_Embed_Success(t *testing.T) {

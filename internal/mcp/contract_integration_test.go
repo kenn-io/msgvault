@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var task5StableToolNames = []string{
@@ -33,6 +34,7 @@ var task5StableToolNames = []string{
 	ToolSearchMessageBodies,
 	ToolSearchMessages,
 	ToolSearchMetadata,
+	ToolSearchPersonFiles,
 	ToolSemanticSearchMessages,
 	ToolStageDeletion,
 }
@@ -137,8 +139,7 @@ func newTask5Fixture(t *testing.T, shape string) task5Fixture {
 		AggregateRows: []query.AggregateRow{{
 			Key: "example.com", Count: 2, TotalSize: 3072, AttachmentSize: int64(len(attachmentBytes)), AttachmentCount: 1, TotalUnique: 1,
 		}},
-		GmailIDs:      []string{"source-message-42"},
-		GmailAccounts: []string{"alice@example.com"},
+		GmailIDs: []string{"source-message-42"},
 		SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
 			return 1, nil
 		},
@@ -153,7 +154,8 @@ func newTask5Fixture(t *testing.T, shape string) task5Fixture {
 			}
 			return slices.Clone(attachmentBytes), nil
 		}),
-		ManifestSaver: saver,
+		ManifestSaver:      saver,
+		PersonFileSearcher: &recordingPersonFileSearcher{},
 	}
 
 	rrf, vectorScore := 0.45, 0.91
@@ -238,6 +240,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 		return map[string]any{"query": "needle", "limit": 1}, true
 	case ToolSearchMetadata:
 		return map[string]any{"query": "subject:archive", "account": "alice@example.com", "limit": 1}, true
+	case ToolSearchPersonFiles:
+		return map[string]any{"person_id": 40, "limit": 1}, true
 	case ToolSearchMessageBodies:
 		return map[string]any{"query": "needle", "limit": 1}, true
 	case ToolSemanticSearchMessages:
@@ -342,6 +346,11 @@ func task5AssertRepresentativeResult(
 	must := require.New(t)
 
 	switch toolName {
+	case ToolSearchPersonFiles:
+		value := task5StructuredAs[generated.PersonFileSearchHTTPResponse](t, result)
+		must.Len(value.Files, 1)
+		checks.Equal(int64(18), value.Files[0].MessageID)
+		checks.Equal([]generated.PersonFileProvenanceRoles{generated.From}, value.Files[0].PersonProvenance.Roles)
 	case ToolSearchMetadata:
 		value := task5StructuredAs[struct {
 			Data []struct {
@@ -482,21 +491,23 @@ func task5AssertRepresentativeResult(
 		checks.Equal(int64(1), value.Accounts[0].ID)
 		checks.Equal("alice@example.com", value.Accounts[0].Identifier)
 	case ToolAggregate:
-		value := task5StructuredAs[[]struct {
-			Key             string
-			Count           int64
-			TotalSize       int64
-			AttachmentSize  int64
-			AttachmentCount int64
-			TotalUnique     int64
+		value := task5StructuredAs[struct {
+			Data []struct {
+				Key             string
+				Count           int64
+				TotalSize       int64
+				AttachmentSize  int64
+				AttachmentCount int64
+				TotalUnique     int64
+			} `json:"data"`
 		}](t, result)
-		must.Len(value, 1)
-		checks.Equal("example.com", value[0].Key)
-		checks.Equal(int64(2), value[0].Count)
-		checks.Equal(int64(3072), value[0].TotalSize)
-		checks.Equal(int64(len(fixture.attachmentBytes)), value[0].AttachmentSize)
-		checks.Equal(int64(1), value[0].AttachmentCount)
-		checks.Equal(int64(1), value[0].TotalUnique)
+		must.Len(value.Data, 1)
+		checks.Equal("example.com", value.Data[0].Key)
+		checks.Equal(int64(2), value.Data[0].Count)
+		checks.Equal(int64(3072), value.Data[0].TotalSize)
+		checks.Equal(int64(len(fixture.attachmentBytes)), value.Data[0].AttachmentSize)
+		checks.Equal(int64(1), value.Data[0].AttachmentCount)
+		checks.Equal(int64(1), value.Data[0].TotalUnique)
 	case ToolFindSimilarMessages:
 		value := task5StructuredAs[struct {
 			SeedMessageID int64 `json:"seed_message_id"`

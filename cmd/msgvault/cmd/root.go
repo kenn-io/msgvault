@@ -42,7 +42,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "msgvault",
+	Use:   daemonService,
 	Short: "Offline email, chat, and meeting archive tool",
 	Long: `msgvault is an offline archive tool that exports and stores email,
 chat, and meeting data locally with full-text search capabilities.

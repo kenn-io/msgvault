@@ -14,8 +14,10 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// Migrate runs the baseline schema and ensures a vec0 virtual table
-// for `defaultDim` exists. Safe to run on every startup.
+// Migrate runs the baseline schema and, when defaultDim > 0, ensures a vec0
+// virtual table for that dimension exists. defaultDim <= 0 skips the table:
+// a multimodal-only open has no text embedding dimension. Safe to run on
+// every startup.
 //
 // PRAGMA foreign_keys is applied per-connection by the ConnectHook
 // registered in RegisterExtension; it is intentionally not run here.
@@ -33,6 +35,9 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	}
 	if err := migrateDocumentLedger(ctx, db); err != nil {
 		return fmt.Errorf("migrate document ledger: %w", err)
+	}
+	if err := migratePersonEmbeddings(ctx, db); err != nil {
+		return fmt.Errorf("migrate person embeddings: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
@@ -71,7 +76,16 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	if err := migrateVecTablesToChunked(ctx, db); err != nil {
 		return fmt.Errorf("migrate vec tables to chunked layout: %w", err)
 	}
-	return EnsureVectorTable(ctx, db, defaultDim)
+	// defaultDim is informational, mirroring pgvector: a multimodal-only
+	// configuration has no text/person embedding dimension, and text
+	// generations create their dimension-specific table in CreateGeneration.
+	if defaultDim <= 0 {
+		return nil
+	}
+	if err := EnsureVectorTable(ctx, db, defaultDim); err != nil {
+		return err
+	}
+	return EnsurePersonVectorTable(ctx, db, defaultDim)
 }
 
 // migrateEmbeddingsToChunked detects the pre-chunking schema (no

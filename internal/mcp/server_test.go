@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
@@ -33,6 +34,8 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
@@ -76,6 +79,10 @@ type attachmentMeta struct {
 	Filename string `json:"filename"`
 	MimeType string `json:"mime_type"`
 	Size     int64  `json:"size"`
+}
+
+type dataResponse[T any] struct {
+	Data []T `json:"data"`
 }
 
 type paginatedSearchMessages struct {
@@ -300,6 +307,94 @@ type recordingDocumentSearcher struct {
 	request store.DocumentSearchRequest
 }
 
+type recordingVisualSearcher struct{ request VisualSearchRequest }
+
+func (s *recordingVisualSearcher) SearchVisualAttachments(
+	_ context.Context,
+	request VisualSearchRequest,
+) (*visual.SearchResponse, error) {
+	s.request = request
+	return &visual.SearchResponse{Results: []visual.AttachmentSearchResult{}}, nil
+}
+
+func TestSearchVisualAttachmentsPreservesSharedPersonScope(t *testing.T) {
+	searcher := &recordingVisualSearcher{}
+	h := &handlers{visualSearcher: searcher}
+	runTool[visual.SearchResponse](t, ToolSearchVisualAttachments, h.searchVisualAttachments, map[string]any{
+		"text": "inspection diagram", "person_id": float64(40),
+		"directions": []any{"to_person", "group"},
+	})
+	assert.Equal(t, int64(40), searcher.request.PersonID)
+	assert.Equal(t, []personscope.Direction{personscope.ToPerson, personscope.Group}, searcher.request.Directions)
+}
+
+type recordingPersonFileSearcher struct {
+	request PersonFileSearchRequest
+}
+
+func (s *recordingPersonFileSearcher) SearchPersonFiles(
+	_ context.Context,
+	request PersonFileSearchRequest,
+) (generated.PersonFileSearchHTTPResponse, error) {
+	s.request = request
+	filename, mimeType := "inspection.png", "image/png"
+	return generated.PersonFileSearchHTTPResponse{
+		Files: []generated.PersonFileSearchRow{{
+			ID: 17, MessageID: 18, ConversationID: 19, SourceID: 20,
+			SourceIdentifier: "synthetic-source", Filename: &filename, MimeType: &mimeType,
+			PersonProvenance: generated.PersonFileProvenance{
+				ParticipantIds: []int64{4}, Roles: []generated.PersonFileProvenanceRoles{generated.From},
+				Directions: []generated.PersonFileProvenanceDirections{generated.FromPerson},
+			},
+		}},
+		TotalCount: 1, CacheRevision: "synthetic-revision",
+	}, nil
+}
+
+func TestSearchPersonFilesPreservesScopeAndProvenance(t *testing.T) {
+	assertions := assert.New(t)
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	response := runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
+		h.searchPersonFiles, map[string]any{
+			"person_id": float64(40), "directions": []any{"from_person", "group"},
+			"after": "2026-08-01", "before": "2026-08-20", "filename": "inspection",
+			"mime_families": []any{"image", "pdf"}, "limit": float64(25), "cursor": "opaque",
+		})
+
+	assertions.Equal(int64(40), searcher.request.PersonID)
+	assertions.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
+	assertions.Equal("2026-08-01", searcher.request.After.Format("2006-01-02"))
+	assertions.Equal("2026-08-20", searcher.request.Before.Format("2006-01-02"))
+	assertions.Equal("inspection", searcher.request.Filename)
+	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, searcher.request.MIMEFamilies)
+	assertions.Equal(25, searcher.request.Limit)
+	assertions.Equal("opaque", searcher.request.Cursor)
+	require.Len(t, response.Files, 1)
+	assertions.Equal(int64(18), response.Files[0].MessageID)
+	assertions.Equal([]generated.PersonFileProvenanceRoles{generated.From}, response.Files[0].PersonProvenance.Roles)
+}
+
+func TestSearchPersonFilesRejectsInvalidScopeBeforeDispatch(t *testing.T) {
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	result := runToolExpectError(t, ToolSearchPersonFiles, h.searchPersonFiles, map[string]any{
+		"person_id": float64(40), "directions": []any{"sideways"},
+	})
+	assert.Contains(t, resultText(t, result), "unknown person file direction")
+	assert.Zero(t, searcher.request.PersonID)
+}
+
+func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
+	searcher := &recordingPersonFileSearcher{}
+	h := &handlers{personFileSearcher: searcher}
+	runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
+		h.searchPersonFiles, map[string]any{"person_id": float64(40)})
+
+	assert.Nil(t, searcher.request.Directions,
+		"an omitted direction must let the metadata route include unclassified roster rows")
+}
+
 func (s *recordingDocumentSearcher) SearchDocuments(
 	_ context.Context,
 	request store.DocumentSearchRequest,
@@ -312,29 +407,43 @@ func (s *recordingDocumentSearcher) SearchDocuments(
 			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
 			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
 			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
+			PersonProvenance: &personscope.Provenance{
+				ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
+				Directions: []personscope.Direction{personscope.FromPerson},
+			},
 		}},
 	}, nil
 }
 
 func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	searcher := &recordingDocumentSearcher{}
 	h := &handlers{documentSearcher: searcher}
 	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
 		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
-		"message_id": float64(18), "limit": float64(5), "cursor": "opaque",
+		"message_id": float64(18), "person_id": float64(40),
+		"directions": []any{"from_person", "group"},
+		"after":      "2026-08-01", "before": "2026-08-20",
+		"limit": float64(5), "cursor": "opaque",
 	})
 	assert.Equal("carton damage", searcher.request.Query)
 	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
 	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
 	assert.Equal(int64(17), searcher.request.AttachmentID)
 	assert.Equal(int64(18), searcher.request.MessageID)
+	assert.Equal(int64(40), searcher.request.PersonID)
+	assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
+	require.NotNil(searcher.request.After)
+	require.NotNil(searcher.request.Before)
 	assert.Equal(5, searcher.request.PageSize)
 	assert.Equal("opaque", searcher.request.Cursor)
-	require.Len(t, response.Results, 1)
+	require.Len(response.Results, 1)
 	assert.Equal("inspection.xlsx", response.Results[0].Filename)
 	assert.Equal("mistral", response.Results[0].Provider)
+	require.NotNil(response.Results[0].PersonProvenance)
+	assert.Equal([]int64{4}, response.Results[0].PersonProvenance.ParticipantIDs)
 }
 
 func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
@@ -2209,8 +2318,8 @@ func TestAggregate(t *testing.T) {
 
 	for _, groupBy := range []string{"sender", "recipient", "domain", "label", "time"} {
 		t.Run(groupBy, func(t *testing.T) {
-			rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
-			assert.Len(t, rows, 2, "rows")
+			response := runTool[dataResponse[query.AggregateRow]](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
+			assert.Len(t, response.Data, 2, "rows")
 		})
 	}
 
@@ -2780,11 +2889,11 @@ func TestAccountFilter(t *testing.T) {
 	})
 
 	t.Run("aggregate with valid account", func(t *testing.T) {
-		rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{
+		response := runTool[dataResponse[query.AggregateRow]](t, "aggregate", h.aggregate, map[string]any{
 			"group_by": "sender",
 			"account":  "alice@gmail.com",
 		})
-		assert.Len(t, rows, 1, "rows")
+		assert.Len(t, response.Data, 1, "rows")
 	})
 
 	t.Run("aggregate with invalid account", func(t *testing.T) {
@@ -2987,19 +3096,11 @@ func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest 
 func TestStageDeletion(t *testing.T) {
 	eng := &querytest.MockEngine{
 		Accounts: []query.AccountInfo{
-			{ID: 1, Identifier: "alice@gmail.com"},
+			{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"},
 		},
 		SearchFastResults: []query.MessageSummary{
-			testutil.NewMessageSummary(1).
-				WithSubject("Newsletter").
-				WithFromEmail("news@example.com").
-				WithSourceMessageID("gmail-001").
-				Build(),
-			testutil.NewMessageSummary(2).
-				WithSubject("Promo").
-				WithFromEmail("promo@example.com").
-				WithSourceMessageID("gmail-002").
-				Build(),
+			{ID: 1, SourceID: 1, Subject: "Newsletter", FromEmail: "news@example.com", SourceMessageID: "gmail-001"},
+			{ID: 2, SourceID: 1, Subject: "Promo", FromEmail: "promo@example.com", SourceMessageID: "gmail-002"},
 		},
 		GmailIDs: []string{"gmail-010", "gmail-011"},
 	}
@@ -3043,7 +3144,40 @@ func TestStageDeletion(t *testing.T) {
 		require.NotNil(t, saver.manifest, "manifest saver should receive manifest")
 		assert.Equal(resp.BatchID, saver.manifest.ID, "manifest ID")
 		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
+		assert.Equal(2, saver.manifest.Version)
+		require.NotNil(t, saver.manifest.Source)
+		assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "alice@gmail.com"}, *saver.manifest.Source)
 		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
+	})
+
+	t.Run("query result without source ID is rejected", func(t *testing.T) {
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{
+			engine: &querytest.MockEngine{
+				Accounts:          []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"}},
+				SearchFastResults: []query.MessageSummary{{ID: 7, SourceMessageID: "gmail-007"}},
+			},
+			dataDir: t.TempDir(), manifestSaver: saver,
+		}
+
+		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		assert.Contains(t, resultText(t, result), "has no source metadata")
+		assert.Nil(t, saver.manifest)
+	})
+
+	t.Run("query result with incomplete account source is rejected", func(t *testing.T) {
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{
+			engine: &querytest.MockEngine{
+				Accounts:          []query.AccountInfo{{ID: 1, Identifier: "alice@gmail.com"}},
+				SearchFastResults: []query.MessageSummary{{ID: 8, SourceID: 1, SourceMessageID: "gmail-008"}},
+			},
+			dataDir: t.TempDir(), manifestSaver: saver,
+		}
+
+		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		assert.Contains(t, resultText(t, result), "has incomplete source metadata")
+		assert.Nil(t, saver.manifest)
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {
@@ -3121,9 +3255,12 @@ func TestStageDeletion(t *testing.T) {
 			Accounts: []query.AccountInfo{
 				{ID: 1, Identifier: "alice@gmail.com"},
 			},
-			GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 				capturedFilter = f
-				return []string{"gmail-100"}, nil
+				return []query.DeletionTarget{{
+					MessageID: 100, SourceID: 1, SourceType: "gmail",
+					SourceIdentifier: "alice@gmail.com", SourceMessageID: "gmail-100",
+				}}, nil
 			},
 		}
 		h := &handlers{engine: eng, dataDir: dataDir}
@@ -3154,13 +3291,36 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, txt, "account not found", "expected account error, got: %s")
 	})
 
+	t.Run("ambiguous account rejected", func(t *testing.T) {
+		dataDir := t.TempDir()
+		ambiguous := &querytest.MockEngine{
+			Accounts: []query.AccountInfo{
+				{ID: 1, SourceType: "gmail", Identifier: "shared@example.invalid"},
+				{ID: 2, SourceType: "imap", Identifier: "shared@example.invalid"},
+			},
+		}
+		h := &handlers{engine: ambiguous, dataDir: dataDir}
+
+		r := runToolExpectError(
+			t, "stage_deletion", h.stageDeletion,
+			map[string]any{
+				"account": "shared@example.invalid",
+				"from":    "news@example.invalid",
+			},
+		)
+		assert.Contains(t, resultText(t, r), "matches multiple sources")
+	})
+
 	t.Run("structured filter limit enforced", func(t *testing.T) {
 		dataDir := t.TempDir()
 		var capturedFilter query.MessageFilter
 		eng := &querytest.MockEngine{
-			GetGmailIDsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]string, error) {
+			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 				capturedFilter = f
-				return []string{"gmail-200"}, nil
+				return []query.DeletionTarget{{
+					MessageID: 200, SourceID: 1, SourceType: "gmail",
+					SourceIdentifier: "test@gmail.com", SourceMessageID: "gmail-200",
+				}}, nil
 			},
 		}
 		h := &handlers{engine: eng, dataDir: dataDir}
@@ -3729,15 +3889,15 @@ func TestSearchByDomains(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("valid domains", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com,example.com"})
-		assert.Len(t, msgs, 2, "msgs")
+		assert.Len(t, response.Data, 2, "msgs")
 	})
 
 	t.Run("domains with whitespace", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": " acme.com , example.com "})
-		assert.Len(t, msgs, 2, "msgs")
+		assert.Len(t, response.Data, 2, "msgs")
 	})
 
 	t.Run("missing domains", func(t *testing.T) {
@@ -3772,7 +3932,7 @@ func TestSearchByDomains(t *testing.T) {
 		}
 		h := newTestHandlers(eng)
 
-		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{
 				"domains": "acme.com,globex.com",
 				"limit":   float64(50),
@@ -3780,7 +3940,7 @@ func TestSearchByDomains(t *testing.T) {
 				"after":   "2024-01-01",
 				"before":  "2024-12-31",
 			})
-		assert.Len(msgs, 1, "msgs")
+		assert.Len(response.Data, 1, "msgs")
 		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
 		assert.Equal(50, capturedLimit, "limit")
 		assert.Equal(10, capturedOffset, "offset")
@@ -3797,7 +3957,7 @@ func TestSearchByDomains(t *testing.T) {
 		}
 		h := newTestHandlers(eng)
 
-		runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
+		runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
 		assert.Equal(t, 100, capturedLimit, "default limit")
 		assert.Equal(t, 0, capturedOffset, "default offset")

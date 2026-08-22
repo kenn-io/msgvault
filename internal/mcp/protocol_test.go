@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const task3ModernProtocolVersion = "2026-07-28"
@@ -579,10 +580,13 @@ func TestMCPModernHTTPOriginAuthAndBodyLimit(t *testing.T) {
 		})
 	}
 
+	// The cap is sized for a base64 visual query image at the tool's
+	// documented maximum plus the JSON envelope; one byte past it must
+	// still be rejected at the transport.
 	oversized := task3ModernRequest(
 		"server/discover",
 		"",
-		strings.Repeat("x", (1<<20)+1),
+		strings.Repeat("x", int((visual.MaxQueryImageBytes*4)/3+2<<20)+1),
 	)
 	oversized.Header.Set("Authorization", "Bearer test-api-key")
 	recorder, _ = task3Serve(handler, oversized)

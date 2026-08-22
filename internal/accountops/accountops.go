@@ -1,23 +1,43 @@
 package accountops
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
-	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/sourceops"
 )
 
 // Store is the source surface needed by account mutation operations.
 type Store interface {
-	collectionops.AccountResolverStore
+	sourceops.Store
 	UpdateSourceDisplayName(sourceID int64, displayName string) error
 }
 
 // UpdateRequest updates CLI-facing account settings.
 type UpdateRequest struct {
-	Email       string `json:"email"`
+	Account     string `json:"account,omitempty"`
+	Email       string `json:"email,omitempty"`
+	SourceID    int64  `json:"source_id,omitempty"`
+	SourceIDSet bool   `json:"-"`
 	DisplayName string `json:"display_name"`
+}
+
+func (r *UpdateRequest) UnmarshalJSON(data []byte) error {
+	type updateRequest UpdateRequest
+	var decoded updateRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, decoded.SourceIDSet = fields["source_id"]
+	*r = UpdateRequest(decoded)
+	return nil
 }
 
 // UpdateResult is returned after updating CLI-facing account settings.
@@ -28,26 +48,32 @@ type UpdateResult struct {
 
 // UpdateDisplayName updates one account's display name.
 func UpdateDisplayName(st Store, req UpdateRequest) (UpdateResult, error) {
-	if req.Email == "" {
-		return UpdateResult{}, opserr.Invalid(errors.New("account email is required"))
+	account := strings.TrimSpace(req.Account)
+	email := strings.TrimSpace(req.Email)
+	if account != "" && email != "" && account != email {
+		return UpdateResult{}, opserr.Invalid(errors.New("account and email selectors are mutually exclusive"))
 	}
-	if req.DisplayName == "" {
+	if account == "" {
+		account = email
+	}
+	if strings.TrimSpace(req.DisplayName) == "" {
 		return UpdateResult{}, opserr.Invalid(errors.New("display name is required"))
 	}
 
-	scope, err := collectionops.ResolveAccount(st, req.Email)
+	source, err := sourceops.ResolveExactOne(st, sourceops.Selector{
+		Account:     account,
+		SourceID:    req.SourceID,
+		SourceIDSet: req.SourceIDSet,
+	})
 	if err != nil {
 		return UpdateResult{}, err
 	}
-	if scope.Source == nil {
-		return UpdateResult{}, opserr.Invalid(fmt.Errorf("no primary account source found for %q", req.Email))
-	}
 
-	if err := st.UpdateSourceDisplayName(scope.Source.ID, req.DisplayName); err != nil {
+	if err := st.UpdateSourceDisplayName(source.ID, req.DisplayName); err != nil {
 		return UpdateResult{}, opserr.Internal(fmt.Errorf("update display name: %w", err))
 	}
 	return UpdateResult{
-		Email:       scope.Source.Identifier,
+		Email:       source.Identifier,
 		DisplayName: req.DisplayName,
 	}, nil
 }

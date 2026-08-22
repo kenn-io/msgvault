@@ -56,7 +56,7 @@ type SetPersonAttributeRequest struct {
 
 func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonAttributes", http.MethodGet,
-		"/persons/{id}/attributes", "List a person's typed attributes")
+		"/people/{id}/attributes", "List a person's typed attributes")
 	addPersonIDParameter(&list)
 	list.Parameters = append(list.Parameters,
 		queryBooleanParam("history", "Include superseded values"),
@@ -66,7 +66,7 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	registerRawHumaRoute(api, list, s.handleListPersonAttributes)
 
 	set := rawAPIV1Operation("setPersonAttribute", http.MethodPut,
-		"/persons/{id}/attributes/{slug}", "Set a person's attribute value")
+		"/people/{id}/attributes/{slug}", "Set a person's attribute value")
 	addPersonIDParameter(&set)
 	addAttributeSlugParameter(&set)
 	set.Parameters = append(set.Parameters,
@@ -78,7 +78,7 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	registerRawHumaRoute(api, set, s.handleSetPersonAttribute)
 
 	clearOperation := rawAPIV1Operation("clearPersonAttribute", http.MethodDelete,
-		"/persons/{id}/attributes/{slug}", "Supersede a person's attribute value")
+		"/people/{id}/attributes/{slug}", "Supersede a person's attribute value")
 	addPersonIDParameter(&clearOperation)
 	addAttributeSlugParameter(&clearOperation)
 	clearOperation.Parameters = append(clearOperation.Parameters,

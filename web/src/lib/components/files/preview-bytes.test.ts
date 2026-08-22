@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { readBoundedStream, validatedImageBlob } from './preview-bytes';
+import {
+  readBoundedStream,
+  validatedImageBlob,
+  validatedThumbnailBlob
+} from './preview-bytes';
 
 const imageCases = [
   ['image/png', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
@@ -65,4 +69,65 @@ describe('preview byte validation', () => {
     )).rejects.toThrow(/byte limit/i);
     expect(cancel).toHaveBeenCalledOnce();
   });
+
+  it('accepts bounded static PNG and JPEG thumbnails', () => {
+    const png = pngBytes(640, 480);
+    const jpeg = jpegBytes(800, 600);
+
+    expect(validatedThumbnailBlob(png, 'image/png', 'image/png').type).toBe('image/png');
+    expect(validatedThumbnailBlob(jpeg, 'image/jpeg', 'image/jpeg').type).toBe('image/jpeg');
+  });
+
+  it('rejects thumbnails with excessive dimensions or decoded pixels', () => {
+    expect(() => validatedThumbnailBlob(
+      pngBytes(4097, 1), 'image/png', 'image/png'
+    )).toThrow(/thumbnail/i);
+    expect(() => validatedThumbnailBlob(
+      jpegBytes(4096, 4096), 'image/jpeg', 'image/jpeg'
+    )).toThrow(/thumbnail/i);
+  });
+
+  it('rejects animated and unbounded image formats before browser decoding', () => {
+    expect(() => validatedThumbnailBlob(
+      pngBytes(320, 240, true), 'image/png', 'image/png'
+    )).toThrow(/thumbnail/i);
+    expect(() => validatedThumbnailBlob(
+      new Uint8Array(imageCases[2]![1]), 'image/gif', 'image/gif'
+    )).toThrow(/thumbnail/i);
+    expect(() => validatedThumbnailBlob(
+      new Uint8Array(imageCases[3]![1]), 'image/webp', 'image/webp'
+    )).toThrow(/thumbnail/i);
+  });
 });
+
+function pngBytes(width: number, height: number, animated = false): Uint8Array {
+  const chunks = [pngChunk('IHDR', [
+    ...u32(width), ...u32(height), 8, 2, 0, 0, 0
+  ])];
+  if (animated) chunks.push(pngChunk('acTL', [...u32(2), ...u32(0)]));
+  chunks.push(pngChunk('IEND', []));
+  return new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ...chunks.flat()
+  ]);
+}
+
+function pngChunk(type: string, data: number[]): number[] {
+  return [...u32(data.length), ...new TextEncoder().encode(type), ...data, 0, 0, 0, 0];
+}
+
+function jpegBytes(width: number, height: number): Uint8Array {
+  return new Uint8Array([
+    0xff, 0xd8,
+    0xff, 0xc0, 0, 11, 8, ...u16(height), ...u16(width), 1, 1, 0x11, 0,
+    0xff, 0xd9
+  ]);
+}
+
+function u16(value: number): number[] {
+  return [(value >>> 8) & 0xff, value & 0xff];
+}
+
+function u32(value: number): number[] {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+}

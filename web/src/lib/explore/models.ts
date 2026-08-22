@@ -9,6 +9,11 @@ export type FileMetadata = components['schemas']['FileMetadataResponse'];
 export type FileSearchRequest = components['schemas']['FileSearchHTTPRequest'];
 export type FileSearchResponse = components['schemas']['FileSearchHTTPResponse'];
 export type FileSearchRow = components['schemas']['FileSearchRow'];
+export type PersonFileSearchRequest = components['schemas']['PersonFileSearchHTTPRequest'];
+export type PersonFileSearchResponse = components['schemas']['PersonFileSearchHTTPResponse'];
+export type PersonFileSearchRow = components['schemas']['PersonFileSearchRow'];
+export type PersonFileProvenance = components['schemas']['PersonFileProvenance'];
+export type PersonFileDirection = NonNullable<PersonFileSearchRequest['directions']>[number];
 export interface FileViewerTarget {
   id: FileSearchRow['id'];
   key?: FileSearchRow['key'];
@@ -47,7 +52,7 @@ export type PersonIdentifier = components['schemas']['PersonIdentifier'];
 export type PersonCluster = components['schemas']['PersonCluster'];
 export type PersonClusterEdge = components['schemas']['PersonClusterEdge'];
 export type DomainSummary = components['schemas']['DomainSummary'];
-export type PersonContextSummaryResponse = components['schemas']['PersonContextSummaryHTTPResponse'];
+export type PersonContextSummaryResponse = components['schemas']['ParticipantContextSummaryHTTPResponse'];
 export type DomainContextSummaryResponse = components['schemas']['DomainContextSummaryHTTPResponse'];
 export type IdentitySearchSort = components['schemas']['IdentitySearchSort'];
 
@@ -96,6 +101,8 @@ export interface ExploreURLState {
   fileSort?: FileSearchSort;
   fileFilenameQuery: string;
   fileMIMEFamilies: FileMIMEFamily[];
+  personFilePresentation: 'media' | 'files';
+  personFileDirections: PersonFileDirection[];
   identityQuery?: string;
   identitySort?: IdentitySearchSort;
   analysisTarget?: string | null;

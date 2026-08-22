@@ -138,13 +138,18 @@ CREATE TABLE IF NOT EXISTS participant_identifiers (
 -- GENERATED ALWAYS AS IDENTITY (AUTOINCREMENT on SQLite) matters here:
 -- person IDs are durable external handles, so a deleted person's ID must
 -- never be recycled for a later person.
+-- vcard_projection_revision serializes native vCard envelope commits against
+-- the semantic writes they project; see person_vcard_projection_revision.go.
+-- It is deliberately separate from `revision`, the caller-facing
+-- compare-and-swap token for the person record itself.
 CREATE TABLE IF NOT EXISTS persons (
-    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    vcard_uid    TEXT NOT NULL UNIQUE,
-    display_name TEXT,
-    revision     BIGINT NOT NULL DEFAULT 1,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vcard_uid                 TEXT NOT NULL UNIQUE,
+    display_name              TEXT,
+    revision                  BIGINT NOT NULL DEFAULT 1,
+    vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Bindings are deliberately participant-local and are the source of truth
@@ -160,6 +165,112 @@ CREATE TABLE IF NOT EXISTS person_participants (
     PRIMARY KEY (person_id, participant_id),
     UNIQUE(participant_id)
 );
+
+-- Explicit opt-in for future profile maintenance. Row presence is the state;
+-- no row means the person is not tracked.
+CREATE TABLE IF NOT EXISTS person_tracking (
+    person_id  BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    tracked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_inference_profiles (
+    fingerprint          TEXT PRIMARY KEY,
+    provider_kind        TEXT NOT NULL,
+    endpoint             TEXT NOT NULL,
+    model                TEXT NOT NULL,
+    api_key_env          TEXT NOT NULL,
+    allow_anonymous      BOOLEAN NOT NULL DEFAULT FALSE,
+    retention_posture    TEXT NOT NULL,
+    training_posture     TEXT NOT NULL,
+    allowed_sources      JSONB NOT NULL,
+    source_since         TEXT NOT NULL,
+    source_until         TEXT,
+    allow_sensitive      BOOLEAN NOT NULL DEFAULT FALSE,
+    policy_json          JSONB NOT NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_inference_consents (
+    id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    profile_fingerprint  TEXT NOT NULL REFERENCES person_inference_profiles(fingerprint),
+    granted_by           TEXT NOT NULL,
+    granted_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by           TEXT,
+    revoked_at           TIMESTAMPTZ,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_inference_consents_active
+    ON person_inference_consents(profile_fingerprint)
+    WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_semantic_embedding_profiles (
+    fingerprint             TEXT PRIMARY KEY,
+    purpose                 TEXT NOT NULL,
+    destination             TEXT NOT NULL,
+    api_format              TEXT NOT NULL,
+    model                   TEXT NOT NULL,
+    api_key_env             TEXT NOT NULL,
+    retention_posture       TEXT NOT NULL,
+    training_posture        TEXT NOT NULL,
+    renderer_policy         TEXT NOT NULL,
+    disclosed_field_classes JSONB NOT NULL,
+    corpus_scope            TEXT NOT NULL,
+    policy_json             JSONB NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_semantic_embedding_consents (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_semantic_embedding_profiles(fingerprint),
+    granted_by          TEXT NOT NULL,
+    granted_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by          TEXT,
+    revoked_at          TIMESTAMPTZ,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_semantic_embedding_consents_active
+    ON person_semantic_embedding_consents(profile_fingerprint)
+    WHERE revoked_at IS NULL;
+
+-- Lossless native vCard resources. Typed profile tables remain the semantic
+-- source of truth; this table retains exact wire bodies and normalized
+-- occurrence metadata for future CardDAV layers.
+CREATE TABLE IF NOT EXISTS vcard_resource_envelopes (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    person_id              BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    canonical_person_uid   TEXT NOT NULL,
+    source_ref             TEXT NOT NULL CHECK(length(trim(source_ref)) > 0),
+    source_resource_uid    TEXT NOT NULL CHECK(length(trim(source_resource_uid)) > 0),
+    href                   TEXT,
+    original_raw_bytes     BYTEA NOT NULL,
+    stored_body            BYTEA NOT NULL,
+    resource_metadata      JSONB NOT NULL,
+    projection_fingerprint TEXT,
+    content_hash           TEXT NOT NULL,
+    etag                   TEXT NOT NULL,
+    revision               BIGINT NOT NULL DEFAULT 1,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_ref, source_resource_uid)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vcard_resource_envelopes_href
+    ON vcard_resource_envelopes(source_ref, href)
+    WHERE href IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vcard_resource_envelopes_person
+    ON vcard_resource_envelopes(person_id);
+CREATE INDEX IF NOT EXISTS idx_vcard_resource_envelopes_canonical_uid
+    ON vcard_resource_envelopes(canonical_person_uid);
+
+-- Retired canonical UIDs are a separate namespace from source-resource UIDs.
+CREATE TABLE IF NOT EXISTS person_uid_aliases (
+    retired_uid          TEXT PRIMARY KEY,
+    surviving_person_id  BIGINT REFERENCES persons(id) ON DELETE SET NULL,
+    reason               TEXT NOT NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_person_uid_aliases_survivor
+    ON person_uid_aliases(surviving_person_id)
+    WHERE surviving_person_id IS NOT NULL;
 
 -- ============================================================================
 -- CONVERSATIONS & MESSAGES
@@ -335,6 +446,8 @@ CREATE TABLE IF NOT EXISTS attachments (
 
     source_attachment_id TEXT,
     attachment_metadata JSONB,
+	attachment_state TEXT,
+	attachment_skip_reason TEXT,
 
     attachment_role TEXT NOT NULL DEFAULT 'unknown'
         CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown')),
@@ -429,6 +542,81 @@ CREATE TABLE IF NOT EXISTS attachment_change_consumers (
     CHECK (last_sequence >= baseline_sequence)
 );
 
+CREATE TABLE IF NOT EXISTS visual_generations (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    model TEXT NOT NULL,
+    dimension INTEGER NOT NULL CHECK (dimension = 1024),
+    state TEXT NOT NULL DEFAULT 'building'
+        CHECK (state IN ('building', 'active', 'retired')),
+    source_fence BIGINT NOT NULL DEFAULT 0,
+    consented_at TIMESTAMPTZ,
+    -- Docbank Voyage policy fingerprint the consent was recorded against. A
+    -- re-probed manifest changes the fingerprint and requires new consent.
+    consent_policy_fingerprint TEXT,
+    -- Policy fingerprint the archive was last reconciled under. A change
+    -- forces a full re-evaluation of every candidate without discarding the
+    -- generation's published vectors.
+    capability_fingerprint TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    activated_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_active
+    ON visual_generations(state) WHERE state = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_generations_building
+    ON visual_generations(state) WHERE state = 'building';
+
+CREATE TABLE IF NOT EXISTS visual_publications (
+    generation_id BIGINT NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    published_revision TEXT,
+    prepared_revision TEXT,
+    source_fence BIGINT NOT NULL DEFAULT 0,
+    representative_attachment_id BIGINT,
+    attachment_role TEXT NOT NULL,
+    role_source TEXT NOT NULL,
+    current_vector_token TEXT,
+    pending_vector_token TEXT,
+    state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'tombstoned')),
+    outcome_kind TEXT,
+    outcome_reason TEXT,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key)
+);
+
+-- Backend vector tokens the archive no longer references but whose backend
+-- rows still need deleting. Every statement that drops a token from
+-- current_vector_token or pending_vector_token records it here in the same
+-- transaction, so a crashed or failed inline backend delete is retried by
+-- the obsolete-token sweep instead of orphaning the vector. Multi-row: any
+-- number of tokens can be pending cleanup for one owner.
+CREATE TABLE IF NOT EXISTS visual_obsolete_tokens (
+    generation_id BIGINT NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    vector_token TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, vector_token)
+);
+
+CREATE TABLE IF NOT EXISTS visual_work_claims (
+    generation_id BIGINT NOT NULL REFERENCES visual_generations(id) ON DELETE CASCADE,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    media_input_key TEXT NOT NULL,
+    proposed_revision TEXT NOT NULL,
+    lease_owner TEXT NOT NULL,
+    lease_expires_at TIMESTAMPTZ NOT NULL,
+    fencing_token BIGINT NOT NULL,
+    source_fence BIGINT NOT NULL,
+    -- CAS stamp of the owning message's context at claim time. Commit
+    -- refuses when the live stamp differs, so a subject or body edit during
+    -- a provider request can never publish a vector of the old context.
+    claimed_content_stamp TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, message_id, blob_hash, media_input_key, proposed_revision)
+);
+
 -- ============================================================================
 -- SYNC STATE
 -- ============================================================================
@@ -477,11 +665,28 @@ CREATE TABLE IF NOT EXISTS imap_folder_state (
     mailbox TEXT NOT NULL,
     uidvalidity BIGINT NOT NULL,
     uidnext BIGINT NOT NULL,
+    highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0,
 
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (source_id, mailbox)
 );
+
+CREATE TABLE IF NOT EXISTS imap_message_memberships (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity BIGINT NOT NULL,
+    uid BIGINT NOT NULL,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    flags JSONB NOT NULL DEFAULT '[]'::JSONB,
+
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox, uidvalidity, uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
+    ON imap_message_memberships(source_id, message_id);
 
 CREATE TABLE IF NOT EXISTS source_import_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -561,6 +766,7 @@ CREATE TABLE IF NOT EXISTS organization_names (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -592,6 +798,7 @@ CREATE TABLE IF NOT EXISTS organization_identifiers (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -627,6 +834,7 @@ CREATE TABLE IF NOT EXISTS organization_addresses (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -660,6 +868,7 @@ CREATE TABLE IF NOT EXISTS organization_contact_points (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -687,6 +896,7 @@ CREATE TABLE IF NOT EXISTS organization_categories (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -712,6 +922,7 @@ CREATE TABLE IF NOT EXISTS organization_media (
     vcard_pid TEXT, vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -927,6 +1138,7 @@ CREATE TABLE IF NOT EXISTS person_relationships (
     notes                TEXT,
     source               TEXT NOT NULL DEFAULT 'user',
     source_ref           TEXT,
+    source_resource_uid  TEXT,
     confidence           DOUBLE PRECISION,
     vcard_property       TEXT,
     vcard_group          TEXT,
@@ -982,6 +1194,7 @@ CREATE TABLE IF NOT EXISTS person_relationship_reviews (
     status                   TEXT NOT NULL DEFAULT 'pending',
     source                   TEXT NOT NULL,
     source_ref               TEXT,
+    source_resource_uid      TEXT,
     vcard_property           TEXT,
     vcard_group              TEXT,
     vcard_prop_id            TEXT,
@@ -1033,6 +1246,7 @@ CREATE TABLE IF NOT EXISTS attribute_definitions (
     ui_editable    BOOLEAN NOT NULL DEFAULT TRUE,
     api_mutable    BOOLEAN NOT NULL DEFAULT TRUE,
     is_searchable  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_sensitive   BOOLEAN NOT NULL DEFAULT FALSE,
     is_audited     BOOLEAN NOT NULL DEFAULT TRUE,
     is_deletable   BOOLEAN NOT NULL DEFAULT TRUE,
     history_exempt BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1210,6 +1424,7 @@ CREATE TABLE IF NOT EXISTS person_names (
     vcard_altid           TEXT,
     source                TEXT NOT NULL,
     source_ref            TEXT,
+    source_resource_uid   TEXT,
     confidence            DOUBLE PRECISION
         CHECK (confidence IS NULL
                OR (confidence >= 0 AND confidence <= 1
@@ -1253,6 +1468,7 @@ CREATE TABLE IF NOT EXISTS person_contact_points (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION
         CHECK (confidence IS NULL
                OR (confidence >= 0 AND confidence <= 1
@@ -1308,6 +1524,7 @@ CREATE TABLE IF NOT EXISTS person_addresses (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -1349,6 +1566,7 @@ CREATE TABLE IF NOT EXISTS person_dates (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -1388,6 +1606,7 @@ CREATE TABLE IF NOT EXISTS person_categories (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -1430,6 +1649,7 @@ CREATE TABLE IF NOT EXISTS person_media (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')
@@ -1476,6 +1696,7 @@ CREATE TABLE IF NOT EXISTS participant_contact_observations (
     vcard_altid TEXT,
     source TEXT NOT NULL,
     source_ref TEXT,
+    source_resource_uid TEXT,
     confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
         confidence >= 0 AND confidence <= 1
         AND source NOT IN ('user', 'carddav_import', 'vcard_import')

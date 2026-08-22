@@ -92,31 +92,43 @@ type ImportMeetingBody = MeetingImportRequest
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
+type StartVisualAttachmentBuildBody = VisualBuildRequest
+
+type RetireVisualAttachmentGenerationBody = VisualRetireRequest
+
+type RetryVisualAttachmentOwnerBody = VisualRetryRequest
+
 type CreateOrganizationBody = OrganizationCreateBody
 
 type PatchOrganizationBody = OrganizationBody
 
 type PutOrganizationProfileBody = OrganizationProfileBody
 
-type SearchPeopleBody = IdentitySearchHTTPRequest
+type SearchParticipantsBody = IdentitySearchHTTPRequest
 
-type SearchPersonFilesBody = FileSearchHTTPRequest
+type SearchParticipantFilesBody = PersonFileSearchHTTPRequest
 
-type GetPersonContextSummaryBody = ExploreHTTPRequest
+type GetParticipantContextSummaryBody = ExploreHTTPRequest
 
-type GetPersonTimelineBody = ExploreHTTPRequest
-
-type CreatePersonRelationshipBody = CreatePersonRelationshipRequest
-
-type PatchPersonRelationshipBody = PatchPersonRelationshipRequest
+type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
+
+type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
+type SearchPersonFilesBody = PersonFileSearchHTTPRequest
+
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
+
+type SetPersonTrackingBody = PutPersonTrackingRequest
+
+type CreatePersonRelationshipBody = CreatePersonRelationshipRequest
+
+type PatchPersonRelationshipBody = PatchPersonRelationshipRequest
 
 type RunQueryBody = QueryRequest
 
@@ -131,6 +143,8 @@ type GetRelationshipTimelineBody = RelationshipTimelineHTTPRequest
 type CreateSavedViewBody = CreateSavedViewRequest
 
 type PatchSavedViewBody = PatchSavedViewRequest
+
+type SearchVisualAttachmentsBody = VisualTextSearchRequest
 
 type GetSearchCoverageBody = SearchCoverageRequest
 

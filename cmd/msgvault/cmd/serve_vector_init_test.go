@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +16,11 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/personsearch"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 // fakeCmdVectorBackend satisfies vector.Backend for the init tests. It only
@@ -29,6 +35,31 @@ type fakeCmdVectorBackend struct {
 
 	active    *vector.Generation
 	activeErr error
+}
+
+type vectorInitPersonBackend struct {
+	*fakeCmdVectorBackend
+	vector.PersonBackend
+}
+
+func (b *vectorInitPersonBackend) SearchPeople(
+	context.Context, vector.GenerationID, []float32, int,
+) ([]vector.PersonHit, error) {
+	return nil, errors.New("synthetic installed person engine reached")
+}
+
+type vectorInitPersonStore struct{}
+
+func (vectorInitPersonStore) ResolvePersonSemanticCandidatesContext(
+	context.Context, []store.PersonSemanticCandidate,
+) ([]store.Person, error) {
+	return nil, nil
+}
+
+type vectorInitPersonEmbedder struct{}
+
+func (vectorInitPersonEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+	return []float32{1, 0}, nil
 }
 
 func (b *fakeCmdVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
@@ -59,7 +90,9 @@ func newVectorInitTestServer(t *testing.T) *api.Server {
 func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.Store, string, bool) (*vectorFeatures, error)) {
 	t.Helper()
 	prev := setupVectorFeaturesForRun
-	setupVectorFeaturesForRun = fn
+	setupVectorFeaturesForRun = func(ctx context.Context, s *store.Store, path string, readOnly bool, _ ...visual.StreamOpener) (*vectorFeatures, error) {
+		return fn(ctx, s, path, readOnly)
+	}
 	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
 }
 
@@ -118,16 +151,45 @@ func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 	assert.True(t, h.WaitTimeout(time.Second))
 }
 
+func TestStartVectorInitRunsForIndependentMultimodalLane(t *testing.T) {
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = false
+	c.Vector.Multimodal.Enabled = true
+	withTestConfig(t, c)
+
+	called := false
+	prev := setupVectorFeaturesForRun
+	setupVectorFeaturesForRun = func(context.Context, *store.Store, string, bool, ...visual.StreamOpener) (*vectorFeatures, error) {
+		called = true
+		return &vectorFeatures{Close: func() error { return nil }}, nil
+	}
+	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
+
+	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil,
+		newVectorInitTestServer(t), scheduler.New(nil))
+	require.True(t, h.WaitTimeout(5*time.Second))
+	assert.True(t, called, "multimodal-only enablement must initialize vector infrastructure")
+}
+
 func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	withTestConfig(t, c)
 
 	closed := false
+	backend := &vectorInitPersonBackend{fakeCmdVectorBackend: &fakeCmdVectorBackend{
+		active: &vector.Generation{ID: 1, Fingerprint: c.Vector.GenerationFingerprint()},
+	}}
+	personEngine := personsearch.NewEngine(
+		backend, vectorInitPersonStore{}, vectorInitPersonEmbedder{},
+		personsearch.Config{ExpectedFingerprint: c.Vector.GenerationFingerprint()},
+	)
 	overrideSetupVectorFeatures(t, func(context.Context, *store.Store, string, bool) (*vectorFeatures, error) {
 		return &vectorFeatures{
-			Backend: &fakeCmdVectorBackend{},
-			Close:   func() error { closed = true; return nil },
+			Backend: backend, PersonSearchEngine: personEngine,
+			Cfg: c.Vector, Close: func() error { closed = true; return nil },
 		}, nil
 	})
 
@@ -135,10 +197,20 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 	sched := scheduler.New(nil)
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, sched)
 
-	require.True(t, h.WaitTimeout(5*time.Second))
+	requirements.True(h.WaitTimeout(5 * time.Second))
 	waitForVectorStatus(t, srv, api.VectorStatusReady)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/people/search",
+		strings.NewReader(`{"query":"synthetic"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assertions.Equal(http.StatusServiceUnavailable, response.Code)
+	assertions.Contains(response.Body.String(), "semantic_search_unavailable",
+		"ready status must publish the person engine in the same installation")
+	assertions.NotContains(response.Body.String(), "vector_not_enabled",
+		"ready status must never precede person engine installation")
 	h.CloseFeatures()
-	assert.True(t, closed, "CloseFeatures must close the opened backend")
+	assertions.True(closed, "CloseFeatures must close the opened backend")
 }
 
 func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
@@ -242,8 +314,8 @@ func TestStartVectorInitAbortsQuietlyOnCancel(t *testing.T) {
 		"shutdown-cancelled init must not flip status to error")
 }
 
-func TestNewSchedulerEmbedJobThreadsContextRunnerAndConvergenceChecker(t *testing.T) {
-	runner := &embed.ContextWorker{}
+func TestNewSchedulerEmbedJobThreadsGenerationRunnerAndConvergenceChecker(t *testing.T) {
+	runner := &embed.GenerationWorker{}
 	checker := &registeredConvergenceChecker{}
 	vf := &vectorFeatures{
 		Backend: &fakeCmdVectorBackend{}, Runner: runner, Convergence: checker,
@@ -367,6 +439,7 @@ func TestRegisterEmbedJob_ContextualActivationRequiresEveryConvergenceDimension(
 	rootAssert := assert.New(t)
 	complete := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
+		PersonCoverageComplete:  true,
 		LatestJournalSequence:   5,
 		ConsumedJournalSequence: 5,
 		ReconciliationComplete:  true,
@@ -378,6 +451,10 @@ func TestRegisterEmbedJob_ContextualActivationRequiresEveryConvergenceDimension(
 		{name: "message coverage incomplete", mutate: func(s *scheduler.ConvergenceResult) {
 			s.MessageCoverageComplete = false
 			s.MessageCoverageMissing = 1
+		}},
+		{name: "person coverage incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.PersonCoverageComplete = false
+			s.PersonCoverageMismatched = 1
 		}},
 		{name: "journal incomplete", mutate: func(s *scheduler.ConvergenceResult) {
 			s.ConsumedJournalSequence = 4
@@ -408,6 +485,7 @@ func TestRegisterEmbedJob_ContextualActivationRequiresEveryConvergenceDimension(
 func TestRegisterEmbedJob_ContextualLifecycleRefusalsNeverActivateAnotherGeneration(t *testing.T) {
 	complete := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
+		PersonCoverageComplete:  true,
 		LatestJournalSequence:   5,
 		ConsumedJournalSequence: 5,
 		ReconciliationComplete:  true,
@@ -427,4 +505,23 @@ func TestRegisterEmbedJob_ContextualLifecycleRefusalsNeverActivateAnotherGenerat
 		check.Equal([]int64{5}, backend.sequences)
 		check.Empty(backend.activatedCalls)
 	})
+}
+
+func TestRequireVisualConsentRejectsRetiredGeneration(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "visual-consent-state", Model: "voyage-multimodal-3.5", Dimension: 1024,
+	})
+	require.NoError(err)
+	require.NoError(st.ConsentVisualGeneration(t.Context(), generation.ID, "policy-fp"))
+	vf := &visualFeatures{Archive: st, Generation: generation, PolicyFingerprint: "policy-fp"}
+	require.NoError(requireVisualConsent(t.Context(), vf))
+
+	// Once retired, the installed resume and retry callbacks must refuse to
+	// clean and repopulate the generation: activation can never expose it.
+	require.NoError(st.RetireVisualGeneration(t.Context(), generation.ID))
+	err = requireVisualConsent(t.Context(), vf)
+	require.Error(err)
+	require.Contains(err.Error(), "retired")
 }

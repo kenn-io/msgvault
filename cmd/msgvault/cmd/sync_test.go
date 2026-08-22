@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // fakeClientSecrets is a minimal Google OAuth client_secret.json that
@@ -122,6 +124,40 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	// error produced by getTokenSourceWithReauth.
 	assert.Contains(output, "add-account",
 		"Gmail error should originate from runIncrementalSync; output:\n%s", output)
+}
+
+func TestResolveSyncSourcesSourceIDIsExact(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	gmail, err := f.Store.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	_, err = f.Store.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+
+	sources, legacy, err := resolveSyncSources(f.Store, sourceops.Selector{
+		SourceID: gmail.ID, SourceIDSet: true,
+	})
+	require.NoError(err)
+	assert.False(legacy)
+	require.Len(sources, 1)
+	assert.Equal(gmail.ID, sources[0].ID)
+}
+
+func TestResolveSyncSourcesNumericTokenDoesNotBecomeSourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	numeric, err := f.Store.GetOrCreateSource("imap", "15551234567")
+	require.NoError(err)
+
+	sources, legacy, err := resolveSyncSources(f.Store, sourceops.Selector{Account: "15551234567"})
+	require.NoError(err)
+	assert.False(legacy)
+	require.Len(sources, 1)
+	assert.Equal(numeric.ID, sources[0].ID)
 }
 
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
@@ -674,8 +710,12 @@ func TestTrimFolderFilter(t *testing.T) {
 }
 
 func TestSyncCommandRegistersFolderFlags(t *testing.T) {
-	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("folder"))
-	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("skip-folder"))
+	require := require.New(t)
+
+	require.NotNil(syncIncrementalCmd.Flags().Lookup("folder"))
+	require.NotNil(syncIncrementalCmd.Flags().Lookup("skip-folder"))
+	require.NotNil(syncIncrementalCmd.Flags().Lookup("source-id"))
+	require.NotNil(syncFullCmd.Flags().Lookup("source-id"))
 }
 
 // Full e2e integration with an in-memory IMAP server is tested in

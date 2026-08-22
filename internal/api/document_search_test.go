@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -50,6 +51,33 @@ func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
 	require.Len(t, body.Results, 1)
 	assert.Equal("damage-photo.docx", body.Results[0].Filename)
 	assert.Equal("next", body.NextCursor)
+}
+
+func TestDocumentSearchHTTPResolvesDurablePersonScope(t *testing.T) {
+	assertions := assert.New(t)
+	server, catalog := newTestServerWithMockStore(t)
+	catalog.personContextFunc = func(_ context.Context, id int64) (*store.Person, error) {
+		assertions.Equal(int64(40), id)
+		return &store.Person{ID: id, ParticipantIDs: []int64{4, 9}}, nil
+	}
+	catalog.documentSearchFunc = func(
+		_ context.Context,
+		request store.DocumentSearchRequest,
+	) (store.DocumentSearchResponse, error) {
+		require.NotNil(t, request.Person)
+		assertions.Equal([]int64{4, 9}, request.Person.ParticipantIDs)
+		assertions.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, request.Person.Directions)
+		require.NotNil(t, request.After)
+		require.NotNil(t, request.Before)
+		assertions.Equal("2026-08-01", request.After.Format("2006-01-02"))
+		assertions.Equal("2026-08-20", request.Before.Format("2006-01-02"))
+		return store.DocumentSearchResponse{}, nil
+	}
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/documents/search?q=inspection&person_id=40&direction=from_person,group&after=2026-08-01&before=2026-08-20", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestDocumentSearchHTTPMapsCursorRevisionConflict(t *testing.T) {
@@ -202,7 +230,7 @@ func TestOpenAPIDocumentSearchParameters(t *testing.T) {
 		names = append(names, parameter.Name)
 	}
 	assert.ElementsMatch(t,
-		[]string{"q", "source_id", "message_type", "attachment_id", "message_id", "limit", "cursor"},
+		[]string{"q", "source_id", "message_type", "attachment_id", "message_id", "person_id", "participant_id", "direction", "after", "before", "limit", "cursor"},
 		names)
 }
 
