@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -328,6 +330,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and configure scheduler
 	sched := scheduler.New(syncFunc).WithLogger(logger).
 		WithWorkTracker(combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a scheduled sync")))
+	cardDAVController, err := api.NewCardDAVController(cfg, s)
+	if err != nil {
+		return fmt.Errorf("configure CardDAV: %w", err)
+	}
+	cardDAVController.SetScheduleReconciler(func(cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger)
+	})
+	if err := reconcileCardDAVSchedulerJob(sched, cfg.CardDAV, cardDAVController.Current(), logger); err != nil {
+		return err
+	}
 
 	// Add all scheduled accounts
 	count, errs := sched.AddAccountsFromConfig(cfg)
@@ -548,6 +560,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ShutdownToken:                 ownership.shutdownToken,
 		ShutdownFunc:                  cancel,
 		Scheduler:                     schedAdapter,
+		CardDAV:                       cardDAVController,
 		Logger:                        logger,
 		DaemonVersion:                 Version,
 		AnalyticsMode:                 analyticsMode,
@@ -698,6 +711,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("API server: %w", serverStartupErr)
 	}
 
+	return nil
+}
+
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
+	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
+		sched.RemoveJob(api.CardDAVJobName)
+		if cardDAVConfig.Enabled && cardDAVConfig.Schedule == "" {
+			logger.Warn("carddav is enabled but has no schedule — the daemon will not sync it",
+				"hint", `set a cron schedule (e.g. "0 */6 * * *") in [carddav]`)
+		}
+		return nil
+	}
+	if service == nil {
+		sched.RemoveJob(api.CardDAVJobName)
+		logger.Warn("carddav credentials are unavailable or do not match saved discovery; skipping scheduled sync",
+			"hint", "save the CardDAV account with its password to repair the connection")
+		return nil
+	}
+	if err := sched.AddJob(scheduler.Job{
+		Name: api.CardDAVJobName, Schedule: cardDAVConfig.Schedule,
+		Run: func(ctx context.Context) error {
+			_, err := service.Sync(ctx, carddav.SyncOptions{})
+			return err
+		},
+	}); err != nil {
+		return fmt.Errorf("schedule CardDAV sync: %w", err)
+	}
 	return nil
 }
 

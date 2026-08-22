@@ -3,6 +3,7 @@
 
   import type { APIClient } from '../../api/client';
   import type { components } from '../../api/generated/schema';
+  import CardDAVAccountSettings from './CardDAVAccountSettings.svelte';
   import {
     groupSettings,
     settingsCatalog,
@@ -300,6 +301,8 @@
 
       <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button>
     </form>
+
+    <CardDAVAccountSettings {client} {settings} />
   {/if}
 </main>
 

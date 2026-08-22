@@ -41,6 +41,10 @@ const BeeperJobName = sourceTypeBeeper
 // Slack workspace source.
 const SlackJobName = sourceTypeSlack
 
+// CardDAVJobName is the stable singleton scheduler identity for the configured
+// CardDAV account.
+const CardDAVJobName = "carddav"
+
 // classifySourceScheduling determines which scheduler, if any, may operate a
 // store source. Account scheduling is opt-in so imported or unknown source
 // types cannot borrow a scheduled account merely by sharing its identifier.

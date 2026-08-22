@@ -100,6 +100,76 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
+-- One external CardDAV connection. Passwords remain in the private token file
+-- and are never persisted here.
+CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
+    singleton SMALLINT PRIMARY KEY CHECK (singleton = 1)
+);
+INSERT INTO carddav_discovery_lock(singleton) VALUES (1) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS carddav_accounts (
+    id                    SMALLINT PRIMARY KEY CHECK (id = 1),
+    base_url              TEXT NOT NULL,
+    username              TEXT NOT NULL,
+    principal_url         TEXT NOT NULL,
+    home_url              TEXT NOT NULL,
+    connection_generation BIGINT NOT NULL DEFAULT 1 CHECK (connection_generation > 0),
+    discovery_revision    BIGINT NOT NULL DEFAULT 0 CHECK (discovery_revision >= 0),
+    discovered_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS carddav_account_home_urls (
+    account_id      SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    home_url        TEXT NOT NULL,
+    discovery_index INTEGER NOT NULL CHECK (discovery_index >= 0),
+    PRIMARY KEY (account_id, home_url),
+    UNIQUE (account_id, discovery_index)
+);
+
+CREATE TABLE IF NOT EXISTS carddav_retry_gate (
+    account_id     SMALLINT PRIMARY KEY REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    retry_after_at TIMESTAMPTZ NOT NULL,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS carddav_address_books (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id               SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    canonical_url            TEXT NOT NULL,
+    discovery_alias_url      TEXT,
+    display_name             TEXT NOT NULL,
+    discovery_index          INTEGER NOT NULL CHECK (discovery_index >= 0),
+    supports_sync_collection BOOLEAN NOT NULL DEFAULT FALSE,
+    supports_multiget        BOOLEAN NOT NULL DEFAULT FALSE,
+    supported_vcard_versions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    can_create               BOOLEAN,
+    can_update               BOOLEAN,
+    can_delete               BOOLEAN,
+    is_write_target          BOOLEAN NOT NULL DEFAULT FALSE,
+    is_subscribed            BOOLEAN NOT NULL DEFAULT FALSE,
+    is_lookup_source         BOOLEAN NOT NULL DEFAULT TRUE,
+    sync_token               TEXT NOT NULL DEFAULT '',
+    sync_revision            BIGINT NOT NULL DEFAULT 1 CHECK (sync_revision > 0),
+    needs_full_reconcile     BOOLEAN NOT NULL DEFAULT FALSE,
+    last_seen_revision       BIGINT NOT NULL CHECK (last_seen_revision >= 0),
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (NOT is_write_target OR is_subscribed)
+);
+
+CREATE TABLE IF NOT EXISTS carddav_address_book_urls (
+    account_id       SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    address_book_id  BIGINT NOT NULL REFERENCES carddav_address_books(id) ON DELETE CASCADE,
+    url_role         TEXT NOT NULL CHECK (url_role IN ('canonical', 'alias')),
+    normalized_url   TEXT NOT NULL,
+    PRIMARY KEY (address_book_id, url_role),
+    UNIQUE (account_id, normalized_url)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_write_target
+    ON carddav_address_books(account_id) WHERE is_write_target = TRUE;
 CREATE TABLE IF NOT EXISTS participants (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email_address TEXT,
@@ -268,6 +338,90 @@ CREATE TABLE IF NOT EXISTS person_uid_aliases (
     reason               TEXT NOT NULL,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS carddav_resources (
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    address_book_id         BIGINT NOT NULL REFERENCES carddav_address_books(id) ON DELETE CASCADE,
+    href                    TEXT NOT NULL,
+    remote_uid              TEXT,
+    remote_etag             TEXT NOT NULL,
+    remote_body             BYTEA NOT NULL,
+    remote_semantic_hash    TEXT NOT NULL,
+    local_hash              TEXT NOT NULL,
+    mapping_status          TEXT NOT NULL CHECK (mapping_status IN ('mapped', 'unbound', 'ambiguous')),
+    mapping_revision        BIGINT NOT NULL DEFAULT 1 CHECK (mapping_revision > 0),
+    governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
+    person_id               BIGINT REFERENCES persons(id) ON DELETE SET NULL,
+    person_revision_at_bind BIGINT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (address_book_id, href)
+);
+CREATE TABLE IF NOT EXISTS carddav_publications (
+    person_id                   BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE RESTRICT,
+    desired                     BOOLEAN NOT NULL DEFAULT TRUE,
+    address_book_id             BIGINT REFERENCES carddav_address_books(id) ON DELETE CASCADE,
+    href                        TEXT,
+    pending_operation           TEXT CHECK (pending_operation IN ('create', 'update', 'delete')),
+    outgoing_body               BYTEA,
+    outgoing_semantic_hash      TEXT,
+    local_hash                  TEXT,
+    remote_etag                 TEXT,
+    connection_generation       BIGINT,
+    book_sync_revision          BIGINT,
+    mapping_revision            BIGINT,
+    previous_mapping_revision   BIGINT,
+    create_recovery_used        BOOLEAN NOT NULL DEFAULT FALSE,
+    mutation_revision           BIGINT NOT NULL DEFAULT 0 CHECK (mutation_revision >= 0),
+    pending_started_at          TIMESTAMPTZ,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((pending_operation IS NULL) OR
+           (address_book_id IS NOT NULL AND href IS NOT NULL AND
+            local_hash IS NOT NULL AND connection_generation IS NOT NULL AND
+            book_sync_revision IS NOT NULL AND mapping_revision IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_carddav_publications_pending
+    ON carddav_publications(pending_operation, person_id);
+CREATE TABLE IF NOT EXISTS carddav_conflicts (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    address_book_id          BIGINT NOT NULL REFERENCES carddav_address_books(id) ON DELETE CASCADE,
+    href                     TEXT NOT NULL,
+    base_local_hash          TEXT NOT NULL,
+    local_hash               TEXT NOT NULL,
+    base_remote_hash         TEXT NOT NULL,
+    base_remote_etag         TEXT NOT NULL,
+    remote_etag              TEXT,
+    mapping_revision         BIGINT NOT NULL CHECK (mapping_revision > 0),
+    local_body               BYTEA,
+    remote_body              BYTEA,
+    local_tombstone          BOOLEAN NOT NULL DEFAULT FALSE,
+    remote_tombstone         BOOLEAN NOT NULL DEFAULT FALSE,
+    pending_operation        TEXT CHECK (pending_operation IN ('delete')),
+    connection_generation    BIGINT,
+    book_sync_revision       BIGINT,
+    previous_mapping_revision BIGINT,
+    pending_started_at       TIMESTAMPTZ,
+    status                   TEXT NOT NULL DEFAULT 'unresolved' CHECK (status IN ('unresolved', 'resolved')),
+    resolution               TEXT CHECK (resolution IN ('keep_local', 'keep_remote')),
+    resolved_at              TIMESTAMPTZ,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (local_tombstone OR local_body IS NOT NULL),
+    CHECK (remote_tombstone OR remote_body IS NOT NULL),
+    CONSTRAINT carddav_conflicts_pending_invariant CHECK (pending_operation IS NULL OR
+           (status = 'unresolved' AND local_tombstone AND remote_etag IS NOT NULL AND
+            connection_generation IS NOT NULL AND book_sync_revision IS NOT NULL AND
+            previous_mapping_revision IS NOT NULL AND pending_started_at IS NOT NULL)),
+    CHECK ((status = 'unresolved' AND resolution IS NULL AND resolved_at IS NULL) OR
+           (status = 'resolved' AND resolution IS NOT NULL AND resolved_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_unresolved_conflict
+    ON carddav_conflicts(address_book_id, href) WHERE status = 'unresolved';
+CREATE INDEX IF NOT EXISTS idx_carddav_conflicts_resolved_at
+    ON carddav_conflicts(status, resolved_at);
+CREATE INDEX IF NOT EXISTS idx_carddav_resources_person
+    ON carddav_resources(person_id) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_person_uid_aliases_survivor
     ON person_uid_aliases(surviving_person_id)
     WHERE surviving_person_id IS NOT NULL;

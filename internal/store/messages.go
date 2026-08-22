@@ -835,7 +835,7 @@ func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 	}
 	var id int64
 	err := s.withTx(func(tx *loggedTx) error {
-		if s.dialect.DriverName() != "pgx" {
+		if s.dialect.DriverName() != postgresDriverName {
 			// Acquire SQLite's writer slot before the prior-state read. This
 			// prevents a deferred read transaction from failing to upgrade when
 			// another writer commits between the read and the message upsert.
@@ -991,7 +991,7 @@ func appendBodylessMessageChange(
 	newType := sql.NullString{String: msg.MessageType, Valid: msg.MessageType != ""}
 	newConversation := nullInt64(msg.ConversationID)
 	newSentAt := canonicalMessageTime(msg.SentAt, msg.ReceivedAt, msg.InternalDate)
-	if dialect.DriverName() == "pgx" {
+	if dialect.DriverName() == postgresDriverName {
 		if _, err := q.Exec(`
 			SELECT pg_advisory_xact_lock_shared(hashtextextended('msgvault.embedding_change_clock', 0)),
 			       append_embedding_change(?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
@@ -1392,7 +1392,7 @@ func (s *Store) persistMessageWithParticipantsContext(
 ) (int64, error) {
 	var messageID int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if s.dialect.DriverName() != "pgx" {
+		if s.dialect.DriverName() != postgresDriverName {
 			// Reserve SQLite's writer slot before any prior-state or related
 			// snapshot reads. Otherwise a concurrent commit can leave this
 			// deferred WAL transaction unable to upgrade to a writer.
@@ -4197,7 +4197,7 @@ func replaceConversationParticipantsTx(
 	participants []ConversationParticipantRef,
 ) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if dialect.DriverName() != "pgx" {
+	if dialect.DriverName() != postgresDriverName {
 		// Acquire SQLite's writer slot before taking the journal snapshot. A
 		// deferred transaction that reads first cannot upgrade its stale WAL
 		// snapshot if another writer commits before the membership DELETE.

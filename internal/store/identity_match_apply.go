@@ -70,6 +70,12 @@ func (s *Store) AcceptIdentityMatchCandidateContext(
 	if err != nil {
 		return nil, 0, err
 	}
+	if candidate.LeftKind == IdentityMatchCardDAVResource &&
+		candidate.RightKind == IdentityMatchPerson {
+		return s.acceptCardDAVIdentityMatchCandidateContext(
+			ctx, candidateID, decidedBy, notes,
+		)
+	}
 	if candidate.LeftKind != IdentityMatchParticipant || candidate.RightKind != IdentityMatchParticipant {
 		return nil, 0, fmt.Errorf("candidate %d (%s to %s): %w",
 			candidateID, candidate.LeftKind, candidate.RightKind,

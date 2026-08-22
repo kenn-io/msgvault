@@ -43,6 +43,23 @@ func (c CandidateClassification) Validate() error {
 	}
 }
 
+type CardDAVResolveRequestChoice string
+
+const (
+	KeepLocal  CardDAVResolveRequestChoice = "keep_local"
+	KeepRemote CardDAVResolveRequestChoice = "keep_remote"
+)
+
+// Validate checks if the CardDAVResolveRequestChoice value is valid
+func (c CardDAVResolveRequestChoice) Validate() error {
+	switch c {
+	case KeepLocal, KeepRemote:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVResolveRequestChoice value, got: %v", c))
+	}
+}
+
 type CreateAttributeDefinitionRequestCardinality string
 
 const (

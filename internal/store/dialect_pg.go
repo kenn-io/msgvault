@@ -31,7 +31,7 @@ type PostgreSQLDialect struct {
 	fullyVisibleBound time.Time
 }
 
-func (d *PostgreSQLDialect) DriverName() string { return "pgx" }
+func (d *PostgreSQLDialect) DriverName() string { return postgresDriverName }
 
 // Rebind converts ? placeholders to PostgreSQL $1, $2, ... numbered
 // placeholders. Delegates to sqldialect so the query package's
@@ -587,6 +587,13 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE carddav_address_books ADD COLUMN IF NOT EXISTS needs_full_reconcile BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_address_books.needs_full_reconcile"},
+		{`ALTER TABLE carddav_address_books ADD COLUMN IF NOT EXISTS sync_token TEXT NOT NULL DEFAULT ''`, "carddav_address_books.sync_token"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS pending_operation TEXT CHECK (pending_operation IN ('delete'))`, "carddav_conflicts.pending_operation"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS connection_generation BIGINT`, "carddav_conflicts.connection_generation"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS book_sync_revision BIGINT`, "carddav_conflicts.book_sync_revision"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS previous_mapping_revision BIGINT`, "carddav_conflicts.previous_mapping_revision"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS pending_started_at TIMESTAMPTZ`, "carddav_conflicts.pending_started_at"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS sync_config JSONB`, "sync_config"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},

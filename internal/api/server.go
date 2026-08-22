@@ -15,6 +15,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -234,6 +235,7 @@ type Server struct {
 	shutdownToken  string
 	shutdownFunc   func()
 	scheduler      SyncScheduler
+	cardDAV        *CardDAVController
 	logger         *slog.Logger
 	requestTimeout time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
@@ -445,8 +447,11 @@ type ServerOptions struct {
 	// derives it: ready when Backend is non-nil, disabled otherwise. The
 	// serve daemon passes VectorStatusInitializing and installs the
 	// components later via SetVectorFeatures.
-	VectorStatus  VectorStatus
-	Scheduler     SyncScheduler
+	VectorStatus VectorStatus
+	Scheduler    SyncScheduler
+	// CardDAV owns the single configured CardDAV service used by HTTP, CLI,
+	// and scheduled synchronization.
+	CardDAV       *CardDAVController
 	Logger        *slog.Logger
 	IdleTracker   *IdleTracker
 	OperationGate OperationGate
@@ -522,6 +527,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		backend:                  opts.Backend,
 		personSearchEngine:       opts.PersonSearchEngine,
 		scheduler:                opts.Scheduler,
+		cardDAV:                  opts.CardDAV,
 		logger:                   opts.Logger,
 		requestTimeout:           timeout,
 		readTimeout:              daemonReadTimeout,
@@ -993,6 +999,10 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
 		}
+		if cardDAVRequestNeedsProtectiveCeiling(r) {
+			serveWithProtectiveRequestDeadline(w, r, next)
+			return
+		}
 		if s.requestUsesCLITimeoutPolicy(r) {
 			if cliRequestNeedsProtectiveCeiling(r) {
 				serveWithProtectiveRequestDeadline(w, r, next)
@@ -1011,6 +1021,24 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// cardDAVRequestNeedsProtectiveCeiling identifies routes that may perform
+// upstream CardDAV requests. Their client has its own five-minute operation
+// budget, so the ordinary one-minute API timeout must not preempt it.
+func cardDAVRequestNeedsProtectiveCeiling(r *http.Request) bool {
+	switch r.Method + " " + r.URL.Path {
+	case "POST /api/v1/carddav/account/test",
+		"PUT /api/v1/carddav/account",
+		"POST /api/v1/carddav/sync":
+		return true
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/carddav/publications/") {
+		return r.Method == http.MethodPost || r.Method == http.MethodDelete
+	}
+	return r.Method == http.MethodPost &&
+		strings.HasPrefix(r.URL.Path, "/api/v1/carddav/conflicts/") &&
+		strings.HasSuffix(r.URL.Path, "/resolve")
 }
 
 // cliRequestNeedsProtectiveCeiling identifies marked CLI routes whose
@@ -1057,6 +1085,7 @@ func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
 func isLongDaemonRequest(path string) bool {
 	switch path {
 	case "/api/v1/cli/build-cache",
+		"/api/v1/carddav/sync",
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,
 		"/api/v1/cli/identities/discover",
