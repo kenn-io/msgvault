@@ -143,6 +143,56 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 	assert.Equal(fixture.sourcePersonID, *alias.SurvivingPersonID)
 }
 
+func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-closed-merge", Actor: "test",
+	})
+	require.NoError(err)
+	split, err := source.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         absorbed.ParticipantIDs,
+		ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey:         "subset-close-merge", Actor: "test",
+	})
+	require.NoError(err)
+	require.True(split.ExactReversal)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+		IncludeAttributes: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), copyResult.PersonMergePackets)
+	assert.Zero(copyResult.OmittedPersonMergePackets)
+
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	detail, err := destination.GetPersonMergeContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+	assert.Nil(detail.Merge.CurrentPersonID)
+	assert.Len(detail.Splits, 1)
+	_, err = destination.GetPersonContext(ctx, split.SourcePerson.ID)
+	require.NoError(err)
+	_, err = destination.GetPersonContext(ctx, split.NewPerson.ID)
+	require.NoError(err)
+}
+
 func TestSubsetPersonMergePacketCanSplitAfterNewPersonCreation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -891,7 +891,17 @@ func copyPersonMergePackets(
 	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
 		if _, err := tx.Exec(`INSERT INTO selected_person_merges (id)
 			SELECT merge_record.id FROM src.person_merges merge_record
-			WHERE merge_record.current_person_id IN (SELECT id FROM persons)
+			WHERE (
+				merge_record.current_person_id IN (SELECT id FROM persons)
+				OR EXISTS (SELECT 1 FROM src.person_splits split_record
+					WHERE split_record.merge_id = merge_record.id
+					  AND (split_record.source_person_id IN (SELECT id FROM persons)
+						OR split_record.new_person_id IN (SELECT id FROM persons)))
+				OR EXISTS (SELECT 1 FROM src.person_merge_participants lineage
+					JOIN person_participants binding
+					  ON binding.participant_id = lineage.participant_id
+					WHERE lineage.merge_id = merge_record.id)
+			)
 			  AND NOT EXISTS (
 				SELECT 1 FROM src.person_merge_participants lineage
 				WHERE lineage.merge_id = merge_record.id

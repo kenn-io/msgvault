@@ -113,6 +113,13 @@ func (s *Store) SetAttachmentRoleRepairPreparedHookForTest(fn func()) func() {
 	return func() { s.attachmentRoleRepairPreparedHook = nil }
 }
 
+// SetIdentityMatchAcceptBeforeDecisionHookForTest pauses a user acceptance
+// after its initial read and before its locked decision transaction.
+func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func() {
+	s.identityMatchAcceptBeforeDecisionHook = fn
+	return func() { s.identityMatchAcceptBeforeDecisionHook = nil }
+}
+
 // SetPersonOperationBeforeIdentityLockHookForTest installs a per-Store barrier
 // immediately before merge and split transactions acquire the identity lock.
 // Concurrency tests use it to prove every competing transaction is open and at

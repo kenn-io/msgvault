@@ -332,6 +332,69 @@ func TestSQLiteSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) 
 		"a concurrent system acceptance must not leave a rejected identity edge")
 }
 
+func TestFailedUserAcceptanceRestoresLockedDecisionState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+
+	left, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@rollback-race-left:beeper.local", "Test User")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@rollback-race-right:beeper.local", "Test User")
+	require.NoError(err)
+	_, _, err = st.CreatePersonFromParticipantContext(ctx, left)
+	require.NoError(err)
+	_, _, err = st.CreatePersonFromParticipantContext(ctx, right)
+	require.NoError(err)
+	candidate := upsertPairCandidate(
+		t, st, left, right, store.IdentityMatchStableProviderID)
+
+	acceptanceRead := make(chan struct{})
+	resumeAcceptance := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAcceptance := func() {
+		releaseOnce.Do(func() { close(resumeAcceptance) })
+	}
+	restoreHook := st.SetIdentityMatchAcceptBeforeDecisionHookForTest(func() {
+		close(acceptanceRead)
+		<-resumeAcceptance
+	})
+	t.Cleanup(restoreHook)
+	t.Cleanup(releaseAcceptance)
+
+	acceptDone := make(chan error, 1)
+	go func() {
+		_, _, acceptErr := st.AcceptIdentityMatchCandidateContext(
+			ctx, candidate.ID, "user", nil)
+		acceptDone <- acceptErr
+	}()
+	select {
+	case <-acceptanceRead:
+	case <-time.After(5 * time.Second):
+		require.FailNow("acceptance did not finish its initial read")
+	}
+
+	rejectionNote := "rejected while acceptance waited"
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateRejected, "user", &rejectionNote)
+	require.NoError(err)
+	releaseAcceptance()
+	select {
+	case err = <-acceptDone:
+		require.ErrorIs(err, store.ErrPersonBindingConflict)
+	case <-time.After(5 * time.Second):
+		require.FailNow("acceptance did not finish")
+	}
+
+	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateRejected, reloaded.State)
+	require.NotNil(reloaded.Notes)
+	assert.Equal(rejectionNote, *reloaded.Notes)
+}
+
 func TestAcceptUsernameCandidateRequiresAUser(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

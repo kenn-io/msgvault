@@ -607,10 +607,23 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 	decidedBy string,
 	notes *string,
 ) (*IdentityMatchCandidate, error) {
+	candidate, _, err := s.decideIdentityMatchCandidateContext(
+		ctx, candidateID, state, decidedBy, notes)
+	return candidate, err
+}
+
+func (s *Store) decideIdentityMatchCandidateContext(
+	ctx context.Context,
+	candidateID int64,
+	state IdentityMatchState,
+	decidedBy string,
+	notes *string,
+) (*IdentityMatchCandidate, *IdentityMatchCandidate, error) {
 	if !state.valid() {
-		return nil, ErrInvalidIdentityMatchState
+		return nil, nil, ErrInvalidIdentityMatchState
 	}
 	var candidate *IdentityMatchCandidate
+	var before *IdentityMatchCandidate
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -619,6 +632,7 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		if err != nil {
 			return err
 		}
+		before = current
 		if current.State == IdentityMatchStateAccepted && state == IdentityMatchStateRejected {
 			if current.DecidedBy != nil && *current.DecidedBy == string(ProvenanceUser) {
 				return ErrIdentityMatchAlreadyAccepted
@@ -683,7 +697,7 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		candidate, err = getIdentityMatchCandidateTx(ctx, tx, candidateID)
 		return err
 	})
-	return candidate, err
+	return candidate, before, err
 }
 
 // rejectSystemAcceptedIdentityMatchTxContext withdraws the direct edge that

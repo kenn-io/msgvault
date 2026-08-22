@@ -77,11 +77,15 @@ func (s *Store) AcceptIdentityMatchCandidateContext(
 	}
 
 	accepted := candidate
+	beforeTransition := candidate
 	transitioned := false
 	if candidate.State != IdentityMatchStateAccepted ||
 		(decidedBy == string(ProvenanceUser) &&
 			(candidate.DecidedBy == nil || *candidate.DecidedBy != string(ProvenanceUser))) {
-		accepted, err = s.DecideIdentityMatchCandidateContext(
+		if s.identityMatchAcceptBeforeDecisionHook != nil {
+			s.identityMatchAcceptBeforeDecisionHook()
+		}
+		accepted, beforeTransition, err = s.decideIdentityMatchCandidateContext(
 			ctx, candidateID, IdentityMatchStateAccepted, decidedBy, notes)
 		if err != nil {
 			return nil, 0, err
@@ -95,7 +99,7 @@ func (s *Store) AcceptIdentityMatchCandidateContext(
 		if transitioned && decidedBy == string(ProvenanceUser) &&
 			errors.Is(err, ErrPersonBindingConflict) {
 			if restoreErr := s.restoreIdentityMatchDecisionAfterBindingConflictContext(
-				ctx, candidate, accepted,
+				ctx, beforeTransition, accepted,
 			); restoreErr != nil {
 				return nil, 0, errors.Join(err, restoreErr)
 			}
