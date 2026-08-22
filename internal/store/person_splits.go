@@ -235,11 +235,15 @@ func (s *Store) splitPersonMergeOnce(
 			personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, lineageArgs...); err != nil {
 			return fmt.Errorf("mark split participant lineage: %w", err)
 		}
-		if exact {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_merges
-				SET current_person_id = NULL WHERE id = ?`, request.MergeID); err != nil {
-				return fmt.Errorf("close exact-split merge lineage: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_merges
+			SET current_person_id = NULL
+			WHERE id = ? AND current_person_id = ? AND NOT EXISTS (
+				SELECT 1 FROM person_merge_participants lineage
+				WHERE lineage.merge_id = person_merges.id
+				  AND lineage.origin_side = 'absorbed'
+				  AND lineage.split_id IS NULL
+			)`, request.MergeID, request.SourcePersonID); err != nil {
+			return fmt.Errorf("close fully split merge lineage: %w", err)
 		}
 		identityRevision, err := s.bumpIdentityRevisionContext(ctx, tx)
 		if err != nil {

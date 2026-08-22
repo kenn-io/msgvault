@@ -1017,9 +1017,9 @@ func (s *Store) movePersonCategoriesTx(
 func (s *Store) movePersonAttributesTx(
 	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
 ) error {
-	lockClause := s.dialect.SelectForUpdate()
-	if lockClause != "" {
-		lockClause += " OF a"
+	singleValueLockClause := s.dialect.SelectForUpdate()
+	if singleValueLockClause != "" {
+		singleValueLockClause += " OF a"
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT
 		a.id, a.definition_id, survivor.id,
@@ -1042,7 +1042,7 @@ func (s *Store) movePersonAttributesTx(
 		 AND survivor.active_until IS NULL AND survivor.superseded_at IS NULL
 		WHERE a.person_id = ? AND definition.cardinality = 'single'
 		  AND a.active_until IS NULL AND a.superseded_at IS NULL
-		ORDER BY a.definition_id, a.id`+lockClause, survivorID, absorbedID)
+		ORDER BY a.definition_id, a.id`+singleValueLockClause, survivorID, absorbedID)
 	if err != nil {
 		return fmt.Errorf("load absorbed single attributes: %w", err)
 	}
@@ -1110,6 +1110,10 @@ func (s *Store) movePersonAttributesTx(
 		return err
 	}
 
+	multiValueLockClause := s.dialect.SelectForUpdate()
+	if multiValueLockClause != "" {
+		multiValueLockClause += " OF absorbed, survivor"
+	}
 	duplicateRows, err := tx.QueryContext(ctx, `SELECT absorbed.id, survivor.id,
 		absorbed.value_json, survivor.value_json
 		FROM person_attribute_values absorbed
@@ -1128,7 +1132,7 @@ func (s *Store) movePersonAttributesTx(
 		 AND absorbed.value_record_id IS NOT DISTINCT FROM survivor.value_record_id
 		WHERE absorbed.person_id = ?
 		  AND absorbed.active_until IS NULL AND absorbed.superseded_at IS NULL
-		ORDER BY absorbed.id, survivor.id`+lockClause, survivorID, absorbedID)
+		ORDER BY absorbed.id, survivor.id`+multiValueLockClause, survivorID, absorbedID)
 	if err != nil {
 		return fmt.Errorf("load duplicate absorbed multi attributes: %w", err)
 	}

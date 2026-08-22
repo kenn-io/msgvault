@@ -2289,7 +2289,7 @@ func TestSplitPersonMerge_CutsIdentityLinks(t *testing.T) {
 	assert.Equal(t, []int64{result.NewPerson.ParticipantIDs[0]}, selectedCluster)
 }
 
-func TestSplitPersonMerge_LaterSplitIsNeverExactReversal(t *testing.T) {
+func TestSplitPersonMerge_SequentialPartialSplitsReleasePersonDeletion(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2310,6 +2310,9 @@ func TestSplitPersonMerge_LaterSplitIsNeverExactReversal(t *testing.T) {
 	require.NoError(err)
 	assert.False(second.ExactReversal)
 	assert.Equal("retired_uid_alias_unchanged", second.UIDAliasDisposition)
+	require.NoError(f.store.DeletePersonContext(
+		ctx, second.SourcePerson.ID, second.SourcePerson.Revision,
+	))
 }
 
 func TestSplitPersonMerge_Validation(t *testing.T) {
