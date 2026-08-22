@@ -654,6 +654,25 @@ func TestAddAccount_HeadlessAppliesGrantDecision(t *testing.T) {
 		assert.Contains(out, "Headless Server Setup")
 	})
 
+	t.Run("copies existing token before readonly reauthorization", func(t *testing.T) {
+		require := require.New(t)
+
+		saveAddAccountFlags(t)
+		_, restore := seedTokenEnv(t, gmailReadonlyCalendarTokenJSON)
+		defer restore()
+
+		out, err := runAddAccountForTest(t,
+			scopeEscalationAccount, "--headless", "--readonly", "--no-default-identity")
+
+		require.NoError(err)
+		copyToken := strings.Index(out, "Copy the existing token from the headless server")
+		reauthorize := strings.Index(out,
+			"msgvault add-account "+scopeEscalationAccount+" --readonly --force")
+		require.NotEqual(-1, copyToken)
+		require.NotEqual(-1, reauthorize)
+		assert.Less(t, copyToken, reauthorize)
+	})
+
 	t.Run("brand new account prints instructions with no warning", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -668,6 +687,7 @@ func TestAddAccount_HeadlessAppliesGrantDecision(t *testing.T) {
 		require.NoError(err)
 		assert.Contains(out, "Headless Server Setup")
 		assert.Contains(out, "--readonly")
+		assert.NotContains(out, "--force")
 		assert.NotContains(out, "Warning")
 	})
 }

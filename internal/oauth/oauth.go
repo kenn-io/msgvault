@@ -331,6 +331,8 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string, readonly bool)
 	// Use same sanitization as tokenPath for consistency
 	tokenFile := sanitizeEmail(email) + ".json"
 	tokenPath := filepath.Join(tokensDir, tokenFile)
+	_, tokenErr := os.Stat(tokenPath)
+	hasToken := tokenErr == nil
 
 	addCmd := "    msgvault add-account " + email
 	if oauthApp != "" {
@@ -347,16 +349,31 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string, readonly bool)
 	fmt.Println("cannot directly authorize. Instead, authorize on a machine with a browser")
 	fmt.Println("and copy the token to your server.")
 	fmt.Println()
-	fmt.Println("Step 1: On a machine with a browser, run:")
+	step := 1
+	if hasToken {
+		fmt.Printf("Step %d: Copy the existing token from the headless server to the browser machine:\n", step)
+		fmt.Println()
+		fmt.Printf("    mkdir -p %s\n", shellQuote(tokensDir))
+		fmt.Printf("    scp user@server:%s %s\n", shellQuote(tokenPath), shellQuote(tokenPath))
+		fmt.Println()
+		step++
+	}
+	fmt.Printf("Step %d: On a machine with a browser, run:\n", step)
 	fmt.Println()
-	fmt.Println(addCmd)
+	if hasToken {
+		fmt.Println(addCmd + " --force")
+	} else {
+		fmt.Println(addCmd)
+	}
 	fmt.Println()
-	fmt.Println("Step 2: Copy the token file to your headless server:")
+	step++
+	fmt.Printf("Step %d: Copy the token file to your headless server:\n", step)
 	fmt.Println()
 	fmt.Printf("    ssh user@server mkdir -p %s\n", shellQuote(tokensDir))
 	fmt.Printf("    scp %s user@server:%s\n", shellQuote(tokenPath), shellQuote(tokenPath))
 	fmt.Println()
-	fmt.Println("Step 3: On the headless server, register the account:")
+	step++
+	fmt.Printf("Step %d: On the headless server, register the account:\n", step)
 	fmt.Println()
 	fmt.Println(addCmd)
 	fmt.Println()
