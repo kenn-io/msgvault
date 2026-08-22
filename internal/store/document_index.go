@@ -1193,6 +1193,16 @@ func documentOccurrenceMediaScopeSQL(
 
 func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence DocumentOccurrence) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			// The occurrence row may not exist yet, so there is no row to lock.
+			// Serialize first inserts that share the attachment uniqueness key.
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+				hashtextextended(CAST(? AS TEXT), 0))`,
+				fmt.Sprintf("msgvault.document_occurrence.attachment:%d", occurrence.AttachmentID),
+			); err != nil {
+				return fmt.Errorf("lock document occurrence attachment: %w", err)
+			}
+		}
 		var existing DocumentOccurrence
 		err := tx.QueryRow(`
 			SELECT occurrence_key, attachment_id, message_id, source_id,

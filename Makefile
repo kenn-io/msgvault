@@ -18,6 +18,11 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
 GOLANGCI_LINT_VERSION ?= v2.13.1
+GO_INSTALL_BIN := $(shell go env GOBIN)
+ifeq ($(strip $(GO_INSTALL_BIN)),)
+GO_INSTALL_BIN := $(shell go env GOPATH)/bin
+endif
+GOLANGCI_LINT_BIN := $(GO_INSTALL_BIN)/golangci-lint
 
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
 # pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
@@ -287,13 +292,9 @@ lint:
 	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run --fix ./...
 
 # Run linter (CI, no auto-fix)
-lint-ci: testify-helper-check
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
-		exit 1; \
-	fi
+lint-ci: lint-tools testify-helper-check
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
-	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run ./...
+	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(GOLANGCI_LINT_BIN)" run ./...
 
 # Enforce testify helper usage in assertion-heavy tests
 testify-helper-check:
