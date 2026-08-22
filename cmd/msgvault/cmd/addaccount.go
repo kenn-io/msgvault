@@ -806,8 +806,8 @@ func refuseReadonlyUnderAliasSpelling(mgr *oauth.Manager, email, resolvedApp str
 			"  1. Revoke msgvault at https://myaccount.google.com/permissions\n"+
 			"%s\n"+
 			"  3. msgvault add-account %s%s\n"+
-			"Revoking clears every other Google scope for this account, so re-run the\n"+
-			"commands that granted them (msgvault add-calendar, add-synctech-sms-drive).\n"+
+			"Revoking also clears other Google scopes for this OAuth app, including\n"+
+			"Calendar and Drive. Re-authorize those integrations separately.\n"+
 			"%s",
 		email, strings.Join(equivalents, ", "), strings.Join(removals, "\n"), email, flags,
 		"Archived mail is not affected.")
@@ -857,8 +857,8 @@ func narrowingSteps(email, tokenPath, resolvedApp string) string {
 			"  1. Revoke msgvault at https://myaccount.google.com/permissions\n"+
 			"  2. rm %s\n"+
 			"  3. msgvault add-account %s%s\n"+
-			"Revoking clears every other Google scope for this account, so re-run the\n"+
-			"commands that granted them (msgvault add-calendar, add-synctech-sms-drive).\n"+
+			"Revoking also clears other Google scopes for this OAuth app, including\n"+
+			"Calendar and Drive. Re-authorize those integrations separately.\n"+
 			"Archived mail is not affected.",
 		oauth.ShellQuote(tokenPath), email, flags,
 	)
