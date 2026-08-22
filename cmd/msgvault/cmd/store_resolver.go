@@ -40,8 +40,16 @@ const (
 //
 // Always returns nil unless the migration itself errors.
 func runStartupMigrations(s *store.Store) error {
+	return runStartupMigrationsContext(context.Background(), s)
+}
+
+// runStartupMigrationsContext is the context-aware form of
+// runStartupMigrations, for callers — like eval, whose Cobra context is
+// already cancellable on Ctrl-C — that must not let a long-running
+// migration ignore a cancellation the user actually asked for.
+func runStartupMigrationsContext(ctx context.Context, s *store.Store) error {
 	addrs := cfg.Identity.Addresses
-	res, err := s.RunStartupMigrations(addrs)
+	res, err := s.RunStartupMigrationsContext(ctx, addrs)
 	if err != nil {
 		logger.Warn("startup migration failed", "error", err)
 		return err
