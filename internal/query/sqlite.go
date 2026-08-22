@@ -902,10 +902,48 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 // hydration: ~3 SQL round-trips total (one base query + one labels
 // batch) regardless of len(ids), versus 7N round-trips when callers
 // loop GetMessage per hit.
+// messageSummaryIDChunk caps how many ids GetMessageSummariesByIDs binds into
+// a single IN-list statement. SQLite refuses a statement carrying more than
+// 32766 bound parameters by default, and one id is one parameter here; the
+// eval command's dense vector/hybrid modes can over-fetch a ranked result set
+// well past that at a large -n. This engine is dialect-agnostic (SQLite and
+// PostgreSQL share it), and PostgreSQL's own parameter ceiling is far higher,
+// so chunking — rather than a SQLite-only rewrite of the IN clause — is the
+// one code path that stays correct on both.
+const messageSummaryIDChunk = 500
+
 func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]MessageSummary, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	byID := make(map[int64]MessageSummary, len(ids))
+	for start := 0; start < len(ids); start += messageSummaryIDChunk {
+		end := min(start+messageSummaryIDChunk, len(ids))
+		if err := e.fetchMessageSummariesByIDsInto(ctx, ids[start:end], byID); err != nil {
+			return nil, err
+		}
+	}
+
+	// Reassemble in caller-order so search rank is preserved.
+	results := make([]MessageSummary, 0, len(byID))
+	for _, id := range ids {
+		if m, ok := byID[id]; ok {
+			results = append(results, m)
+		}
+	}
+	if len(results) > 0 {
+		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
+			return nil, fmt.Errorf("fetch labels: %w", err)
+		}
+	}
+	return results, nil
+}
+
+// fetchMessageSummariesByIDsInto runs one chunk's IN-list query and merges
+// its rows into byID, keyed by message id.
+func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
+	ctx context.Context, ids []int64, byID map[int64]MessageSummary,
+) error {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -939,11 +977,10 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("get message summaries by ids: %w", err)
+		return fmt.Errorf("get message summaries by ids: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	byID := make(map[int64]MessageSummary, len(ids))
 	for rows.Next() {
 		var msg MessageSummary
 		var sentAt sql.NullTime
@@ -967,7 +1004,7 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			&msg.MessageType,
 			&msg.ConversationTitle,
 		); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
+			return fmt.Errorf("scan message: %w", err)
 		}
 		if sentAt.Valid {
 			msg.SentAt = sentAt.Time
@@ -978,22 +1015,9 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 		byID[msg.ID] = msg
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate messages: %w", err)
+		return fmt.Errorf("iterate messages: %w", err)
 	}
-
-	// Reassemble in caller-order so search rank is preserved.
-	results := make([]MessageSummary, 0, len(byID))
-	for _, id := range ids {
-		if m, ok := byID[id]; ok {
-			results = append(results, m)
-		}
-	}
-	if len(results) > 0 {
-		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
-			return nil, fmt.Errorf("fetch labels: %w", err)
-		}
-	}
-	return results, nil
+	return nil
 }
 
 func (e *SQLiteEngine) fetchLabelsForMessages(ctx context.Context, messages []MessageSummary) error {

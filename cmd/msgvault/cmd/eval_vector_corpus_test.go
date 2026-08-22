@@ -164,3 +164,42 @@ func TestAttachVector_MatchesArchiveCorpusWhenScopeCoversIt(t *testing.T) {
 		"an unscoped generation embeds the whole archive")
 	assert.Equal(ev.prov.Conversations, ev.prov.VectorConversations)
 }
+
+// TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp is the
+// regression for requiring messages.embed_gen = gen in the corpus query.
+// Content changes reset a message's embed_gen to mark it for re-embedding,
+// but Backend.Search reads vectors.db purely by generation_id: the old
+// vector stays searchable, embed_gen or not, until a re-embed run actually
+// replaces it. A count that required the stamp would report a smaller
+// corpus than what the run's own search can retrieve — message 1's stale
+// stamp here must not remove it.
+func TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dataDir := t.TempDir()
+	s := seedRankingDivergenceArchiveIn(t, dataDir)
+
+	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
+	c.Data.DataDir = dataDir
+	c.Vector.Embeddings.Dimension = 3
+	withTestConfig(t, c)
+
+	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
+
+	// Simulate a content change on message 1 after it was embedded: the
+	// backfill machinery resets embed_gen to mark it for re-embedding, but
+	// its vector row in vectors.db is untouched until that re-embed runs.
+	_, err := s.DB().Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 1`)
+	require.NoError(err, "reset embed_gen to simulate a pending re-embed")
+
+	ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}
+	cleanup, err := ev.attachVector(ctx, s)
+	require.NoError(err, "attachVector")
+	defer cleanup()
+
+	assert.EqualValues(2, ev.prov.VectorMessages,
+		"message 1's stale embed_gen must not drop it from a corpus its own stale vector is still searchable in")
+	assert.EqualValues(2, ev.prov.VectorConversations)
+}

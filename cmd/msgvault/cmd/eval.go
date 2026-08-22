@@ -1180,18 +1180,23 @@ func (e *evaluator) collectVectorStats(
 // below the archive-wide Messages/Conversations collectCorpusStats already
 // recorded.
 //
-// Backend.EmbeddedMessageCount already answers "how many live messages does
-// this generation search" for production coverage reporting, but this
-// function needs the conversation count too, and Backend has no equivalent
-// accessor for that — adding one for a single report field would be more
-// machinery than the risk warrants. Rather than call EmbeddedMessageCount for
-// messages and a second, separately-erroring query for conversations (which
-// can desync under a transient failure on one call but not the other,
-// printing a self-contradictory report), both counts are read from one
-// query: the embedded message ids come from vectors.db, same as
-// IndexedVectors reads, and get intersected once against main.db's live,
-// scoped, stamped population, reading COUNT(DISTINCT id) and
-// COUNT(DISTINCT conversation_id) off the same row.
+// This deliberately does NOT require messages.embed_gen = gen, unlike
+// Backend.EmbeddedMessageCount (production's own coverage accessor, built for
+// a different question: "is this message's CURRENT content embedded"). A
+// content change resets embed_gen to mark a message as needing re-embedding,
+// but Backend.Search reads vectors.db purely by generation_id — it returns a
+// message's stale vector until the re-embed actually runs, embed_gen or not.
+// Requiring the stamp here would undercount relative to what a run can
+// actually retrieve, the same "corpus" mismatch this field exists to fix in
+// the other direction. So membership is: present in vectors.db for this
+// generation, live, and in scope — exactly what Search can return, nothing
+// narrower.
+//
+// Both counts are read from one query — the embedded message ids come from
+// vectors.db, same as IndexedVectors reads, intersected once against
+// main.db's live, scoped population — rather than a separate call per count,
+// so a transient failure can only leave both at zero together, never one
+// populated and the other not.
 //
 // Failures degrade the report rather than the run, same policy as
 // collectCorpusStats: provenance is a courtesy to the reader, not a
@@ -1226,9 +1231,8 @@ func (e *evaluator) collectVectorCorpusStats(
 		return
 	}
 	where := `id IN (SELECT value FROM json_each(?))
-		AND embed_gen = ?
 		AND ` + store.LiveMessagesWhere("", true)
-	args := []any{string(blob), int64(gen)}
+	args := []any{string(blob)}
 	if len(vecCfg.Embed.Scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(vecCfg.Embed.Scope.MessageTypes))
 		for i, typ := range vecCfg.Embed.Scope.MessageTypes {
