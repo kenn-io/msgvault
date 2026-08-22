@@ -226,6 +226,16 @@ func (s *Store) AdvanceAttachmentChangeConsumer(
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		if !s.IsPostgreSQL() {
+			// Reserve SQLite's writer slot before reading the cursor and event.
+			// A deferred transaction cannot upgrade a stale WAL snapshot after
+			// a peer advances the same consumer and commits.
+			if _, err := q.Exec(`
+				UPDATE attachment_change_consumers
+				SET last_sequence = last_sequence WHERE consumer_key = ?`, consumerKey); err != nil {
+				return fmt.Errorf("lock attachment change consumer: %w", err)
+			}
+		}
 		var current int64
 		var complete bool
 		if err := q.QueryRow(`

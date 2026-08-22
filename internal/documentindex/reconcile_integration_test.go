@@ -1,9 +1,11 @@
 package documentindex
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -184,6 +186,59 @@ func TestConcurrentOccurrenceReconciliationKeepsHighestSourceSequence(t *testing
 		attachmentID,
 	).Scan(&sequence))
 	assert.Equal(t, int64(100), sequence)
+}
+
+func TestSQLiteOccurrenceReconciliationWaitsForWriterSlot(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite writer-slot regression")
+	}
+	messageID := f.CreateMessage("document-reconcile-writer-slot")
+	attachmentID := createReconcileAttachment(t, f, messageID, "1")
+
+	holder, err := f.Store.DB().Conn(t.Context())
+	require.NoError(err)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_, _ = holder.ExecContext(context.Background(), "ROLLBACK")
+		}
+		_ = holder.Close()
+	})
+	_, err = holder.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(err)
+	_, err = holder.ExecContext(t.Context(), `
+		INSERT INTO archive_metadata (key, value)
+		VALUES ('test.document-writer-slot', 'held')`)
+	require.NoError(err)
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, reconcileErr := f.Store.ReconcileDocumentOccurrence(
+			t.Context(), attachmentID, 10,
+		)
+		result <- reconcileErr
+	}()
+	require.Eventually(func() bool {
+		return f.Store.DB().Stats().InUse >= 2 || len(result) > 0
+	}, time.Second, time.Millisecond)
+	select {
+	case reconcileErr := <-result:
+		require.NoError(reconcileErr, "reconciliation returned while the SQLite writer slot was held")
+	default:
+	}
+	require.GreaterOrEqual(f.Store.DB().Stats().InUse, 2)
+
+	select {
+	case reconcileErr := <-result:
+		require.NoError(reconcileErr, "reconciliation returned while the SQLite writer slot was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	_, err = holder.ExecContext(t.Context(), "COMMIT")
+	require.NoError(err)
+	held = false
+	require.NoError(<-result)
 }
 
 func TestReconcilerRemovesCascadedOccurrenceFromJournalReplay(t *testing.T) {

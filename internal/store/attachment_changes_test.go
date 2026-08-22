@@ -1,8 +1,10 @@
 package store_test
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -117,6 +119,66 @@ func TestAttachmentChangeConsumersPruneOnlySharedConsumedPrefix(t *testing.T) {
 	require.NoError(f.Store.UnregisterAttachmentChangeConsumer(t.Context(), "visual-index/v1"))
 	createJournalAttachment(t, f, messageID, "part:3", "d")
 	assert.Zero(attachmentChangeCount(t, f), "capture stops after the final consumer unregisters")
+}
+
+func TestSQLiteAttachmentChangeAdvanceWaitsForWriterSlot(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite writer-slot regression")
+	}
+	consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), "document-index/v1")
+	require.NoError(err)
+	require.NoError(f.Store.CompleteAttachmentChangeReconciliation(
+		t.Context(), consumer.ConsumerKey, consumer.BaselineSequence,
+	))
+	messageID := f.CreateMessage("attachment-consumer-writer-slot")
+	createJournalAttachment(t, f, messageID, "part:writer-slot", "e")
+	changes, err := f.Store.ListAttachmentChanges(t.Context(), consumer.ConsumerKey, 1)
+	require.NoError(err)
+	require.Len(changes, 1)
+
+	holder, err := f.Store.DB().Conn(t.Context())
+	require.NoError(err)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_, _ = holder.ExecContext(context.Background(), "ROLLBACK")
+		}
+		_ = holder.Close()
+	})
+	_, err = holder.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(err)
+	_, err = holder.ExecContext(t.Context(), `
+		INSERT INTO archive_metadata (key, value)
+		VALUES ('test.attachment-writer-slot', 'held')`)
+	require.NoError(err)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- f.Store.AdvanceAttachmentChangeConsumer(
+			t.Context(), consumer.ConsumerKey, changes[0].Sequence,
+		)
+	}()
+	require.Eventually(func() bool {
+		return f.Store.DB().Stats().InUse >= 2 || len(result) > 0
+	}, time.Second, time.Millisecond)
+	select {
+	case advanceErr := <-result:
+		require.NoError(advanceErr, "cursor advance returned while the SQLite writer slot was held")
+	default:
+	}
+	require.GreaterOrEqual(f.Store.DB().Stats().InUse, 2)
+
+	select {
+	case advanceErr := <-result:
+		require.NoError(advanceErr, "cursor advance returned while the SQLite writer slot was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	_, err = holder.ExecContext(t.Context(), "COMMIT")
+	require.NoError(err)
+	held = false
+	require.NoError(<-result)
 }
 
 func TestAttachmentChangeJournalCapturesCascadeDeletion(t *testing.T) {

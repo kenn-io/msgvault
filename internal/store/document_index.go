@@ -1202,6 +1202,14 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 			); err != nil {
 				return fmt.Errorf("lock document occurrence attachment: %w", err)
 			}
+		} else {
+			// Reserve SQLite's writer slot before reading occurrence state. A
+			// deferred transaction cannot upgrade a stale WAL snapshot after a
+			// concurrent reconciliation commits.
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE document_index_state SET revision = revision WHERE singleton = 1`); err != nil {
+				return fmt.Errorf("lock document occurrence reconciliation: %w", err)
+			}
 		}
 		var existing DocumentOccurrence
 		err := tx.QueryRow(`
