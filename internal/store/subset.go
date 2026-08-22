@@ -1113,6 +1113,18 @@ func pruneIncompletePersonMergePackets(tx *sql.Tx) error {
 }
 
 func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
+	var omittedSplitOwner int
+	if err := tx.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM src.person_merge_participants lineage
+		JOIN src.person_splits split_record ON split_record.id = lineage.split_id
+		WHERE lineage.merge_id = ?
+		  AND split_record.merge_id NOT IN (SELECT id FROM selected_person_merges)
+	)`, mergeID).Scan(&omittedSplitOwner); err != nil {
+		return false, fmt.Errorf("validate person merge split dependencies: %w", err)
+	}
+	if omittedSplitOwner != 0 {
+		return false, nil
+	}
 	var snapshotBlob []byte
 	var snapshotSHA256 string
 	if err := tx.QueryRow(`SELECT snapshot_blob, snapshot_sha256
