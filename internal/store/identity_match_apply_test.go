@@ -383,6 +383,57 @@ func TestAcceptAcrossDifferentPersonsBecomesAConflict(t *testing.T) {
 		"the failed accept is recorded as a conflict for review")
 }
 
+func TestFailedUserAcceptPreservesObservationConflictCleanup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("example", "rollback-left", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("example", "rollback-right", "Right")
+	require.NoError(err)
+	normalized := "rollback-shared@example.org"
+	candidate, created, err := st.UpsertIdentityMatchCandidateContext(
+		ctx, store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: left,
+			RightKind: store.IdentityMatchParticipant, RightID: right,
+			Basis: store.IdentityMatchEmail, NormalizedValue: &normalized,
+			State: store.IdentityMatchStateCandidate, Source: store.ProvenanceUser,
+		},
+	)
+	require.NoError(err)
+	require.True(created)
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: normalized,
+		ProviderUserID: new("provider-left"),
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	leftObservation, err := st.RecordContactObservationContext(ctx, left, input)
+	require.NoError(err)
+	input.ProviderUserID = new("provider-right")
+	conflicting, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	require.True(conflicting.Conflicting)
+	assert.Equal(candidate.ID, *conflicting.CandidateID)
+	_, _, err = st.CreatePersonFromParticipantContext(ctx, left)
+	require.NoError(err)
+	_, _, err = st.CreatePersonFromParticipantContext(ctx, right)
+	require.NoError(err)
+
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "user", nil)
+	require.ErrorIs(err, store.ErrPersonBindingConflict)
+	restored, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateConflict, restored.State)
+
+	require.NoError(st.SupersedeParticipantObservationContext(
+		ctx, left, leftObservation.Observation.Envelope.ID, nil,
+	))
+	demoted, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateCandidate, demoted.State)
+}
+
 func TestAcceptRejectsUnsupportedEndpointKinds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

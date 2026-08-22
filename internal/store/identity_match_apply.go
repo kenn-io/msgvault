@@ -122,12 +122,14 @@ func (s *Store) restoreIdentityMatchDecisionAfterBindingConflictContext(
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 			state = ?, decided_by = ?, decided_at = ?, notes = ?,
-			application_pending = ?, pre_conflict_state = NULL,
+			application_pending = ?, observation_conflict_origin = ?,
+			pre_conflict_state = ?,
 			updated_at = ?
 			WHERE id = ? AND state = 'conflict' AND application_pending = FALSE
 			  AND notes = ?`,
 			before.State, before.DecidedBy, before.DecidedAt, before.Notes,
-			before.applicationPending, before.UpdatedAt, before.ID,
+			before.applicationPending, before.conflictState.observationOrigin,
+			before.conflictState.preConflictState, before.UpdatedAt, before.ID,
 			"accepted match spans two durable person profiles; not applied",
 		)
 		if err != nil {

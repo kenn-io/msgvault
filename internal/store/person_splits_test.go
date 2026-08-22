@@ -850,6 +850,12 @@ func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t 
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
 	require.NoError(err)
+	thirdName, err := st.AddPersonNameContext(ctx, third.ID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: new("Nested Third"),
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	thirdUID := third.VCardUID
 	first, err = st.GetPersonContext(ctx, first.ID)
 	require.NoError(err)
 	second, err = st.GetPersonContext(ctx, second.ID)
@@ -888,7 +894,16 @@ func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t 
 	})
 	require.NoError(err)
 	assert.False(laterSplit.ExactReversal)
+	assert.Equal("retired_uid_alias_retargeted", laterSplit.UIDAliasDisposition)
 	assert.Contains(laterSplit.NewPerson.ParticipantIDs, third.ParticipantIDs[0])
+	thirdProfile, err := st.GetPersonProfileContext(ctx, laterSplit.NewPerson.ID)
+	require.NoError(err)
+	require.Len(thirdProfile.Names, 1)
+	assert.Equal(thirdName.Envelope.ID, thirdProfile.Names[0].Envelope.ID)
+	alias, err := st.ResolveRetiredPersonUIDContext(ctx, thirdUID)
+	require.NoError(err)
+	require.NotNil(alias.SurvivingPersonID)
+	assert.Equal(laterSplit.NewPerson.ID, *alias.SurvivingPersonID)
 	var nameOwner int64
 	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT person_id
 		FROM person_names WHERE id = ?`), secondName.Envelope.ID).Scan(&nameOwner))

@@ -26,11 +26,17 @@ type personSplitLineage struct {
 	personID      sql.NullInt64
 }
 
+type personSplitLineageSelection struct {
+	exact            bool
+	restoresAbsorbed bool
+}
+
 type personSplitAncestorRestoration struct {
 	merge          *PersonMerge
 	snapshot       personMergeSnapshot
 	absorbedRoot   personMergeSnapshotPerson
 	participantIDs []int64
+	selection      personSplitLineageSelection
 }
 
 type personSplitJournalRow struct {
@@ -129,13 +135,13 @@ func (s *Store) splitPersonMergeOnce(
 		if err != nil {
 			return err
 		}
-		exact, err := validatePersonSplitLineage(
+		selection, err := validatePersonSplitLineage(
 			lineage, request.SourcePersonID, request.ParticipantIDs,
 		)
 		if err != nil {
 			return err
 		}
-		if exact {
+		if selection.restoresAbsorbed {
 			reviewed, err := personSplitHasPostMergeAcceptedCandidateTx(
 				ctx, tx, request.MergeID, snapshot,
 			)
@@ -161,7 +167,7 @@ func (s *Store) splitPersonMergeOnce(
 			return err
 		}
 		var displayName any
-		if exact && absorbedRoot.DisplayName != nil {
+		if selection.restoresAbsorbed && absorbedRoot.DisplayName != nil {
 			displayName = *absorbedRoot.DisplayName
 		}
 		var newPersonID int64
@@ -208,7 +214,7 @@ func (s *Store) splitPersonMergeOnce(
 		ambiguous, err := s.restorePersonSplitRowsTx(
 			ctx, tx, request.MergeID, splitID, request.SourcePersonID,
 			newPersonID, snapshot.Persons[0].ID, absorbedRoot.ID, sourceUID, newUID,
-			request.ParticipantIDs, exact, snapshot, &unrestored,
+			request.ParticipantIDs, selection, snapshot, &unrestored,
 		)
 		if err != nil {
 			return err
@@ -217,7 +223,7 @@ func (s *Store) splitPersonMergeOnce(
 			ancestorAmbiguous, err := s.restorePersonSplitRowsTx(
 				ctx, tx, ancestor.merge.ID, splitID, request.SourcePersonID,
 				newPersonID, ancestor.snapshot.Persons[0].ID, ancestor.absorbedRoot.ID,
-				sourceUID, newUID, ancestor.participantIDs, true, ancestor.snapshot,
+				sourceUID, newUID, ancestor.participantIDs, ancestor.selection, ancestor.snapshot,
 				&unrestored,
 			)
 			if err != nil {
@@ -249,7 +255,7 @@ func (s *Store) splitPersonMergeOnce(
 					ErrPersonSplitParticipants)
 			}
 		}
-		if exact {
+		if selection.restoresAbsorbed {
 			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET
 				state = 'rejected', reviewed_by = ?, reviewed_at = `+s.dialect.Now()+`
 				WHERE merge_id = ? AND state = 'pending'`, request.Actor, request.MergeID); err != nil {
@@ -262,7 +268,7 @@ func (s *Store) splitPersonMergeOnce(
 			return err
 		}
 		aliasDisposition := personSplitAliasUnchanged
-		if exact {
+		if selection.restoresAbsorbed {
 			aliasResult, err := tx.ExecContext(ctx, `UPDATE person_uid_aliases
 				SET surviving_person_id = ? WHERE retired_uid = ? AND surviving_person_id = ?`,
 				newPersonID, merge.AbsorbedVCardUID, request.SourcePersonID)
@@ -321,7 +327,7 @@ func (s *Store) splitPersonMergeOnce(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, request.SourcePersonID, newPersonID); err != nil {
 			return err
 		}
-		exactReversal := exact && len(unrestored) == 0
+		exactReversal := selection.exact && len(unrestored) == 0
 		if _, err := tx.ExecContext(ctx, `UPDATE person_splits
 			SET is_exact_reversal = ? WHERE id = ?`, exactReversal, splitID); err != nil {
 			return fmt.Errorf("record exact person split outcome: %w", err)
@@ -557,13 +563,13 @@ func (s *Store) loadPersonSplitAncestorRestorationsTx(
 		if len(absorbedSelected) == 0 {
 			continue
 		}
-		exact, err := validatePersonSplitLineage(
+		selection, err := validatePersonSplitLineage(
 			lineage, request.SourcePersonID, absorbedSelected,
 		)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !exact {
+		if !selection.restoresAbsorbed {
 			return nil, nil, ErrPersonSplitParticipants
 		}
 		merge, snapshot, err := s.loadPersonSplitMergeTx(ctx, tx, mergeID)
@@ -585,7 +591,7 @@ func (s *Store) loadPersonSplitAncestorRestorationsTx(
 		}
 		restorations = append(restorations, personSplitAncestorRestoration{
 			merge: merge, snapshot: snapshot, absorbedRoot: absorbedRoot,
-			participantIDs: absorbedSelected,
+			participantIDs: absorbedSelected, selection: selection,
 		})
 	}
 	return restorations, transfers, nil
@@ -593,7 +599,7 @@ func (s *Store) loadPersonSplitAncestorRestorationsTx(
 
 func validatePersonSplitLineage(
 	lineage []personSplitLineage, sourceID int64, selected []int64,
-) (bool, error) {
+) (personSplitLineageSelection, error) {
 	wanted := make(map[int64]struct{}, len(selected))
 	for _, id := range selected {
 		wanted[id] = struct{}{}
@@ -624,21 +630,24 @@ func validatePersonSplitLineage(
 		matched++
 		if item.originSide != personMergeOriginAbsorbed ||
 			(!item.splitID.Valid && (!item.personID.Valid || item.personID.Int64 != sourceID)) {
-			return false, ErrPersonSplitParticipants
+			return personSplitLineageSelection{}, ErrPersonSplitParticipants
 		}
 		alreadySplit = alreadySplit || item.splitID.Valid
 	}
 	if matched != len(selected) {
-		return false, ErrPersonSplitParticipants
+		return personSplitLineageSelection{}, ErrPersonSplitParticipants
 	}
 	if alreadySplit {
-		return false, ErrPersonMergeAlreadySplit
+		return personSplitLineageSelection{}, ErrPersonMergeAlreadySplit
 	}
 	if sourceBindings <= len(selected) {
-		return false, ErrPersonSplitParticipants
+		return personSplitLineageSelection{}, ErrPersonSplitParticipants
 	}
-	return survivorLineageIntact && len(selected) == absorbedUnsplit &&
-		absorbedUnsplit == absorbedTotal, nil
+	restoresAbsorbed := len(selected) == absorbedUnsplit && absorbedUnsplit == absorbedTotal
+	return personSplitLineageSelection{
+		exact:            survivorLineageIntact && restoresAbsorbed,
+		restoresAbsorbed: restoresAbsorbed,
+	}, nil
 }
 
 func absorbedPersonMergeSnapshotRoot(
@@ -673,7 +682,7 @@ func (s *Store) restorePersonSplitRowsTx(
 	mergeID, splitID, sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64,
 	sourceUID, newUID string,
 	selected []int64,
-	exact bool,
+	selection personSplitLineageSelection,
 	snapshot personMergeSnapshot,
 	unrestored *[]PersonMergeRowRef,
 ) ([]PersonMergeRowRef, error) {
@@ -693,8 +702,9 @@ func (s *Store) restorePersonSplitRowsTx(
 	move := make([]personSplitJournalRow, 0, len(journal))
 	ambiguous := make([]PersonMergeRowRef, 0)
 	for _, row := range journal {
-		eligible := exact
-		if !exact && row.provenance == personMergeProvenanceParticipantExact &&
+		eligible := selection.exact ||
+			(selection.restoresAbsorbed && row.originSide == personMergeOriginAbsorbed)
+		if !eligible && row.provenance == personMergeProvenanceParticipantExact &&
 			row.participantID.Valid {
 			_, eligible = selectedSet[row.participantID.Int64]
 		}
@@ -743,7 +753,7 @@ func (s *Store) restorePersonSplitRowsTx(
 		if personSplitSnapshotHasUnsupportedCandidate(
 			snapshotRow, unsupportedCandidates, unsupportedEvidence,
 		) {
-			appendPersonSplitUnrestoredRow(unrestored, exact, row)
+			appendPersonSplitUnrestoredRow(unrestored, selection, row)
 			if err := s.rebasePriorPersonMergeRowsAfterSplitTx(
 				ctx, tx, mergeID, row, snapshotRow, sourceID, newPersonID,
 				survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID, false,
@@ -764,7 +774,7 @@ func (s *Store) restorePersonSplitRowsTx(
 				return nil, err
 			}
 			if !restore {
-				appendPersonSplitUnrestoredRow(unrestored, exact, row)
+				appendPersonSplitUnrestoredRow(unrestored, selection, row)
 				// Deleting or reassigning the surviving merged row is post-merge
 				// user state. Do not recreate a duplicate under stale ownership.
 				if err := s.rebasePriorPersonMergeRowsAfterSplitTx(
@@ -795,7 +805,7 @@ func (s *Store) restorePersonSplitRowsTx(
 		}
 		dependenciesPresent = dependenciesPresent && recordTargetPresent
 		if !dependenciesPresent {
-			appendPersonSplitUnrestoredRow(unrestored, exact, row)
+			appendPersonSplitUnrestoredRow(unrestored, selection, row)
 			// Dependency removal after the merge is user state. Preserve the
 			// deleted row instead of turning an exact split into an FK failure.
 			if err := s.rebasePriorPersonMergeRowsAfterSplitTx(
@@ -839,7 +849,7 @@ func (s *Store) restorePersonSplitRowsTx(
 		if personSplitSnapshotHasUnsupportedCandidate(
 			snapshotRow, unsupportedCandidates, unsupportedEvidence,
 		) {
-			appendPersonSplitUnrestoredRow(unrestored, exact, row)
+			appendPersonSplitUnrestoredRow(unrestored, selection, row)
 			if err := s.rebasePriorPersonMergeRowsAfterSplitTx(
 				ctx, tx, mergeID, row, snapshotRow, sourceID, newPersonID,
 				survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID, false,
@@ -893,9 +903,10 @@ func (s *Store) restorePersonSplitRowsTx(
 }
 
 func appendPersonSplitUnrestoredRow(
-	rows *[]PersonMergeRowRef, exact bool, row personSplitJournalRow,
+	rows *[]PersonMergeRowRef, selection personSplitLineageSelection, row personSplitJournalRow,
 ) {
-	if !exact {
+	if !selection.exact &&
+		(!selection.restoresAbsorbed || row.originSide != personMergeOriginAbsorbed) {
 		return
 	}
 	var originalID *int64

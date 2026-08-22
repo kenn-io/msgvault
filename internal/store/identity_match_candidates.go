@@ -73,6 +73,11 @@ func (s IdentityMatchState) valid() bool {
 	}
 }
 
+type identityMatchConflictState struct {
+	observationOrigin sql.NullString
+	preConflictState  sql.NullString
+}
+
 type IdentityMatchCandidate struct {
 	ID                 int64                     `json:"id"`
 	LeftKind           IdentityMatchEndpointKind `json:"left_kind"`
@@ -95,6 +100,7 @@ type IdentityMatchCandidate struct {
 	CreatedAt          time.Time                 `json:"created_at"`
 	UpdatedAt          time.Time                 `json:"updated_at"`
 	applicationPending bool
+	conflictState      identityMatchConflictState
 }
 
 type IdentityMatchEvidence struct {
@@ -1360,7 +1366,8 @@ const identityMatchCandidateSelect = `SELECT
 	c.id, c.left_kind, c.left_id, c.right_kind, c.right_id, c.basis,
 	cs.slug, c.scope_kind, c.scope_value, c.normalized_value, c.state,
 	c.confidence, c.source, c.source_ref, c.decided_by, c.decided_at,
-	c.notes, c.created_at, c.updated_at, c.application_pending
+	c.notes, c.created_at, c.updated_at, c.application_pending,
+	c.observation_conflict_origin, c.pre_conflict_state
 	FROM identity_match_candidates c
 	LEFT JOIN communication_services cs ON cs.id = c.service_id`
 
@@ -1438,7 +1445,8 @@ func scanIdentityMatchCandidate(row scanner) (*IdentityMatchCandidate, error) {
 		&serviceSlug, &scopeKind, &scopeValue, &normalizedValue,
 		&candidate.State, &confidence, &candidate.Source, &sourceRef,
 		&decidedBy, &decidedAt, &notes, &candidate.CreatedAt, &candidate.UpdatedAt,
-		&candidate.applicationPending,
+		&candidate.applicationPending, &candidate.conflictState.observationOrigin,
+		&candidate.conflictState.preConflictState,
 	); err != nil {
 		return nil, err
 	}
