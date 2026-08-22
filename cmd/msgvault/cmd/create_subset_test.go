@@ -123,6 +123,8 @@ func TestCreateSubsetVCardResourcesRequireFlag(t *testing.T) {
 	})
 	assert.Contains(resourcesStderr, "WARNING: --include-vcard-resources",
 		"the opt-in must state what it exposes before copying it")
+	assert.Contains(resourcesStderr,
+		"Merge packets require --include-attributes and will be reported as omitted.")
 	resources := openSubset(subsetOutput)
 	copied, err := resources.GetVCardResourceEnvelopeContext(
 		ctx, "address-book", "source-bob")

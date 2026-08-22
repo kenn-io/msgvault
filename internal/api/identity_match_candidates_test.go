@@ -95,24 +95,36 @@ func TestAcceptIdentityMatchCandidateLinksAndReportsCacheState(t *testing.T) {
 	assert.Contains(members, bob, "accepting must apply the link, not only record it")
 }
 
-func TestAcceptIdentityMatchCandidateAcrossPersonsIsAConflict(t *testing.T) {
+func TestAcceptIdentityMatchCandidateAcrossPersonsReturnsPersonMergeRequired(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
 	ctx := context.Background()
-	_, _, err := st.CreatePersonFromParticipantContext(ctx, alice)
+	left, _, err := st.CreatePersonFromParticipantContext(ctx, alice)
 	require.NoError(err, "promote alice")
-	_, _, err = st.CreatePersonFromParticipantContext(ctx, bob)
+	right, _, err := st.CreatePersonFromParticipantContext(ctx, bob)
 	require.NoError(err, "promote bob")
+	beforeIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
 
 	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID), nil, "")
 	require.Equal(http.StatusConflict, response.Code, response.Body.String())
-	assert.Contains(response.Body.String(), "person_binding_conflict")
+	assertPersonMergeRequiredResponse(t, response, *left, *right)
 
 	reloaded, err := st.GetIdentityMatchCandidateContext(ctx, candidate.ID)
 	require.NoError(err, "GetIdentityMatchCandidateContext")
-	assert.Equal(store.IdentityMatchStateConflict, reloaded.State)
+	assert.Equal(candidate.State, reloaded.State, "a merge offer must not decide the candidate")
+	assert.Equal(candidate.UpdatedAt, reloaded.UpdatedAt)
+	assert.False(linkedParticipants(t, st, alice, bob))
+	afterIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(beforeIdentityRevision, afterIdentityRevision)
+	for _, before := range []*store.Person{left, right} {
+		after, getErr := st.GetPersonContext(ctx, before.ID)
+		require.NoError(getErr)
+		assert.Equal(before.Revision, after.Revision)
+	}
 }
 
 func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {

@@ -48,7 +48,6 @@ import (
 // 1.6.0 adds the browser-session login, bootstrap, and logout routes. Existing
 // API-key security remains the documented scheme for protected API routes;
 // cookie authentication is an additive same-origin browser mechanism.
-//
 // 1.7.0 adds optimistic, secret-redacting browser settings reads and writes.
 //
 // 1.8.0 adds daemon-owned shared Saved View CRUD with schema-versioned
@@ -215,10 +214,10 @@ import (
 // clients check this version before asking a daemon to perform a scoped sync.
 // 2.5.0 adds durable-person attachment retrieval across metadata, document,
 // and visual lanes while keeping participant references compatible.
-// 2.6.0 adds protected semantic search over durable curated people. Ranked
-// results contain only the durable person root and semantic score; person
-// projection text and raw profile details remain internal.
-// Additive (minor bump): existing person and participant routes are unchanged.
+// 2.6.0 adds protected semantic search over durable curated people, reversible
+// person merge/split mutations, merge history and snapshot inspection, and
+// merge-candidate decisions. Mutations require strong person revision tags;
+// merge and split also require retry-stable Idempotency-Key headers.
 const APISchemaVersion = "2.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -616,6 +615,31 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			trackedAt.Extensions["x-omitempty"] = false
 			trackedAt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
+			}
+		}
+	}
+	if response := schemas["PersonMergeSnapshotResponse"]; response != nil {
+		if snapshot := response.Properties["snapshot"]; snapshot != nil {
+			if snapshot.Extensions == nil {
+				snapshot.Extensions = map[string]any{}
+			}
+			snapshot.Extensions["x-go-type"] = "json.RawMessage"
+			snapshot.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
+		}
+	}
+	for schemaName, properties := range map[string][]string{
+		"PersonMergeDetail": {"participants", "review_candidates", "rows", "splits"},
+		"PersonMergeResult": {"review_candidates"},
+		"PersonSplitResult": {"ambiguous_rows"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, propertyName := range properties {
+				if property := schema.Properties[propertyName]; property != nil {
+					if property.Extensions == nil {
+						property.Extensions = map[string]any{}
+					}
+					property.Extensions["x-omitempty"] = false
+				}
 			}
 		}
 	}

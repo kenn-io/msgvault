@@ -15,6 +15,8 @@ var (
 	ErrRelationshipTypeNotFound = errors.New("relationship type not found")
 )
 
+const relatedTypeFriend = "friend"
+
 // relatedTypeValues is the set of TYPE parameter values that name a
 // person-to-person RELATION, in registry order.
 //
@@ -38,7 +40,7 @@ var (
 // repository vendors these CSVs yet). PR 8 depends on both and owns the test
 // that cross-checks this list against that snapshot once it exists.
 var relatedTypeValues = []string{
-	"contact", "acquaintance", "friend", "met", "co-worker", "colleague",
+	"contact", "acquaintance", relatedTypeFriend, "met", "co-worker", "colleague",
 	"co-resident", "neighbor", "child", "parent", "sibling", "spouse", "kin",
 	"muse", "crush", "date", "sweetheart", "me", "agent", "emergency",
 }

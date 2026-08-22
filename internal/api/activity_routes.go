@@ -188,7 +188,7 @@ func activityDateParam(name, description string) *huma.Param {
 	location := "query"
 	required := false
 	if name == activityDateField {
-		location = "path"
+		location = pathKey
 		required = true
 	}
 	parameter := param(name, location, huma.TypeString, description, required)

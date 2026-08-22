@@ -96,3 +96,53 @@ func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T
 	require.NoError(globErr, "glob temporary backups after cancellation")
 	assert.Empty(tempMatches, "temporary backup files must be cleaned up")
 }
+
+func TestBackupDatabaseContext_PreservesReversiblePersonMerge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")
+	ctx := context.Background()
+	f := storetest.New(t)
+	survivorParticipant := f.EnsureParticipant(
+		"backup-merge-survivor@example.com", "Survivor", "example.com")
+	absorbedParticipant := f.EnsureParticipant(
+		"backup-merge-absorbed@example.com", "Absorbed", "example.com")
+	survivor, _, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+	require.NoError(err)
+	absorbed, _, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+	require.NoError(err)
+	_, err = f.Store.AddPersonNameContext(ctx, absorbed.ID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: new("Backup Absorbed"),
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	absorbed, err = f.Store.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "backup-person-merge", Actor: "test",
+	})
+	require.NoError(err)
+
+	destination := filepath.Join(t.TempDir(), "msgvault.db.backup")
+	require.NoError(f.Store.BackupDatabaseContext(ctx, destination))
+	restored, err := store.Open(destination)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(restored.Close()) })
+	detail, err := restored.GetPersonMergeContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+	assert.Len(detail.Participants, 2)
+	_, err = restored.GetPersonMergeSnapshotContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+	split, err := restored.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         []int64{absorbedParticipant},
+		ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey:         "backup-person-split", Actor: "test",
+	})
+	require.NoError(err)
+	assert.True(split.ExactReversal)
+	assert.Equal([]int64{absorbedParticipant}, split.NewPerson.ParticipantIDs)
+}

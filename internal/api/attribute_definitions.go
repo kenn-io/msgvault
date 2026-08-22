@@ -348,14 +348,14 @@ func attributeDefinitionETag(definition store.AttributeDefinition) string {
 
 func addAttributeDefinitionIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "id", In: "path", Required: true, Description: "Attribute definition ID",
+		Name: "id", In: pathKey, Required: true, Description: "Attribute definition ID",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
 func addAttributeDefinitionIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: ifMatchHeaderName, In: "header", Required: true,
+		Name: ifMatchHeaderName, In: headerParamLocation, Required: true,
 		Description: "Strong ETag returned by the latest definition read",
 		Schema:      &huma.Schema{Type: huma.TypeString},
 	})

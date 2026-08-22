@@ -609,8 +609,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_value TEXT`, "pi_scope_value"},
 		{postgresParticipantLinkIdentityMatchCandidateMigration, "participant_links.identity_match_candidate_id"},
 		{postgresIdentityMatchObservationConflictOriginMigration, identityMatchObservationConflictOriginMigrationDesc},
-		{postgresIdentityMatchCandidateSourcesMigration, "identity_match_candidate_sources"},
-		{postgresIdentityMatchEvidenceSourcesMigration, "identity_match_evidence_sources"},
+		{postgresIdentityMatchCandidateSourcesMigration, identityMatchCandidateSourcesTableName},
+		{postgresIdentityMatchEvidenceSourcesMigration, identityMatchEvidenceSourcesTableName},
 		{postgresIdentityMatchPreConflictStateMigration, "identity_match_candidates.pre_conflict_state"},
 		{postgresIdentityMatchApplicationPendingMigration, "identity_match_candidates.application_pending"},
 		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
@@ -1782,8 +1782,8 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions",
-	"participant_contact_observations", "identity_match_candidates", "identity_match_candidate_sources",
-	"identity_match_evidence", "identity_match_evidence_sources",
+	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
+	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.

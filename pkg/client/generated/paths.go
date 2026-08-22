@@ -412,6 +412,16 @@ type SearchPersonFilesPath struct {
 	ID int64 `json:"id"`
 }
 
+type MergePersonsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonMergesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonStructuredProfilePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -440,6 +450,11 @@ type ListPersonRelationshipsPath struct {
 	ID int64 `json:"id"`
 }
 
+type SplitPersonMergePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonTrackingPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -448,6 +463,33 @@ type GetPersonTrackingPath struct {
 type SetPersonTrackingPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
+}
+
+type DecidePersonMergeCandidatePath struct {
+	// CandidateID Person merge review candidate ID
+	CandidateID int64 `json:"candidate_id" validate:"gte=1"`
+}
+
+func (d DecidePersonMergeCandidatePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type GetPersonMergePath struct {
+	// MergeID Durable person merge ID
+	MergeID int64 `json:"merge_id" validate:"gte=1"`
+}
+
+func (g GetPersonMergePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetPersonMergeSnapshotPath struct {
+	// MergeID Durable person merge ID
+	MergeID int64 `json:"merge_id" validate:"gte=1"`
+}
+
+func (g GetPersonMergeSnapshotPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type DeletePersonRelationshipPath struct {

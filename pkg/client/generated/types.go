@@ -1608,6 +1608,24 @@ type DecideIdentityMatchRequest struct {
 	Notes *string `json:"notes,omitempty"`
 }
 
+type DecidePersonMergeCandidateRequest struct {
+	Decision DecidePersonMergeCandidateRequestDecision `json:"decision" validate:"required"`
+	PersonID int64                                     `json:"person_id"`
+}
+
+func (d DecidePersonMergeCandidateRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(d.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type DeepSearchResponse struct {
 	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
 	Count        int64               `json:"count"`
@@ -3910,6 +3928,10 @@ type MergeOrganizationBody struct {
 	LosingRevision       int64 `json:"losing_revision"`
 }
 
+type MergePersonRequest struct {
+	AbsorbedPersonID int64 `json:"absorbed_person_id"`
+}
+
 type MessageDetail struct {
 	Attachments     []AttachmentInfo `json:"attachments,omitempty" validate:"required"`
 	Bcc             []string         `json:"bcc,omitempty"`
@@ -5825,6 +5847,285 @@ func (p PersonMediaPatchRequest) Validate() error {
 	return errors
 }
 
+type PersonMerge struct {
+	AbsorbedPersonID       int64     `json:"absorbed_person_id"`
+	AbsorbedRevisionBefore int64     `json:"absorbed_revision_before"`
+	AbsorbedVcardUID       string    `json:"absorbed_vcard_uid" validate:"required"`
+	Actor                  string    `json:"actor" validate:"required"`
+	CreatedAt              time.Time `json:"created_at" validate:"required"`
+	CurrentPersonID        *int64    `json:"current_person_id,omitempty"`
+	ID                     int64     `json:"id"`
+	SnapshotSha256         string    `json:"snapshot_sha256" validate:"required"`
+	SnapshotVersion        int64     `json:"snapshot_version"`
+	SurvivorPersonID       int64     `json:"survivor_person_id"`
+	SurvivorRevisionAfter  int64     `json:"survivor_revision_after"`
+	SurvivorRevisionBefore int64     `json:"survivor_revision_before"`
+	SurvivorVcardUID       string    `json:"survivor_vcard_uid" validate:"required"`
+}
+
+func (p PersonMerge) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeDetail struct {
+	Merge            PersonMerge                  `json:"merge"`
+	Participants     []PersonMergeParticipant     `json:"participants" validate:"required"`
+	ReviewCandidates []PersonMergeReviewCandidate `json:"review_candidates" validate:"required"`
+	Rows             []PersonMergeRow             `json:"rows" validate:"required"`
+	Splits           []PersonSplit                `json:"splits" validate:"required"`
+}
+
+func (p PersonMergeDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Merge).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Merge", err)
+		}
+	}
+	for i, item := range p.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.ReviewCandidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ReviewCandidates[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Splits {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Splits[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeParticipant struct {
+	MergeID       int64  `json:"merge_id"`
+	OriginSide    string `json:"origin_side" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+	SplitID       *int64 `json:"split_id,omitempty"`
+}
+
+func (p PersonMergeParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeProfile struct {
+	Etag   string `json:"etag" validate:"required"`
+	Person Person `json:"person"`
+}
+
+func (p PersonMergeProfile) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Etag, "required"); err != nil {
+		errors = errors.Append("Etag", err)
+	}
+	if v, ok := any(p.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeRequiredError struct {
+	ErrorData string               `json:"error" validate:"required"`
+	Message   string               `json:"message" validate:"required"`
+	Profiles  []PersonMergeProfile `json:"profiles,omitempty" validate:"required"`
+}
+
+func (p PersonMergeRequiredError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(p.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	for i, item := range p.Profiles {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Profiles[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeResult struct {
+	CacheState       PersonMergeResultCacheState  `json:"cache_state" validate:"required"`
+	IdentityRevision int64                        `json:"identity_revision"`
+	Merge            PersonMerge                  `json:"merge"`
+	Person           Person                       `json:"person"`
+	ReviewCandidates []PersonMergeReviewCandidate `json:"review_candidates" validate:"required"`
+}
+
+func (p PersonMergeResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.CacheState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CacheState", err)
+		}
+	}
+	if v, ok := any(p.Merge).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Merge", err)
+		}
+	}
+	if v, ok := any(p.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	for i, item := range p.ReviewCandidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ReviewCandidates[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeReviewCandidate struct {
+	AbsorbedValueID   int64      `json:"absorbed_value_id"`
+	CreatedAt         time.Time  `json:"created_at" validate:"required"`
+	DefinitionID      int64      `json:"definition_id"`
+	ID                int64      `json:"id"`
+	MergeID           int64      `json:"merge_id"`
+	PersonID          int64      `json:"person_id"`
+	ResolutionValueID *int64     `json:"resolution_value_id,omitempty"`
+	ReviewedAt        *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy        *string    `json:"reviewed_by,omitempty"`
+	State             string     `json:"state" validate:"required"`
+	SurvivorValueID   int64      `json:"survivor_value_id"`
+}
+
+func (p PersonMergeReviewCandidate) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeRow struct {
+	Action         string  `json:"action" validate:"required"`
+	CurrentRowID   *int64  `json:"current_row_id,omitempty"`
+	CurrentRowKey  *string `json:"current_row_key,omitempty"`
+	MergeID        int64   `json:"merge_id"`
+	OriginSide     string  `json:"origin_side" validate:"required"`
+	OriginalRowID  *int64  `json:"original_row_id,omitempty"`
+	OriginalRowKey string  `json:"original_row_key" validate:"required"`
+	ParticipantID  *int64  `json:"participant_id,omitempty"`
+	ProvenanceKind string  `json:"provenance_kind" validate:"required"`
+	SnapshotPath   string  `json:"snapshot_path" validate:"required"`
+	SplitID        *int64  `json:"split_id,omitempty"`
+	TableName      string  `json:"table_name" validate:"required"`
+}
+
+func (p PersonMergeRow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeRowRef struct {
+	Action         string `json:"action" validate:"required"`
+	OriginalRowID  *int64 `json:"original_row_id,omitempty"`
+	OriginalRowKey string `json:"original_row_key" validate:"required"`
+	TableName      string `json:"table_name" validate:"required"`
+}
+
+func (p PersonMergeRowRef) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeSnapshotResponse struct {
+	Sha256   string          `json:"sha256" validate:"required"`
+	Snapshot json.RawMessage `json:"snapshot"`
+	Version  int64           `json:"version"`
+}
+
+func (p PersonMergeSnapshotResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Sha256, "required"); err != nil {
+		errors = errors.Append("Sha256", err)
+	}
+	if v, ok := any(p.Snapshot).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Snapshot", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeSummary struct {
+	Merge                 PersonMerge      `json:"merge"`
+	ParticipantCount      int64            `json:"participant_count"`
+	PendingCandidateCount int64            `json:"pending_candidate_count"`
+	RowActionCounts       map[string]int64 `json:"row_action_counts"`
+	RowCount              int64            `json:"row_count"`
+	SplitCount            int64            `json:"split_count"`
+}
+
+func (p PersonMergeSummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Merge).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Merge", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergesResponse struct {
+	Limit  int64                `json:"limit"`
+	Merges []PersonMergeSummary `json:"merges,omitempty" validate:"required"`
+	Offset int64                `json:"offset"`
+}
+
+func (p PersonMergesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Merges {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Merges[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonName struct {
 	AdditionalNames   *string       `json:"additional_names,omitempty"`
 	Envelope          ValueEnvelope `json:"envelope"`
@@ -6226,6 +6527,80 @@ func (p PersonSearchResult) Validate() error {
 	if v, ok := any(p.Person).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonSplit struct {
+	Actor                string    `json:"actor" validate:"required"`
+	CreatedAt            time.Time `json:"created_at" validate:"required"`
+	ExactReversal        bool      `json:"exact_reversal"`
+	ID                   int64     `json:"id"`
+	MergeID              int64     `json:"merge_id"`
+	NewPersonID          int64     `json:"new_person_id"`
+	NewPersonUID         string    `json:"new_person_uid" validate:"required"`
+	SourcePersonID       int64     `json:"source_person_id"`
+	SourceRevisionAfter  int64     `json:"source_revision_after"`
+	SourceRevisionBefore int64     `json:"source_revision_before"`
+}
+
+func (p PersonSplit) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonSplitResult struct {
+	AmbiguousRows       []PersonMergeRowRef         `json:"ambiguous_rows" validate:"required"`
+	CacheState          PersonSplitResultCacheState `json:"cache_state" validate:"required"`
+	ExactReversal       bool                        `json:"exact_reversal"`
+	IdentityRevision    int64                       `json:"identity_revision"`
+	NewPerson           Person                      `json:"new_person"`
+	SourcePerson        Person                      `json:"source_person"`
+	Split               PersonSplit                 `json:"split"`
+	UIDAliasDisposition string                      `json:"uid_alias_disposition" validate:"required"`
+	UnrestoredRows      []PersonMergeRowRef         `json:"unrestored_rows,omitempty" validate:"required"`
+}
+
+func (p PersonSplitResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.AmbiguousRows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AmbiguousRows[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.CacheState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CacheState", err)
+		}
+	}
+	if v, ok := any(p.NewPerson).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("NewPerson", err)
+		}
+	}
+	if v, ok := any(p.SourcePerson).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SourcePerson", err)
+		}
+	}
+	if v, ok := any(p.Split).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Split", err)
+		}
+	}
+	if err := typesValidator.Var(p.UIDAliasDisposition, "required"); err != nil {
+		errors = errors.Append("UIDAliasDisposition", err)
+	}
+	for i, item := range p.UnrestoredRows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("UnrestoredRows[%d]", i), err)
+			}
 		}
 	}
 	if len(errors) == 0 {
@@ -7495,6 +7870,15 @@ type SourcesRequest struct {
 }
 
 func (s SourcesRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SplitPersonRequest struct {
+	MergeID        int64   `json:"merge_id"`
+	ParticipantIds []int64 `json:"participant_ids,omitempty" validate:"required"`
+}
+
+func (s SplitPersonRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 

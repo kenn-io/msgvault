@@ -113,7 +113,7 @@ var attributeFieldTypes = map[AttributeFieldType]bool{
 	AttributeFieldPhone: true, AttributeFieldJSON: true,
 }
 
-var attributeRecordTargets = map[string]bool{"person": true}
+var attributeRecordTargets = map[string]bool{string(AttributeObjectPerson): true}
 
 var attributeSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 

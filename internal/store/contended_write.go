@@ -71,6 +71,35 @@ func retryContendedWrite[T any](
 		operation, maxContendedWriteAttempts, lastErr)
 }
 
+// retryBusyWrite retries only lock and transaction contention. Callers whose
+// unique constraints describe deterministic domain conflicts use this form so
+// they return the first typed failure instead of repeating an expensive write.
+func retryBusyWrite[T any](
+	ctx context.Context, s *Store, operation string, attempt func() (*T, error),
+) (*T, error) {
+	var lastErr error
+	for i := range maxContendedWriteAttempts {
+		write, err := attempt()
+		if err == nil {
+			return write, nil
+		}
+		if !s.dialect.IsBusyError(err) {
+			return nil, err
+		}
+		lastErr = err
+		if i == maxContendedWriteAttempts-1 {
+			break
+		}
+		select {
+		case <-time.After(contendedWriteBackoff(i)):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, fmt.Errorf("%s: gave up after %d attempts: %w",
+		operation, maxContendedWriteAttempts, lastErr)
+}
+
 // retryContendedWriteErr is retryContendedWrite for writers that return no
 // value.
 func retryContendedWriteErr(

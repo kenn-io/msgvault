@@ -133,7 +133,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
 		apiKeySecurityScheme: {
 			Type: "apiKey",
-			In:   "header",
+			In:   headerParamLocation,
 			Name: "X-Api-Key",
 		},
 	}
@@ -228,6 +228,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
+	s.registerPersonMergeRoutes(apiV1)
 	s.registerOrganizationRoutes(apiV1)
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
@@ -678,7 +679,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "listMessageTasks", "createOrLinkMessageTask":
 		params := []*huma.Param{pathIntegerParam("Archived email message ID")}
 		if operationID == "createOrLinkMessageTask" {
-			params = append(params, param("X-Request-Id", "header", "string", "Browser-generated retry-stable request ID", true))
+			params = append(params, param("X-Request-Id", headerParamLocation, "string", "Browser-generated retry-stable request ID", true))
 		}
 		return params
 	case "listIdentityMatchCandidates":
@@ -961,7 +962,7 @@ func mergeParams(groups ...[]*huma.Param) []*huma.Param {
 }
 
 func pathStringParam(name, doc string) *huma.Param {
-	return param(name, "path", huma.TypeString, doc, true)
+	return param(name, pathKey, huma.TypeString, doc, true)
 }
 
 func pathIntegerParam(doc string) *huma.Param {
@@ -969,7 +970,7 @@ func pathIntegerParam(doc string) *huma.Param {
 }
 
 func pathNamedIntegerParam(name, doc string) *huma.Param {
-	p := param(name, "path", huma.TypeInteger, doc, true)
+	p := param(name, pathKey, huma.TypeInteger, doc, true)
 	p.Schema.Format = formatInt64
 	return p
 }

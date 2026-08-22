@@ -62,7 +62,7 @@ var MessagesContentColumns = []string{
 // wrong call here is a consumer that silently misses updates.
 var MessagesNonContentColumns = []string{
 	"id",                // immutable identity
-	"source_id",         // immutable: which account this came from
+	sourceIDColumnName,  // immutable: which account this came from
 	"rfc822_message_id", // not reported by the feed (dedup.go rewrites it)
 	"read_at",           // local read state, not archive content
 	"delivered_at",      // platform delivery receipt

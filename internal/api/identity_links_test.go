@@ -156,6 +156,81 @@ func TestLinkIdentity_IndirectEdgeConflict(t *testing.T) {
 	assert.Equal("already_linked", errResp.Error)
 }
 
+func TestLinkIdentityAcrossPersonsReturnsPersonMergeRequired(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srv, st := newIdentityLinkTestServer(t)
+	leftParticipant := st.mustParticipant(t, "merge-required-left@example.com", "Left", "example.com")
+	rightParticipant := st.mustParticipant(t, "merge-required-right@example.com", "Right", "example.com")
+	left, _, err := st.CreatePersonFromParticipantContext(ctx, leftParticipant)
+	require.NoError(err)
+	right, _, err := st.CreatePersonFromParticipantContext(ctx, rightParticipant)
+	require.NoError(err)
+	beforeIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
+
+	response := postIdentityLink(t, srv, "/api/v1/identity/links", IdentityLinkRequest{
+		ParticipantA: leftParticipant,
+		ParticipantB: rightParticipant,
+	})
+
+	require.Equal(http.StatusConflict, response.Code, response.Body.String())
+	assertPersonMergeRequiredResponse(t, response, *left, *right)
+	assert.False(linkedParticipants(t, st, leftParticipant, rightParticipant))
+	afterIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
+	assert.Equal(beforeIdentityRevision, afterIdentityRevision)
+	for _, before := range []*store.Person{left, right} {
+		after, getErr := st.GetPersonContext(ctx, before.ID)
+		require.NoError(getErr)
+		assert.Equal(before.Revision, after.Revision)
+	}
+}
+
+func TestLinkIdentityMalformedPersonConflictKeepsGenericResponse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := newFailingIdentityLinkTestServer(t, &store.PersonBindingConflictError{
+		PersonIDs: []int64{3, 2, 1},
+	})
+
+	response := postIdentityLink(t, srv, "/api/v1/identity/links", IdentityLinkRequest{
+		ParticipantA: 1,
+		ParticipantB: 2,
+	})
+
+	require.Equal(http.StatusConflict, response.Code, response.Body.String())
+	var body ErrorResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body), response.Body.String())
+	assert.Equal("person_binding_conflict", body.Error)
+	assert.NotContains(response.Body.String(), "person_merge_required")
+}
+
+func assertPersonMergeRequiredResponse(
+	t *testing.T, response *httptest.ResponseRecorder, want ...store.Person,
+) {
+	t.Helper()
+	assert := assert.New(t)
+	var body struct {
+		Error    string `json:"error"`
+		Message  string `json:"message"`
+		Profiles []struct {
+			Person store.Person `json:"person"`
+			ETag   string       `json:"etag"`
+		} `json:"profiles"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body), response.Body.String())
+	assert.Equal("person_merge_required", body.Error)
+	assert.NotEmpty(body.Message)
+	require.Len(t, body.Profiles, len(want))
+	for index := range want {
+		assert.Equal(want[index].ID, body.Profiles[index].Person.ID)
+		assert.Equal(want[index].Revision, body.Profiles[index].Person.Revision)
+		assert.Equal(personETag(want[index]), body.Profiles[index].ETag)
+	}
+}
+
 func TestLinkIdentity_RefresherFailureReportsStaleWithoutFailingRequest(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

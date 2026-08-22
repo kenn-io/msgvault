@@ -563,9 +563,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// added in 1.40.0, identity match review added in 1.41.0, and dated activity
 	// routes added in 1.42.0, cache-readiness responses added in 1.43.0,
 	// document search added in 1.44.0, participant/people separation added in
-	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
-	// 2.6.0 did not touch it.
-	assert.Equal("2.6.0", APISchemaVersion, "person search is an additive schema release")
+	// 2.0.0, tracking added in 2.1.0, and later additive releases through 2.6.0
+	// did not touch it.
+	assert.Equal("2.6.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -923,6 +923,18 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	clientGrouping := openAPIClientDocument().Components.Schemas.Map()["ExploreGroupsHTTPRequest"].Properties["grouping"]
 	requirements.NotNil(clientGrouping.Extensions)
 	assertions.Equal(map[string]any{"validate": "required,min=1,max=1"}, clientGrouping.Extensions["x-oapi-codegen-extra-tags"])
+}
+
+func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	snapshot := openAPIClientDocument().Components.Schemas.Map()["PersonMergeSnapshotResponse"]
+	require.NotNil(snapshot)
+	property := snapshot.Properties["snapshot"]
+	require.NotNil(property)
+	assert.Equal("json.RawMessage", property.Extensions["x-go-type"])
+	assert.Equal(map[string]any{"path": "encoding/json"},
+		property.Extensions["x-go-type-import"])
 }
 
 func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {

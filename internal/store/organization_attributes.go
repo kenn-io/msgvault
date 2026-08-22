@@ -389,6 +389,11 @@ func (s *Store) supersedeOrganizationAttributeValueOnce(
 		if err := retractableAttributeDefinition(*definition); err != nil {
 			return err
 		}
+		if definition.ValueType == AttributeValueRecordReference {
+			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+				return err
+			}
+		}
 		ordinal := int64(0)
 		if input.Ordinal != nil {
 			if definition.Cardinality == AttributeCardinalitySingle && *input.Ordinal != 0 {
