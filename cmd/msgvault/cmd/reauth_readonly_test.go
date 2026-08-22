@@ -127,7 +127,7 @@ func TestReauthHintCommandIsNotItselfRefused(t *testing.T) {
 	// suggested command would hit.
 	decision := decideAddAccountGrant(
 		"x@gmail.com", true, true, narrowed, true, false,
-		"/tmp/tokens/x@gmail.com.json")
+		"/tmp/tokens/x@gmail.com.json", "")
 
 	require.NoError(decision.Err,
 		"the hint must not recommend a command add-account would refuse")

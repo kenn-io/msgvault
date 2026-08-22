@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
@@ -355,7 +356,7 @@ func TestDecideAddAccountGrant(t *testing.T) {
 
 			got := decideAddAccountGrant(
 				email, tt.hasToken, tt.hasScopeMetadata, tt.granted, tt.readonly,
-				tt.freshClient, "/tmp/tokens/user@example.com.json")
+				tt.freshClient, "/tmp/tokens/user@example.com.json", "")
 
 			if tt.wantErr {
 				require.Error(got.Err)
@@ -451,6 +452,26 @@ func TestAddAccount_ReadonlyRefusesWriteCapableAccount(t *testing.T) {
 	after, readErr := os.ReadFile(tokenPath)
 	require.NoError(readErr)
 	assert.Equal(before, after, "refusal must not touch the existing token")
+}
+
+func TestAddAccount_ReadonlyRemediationPreservesNamedOAuthApp(t *testing.T) {
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+	cfg.OAuth.Apps = map[string]config.OAuthApp{
+		"workspace app": {ClientSecrets: cfg.OAuth.ClientSecrets},
+	}
+
+	_, err := runAddAccountForTest(t,
+		scopeEscalationAccount,
+		"--readonly",
+		"--oauth-app", "workspace app",
+		"--no-default-identity",
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(),
+		"msgvault add-account user@example.com --oauth-app 'workspace app' --readonly")
 }
 
 // TestAddAccount_ReadonlyForceIsStillRefused is the regression for the change
@@ -650,6 +671,55 @@ func TestAddAccount_HeadlessAppliesGrantDecision(t *testing.T) {
 	})
 }
 
+func TestAddAccount_HeadlessReadonlyRefusesStoredTokenWithoutOAuthCredentials(t *testing.T) {
+	t.Run("exact token", func(t *testing.T) {
+		saveAddAccountFlags(t)
+		_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+		defer restore()
+		cfg.OAuth.ClientSecrets = ""
+
+		out, err := runAddAccountForTest(t,
+			scopeEscalationAccount, "--headless", "--readonly", "--no-default-identity")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be verified")
+		assert.NotContains(t, out, "Headless Server Setup")
+	})
+
+	t.Run("equivalent token", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		saveAddAccountFlags(t)
+		_, restore := seedTokenEnv(t, gmailReadonlyTokenJSON)
+		defer restore()
+		require.NoError(os.WriteFile(
+			filepath.Join(cfg.TokensDir(), "username@gmail.com.json"),
+			[]byte(gmailOnlyTokenJSON), 0600))
+		cfg.OAuth.ClientSecrets = ""
+
+		out, err := runAddAccountForTest(t,
+			"user.name@gmail.com", "--headless", "--readonly", "--no-default-identity")
+
+		require.Error(err)
+		assert.Contains(err.Error(), "cannot be verified")
+		assert.NotContains(out, "Headless Server Setup")
+	})
+
+	t.Run("new account still prints instructions", func(t *testing.T) {
+		saveAddAccountFlags(t)
+		_, restore := seedTokenEnv(t, gmailReadonlyTokenJSON)
+		defer restore()
+		cfg.OAuth.ClientSecrets = ""
+
+		out, err := runAddAccountForTest(t,
+			"fresh@example.com", "--headless", "--readonly", "--no-default-identity")
+
+		require.NoError(t, err)
+		assert.Contains(t, out, "Headless Server Setup")
+	})
+}
+
 // TestAddAccount_ReadonlyReusesAlreadyNarrowToken covers requirement 6: no
 // refusal, no warning, and no pointless re-authorization.
 func TestAddAccount_ReadonlyReusesAlreadyNarrowToken(t *testing.T) {
@@ -737,7 +807,7 @@ func TestReadonlyGrantWarning(t *testing.T) {
 			mgr, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), logger)
 			require.NoError(err)
 
-			got := readonlyGrantWarning(mgr, scopeEscalationAccount)
+			got := readonlyGrantWarning(mgr, scopeEscalationAccount, "")
 
 			if !tt.wantWarn {
 				assert.Empty(got)

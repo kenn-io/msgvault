@@ -224,7 +224,7 @@ func addAccountAuthorizeError(err error, sourceExists bool) error {
 // obvious retry is refused, because the grant now carries the very write access
 // the refusal exists to catch. Warning keeps the account working and puts the
 // remedy in the operator's hands.
-func readonlyGrantWarning(mgr *oauth.Manager, email string) string {
+func readonlyGrantWarning(mgr *oauth.Manager, email, resolvedApp string) string {
 	granted := oauth.GrantedGmailWriteScopes(mgr.GrantedScopes(email))
 	if len(granted) == 0 {
 		return ""
@@ -235,16 +235,16 @@ func readonlyGrantWarning(mgr *oauth.Manager, email string) string {
 			"other narrowing — revoking alone will not do it, because the refusal reads the\n"+
 			"scopes recorded in the token file:\n%s",
 		email, strings.Join(granted, ", "),
-		narrowingSteps(email, mgr.TokenPath(email)),
+		narrowingSteps(email, mgr.TokenPath(email), resolvedApp),
 	)
 }
 
 // warnOnWiderThanRequestedGrant prints the readonly grant warning, if any.
-func warnOnWiderThanRequestedGrant(out io.Writer, mgr *oauth.Manager, email string) {
+func warnOnWiderThanRequestedGrant(out io.Writer, mgr *oauth.Manager, email, resolvedApp string) {
 	if !readonlyGrant {
 		return
 	}
-	if warning := readonlyGrantWarning(mgr, email); warning != "" {
+	if warning := readonlyGrantWarning(mgr, email, resolvedApp); warning != "" {
 		_, _ = fmt.Fprintln(out, warning)
 	}
 }
@@ -325,7 +325,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 	if err := mgr.Authorize(cmd.Context(), email); err != nil {
 		return false, addAccountAuthorizeError(err, sourceExists)
 	}
-	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), mgr, email)
+	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), mgr, email, binding.resolvedApp)
 	// The grant decision is a pre-authorization gate, and it has now been made
 	// for this run. The daemon request carries a runtime-token-authenticated
 	// proof so its subprocess registers the account instead of
@@ -570,7 +570,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	if err := oauthMgr.Authorize(cmd.Context(), email); err != nil {
 		return addAccountAuthorizeError(err, existingSource != nil)
 	}
-	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email)
+	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 
 	// Authorization succeeded — now persist the binding and source.
 	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
@@ -709,6 +709,7 @@ func decideAddAccountGrant(
 	readonly bool,
 	freshClient bool,
 	tokenPath string,
+	resolvedApp string,
 ) addAccountGrantDecision {
 	if !hasToken {
 		return addAccountGrantDecision{}
@@ -735,7 +736,7 @@ func decideAddAccountGrant(
 				"%s has a token that predates scope recording, so its Gmail access cannot be verified\n"+
 					"Tokens this old were issued with read and modify access, which --readonly "+
 					"cannot take away on its own.\n%s",
-				email, narrowingRemedy(email, tokenPath),
+				email, narrowingRemedy(email, tokenPath, resolvedApp),
 			)}
 		}
 		if granted := oauth.GrantedGmailWriteScopes(grantedScopes); len(granted) > 0 {
@@ -744,7 +745,7 @@ func decideAddAccountGrant(
 					"Re-authorizing preserves scopes the account already holds, so --readonly "+
 					"alone cannot take write access away.\n"+
 					"Non-Gmail grants such as Calendar are preserved either way.\n%s",
-				email, strings.Join(granted, ", "), narrowingRemedy(email, tokenPath),
+				email, strings.Join(granted, ", "), narrowingRemedy(email, tokenPath, resolvedApp),
 			)}
 		}
 		return addAccountGrantDecision{}
@@ -832,10 +833,10 @@ func addAccountReadonlyRemediationFlagSuffix(resolvedApp string) string {
 //
 // tokenPath is passed in rather than derived from the global config, so this
 // and decideAddAccountGrant stay pure and testable.
-func narrowingRemedy(email, tokenPath string) string {
+func narrowingRemedy(email, tokenPath, resolvedApp string) string {
 	return "Access already granted cannot be narrowed: re-authorizing does not revoke it,\n" +
 		"and revoking applies to the whole grant.\n" +
-		narrowingSteps(email, tokenPath)
+		narrowingSteps(email, tokenPath, resolvedApp)
 }
 
 // narrowingSteps is the procedure itself, shared by the refusal and by the
@@ -846,16 +847,17 @@ func narrowingRemedy(email, tokenPath string) string {
 // The path is shell-quoted because the tokens directory comes from
 // MSGVAULT_HOME, --home, or [data].data_dir, any of which may contain a space —
 // and an unquoted rm would then take two operands and silently do nothing.
-func narrowingSteps(email, tokenPath string) string {
+func narrowingSteps(email, tokenPath, resolvedApp string) string {
+	flags := addAccountReadonlyRemediationFlagSuffix(resolvedApp)
 	return fmt.Sprintf(
 		"To make this account read-only, remove its access and grant it again:\n"+
 			"  1. Revoke msgvault at https://myaccount.google.com/permissions\n"+
 			"  2. rm %s\n"+
-			"  3. msgvault add-account %s --readonly\n"+
+			"  3. msgvault add-account %s%s\n"+
 			"Revoking clears every other Google scope for this account, so re-run the\n"+
 			"commands that granted them (msgvault add-calendar, add-synctech-sms-drive).\n"+
 			"Archived mail is not affected.",
-		oauth.ShellQuote(tokenPath), email,
+		oauth.ShellQuote(tokenPath), email, flags,
 	)
 }
 
@@ -875,15 +877,22 @@ func gmailScopesIn(scopes []string) []string {
 // which prints instructions rather than authorizing and so never reaches the
 // usual decision point.
 //
-// It is best-effort by design: --headless has always worked as a pure
-// instruction-printer, including on a host with no OAuth credentials
-// configured, and requiring credentials here would regress that. When the
-// manager cannot be built there is no recorded grant to inspect, so the
-// instructions print as before.
+// It is best-effort by design: --headless still prints for a new account when
+// OAuth credentials are not configured. A read-only run with an exact or
+// equivalent stored token fails closed, because its client cannot be verified.
 func applyHeadlessGrantDecision(cmd *cobra.Command, email, resolvedApp string) error {
 	clientSecretsPath, err := cfg.OAuth.ClientSecretsFor(resolvedApp)
 	if err != nil {
-		return nil //nolint:nilerr // deliberate: --headless works without configured credentials
+		if !readonlyGrant {
+			return nil // --headless still prints without configured credentials
+		}
+		if oauth.StoredTokenOrEquivalentExists(cfg.TokensDir(), email) {
+			return fmt.Errorf(
+				"%s has a stored token, but its Gmail access cannot be verified without OAuth client credentials: %w",
+				email, err,
+			)
+		}
+		return nil // --headless works without configured credentials for a new account
 	}
 	mgr, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
 	if err != nil {
@@ -926,6 +935,7 @@ func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email, reso
 		readonlyGrant,
 		freshClient,
 		mgr.TokenPath(email),
+		resolvedApp,
 	)
 	if decision.Err != nil {
 		return decision.Err

@@ -1309,12 +1309,26 @@ func RevokeStoredCredential(ctx context.Context, tokensDir, email string) error 
 // file as the exact spelling, so candidates are also compared by identity
 // (os.SameFile), not just by name.
 func (m *Manager) FindEquivalentTokenEmails(email string) []string {
-	entries, err := os.ReadDir(m.tokensDir)
+	return findEquivalentTokenEmails(m.tokensDir, email)
+}
+
+// StoredTokenOrEquivalentExists reports whether the exact address or a Gmail
+// alias spelling has a token file. It does not require OAuth client credentials.
+func StoredTokenOrEquivalentExists(tokensDir, email string) bool {
+	_, err := os.Lstat(TokenFilePath(tokensDir, email))
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return len(findEquivalentTokenEmails(tokensDir, email)) > 0
+}
+
+func findEquivalentTokenEmails(tokensDir, email string) []string {
+	entries, err := os.ReadDir(tokensDir)
 	if err != nil {
 		return nil
 	}
 	own := sanitizeEmail(email) + ".json"
-	ownInfo, ownErr := os.Stat(filepath.Join(m.tokensDir, own))
+	ownInfo, ownErr := os.Stat(filepath.Join(tokensDir, own))
 	var equivalents []string
 	for _, entry := range entries {
 		name := entry.Name()
