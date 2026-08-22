@@ -642,6 +642,22 @@ func TestStatsReportsVectorStatus(t *testing.T) {
 	}
 }
 
+func TestStatsReportsTextVectorMessageScope(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+	vectorCfg := vector.Config{Enabled: true}
+	vectorCfg.Embed.Scope.MessageTypes = []string{"sms", "mms"}
+	srv.SetVectorFeatures(nil, nil, &fakeVectorBackend{}, vectorCfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body StatsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []string{"mms", "sms"}, body.VectorTextMessageTypes)
+}
+
 // TestHealthReportsAnalyticsMode pins that /health carries the analytics
 // engine mode the daemon selected at startup, and omits the field when the
 // server was built without one, so clients can distinguish live-SQL

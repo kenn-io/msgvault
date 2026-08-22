@@ -8413,6 +8413,12 @@ components:
           $ref: "#/components/schemas/StatsView"
         vector_status:
           type: string
+        vector_text_message_types:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         vector_text_status:
           type: string
         vector_visual_status:

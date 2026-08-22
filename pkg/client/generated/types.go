@@ -7567,18 +7567,19 @@ func (s StageDeletionResponse) Validate() error {
 }
 
 type StatsResponse struct {
-	ActiveMessages        int64      `json:"active_messages"`
-	DatabaseSizeBytes     int64      `json:"database_size_bytes"`
-	SourceDeletedMessages int64      `json:"source_deleted_messages"`
-	TotalAccounts         int64      `json:"total_accounts"`
-	TotalAttachments      int64      `json:"total_attachments"`
-	TotalLabels           int64      `json:"total_labels"`
-	TotalMessages         int64      `json:"total_messages"`
-	TotalThreads          int64      `json:"total_threads"`
-	VectorSearch          *StatsView `json:"vector_search,omitempty"`
-	VectorStatus          *string    `json:"vector_status,omitempty"`
-	VectorTextStatus      *string    `json:"vector_text_status,omitempty"`
-	VectorVisualStatus    *string    `json:"vector_visual_status,omitempty"`
+	ActiveMessages         int64      `json:"active_messages"`
+	DatabaseSizeBytes      int64      `json:"database_size_bytes"`
+	SourceDeletedMessages  int64      `json:"source_deleted_messages"`
+	TotalAccounts          int64      `json:"total_accounts"`
+	TotalAttachments       int64      `json:"total_attachments"`
+	TotalLabels            int64      `json:"total_labels"`
+	TotalMessages          int64      `json:"total_messages"`
+	TotalThreads           int64      `json:"total_threads"`
+	VectorSearch           *StatsView `json:"vector_search,omitempty"`
+	VectorStatus           *string    `json:"vector_status,omitempty"`
+	VectorTextMessageTypes []string   `json:"vector_text_message_types,omitempty"`
+	VectorTextStatus       *string    `json:"vector_text_status,omitempty"`
+	VectorVisualStatus     *string    `json:"vector_visual_status,omitempty"`
 }
 
 func (s StatsResponse) Validate() error {

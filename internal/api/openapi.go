@@ -220,7 +220,8 @@ import (
 // projection text and raw profile details remain internal.
 // Additive (minor bump): existing person and participant routes are unchanged.
 // 2.7.0 adds exact structured sender, recipient, domain, label, source, date,
-// time-period, and attachment filters to vector and hybrid search.
+// time-period, and attachment filters to vector and hybrid search. Stats also
+// report the text-vector message-type scope for compatible search clients.
 // Additive (minor bump): existing unfiltered searches are unchanged.
 const APISchemaVersion = "2.7.0"
 

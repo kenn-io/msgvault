@@ -144,7 +144,7 @@ func tuiSemanticSearcher(
 	if err != nil || !compatible {
 		return nil
 	}
-	available, err := client.VectorSearchAvailable(ctx)
+	available, err := client.VectorSearchAvailableForMessageType(ctx, tuiSemanticMessageType)
 	if err != nil || !available {
 		return nil
 	}
@@ -152,7 +152,10 @@ func tuiSemanticSearcher(
 	return searcher
 }
 
-const semanticSearchMinAPISchemaVersion = "2.7.0"
+const (
+	semanticSearchMinAPISchemaVersion = "2.7.0"
+	tuiSemanticMessageType            = "email"
+)
 
 type tuiAttachmentOpener struct {
 	client *daemonclient.Client

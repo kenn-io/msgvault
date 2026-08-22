@@ -167,7 +167,9 @@ func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
 		schemaVersion string
 		wantSearch    bool
 	}{
-		{name: "ready", stats: map[string]any{"vector_status": "ready"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
+		{name: "ready without message scope", stats: map[string]any{"vector_status": "ready"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
+		{name: "ready with email message scope", stats: map[string]any{"vector_status": "ready", "vector_text_message_types": []string{"email"}}, schemaVersion: api.APISchemaVersion, wantSearch: true},
+		{name: "ready with text-only message scope", stats: map[string]any{"vector_status": "ready", "vector_text_message_types": []string{"sms", "mms"}}, schemaVersion: api.APISchemaVersion},
 		{name: "initializing remains callable", stats: map[string]any{"vector_status": "initializing"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
 		{name: "disabled", stats: map[string]any{"vector_status": "disabled"}, schemaVersion: api.APISchemaVersion},
 		{name: "legacy disabled", stats: map[string]any{"vector_search": map[string]any{"enabled": false}}, schemaVersion: api.APISchemaVersion},

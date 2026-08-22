@@ -6224,6 +6224,7 @@ export interface components {
             total_threads: number;
             vector_search?: components["schemas"]["StatsView"];
             vector_status?: string;
+            vector_text_message_types?: string[] | null;
             vector_text_status?: string;
             vector_visual_status?: string;
         } & {

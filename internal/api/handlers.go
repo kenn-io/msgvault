@@ -62,6 +62,10 @@ type StatsResponse struct {
 	// message search, so text-tool registration must consult this field,
 	// not the shared subsystem status.
 	VectorTextStatus string `json:"vector_text_status,omitempty"`
+	// VectorTextMessageTypes reports the configured message-type scope of the
+	// text vector index. An empty list means the index is not restricted by
+	// message type.
+	VectorTextMessageTypes []string `json:"vector_text_message_types,omitempty"`
 	// VectorVisualStatus reports the multimodal lane the same way, so a
 	// one-time capability probe during asynchronous init can distinguish
 	// "still initializing" from "not configured" instead of permanently
@@ -577,6 +581,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		resp.VectorTextStatus = string(VectorStatusDisabled)
 		if vectorCfg.Enabled {
 			resp.VectorTextStatus = string(status)
+			resp.VectorTextMessageTypes = slices.Clone(vectorCfg.Embed.Scope.BuildScope().MessageTypes)
 		}
 		resp.VectorVisualStatus = string(VectorStatusDisabled)
 		if vectorCfg.Multimodal.Enabled {
