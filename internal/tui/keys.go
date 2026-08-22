@@ -464,6 +464,9 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Sub-grouping: switch to aggregate breakdown within current filter
 	case "tab":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
 		if m.hasDrillFilter() {
 			m.transitionBuffer = m.renderView() // Freeze screen until data loads
 
@@ -508,6 +511,9 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Time sub-grouping: jump directly to sub-aggregate Time view
 	case "t":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
 		if m.hasDrillFilter() && m.drillViewType != query.ViewTime {
 			m.transitionBuffer = m.renderView()
 			m.pushBreadcrumb()
@@ -526,6 +532,9 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Sub-grouping: 'g' switches to aggregate breakdown within current filter (like tab)
 	case "g":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
 		m.transitionBuffer = m.renderView() // Freeze screen until data loads
 		if m.hasDrillFilter() {
 			// Save current state to breadcrumb (including viewType for proper restoration)

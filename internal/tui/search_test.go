@@ -317,6 +317,32 @@ func TestSemanticSearchDisablesListSorting(t *testing.T) {
 	assert.NotContains(model.messageListView(), "Date↓")
 }
 
+func TestSemanticSearchDisablesAggregateNavigation(t *testing.T) {
+	assert := assert.New(t)
+	wantMessages := []query.MessageSummary{
+		{ID: 2, Subject: "higher-ranked"},
+		{ID: 1, Subject: "lower-ranked"},
+	}
+
+	for _, navigationKey := range []rune{'\t', 'g', 't'} {
+		t.Run(string(navigationKey), func(t *testing.T) {
+			model := NewBuilder().WithLevel(levelMessageList).WithSize(120, 20).
+				WithMessages(wantMessages...).
+				WithActiveSearch("find the invoice", searchModeSemantic).Build()
+			model.inlineSearchActive = false
+			model.searchQuery = "find the invoice"
+			model.drillFilter = query.MessageFilter{Sender: "agent@example.test"}
+
+			got, cmd := applyMessageListKeyWithCmd(t, model, key(navigationKey))
+			assert.Nil(cmd, "key %q must not aggregate semantic results", navigationKey)
+			assert.Equal(levelMessageList, got.level)
+			assert.Equal("find the invoice", got.searchQuery)
+			assert.Equal(wantMessages, got.messages)
+			assert.False(got.loading)
+		})
+	}
+}
+
 // TestSpinnerAppearsInViewWhenLoading verifies spinner character appears in rendered view.
 func TestSpinnerAppearsInViewWhenLoading(t *testing.T) {
 	model := NewBuilder().

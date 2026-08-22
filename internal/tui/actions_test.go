@@ -649,7 +649,7 @@ func TestOpenAttachmentDownloadsThenUsesInjectedOSHandler(t *testing.T) {
 		DataDir:             t.TempDir(),
 		AttachmentOutputDir: outputDir,
 		AttachmentReader: mapAttachmentReader{data: map[string][]byte{
-			contentHash: []byte("contract bytes"),
+			contentHash: []byte("%PDF-1.7\n"),
 		}},
 		OpenTarget: func(_ context.Context, target string) error {
 			opened = target
@@ -674,6 +674,38 @@ func TestOpenAttachmentDownloadsThenUsesInjectedOSHandler(t *testing.T) {
 	assert.FileExists(opened)
 }
 
+func TestOpenAttachmentBlocksDetectedContentMismatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const contentHash = "abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
+	outputDir := t.TempDir()
+	opened := false
+	ctrl := NewActionControllerWithOptions(&querytest.MockEngine{}, ActionControllerOptions{
+		DataDir:             t.TempDir(),
+		AttachmentOutputDir: outputDir,
+		AttachmentReader: mapAttachmentReader{data: map[string][]byte{
+			contentHash: []byte("MZ\x90\x00disguised executable"),
+		}},
+		OpenTarget: func(context.Context, string) error {
+			opened = true
+			return nil
+		},
+	})
+	ctrl.markUntrusted = func(string) error { return nil }
+
+	msg := ctrl.OpenAttachment(query.AttachmentInfo{
+		Filename: "contract.pdf", MimeType: "application/pdf", ContentHash: contentHash,
+	})()
+	result, ok := msg.(ExportResultMsg)
+	require.True(ok, "expected ExportResultMsg, got %T", msg)
+	require.Error(result.Err)
+	assert.Equal("Open Blocked", result.Title)
+	require.ErrorContains(result.Err, "detected content type")
+	assert.False(opened)
+	assert.Contains(result.Result, filepath.Join(outputDir, "contract.pdf"))
+	assert.FileExists(filepath.Join(outputDir, "contract.pdf"))
+}
+
 func TestOpenAttachmentBlocksActiveUnknownAndMismatchedTypes(t *testing.T) {
 	const contentHash = "abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
 	tests := []query.AttachmentInfo{
@@ -681,6 +713,7 @@ func TestOpenAttachmentBlocksActiveUnknownAndMismatchedTypes(t *testing.T) {
 		{Filename: "macro.docm", MimeType: "application/vnd.ms-word.document.macroEnabled.12", ContentHash: contentHash},
 		{Filename: "unknown.bin", MimeType: "application/octet-stream", ContentHash: contentHash},
 		{Filename: "disguised.pdf", MimeType: "application/x-msdownload", ContentHash: contentHash},
+		{Filename: "report.docx", MimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ContentHash: contentHash},
 	}
 	for _, att := range tests {
 		t.Run(att.Filename, func(t *testing.T) {
