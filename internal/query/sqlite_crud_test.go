@@ -1369,7 +1369,10 @@ func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
 // more ids than SQLite's default 32766-parameter-per-statement limit allows
 // in a single call. Requesting more ids than messageSummaryIDChunk must still
 // return every one of them, in the caller's own order — not chunk order —
-// since that order is the search rank the caller reassembles by.
+// since that order is the search rank the caller reassembles by. The label
+// hydration that follows the base query binds ids into its own IN-list too,
+// so a message on each side of the chunk boundary carries a label to prove
+// that pass is chunked as well, not just the base fetch.
 func TestGetMessageSummariesByIDs_ChunksLargeIDSetsAndPreservesOrder(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1387,6 +1390,11 @@ func TestGetMessageSummariesByIDs_ChunksLargeIDSetsAndPreservesOrder(t *testing.
 		})
 	}
 
+	firstChunkLabel := env.AddLabel(dbtest.LabelOpts{SourceID: sourceID, Name: "first-chunk"})
+	env.AddMessageLabel(ids[0], firstChunkLabel)
+	lastChunkLabel := env.AddLabel(dbtest.LabelOpts{SourceID: sourceID, Name: "second-chunk"})
+	env.AddMessageLabel(ids[total-1], lastChunkLabel)
+
 	// Reverse the request order so a bug that silently reassembled results in
 	// chunk (insertion) order rather than caller order would fail loudly.
 	requested := make([]int64, total)
@@ -1400,6 +1408,15 @@ func TestGetMessageSummariesByIDs_ChunksLargeIDSetsAndPreservesOrder(t *testing.
 	for i, m := range hydrated {
 		assert.Equal(requested[i], m.ID, "result order must match the caller's request order, not chunk order")
 	}
+
+	byID := make(map[int64]MessageSummary, len(hydrated))
+	for _, m := range hydrated {
+		byID[m.ID] = m
+	}
+	assert.Equal([]string{"first-chunk"}, byID[ids[0]].Labels,
+		"a message hydrated in the first label chunk must carry its label")
+	assert.Equal([]string{"second-chunk"}, byID[ids[total-1]].Labels,
+		"a message hydrated in the second label chunk must carry its label too")
 }
 
 func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {

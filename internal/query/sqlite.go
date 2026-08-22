@@ -896,22 +896,23 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	return results, nil
 }
 
+// messageSummaryIDChunk caps how many ids GetMessageSummariesByIDs binds into
+// a single IN-list statement — for the base summary query and for the
+// per-message label/participant hydration that follows it. SQLite refuses a
+// statement carrying more than 32766 bound parameters by default, and one id
+// is one parameter here; the eval command's dense vector/hybrid modes can
+// over-fetch a ranked result set well past that at a large -n. This engine
+// is dialect-agnostic (SQLite and PostgreSQL share it), and PostgreSQL's own
+// parameter ceiling is far higher, so chunking — rather than a SQLite-only
+// rewrite of the IN clause — is the one code path that stays correct on both.
+const messageSummaryIDChunk = 500
+
 // GetMessageSummariesByIDs returns summary rows (no body, no raw
 // MIME) for the supplied IDs in the same order as ids. Missing IDs
 // are silently dropped. Designed for vector/hybrid search hit
 // hydration: ~3 SQL round-trips total (one base query + one labels
 // batch) regardless of len(ids), versus 7N round-trips when callers
 // loop GetMessage per hit.
-// messageSummaryIDChunk caps how many ids GetMessageSummariesByIDs binds into
-// a single IN-list statement. SQLite refuses a statement carrying more than
-// 32766 bound parameters by default, and one id is one parameter here; the
-// eval command's dense vector/hybrid modes can over-fetch a ranked result set
-// well past that at a large -n. This engine is dialect-agnostic (SQLite and
-// PostgreSQL share it), and PostgreSQL's own parameter ceiling is far higher,
-// so chunking — rather than a SQLite-only rewrite of the IN clause — is the
-// one code path that stays correct on both.
-const messageSummaryIDChunk = 500
-
 func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]MessageSummary, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -931,8 +932,12 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			results = append(results, m)
 		}
 	}
-	if len(results) > 0 {
-		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
+	// Chunked for the same reason the base query above is: fetchLabelsForMessages
+	// binds one parameter per message id into its own IN-list, and results here
+	// can carry as many ids as the caller originally asked to hydrate.
+	for start := 0; start < len(results); start += messageSummaryIDChunk {
+		end := min(start+messageSummaryIDChunk, len(results))
+		if err := e.fetchLabelsForMessages(ctx, results[start:end]); err != nil {
 			return nil, fmt.Errorf("fetch labels: %w", err)
 		}
 	}
