@@ -196,9 +196,10 @@ func TestTokenIssuedByDifferentClient(t *testing.T) {
 
 			if tt.writeFile {
 				tf := tokenFile{
-					Token:    oauth2.Token{AccessToken: "t", TokenType: "Bearer"},
-					Scopes:   Scopes,
-					ClientID: tt.clientID,
+					AccessToken: "t",
+					TokenType:   "Bearer",
+					Scopes:      Scopes,
+					ClientID:    tt.clientID,
 				}
 				data, err := json.Marshal(tf)
 				require.NoError(t, err)
