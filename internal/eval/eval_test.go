@@ -101,6 +101,40 @@ func TestLoadQrels(t *testing.T) {
 	assert.False(stats.Suspect(), "one stray line in a good file is not suspicious")
 }
 
+// TestLoadQrels_RejectsConflictingGradesForTheSamePair is the regression for
+// silent last-write-wins: a plain map assignment let a later line for the
+// same query/document pair overwrite an earlier, differently-graded one with
+// no diagnostic, so which grade a run scored against depended on nothing but
+// file order.
+func TestLoadQrels_RejectsConflictingGradesForTheSamePair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := filepath.Join(t.TempDir(), "qrels.txt")
+	require.NoError(os.WriteFile(p, []byte("301 0 docA 1\n301 0 docA 0\n"), 0o644))
+
+	q, _, err := LoadQrels(p)
+	require.Error(err, "docA must not silently end up graded 0 just because that line came second")
+	assert.Nil(q)
+	assert.Contains(err.Error(), "301/docA")
+	assert.Contains(err.Error(), "1 vs 0")
+}
+
+// TestLoadQrels_AllowsAnIdenticalRepeat pins the other half: the same
+// query/document pair graded the same way twice — the shape a merged or
+// re-exported judgments file produces — is harmless and must not be rejected
+// alongside a genuine conflict.
+func TestLoadQrels_AllowsAnIdenticalRepeat(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := filepath.Join(t.TempDir(), "qrels.txt")
+	require.NoError(os.WriteFile(p, []byte("301 0 docA 1\n301 0 docA 1\n"), 0o644))
+
+	q, stats, err := LoadQrels(p)
+	require.NoError(err)
+	assert.Equal(1, q["301"]["docA"])
+	assert.Equal(2, stats.Parsed, "both lines still count toward the parsed total")
+}
+
 // TestLoadQrels_WrongColumnCount is the diagnosability regression. A qrels file
 // in the common three-column variant (no iteration column) used to load as an
 // empty-but-valid Qrels with no signal at all, and the only downstream symptom

@@ -71,6 +71,13 @@ func (s LoadStats) Suspect() bool {
 // "<qid> <iter> <docid> <rel>" per line (the iter column is ignored). Lines
 // with fewer than four fields, or a non-integer relevance, are skipped and
 // counted in the returned LoadStats — see that type for why the count matters.
+//
+// A query/document pair graded differently on two lines is rejected, the same
+// way LoadTopics rejects a repeated qid: a plain map assignment would let the
+// later line silently overwrite the earlier one, so which grade a run scored
+// against would depend on nothing but file order, with no diagnostic that it
+// happened. An identical repeat (the same grade twice) is harmless — files
+// get merged and re-exported — so only a genuine conflict is an error.
 func LoadQrels(path string) (Qrels, LoadStats, error) {
 	stats := LoadStats{Path: path}
 	f, err := os.Open(path)
@@ -80,6 +87,8 @@ func LoadQrels(path string) (Qrels, LoadStats, error) {
 	defer func() { _ = f.Close() }()
 
 	q := Qrels{}
+	var conflicts []string
+	seenConflict := make(map[string]struct{})
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -102,11 +111,27 @@ func LoadQrels(path string) (Qrels, LoadStats, error) {
 		if q[qid] == nil {
 			q[qid] = make(map[string]int)
 		}
+		// Read the whole file before complaining, so one message names every
+		// conflicting pair instead of stopping at the first — same policy
+		// LoadTopics uses for a repeated qid.
+		if prev, exists := q[qid][docid]; exists && prev != rel {
+			pair := qid + "/" + docid
+			if _, already := seenConflict[pair]; !already {
+				seenConflict[pair] = struct{}{}
+				conflicts = append(conflicts, fmt.Sprintf("%s (%d vs %d)", pair, prev, rel))
+			}
+		}
 		q[qid][docid] = rel
 		stats.Parsed++
 	}
 	if err := sc.Err(); err != nil {
 		return nil, stats, fmt.Errorf("read qrels: %w", err)
+	}
+	if len(conflicts) > 0 {
+		return nil, stats, fmt.Errorf("qrels file %s grades the same query/document pair differently on "+
+			"different lines: %s — the run would score against whichever grade happened to load last, "+
+			"which depends on nothing but file order; fix the file so each pair is graded once",
+			path, FormatIDList(conflicts, 10))
 	}
 	return q, stats, nil
 }
