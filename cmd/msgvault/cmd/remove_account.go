@@ -278,21 +278,38 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// Remove credentials for the source type.
 	switch source.SourceType {
 	case sourceTypeGmail:
+		remaining, listErr := s.ListSources(sourceTypeGmail)
+		remainingEmails := make([]string, 0, len(remaining))
+		for _, remainingSource := range remaining {
+			remainingEmails = append(remainingEmails, remainingSource.Identifier)
+		}
+		grantInUse := listErr != nil || oauth.EquivalentStoredGrantInUse(
+			cfg.TokensDir(), source.Identifier, remainingEmails,
+		)
+		if listErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not check remaining Gmail accounts; Google grant was not revoked: %v\n",
+				listErr,
+			)
+		}
 		// Revoke the grant at Google before deleting the local file, so
 		// copies of the refresh token do not outlive the account — a later
 		// re-add (read-only or otherwise) has no way to know this grant
 		// ever existed. Best-effort, matching the Microsoft path: the
 		// credential may already be dead, and removal must still complete.
-		if err := oauth.RevokeStoredCredential(
-			cmd.Context(), cfg.TokensDir(), source.Identifier,
-		); err != nil &&
-			!errors.Is(err, os.ErrNotExist) &&
-			!errors.Is(err, oauth.ErrRevokeCredentialInvalid) {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not revoke Google grant for %s (revoke it at "+
-					"https://myaccount.google.com/permissions): %v\n",
-				source.Identifier, err,
-			)
+		// Keep a shared grant while an equivalent Gmail source still uses it.
+		if !grantInUse {
+			if err := oauth.RevokeStoredCredential(
+				cmd.Context(), cfg.TokensDir(), source.Identifier,
+			); err != nil &&
+				!errors.Is(err, os.ErrNotExist) &&
+				!errors.Is(err, oauth.ErrRevokeCredentialInvalid) {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not revoke Google grant for %s (revoke it at "+
+						"https://myaccount.google.com/permissions): %v\n",
+					source.Identifier, err,
+				)
+			}
 		}
 		tokenPath := oauth.TokenFilePath(
 			cfg.TokensDir(), source.Identifier,

@@ -1322,6 +1322,30 @@ func StoredTokenOrEquivalentExists(tokensDir, email string) bool {
 	return len(findEquivalentTokenEmails(tokensDir, email)) > 0
 }
 
+// EquivalentStoredGrantInUse reports whether a remaining Gmail source has an
+// equivalent token issued by the same OAuth client. Unknown legacy client
+// provenance is treated conservatively as shared.
+func EquivalentStoredGrantInUse(tokensDir, email string, remainingEmails []string) bool {
+	m := &Manager{tokensDir: tokensDir}
+	removed, err := m.loadTokenFile(email)
+	if err != nil {
+		return false
+	}
+	for _, remainingEmail := range remainingEmails {
+		if !sameGoogleAccount(email, remainingEmail) {
+			continue
+		}
+		remaining, err := m.loadTokenFile(remainingEmail)
+		if err != nil {
+			continue
+		}
+		if removed.ClientID == "" || remaining.ClientID == "" || removed.ClientID == remaining.ClientID {
+			return true
+		}
+	}
+	return false
+}
+
 func findEquivalentTokenEmails(tokensDir, email string) []string {
 	entries, err := os.ReadDir(tokensDir)
 	if err != nil {

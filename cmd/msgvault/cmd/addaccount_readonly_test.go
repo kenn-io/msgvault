@@ -587,6 +587,7 @@ func TestAddAccount_AuthenticatedPreflightRegistersWiderGrant(t *testing.T) {
 
 	require.NoError(err)
 	assert.Contains(out, "already authorized")
+	assert.Contains(out, "returned Gmail write access")
 	assert.NotContains(out, "Starting browser authorization")
 }
 

@@ -185,3 +185,23 @@ func TestFindEquivalentTokenEmails(t *testing.T) {
 		})
 	}
 }
+
+func TestEquivalentStoredGrantInUse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	mgr := setupTestManager(t, Scopes)
+	mgr.config.ClientID = "client-a"
+	require.NoError(mgr.saveToken("username@gmail.com", &testToken, Scopes))
+	require.NoError(mgr.saveToken("user.name@gmail.com", &testToken, Scopes))
+
+	mgr.config.ClientID = "client-b"
+	require.NoError(mgr.saveToken("username+different@gmail.com", &testToken, Scopes))
+	writeLegacyTokenFile(t, mgr, "username+legacy@gmail.com", testToken)
+
+	assert.True(EquivalentStoredGrantInUse(
+		mgr.tokensDir, "username@gmail.com", []string{"user.name@gmail.com"}))
+	assert.False(EquivalentStoredGrantInUse(
+		mgr.tokensDir, "username@gmail.com", []string{"username+different@gmail.com"}))
+	assert.True(EquivalentStoredGrantInUse(
+		mgr.tokensDir, "username@gmail.com", []string{"username+legacy@gmail.com"}))
+}

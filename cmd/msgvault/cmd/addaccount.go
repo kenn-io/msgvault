@@ -520,6 +520,9 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 	tokenReusable := !forceReauth && addAccountTokenReusable(oauthMgr, email, binding, grantDecided)
 	if tokenReusable {
+		if grantDecided {
+			warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
+		}
 		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
