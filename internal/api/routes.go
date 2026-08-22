@@ -628,7 +628,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
 			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
 			queryStringParam("mode", "Search mode: auto, lexical, semantic, or hybrid", false),
-			queryIntegerParam("candidate_limit", "Maximum lexical/vector candidates to fuse (default 100, max 1000)"),
+			queryIntegerParam("candidate_limit", "Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)"),
 		}
 	case "getDocumentIndexStatus":
 		mediaTypes := queryRefArrayParam("media_type", "Allowed document media types")

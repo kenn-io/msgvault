@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	fingerprintPolicyVersion = 1
+	fingerprintPolicyVersion = 2
 	embeddingProfile         = "vector.embeddings"
+	flatBoundaryPolicy       = "flat-input-v1"
+	contextualBoundaryPolicy = "isolated-chunk-v1"
 )
 
 // GenerationID identifies one document-vector generation.
@@ -79,6 +81,7 @@ func Fingerprint(extractionProfileID string, cfg vector.Config) string {
 		Model               string                    `json:"model"`
 		Dimension           int                       `json:"dimension"`
 		MaxInputChars       int                       `json:"max_input_chars"`
+		BoundaryPolicy      string                    `json:"boundary_policy"`
 	}{
 		Version:             fingerprintPolicyVersion,
 		ExtractionProfileID: extractionProfileID,
@@ -87,6 +90,7 @@ func Fingerprint(extractionProfileID string, cfg vector.Config) string {
 		Model:               cfg.Embeddings.Model,
 		Dimension:           cfg.Embeddings.Dimension,
 		MaxInputChars:       cfg.Embeddings.MaxInputChars,
+		BoundaryPolicy:      documentBoundaryPolicy(cfg),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -94,6 +98,15 @@ func Fingerprint(extractionProfileID string, cfg vector.Config) string {
 	}
 	hash := sha256.Sum256(encoded)
 	return hex.EncodeToString(hash[:])
+}
+
+func documentBoundaryPolicy(cfg vector.Config) string {
+	if cfg.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
+		// Each extracted chunk is a stable contextual document. Grouping chunks
+		// claimed in one worker run would make embeddings depend on batch timing.
+		return contextualBoundaryPolicy
+	}
+	return flatBoundaryPolicy
 }
 
 // EgressFingerprint binds operator consent to the corpus policy and canonical

@@ -143,6 +143,43 @@ func TestWorkerRunNeverClaimsMoreThanLimit(t *testing.T) {
 	assertions.Equal([]embed.DocumentInput{{Chunks: []string{"one", "two"}}}, provider.calls[0])
 }
 
+func TestWorkerRunContextualBoundariesDoNotDependOnLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	claims := func() []*store.DocumentVectorChunkClaim {
+		return []*store.DocumentVectorChunkClaim{
+			workerClaim("extract-a", 1, "one", "token-a"),
+			workerClaim("extract-a", 2, "two", "token-b"),
+			workerClaim("extract-a", 3, "three", "token-c"),
+		}
+	}
+	wantInputs := []embed.DocumentInput{
+		{Chunks: []string{"one"}}, {Chunks: []string{"two"}}, {Chunks: []string{"three"}},
+	}
+
+	boundedProvider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}, {{4, 5, 6}}}}
+	boundedWorker := newFakeWorker(newFakeDocumentVectorLedger(claims()...), boundedProvider, &fakeDocumentVectorBackend{})
+	boundedWorker.deps.ContextualDocuments = true
+	first, err := boundedWorker.Run(t.Context(), 1, 2)
+	requirements.NoError(err)
+	requirements.False(first.Exhausted)
+	boundedProvider.vectors = [][][]float32{{{7, 8, 9}}}
+	second, err := boundedWorker.Run(t.Context(), 1, 2)
+	requirements.NoError(err)
+	requirements.True(second.Exhausted)
+
+	unboundedProvider := &fakeDocumentVectorProvider{vectors: [][][]float32{
+		{{1, 2, 3}}, {{4, 5, 6}}, {{7, 8, 9}},
+	}}
+	unboundedWorker := newFakeWorker(newFakeDocumentVectorLedger(claims()...), unboundedProvider, &fakeDocumentVectorBackend{})
+	unboundedWorker.deps.ContextualDocuments = true
+	_, err = unboundedWorker.Run(t.Context(), 1, 3)
+	requirements.NoError(err)
+
+	assertions.Equal(wantInputs, append(boundedProvider.calls[0], boundedProvider.calls[1]...))
+	assertions.Equal(wantInputs, unboundedProvider.calls[0])
+}
+
 func TestWorkerRunBoundsScanningAndCarriesCursorWithoutStarvation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

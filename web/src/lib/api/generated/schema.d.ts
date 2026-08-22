@@ -10022,7 +10022,7 @@ export interface operations {
                 cursor?: string;
                 /** @description Search mode: auto, lexical, semantic, or hybrid */
                 mode?: string;
-                /** @description Maximum lexical/vector candidates to fuse (default 100, max 1000) */
+                /** @description Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000) */
                 candidate_limit?: number;
             };
             header?: never;

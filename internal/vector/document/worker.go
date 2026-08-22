@@ -51,6 +51,9 @@ type WorkerDeps struct {
 	HeartbeatInterval time.Duration
 	RetryDelay        time.Duration
 	MaxAttempts       int
+	// ContextualDocuments keeps each durable extraction chunk in its own stable
+	// provider document. A worker batch must never redefine contextual scope.
+	ContextualDocuments bool
 	// AfterGenerationID and AfterChunkID restore the bounded scan cursor reported
 	// by a prior run of the same generation. Task 6b may persist this pair; Worker
 	// also carries it across sequential runs and resets it when generations change.
@@ -234,7 +237,7 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	if err != nil || len(claims) == 0 {
 		return result, err
 	}
-	groups, inputs := groupWorkerClaims(claims, w.deps.MaxInputChars)
+	groups, inputs := groupWorkerClaims(claims, w.deps.MaxInputChars, w.deps.ContextualDocuments)
 	result.ProviderCalls = 1
 	result.ProviderDocuments = len(inputs)
 	for _, input := range inputs {
@@ -386,7 +389,20 @@ func (w *Worker) resetCursor(result *RunResult) {
 	result.AfterChunkID = 0
 }
 
-func groupWorkerClaims(claims []*store.DocumentVectorChunkClaim, maxInputChars int) ([][]*store.DocumentVectorChunkClaim, []vector.DocumentInput) {
+func groupWorkerClaims(
+	claims []*store.DocumentVectorChunkClaim, maxInputChars int, contextualDocuments bool,
+) ([][]*store.DocumentVectorChunkClaim, []vector.DocumentInput) {
+	if contextualDocuments {
+		groups := make([][]*store.DocumentVectorChunkClaim, len(claims))
+		inputs := make([]vector.DocumentInput, len(claims))
+		for index, claim := range claims {
+			groups[index] = []*store.DocumentVectorChunkClaim{claim}
+			inputs[index] = vector.DocumentInput{Chunks: []string{
+				documentEmbeddingInput(claim.Text, maxInputChars),
+			}}
+		}
+		return groups, inputs
+	}
 	var groups [][]*store.DocumentVectorChunkClaim
 	var inputs []vector.DocumentInput
 	indices := make(map[string]int)

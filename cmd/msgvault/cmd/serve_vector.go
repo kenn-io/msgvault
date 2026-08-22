@@ -247,6 +247,9 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
 		}
 		messageClient := embed.NewClient(clientConfig)
+		documentClientConfig := clientConfig
+		documentClientConfig.RejectRedirects = true
+		documentClient := embed.NewClient(documentClientConfig)
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewClient(clientConfig)
 		messageWorker := embed.NewWorker(embed.WorkerDeps{
@@ -265,7 +268,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{
 			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
-			Convergence: checker, PersonGate: personGate, SemanticClient: messageClient,
+			Convergence: checker, PersonGate: personGate, SemanticClient: documentClient,
 		}, nil
 	case vector.APIFormatVoyageContextual:
 		if vectorCfg.Embeddings.Model != "voyage-context-4" {
@@ -284,6 +287,9 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
 		}
 		messageClient := embed.NewVoyageClient(clientConfig)
+		documentClientConfig := clientConfig
+		documentClientConfig.RejectRedirects = true
+		documentClient := embed.NewVoyageClient(documentClientConfig)
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewVoyageClient(clientConfig)
 		policy := embed.AssemblyPolicy{
@@ -306,7 +312,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{
 			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
-			Convergence: checker, PersonGate: personGate, SemanticClient: messageClient,
+			Convergence: checker, PersonGate: personGate, SemanticClient: documentClient,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)

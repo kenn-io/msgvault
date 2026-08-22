@@ -369,7 +369,7 @@ type SearchDocumentsQuery struct {
 	// Mode Search mode: auto, lexical, semantic, or hybrid
 	Mode *string `json:"mode,omitempty"`
 
-	// CandidateLimit Maximum lexical/vector candidates to fuse (default 100, max 1000)
+	// CandidateLimit Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)
 	CandidateLimit *int64 `json:"candidate_limit,omitempty"`
 }
 

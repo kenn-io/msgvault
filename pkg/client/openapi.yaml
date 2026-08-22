@@ -11974,7 +11974,7 @@ paths:
           name: mode
           schema:
             type: string
-        - description: Maximum lexical/vector candidates to fuse (default 100, max 1000)
+        - description: Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)
           in: query
           name: candidate_limit
           schema:

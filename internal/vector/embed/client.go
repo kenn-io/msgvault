@@ -47,6 +47,9 @@ type Config struct {
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
 	BeforeRequest BeforeRequestFunc
+	// RejectRedirects prevents provider responses from replaying embedding input
+	// to another URL. BeforeRequest clients always reject redirects as well.
+	RejectRedirects bool
 }
 
 // Client calls an OpenAI-compatible /v1/embeddings endpoint.
@@ -63,7 +66,7 @@ func NewClient(cfg Config) *Client {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
 	}
-	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
+	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest, cfg.RejectRedirects)}
 }
 
 // embeddingRequest is the JSON body sent to the server.

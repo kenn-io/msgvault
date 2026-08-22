@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
@@ -74,8 +75,9 @@ func runDocumentVectorWithFeatures(ctx context.Context, st *store.Store, vf *vec
 	worker := vectordocument.NewWorker(vectordocument.WorkerDeps{
 		Ledger: st, Provider: vf.SemanticClient, Backend: vf.DocumentBackend,
 		Owner: nextDocumentVectorWorkerOwner(), Dimension: generation.Dimension,
-		MaxInputChars: cfg.Vector.Embeddings.MaxInputChars,
-		LeaseDuration: 2 * time.Minute, HeartbeatInterval: 20 * time.Second,
+		MaxInputChars:       cfg.Vector.Embeddings.MaxInputChars,
+		ContextualDocuments: cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual,
+		LeaseDuration:       2 * time.Minute, HeartbeatInterval: 20 * time.Second,
 		RetryDelay: time.Minute, MaxAttempts: 5,
 		AfterGenerationID: afterGenerationID, AfterChunkID: cursor, Now: now,
 	})

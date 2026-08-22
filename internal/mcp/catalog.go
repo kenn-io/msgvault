@@ -685,7 +685,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 			"limit":           limit,
 			"cursor":          stringSchema("Opaque cursor from the previous page"),
 			"mode":            stringSchema("Search mode: auto, lexical, semantic, or hybrid"),
-			"candidate_limit": boundedIntegerSchema("Maximum lexical/vector candidates to fuse (default 100, max 1000)", 1, 1000),
+			"candidate_limit": boundedIntegerSchema("Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)", 1, 1000),
 		}, "query"),
 		outputSchemaFor[store.DocumentSearchResponse](),
 		(*handlers).searchDocuments,

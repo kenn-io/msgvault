@@ -34,12 +34,14 @@ func (t beforeRequestTransport) RoundTrip(request *http.Request) (*http.Response
 	return t.base.RoundTrip(request)
 }
 
-func newHTTPClient(timeout time.Duration, before BeforeRequestFunc) *http.Client {
+func newHTTPClient(timeout time.Duration, before BeforeRequestFunc, rejectRedirects bool) *http.Client {
 	client := &http.Client{Timeout: timeout}
 	if before != nil {
 		client.Transport = beforeRequestTransport{
 			base: http.DefaultTransport, before: before,
 		}
+	}
+	if before != nil || rejectRedirects {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
