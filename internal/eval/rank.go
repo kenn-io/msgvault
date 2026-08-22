@@ -1,5 +1,7 @@
 package eval
 
+import "fmt"
+
 // DedupeKeys collapses a ranked list of document keys so each distinct key
 // appears once, at its best (earliest) rank, preserving relative order.
 //
@@ -24,9 +26,21 @@ package eval
 func DedupeKeys(keys []string) []string {
 	seen := make(map[string]struct{}, len(keys))
 	out := make([]string, 0, len(keys))
-	for _, k := range keys {
+	for i, k := range keys {
 		if k == "" {
-			continue // hit carried no id for this doc-key; not scorable
+			// A hit with no id for this doc-key can never be judged
+			// relevant — no qrels file names an empty docid — but it still
+			// occupied a rank a real user would have seen. Dropping it
+			// outright, rather than giving it a key, would let every
+			// relevant document below it shift up to fill the hole,
+			// inflating MRR/AP/nDCG by a rank position the run didn't earn.
+			// A key unique to its position keeps the slot occupied (it can
+			// never collide with a real key, and giving two such hits the
+			// same placeholder would wrongly collapse them as one document)
+			// while still resolving to non-relevant, exactly like any other
+			// hit no qrels row names.
+			out = append(out, fmt.Sprintf("\x00unscorable:%d", i))
+			continue
 		}
 		if _, dup := seen[k]; dup {
 			continue

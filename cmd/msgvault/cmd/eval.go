@@ -709,10 +709,14 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
+	// Context-aware forms: this command's Cobra context is already
+	// cancellable on Ctrl-C, and a long migration or schema init on a large
+	// archive must actually stop when the user asks it to, not run to
+	// completion on a background context that can't hear the cancellation.
+	if err := s.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
-	if err := runStartupMigrations(s); err != nil {
+	if err := runStartupMigrationsContext(ctx, s); err != nil {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 	if err := requireFTS5ForModes(modes, s.FTS5Available()); err != nil {

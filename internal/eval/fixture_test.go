@@ -192,15 +192,36 @@ func TestThreadCollapsing_ConversationKey(t *testing.T) {
 	assert.InDelta(1.0, NDCGAt(collapsed, rel, 10), 1e-9)
 }
 
-// TestDedupeKeys_PreservesBestRank pins the collapse rule: first occurrence
-// wins (that is the thread's best rank) and empty keys — hits that carry no id
-// for the chosen doc-key — are dropped rather than scored as a document.
+// TestDedupeKeys_PreservesBestRank pins the collapse rule for real keys:
+// first occurrence wins, since that is the thread's best rank.
 func TestDedupeKeys_PreservesBestRank(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal([]string{"b", "a", "c"}, DedupeKeys([]string{"b", "a", "b", "c", "a"}))
-	assert.Equal([]string{"a"}, DedupeKeys([]string{"", "a", "", "a"}))
 	assert.Empty(DedupeKeys(nil))
-	assert.Empty(DedupeKeys([]string{"", ""}))
+}
+
+// TestDedupeKeys_KeepsUnscorableHitsAsUniqueOccupiedSlots is the regression
+// for treating an empty key — a hit that carried no id for the chosen
+// doc-key — as absent from the ranking entirely. It still occupied a rank a
+// real user would have seen, so dropping it would let every relevant
+// document below it shift up and inflate MRR/AP/nDCG by a rank position the
+// run didn't earn. It must survive as a key unique to its own position:
+// present in the output (so later ranks don't shift), but never equal to
+// another such placeholder (two hits missing an id are not one document).
+func TestDedupeKeys_KeepsUnscorableHitsAsUniqueOccupiedSlots(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ranked := DedupeKeys([]string{"", "a", "", "a"})
+	require.Len(ranked, 3, "both unscorable hits occupy a slot; the second \"a\" is still a real duplicate")
+	assert.NotEqual(ranked[0], ranked[2], "two hits missing an id must not collapse into one document")
+	assert.Equal("a", ranked[1])
+
+	rel := map[string]struct{}{"a": {}}
+	assert.InDelta(0.5, ReciprocalRank(ranked, rel), 1e-9,
+		"the relevant doc is genuinely second, not first — dropping the leading empty key would have inflated this to 1.0")
+
+	assert.Len(DedupeKeys([]string{"", ""}), 2, "neither unscorable hit is dropped")
 }
 
 // TestQuotedReplyDistractor_HurtsPrecision covers the other product-specific
