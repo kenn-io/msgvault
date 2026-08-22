@@ -107,6 +107,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 }
 
 func TestDocumentVectorStatusWorksWhenEmbeddingsAreDisabled(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
 	previous := cfg
 	t.Cleanup(func() { cfg = previous })
 	cfg = config.NewDefaultConfig()
@@ -126,6 +127,7 @@ func TestDocumentVectorStatusWorksWhenEmbeddingsAreDisabled(t *testing.T) {
 }
 
 func TestDocumentVectorStatusWorksBeforeExtractionTargetExists(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
 	previous := cfg
 	t.Cleanup(func() { cfg = previous })
 	cfg = config.NewDefaultConfig()
@@ -380,6 +382,7 @@ func (*commandDocumentVectorBackend) Search(context.Context, vectordocument.Gene
 
 func documentVectorCommandFixture(t *testing.T) (*storetest.Fixture, store.DocumentVectorGenerationSpec) {
 	t.Helper()
+	markDaemonCLISubprocessForTest(t)
 	previous := cfg
 	t.Cleanup(func() { cfg = previous })
 	c := config.NewDefaultConfig()

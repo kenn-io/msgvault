@@ -573,6 +573,9 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 	copyAttachmentID := addSearchAttachment(
 		t, f, copyMessageID, claims[0].CanonicalBlobHash, "semantic-copy.pdf", "provider:semantic-copy",
 	)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sent_at = ? WHERE id = ?`), now, copyMessageID)
+	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), copyAttachmentID, 2)
 	require.NoError(err)
 	require.True(eligible)
@@ -603,6 +606,10 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 		assert.Equal(claims[1].ExtractionID, result.ExtractionID)
 		assert.Equal(claims[1].ExtractionProfileID, result.ProfileID)
 		assert.Equal([]string{"semantic"}, result.MatchedSignals)
+		if result.AttachmentID == copyAttachmentID {
+			require.NotNil(result.OccurredAt)
+			assert.True(now.Equal(*result.OccurredAt))
+		}
 	}
 
 	bounded, boundedMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(

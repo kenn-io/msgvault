@@ -83,13 +83,23 @@ func withDocumentVectorStore(deps documentsCommandDeps, fn func(*store.Store) er
 	return fn(st)
 }
 
+func runDocumentVectorCommandHTTP(command *cobra.Command, args []string, forwardEmbeddingKey bool) error {
+	if forwardEmbeddingKey {
+		return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, embeddingsForwardEnv())
+	}
+	return runDaemonCLICommandHTTPFromCobra(command, args)
+}
+
 func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 	var yes bool
 	command := &cobra.Command{
 		Use:   cmdUseConsent,
 		Short: "Consent to hosted embedding for the configured document policy",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, false)
+			}
 			return withDocumentVectorStore(deps, func(st *store.Store) error {
 				spec, err := configuredDocumentVectorSpec(command.Context(), st)
 				if err != nil {
@@ -155,7 +165,10 @@ func newDocumentVectorBuildCmd(deps documentsCommandDeps, resume bool) *cobra.Co
 	var limit int
 	command := &cobra.Command{
 		Use: name, Short: short, Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, true)
+			}
 			return withDocumentVectorStore(deps, func(st *store.Store) error {
 				spec, err := desiredDocumentVectorSpec(command.Context(), st)
 				if err != nil {
@@ -228,7 +241,10 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 	var afterToken string
 	var limit int
 	command := &cobra.Command{Use: "retry", Short: "Reset current failed publications for retry", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, false)
+			}
 			return withDocumentVectorStore(deps, func(st *store.Store) error {
 				result, err := st.ResetDocumentVectorFailures(command.Context(), generationID, afterToken, limit, time.Now())
 				if err != nil {
@@ -249,7 +265,10 @@ func newDocumentVectorRebuildCmd(deps documentsCommandDeps) *cobra.Command {
 	var limit int
 	var yes bool
 	command := &cobra.Command{Use: "rebuild", Short: "Build a fresh generation while the active generation remains searchable", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, true)
+			}
 			if !yes {
 				return errors.New("document vector rebuild requires --yes")
 			}
@@ -279,7 +298,10 @@ func newDocumentVectorRetireCmd(deps documentsCommandDeps) *cobra.Command {
 	var generationID int64
 	var yes bool
 	command := &cobra.Command{Use: cliEmbeddingsOperationRetire, Short: "Retire a document vector generation without deleting its backend ledger", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, false)
+			}
 			if !yes {
 				return errors.New("document vector retirement requires --yes")
 			}
@@ -304,7 +326,10 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 	var limit int
 	var jsonOutput bool
 	command := &cobra.Command{Use: statusValue, Short: "Inspect document vector generations, consent, usage, and failures", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDocumentVectorCommandHTTP(command, args, false)
+			}
 			if cfg == nil || !cfg.Vector.Enabled || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 				if jsonOutput {
 					return json.NewEncoder(command.OutOrStdout()).Encode(map[string]bool{"enabled": false})

@@ -313,9 +313,10 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 	for rows.Next() {
 		var result DocumentSearchResult
 		var headingJSON, text string
+		var occurredAt nullableTimestamp
 		if err := rows.Scan(
 			&result.AttachmentID, &result.MessageID, &result.ConversationID, &result.SourceID,
-			&result.SourceMessageID, &result.OccurredAt, &result.OccurrenceKey,
+			&result.SourceMessageID, &occurredAt, &result.OccurrenceKey,
 			&result.SourcePartKey, &result.Filename, &result.ContainingTitle, &result.MIMEType,
 			&result.CanonicalBlobHash, &result.ChunkKey, &result.ChunkOrdinal, &headingJSON,
 			&result.FirstUnitIndex, &result.LastUnitIndex, &text,
@@ -325,6 +326,9 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 			&result.VectorEmbeddingProfile, &result.VectorModel, &result.VectorDimension,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan document vector search occurrence: %w", err)
+		}
+		if occurredAt.Valid {
+			result.OccurredAt = &occurredAt.Time
 		}
 		if err := json.Unmarshal([]byte(headingJSON), &result.HeadingPath); err != nil {
 			return nil, false, fmt.Errorf("decode document vector search heading path: %w", err)
