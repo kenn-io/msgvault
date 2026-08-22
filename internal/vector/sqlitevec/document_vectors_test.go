@@ -50,6 +50,13 @@ func TestDocumentBackendContractSQLite(t *testing.T) {
 	assert.Equal(t, before, after, "replacement preserves the vec0-linked metadata rowid")
 }
 
+func TestDocumentVectorSearchProbeLimitStaysBounded(t *testing.T) {
+	assert.Equal(t, 10, documentVectorSearchProbeLimit(10, 1))
+	assert.Equal(t, 33, documentVectorSearchProbeLimit(10_000, 1))
+	assert.Equal(t, 200, documentVectorSearchProbeLimit(10_000, 100))
+	assert.Equal(t, 2_000, documentVectorSearchProbeLimit(1_000_000, 1_000))
+}
+
 func testDocumentBackendContract(t *testing.T, backend document.Backend, tokenCount func(string) int) {
 	t.Helper()
 	ctx := context.Background()

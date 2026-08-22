@@ -11969,7 +11969,7 @@ paths:
           name: cursor
           schema:
             type: string
-        - description: "Search mode: auto, lexical, semantic, or hybrid"
+        - description: "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider"
           in: query
           name: mode
           schema:

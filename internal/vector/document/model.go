@@ -53,8 +53,9 @@ const (
 	SearchModeHybrid   SearchMode = "hybrid"
 )
 
-// ParseSearchMode normalizes a document search mode. An omitted mode selects
-// automatic lexical/vector routing.
+// ParseSearchMode normalizes a document search mode. Omitted values normalize
+// to auto; SearchService keeps auto lexical so query text leaves the process
+// only on an explicit semantic or hybrid request.
 func ParseSearchMode(value string) (SearchMode, error) {
 	mode := SearchMode(strings.ToLower(strings.TrimSpace(value)))
 	if mode == "" {

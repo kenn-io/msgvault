@@ -48,6 +48,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Contains(t, unconfirmedOutput.String(), "Dimension: 3")
 	assert.Contains(t, unconfirmedOutput.String(), "Maximum input: 4096 characters")
 	assert.Contains(t, unconfirmedOutput.String(), "Normalized attachment document chunk text will be sent")
+	assert.Contains(t, unconfirmedOutput.String(), "Explicit semantic or hybrid document searches will send query text")
 	assert.NotContains(t, unconfirmedOutput.String(), "secret-that-must-not-print")
 	assert.NotContains(t, unconfirmedOutput.String(), "endpoint-user")
 	assert.NotContains(t, unconfirmedOutput.String(), "endpoint-secret")

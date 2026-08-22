@@ -657,6 +657,9 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
 	limit.Default = json.RawMessage("20")
+	mode := stringSchema("Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider",
+		"auto", "lexical", "semantic", "hybrid")
+	mode.Default = json.RawMessage(`"lexical"`)
 	direction := stringSchema("How the owning message relates to the person",
 		"from_person", "to_person", "group")
 	definition := readDefinition(
@@ -684,7 +687,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 			"before":          stringSchema("Only messages before YYYY-MM-DD"),
 			"limit":           limit,
 			"cursor":          stringSchema("Opaque cursor from the previous page"),
-			"mode":            stringSchema("Search mode: auto, lexical, semantic, or hybrid"),
+			"mode":            mode,
 			"candidate_limit": boundedIntegerSchema("Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)", 1, 1000),
 		}, "query"),
 		outputSchemaFor[store.DocumentSearchResponse](),

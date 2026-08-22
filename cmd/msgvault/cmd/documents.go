@@ -198,7 +198,7 @@ func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	command.Flags().StringVar(&beforeValue, "before", "", "Only messages before YYYY-MM-DD or RFC3339")
 	command.Flags().IntVarP(&request.PageSize, "limit", "n", 20, "Maximum results to return")
 	command.Flags().StringVar(&request.Cursor, "cursor", "", "Opaque cursor from the previous page")
-	command.Flags().StringVar(&request.SearchMode, "mode", "auto", "Search mode: auto, lexical, semantic, or hybrid")
+	command.Flags().StringVar(&request.SearchMode, "mode", "lexical", "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider")
 	command.Flags().IntVar(&request.CandidateLimit, "candidate-limit", 100, "Maximum candidates; semantic candidates are globally ranked before scope filters (1-1000)")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command

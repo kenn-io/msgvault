@@ -211,37 +211,37 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 	hits []DocumentVectorSearchHit,
 	request DocumentSearchRequest,
 	limit int,
-) ([]DocumentSearchResult, error) {
+) ([]DocumentSearchResult, bool, error) {
 	if generationID <= 0 {
-		return nil, fmt.Errorf("%w: vector generation must be positive", ErrDocumentSearchInvalidRequest)
+		return nil, false, fmt.Errorf("%w: vector generation must be positive", ErrDocumentSearchInvalidRequest)
 	}
 	if limit < 1 || limit > maxDocumentVectorCandidateLimit || len(hits) > maxDocumentVectorCandidateLimit {
-		return nil, fmt.Errorf("%w: semantic candidate bounds are invalid", ErrDocumentSearchInvalidRequest)
+		return nil, false, fmt.Errorf("%w: semantic candidate bounds are invalid", ErrDocumentSearchInvalidRequest)
 	}
 	if len(hits) == 0 {
-		return []DocumentSearchResult{}, nil
+		return []DocumentSearchResult{}, false, nil
 	}
 	var err error
 	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	request.MessageTypes, err = sortedUniqueNonempty(request.MessageTypes)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if request.AttachmentID < 0 || request.MessageID < 0 {
-		return nil, fmt.Errorf("%w: request scope has invalid bounds", ErrDocumentSearchInvalidRequest)
+		return nil, false, fmt.Errorf("%w: request scope has invalid bounds", ErrDocumentSearchInvalidRequest)
 	}
 	seenTokens := make(map[string]struct{}, len(hits))
 	values := make([]string, 0, len(hits))
 	args := make([]any, 0, len(hits)*3+6)
 	for _, hit := range hits {
 		if !documentVectorFingerprintPattern.MatchString(hit.Token) || hit.Rank < 1 || math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) {
-			return nil, fmt.Errorf("%w: semantic hit is invalid", ErrDocumentSearchInvalidRequest)
+			return nil, false, fmt.Errorf("%w: semantic hit is invalid", ErrDocumentSearchInvalidRequest)
 		}
 		if _, exists := seenTokens[hit.Token]; exists {
-			return nil, fmt.Errorf("%w: semantic hit token is duplicated", ErrDocumentSearchInvalidRequest)
+			return nil, false, fmt.Errorf("%w: semantic hit token is duplicated", ErrDocumentSearchInvalidRequest)
 		}
 		seenTokens[hit.Token] = struct{}{}
 		// Explicit parameter casts keep PostgreSQL from inferring a parameter-only
@@ -252,7 +252,7 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 	conditions, scopeArgs := documentSearchScope(request, "m", "a", "cv")
 	args = append(args, generationID, string(DocumentVectorGenerationActive))
 	args = append(args, scopeArgs...)
-	args = append(args, limit)
+	args = append(args, limit+1)
 	query := `
 		WITH requested(token, semantic_rank, semantic_score) AS (
 			VALUES ` + strings.Join(values, ", ") + `
@@ -306,10 +306,10 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 		LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
-		return nil, fmt.Errorf("resolve document vector search occurrences: %w", err)
+		return nil, false, fmt.Errorf("resolve document vector search occurrences: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	results := make([]DocumentSearchResult, 0, limit)
+	results := make([]DocumentSearchResult, 0, limit+1)
 	for rows.Next() {
 		var result DocumentSearchResult
 		var headingJSON, text string
@@ -324,22 +324,31 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 			&result.VectorGenerationID, &result.VectorGenerationFingerprint,
 			&result.VectorEmbeddingProfile, &result.VectorModel, &result.VectorDimension,
 		); err != nil {
-			return nil, fmt.Errorf("scan document vector search occurrence: %w", err)
+			return nil, false, fmt.Errorf("scan document vector search occurrence: %w", err)
 		}
 		if err := json.Unmarshal([]byte(headingJSON), &result.HeadingPath); err != nil {
-			return nil, fmt.Errorf("decode document vector search heading path: %w", err)
+			return nil, false, fmt.Errorf("decode document vector search heading path: %w", err)
 		}
 		result.Excerpt, result.HighlightStart, result.HighlightEnd = documentSearchExcerpt(text, nil)
 		result.MatchedSignals = []string{"semantic"}
 		results = append(results, result)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate document vector search occurrences: %w", err)
+		return nil, false, fmt.Errorf("iterate document vector search occurrences: %w", err)
+	}
+	truncated := len(results) > limit
+	if truncated {
+		results = results[:limit]
 	}
 	if err := s.populateDocumentLiveCopyCounts(ctx, results); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return results, nil
+	if request.Person != nil {
+		if err := s.populateDocumentPersonProvenance(ctx, results, *request.Person); err != nil {
+			return nil, false, err
+		}
+	}
+	return results, truncated, nil
 }
 
 func (s *Store) prepareDocumentSearch(

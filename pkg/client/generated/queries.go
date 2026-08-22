@@ -366,7 +366,7 @@ type SearchDocumentsQuery struct {
 	// Cursor Opaque cursor from the previous document search page
 	Cursor *string `json:"cursor,omitempty"`
 
-	// Mode Search mode: auto, lexical, semantic, or hybrid
+	// Mode Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider
 	Mode *string `json:"mode,omitempty"`
 
 	// CandidateLimit Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)

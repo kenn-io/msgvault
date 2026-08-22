@@ -106,7 +106,7 @@ func TestSearchServiceSemanticReturnsAuthoritativeOccurrenceProvenance(t *testin
 	assertions.Equal(10, backend.searches[0].k)
 }
 
-func TestSearchServiceAutoUsesHybridAndPreservesLexicalSignals(t *testing.T) {
+func TestSearchServiceAutoKeepsQueryLocalWhenSemanticCapabilityIsReady(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := seedSemanticSearch(t, "nebula evidence")
@@ -114,17 +114,18 @@ func TestSearchServiceAutoUsesHybridAndPreservesLexicalSignals(t *testing.T) {
 	backend := &searchBackend{hits: []Hit{{Token: fixture.claims[0].Token, Score: .9, Rank: 1}}}
 	service := NewSearchService(SearchDeps{Ledger: fixture.store.Store, Embedder: embedder, Backend: backend})
 
-	response, err := service.Search(t.Context(), store.DocumentSearchRequest{
-		Query: "nebula", SearchMode: string(SearchModeAuto), CandidateLimit: 10,
-	})
+	for _, mode := range []string{"", string(SearchModeAuto)} {
+		response, err := service.Search(t.Context(), store.DocumentSearchRequest{
+			Query: "nebula", SearchMode: mode, CandidateLimit: 10,
+		})
 
-	requirements.NoError(err)
-	requirements.Len(response.Results, 1)
-	assertions.Equal(string(SearchModeHybrid), response.EffectiveMode)
-	assertions.Equal([]string{"content", "semantic"}, response.Results[0].MatchedSignals)
-	assertions.Equal(1, response.Results[0].LexicalRank)
-	assertions.Equal(1, response.Results[0].SemanticRank)
-	assertions.InDelta(2.0/61.0, response.Results[0].FusionScore, 1e-12)
+		requirements.NoError(err)
+		requirements.Len(response.Results, 1)
+		assertions.Equal(string(SearchModeLexical), response.EffectiveMode)
+		assertions.Equal([]string{"content"}, response.Results[0].MatchedSignals)
+	}
+	assertions.Empty(embedder.queries)
+	assertions.Empty(backend.searches)
 }
 
 func TestSearchServiceExplicitLexicalPreservesStoreRankingWithoutProviderWork(t *testing.T) {
@@ -159,7 +160,7 @@ func TestSearchServiceExplicitLexicalPreservesStoreRankingWithoutProviderWork(t 
 	assertions.Empty(backend.searches)
 }
 
-func TestSearchServiceDoesNotFallbackAfterSemanticAttempt(t *testing.T) {
+func TestSearchServiceExplicitSemanticModesDoNotFallbackAfterProviderAttempt(t *testing.T) {
 	fixture := seedSemanticSearch(t, "nebula evidence")
 	providerErr := errors.New("synthetic provider unavailable")
 	service := NewSearchService(SearchDeps{
@@ -167,7 +168,7 @@ func TestSearchServiceDoesNotFallbackAfterSemanticAttempt(t *testing.T) {
 	})
 
 	_, err := service.Search(t.Context(), store.DocumentSearchRequest{
-		Query: "nebula", SearchMode: string(SearchModeAuto), CandidateLimit: 10,
+		Query: "nebula", SearchMode: string(SearchModeHybrid), CandidateLimit: 10,
 	})
 	require.ErrorIs(t, err, providerErr)
 
@@ -177,7 +178,7 @@ func TestSearchServiceDoesNotFallbackAfterSemanticAttempt(t *testing.T) {
 		Backend: &searchBackend{err: backendErr},
 	})
 	_, err = service.Search(t.Context(), store.DocumentSearchRequest{
-		Query: "nebula", SearchMode: string(SearchModeAuto), CandidateLimit: 10,
+		Query: "nebula", SearchMode: string(SearchModeSemantic), CandidateLimit: 10,
 	})
 	require.ErrorIs(t, err, backendErr)
 }

@@ -252,8 +252,8 @@ func (startupDocumentSearchLedger) GetActiveDocumentVectorGeneration(context.Con
 
 func (startupDocumentSearchLedger) ResolveDocumentVectorSearchOccurrences(
 	context.Context, int64, []store.DocumentVectorSearchHit, store.DocumentSearchRequest, int,
-) ([]store.DocumentSearchResult, error) {
-	return nil, nil
+) ([]store.DocumentSearchResult, bool, error) {
+	return nil, false, nil
 }
 
 type startupDocumentSemanticClient struct{}

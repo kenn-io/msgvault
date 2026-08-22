@@ -36,7 +36,7 @@ type SearchLedger interface {
 	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
 	GetDocumentIndexRevision(ctx context.Context) (int64, error)
 	GetActiveDocumentVectorGeneration(ctx context.Context) (*store.DocumentVectorGeneration, error)
-	ResolveDocumentVectorSearchOccurrences(ctx context.Context, generationID int64, hits []store.DocumentVectorSearchHit, request store.DocumentSearchRequest, limit int) ([]store.DocumentSearchResult, error)
+	ResolveDocumentVectorSearchOccurrences(ctx context.Context, generationID int64, hits []store.DocumentVectorSearchHit, request store.DocumentSearchRequest, limit int) ([]store.DocumentSearchResult, bool, error)
 }
 
 var _ SearchLedger = (*store.Store)(nil)
@@ -79,7 +79,7 @@ func (s *SearchService) Search(ctx context.Context, request store.DocumentSearch
 		return store.DocumentSearchResponse{}, fmt.Errorf("read document search revision: %w", err)
 	}
 	var generation *store.DocumentVectorGeneration
-	if requestedMode != SearchModeLexical {
+	if requestedMode == SearchModeSemantic || requestedMode == SearchModeHybrid {
 		generation, err = s.deps.Ledger.GetActiveDocumentVectorGeneration(ctx)
 		if err != nil {
 			return store.DocumentSearchResponse{}, fmt.Errorf("read active document vector generation: %w", err)
@@ -107,8 +107,9 @@ func (s *SearchService) Search(ctx context.Context, request store.DocumentSearch
 		if searchErr != nil {
 			return store.DocumentSearchResponse{}, searchErr
 		}
-		candidates = fuseSearchResults(lexical, nil, prepared.CandidateLimit)
-		truncated = more
+		var fusionMore bool
+		candidates, fusionMore = fuseSearchResults(lexical, nil, prepared.CandidateLimit)
+		truncated = more || fusionMore
 	case SearchModeSemantic, SearchModeHybrid:
 		var lexical []store.DocumentSearchResult
 		if effectiveMode == SearchModeHybrid {
@@ -124,7 +125,9 @@ func (s *SearchService) Search(ctx context.Context, request store.DocumentSearch
 			return store.DocumentSearchResponse{}, semanticErr
 		}
 		truncated = truncated || more
-		candidates = fuseSearchResults(lexical, semantic, prepared.CandidateLimit)
+		var fusionMore bool
+		candidates, fusionMore = fuseSearchResults(lexical, semantic, prepared.CandidateLimit)
+		truncated = truncated || fusionMore
 	default:
 		return store.DocumentSearchResponse{}, fmt.Errorf("%w: unsupported effective mode", store.ErrDocumentSearchInvalidRequest)
 	}
@@ -167,9 +170,8 @@ func (s *SearchService) effectiveMode(requested SearchMode, generation *store.Do
 	case SearchModeLexical:
 		return SearchModeLexical, nil
 	case SearchModeAuto:
-		if semanticReady {
-			return SearchModeHybrid, nil
-		}
+		// Automatic searches stay local. Sending a query to the configured
+		// provider requires an explicit semantic or hybrid request.
 		return SearchModeLexical, nil
 	case SearchModeSemantic, SearchModeHybrid:
 		if !semanticReady {
@@ -230,11 +232,13 @@ func (s *SearchService) collectSemantic(ctx context.Context, request store.Docum
 	for index := range hits {
 		storeHits[index] = store.DocumentVectorSearchHit{Token: hits[index].Token, Score: hits[index].Score, Rank: hits[index].Rank}
 	}
-	results, err := s.deps.Ledger.ResolveDocumentVectorSearchOccurrences(ctx, generation.ID, storeHits, request, request.CandidateLimit)
+	results, expandedMore, err := s.deps.Ledger.ResolveDocumentVectorSearchOccurrences(
+		ctx, generation.ID, storeHits, request, request.CandidateLimit,
+	)
 	if err != nil {
 		return nil, false, err
 	}
-	return results, len(hits) == request.CandidateLimit, nil
+	return results, expandedMore || len(hits) == request.CandidateLimit, nil
 }
 
 func validateSearchVector(value []float32, dimension int) error {

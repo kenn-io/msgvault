@@ -17,7 +17,7 @@ type fusedSearchCandidate struct {
 
 func fuseSearchResults(
 	lexical, semantic []store.DocumentSearchResult, limit int,
-) []store.DocumentSearchResult {
+) ([]store.DocumentSearchResult, bool) {
 	byOccurrence := make(map[string]*fusedSearchCandidate, len(lexical)+len(semantic))
 	for index := range lexical {
 		row := lexical[index]
@@ -58,6 +58,9 @@ func fuseSearchResults(
 			candidate.result.LexicalRank = candidate.lexical.Rank
 			candidate.result.FusionScore += reciprocalRank(candidate.lexical.Rank)
 			candidate.result.MatchedSignals = slices.Clone(candidate.lexical.MatchedSignals)
+			if candidate.result.PersonProvenance == nil {
+				candidate.result.PersonProvenance = candidate.lexical.PersonProvenance
+			}
 			if candidate.semantic != nil {
 				candidate.result.MatchedSignals = append(candidate.result.MatchedSignals, "semantic")
 			}
@@ -70,7 +73,8 @@ func fuseSearchResults(
 		}
 		return candidates[i].result.OccurrenceKey < candidates[j].result.OccurrenceKey
 	})
-	if limit > 0 && len(candidates) > limit {
+	truncated := limit > 0 && len(candidates) > limit
+	if truncated {
 		candidates = candidates[:limit]
 	}
 	results := make([]store.DocumentSearchResult, len(candidates))
@@ -78,7 +82,7 @@ func fuseSearchResults(
 		results[index] = candidates[index].result
 		results[index].Rank = index + 1
 	}
-	return results
+	return results, truncated
 }
 
 func semanticResultLess(left, right store.DocumentSearchResult) bool {

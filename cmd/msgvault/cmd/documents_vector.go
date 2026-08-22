@@ -131,6 +131,7 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	_, _ = fmt.Fprintf(w, "Dimension: %d\n", spec.Dimension)
 	_, _ = fmt.Fprintf(w, "Maximum input: %d characters\n", cfg.Vector.Embeddings.MaxInputChars)
 	_, _ = fmt.Fprintln(w, "Normalized attachment document chunk text will be sent to the configured destination for embedding.")
+	_, _ = fmt.Fprintln(w, "Explicit semantic or hybrid document searches will send query text to the same destination.")
 }
 
 func documentVectorConsentEndpoint(endpoint string) string {

@@ -582,10 +582,11 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 		{Token: claims[0].Token, Score: .8, Rank: 10},
 		{Token: claims[1].Token, Score: .9, Rank: 2},
 	}
-	results, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+	results, resultsMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
 		t.Context(), generation.ID, hits, store.DocumentSearchRequest{}, 10,
 	)
 	require.NoError(err)
+	assert.False(resultsMore)
 	require.Len(results, 2, "two chunks must expand to each occurrence, then collapse by occurrence")
 	assert.Less(results[0].OccurrenceKey, results[1].OccurrenceKey)
 	for _, result := range results {
@@ -604,19 +605,42 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 		assert.Equal([]string{"semantic"}, result.MatchedSignals)
 	}
 
-	bounded, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+	bounded, boundedMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
 		t.Context(), generation.ID, hits, store.DocumentSearchRequest{}, 1,
 	)
 	require.NoError(err)
 	require.Len(bounded, 1)
+	assert.True(boundedMore)
 	assert.Equal(results[0].OccurrenceKey, bounded[0].OccurrenceKey)
 
-	scoped, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+	scoped, scopedMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
 		t.Context(), generation.ID, hits, store.DocumentSearchRequest{AttachmentID: copyAttachmentID}, 10,
 	)
 	require.NoError(err)
 	require.Len(scoped, 1)
+	assert.False(scopedMore)
 	assert.Equal(copyAttachmentID, scoped[0].AttachmentID)
+
+	participantID := f.EnsureParticipant("semantic@example.test", "Semantic", "example.test")
+	var originalMessageID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT message_id FROM attachments WHERE content_hash = ? AND id <> ?`),
+		claims[0].CanonicalBlobHash, copyAttachmentID).Scan(&originalMessageID))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, originalMessageID)
+	require.NoError(err)
+	personResults, personMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+		t.Context(), generation.ID, hits, store.DocumentSearchRequest{Person: &personscope.Scope{
+			ParticipantIDs: []int64{participantID}, Directions: []personscope.Direction{personscope.FromPerson},
+		}}, 10,
+	)
+	require.NoError(err)
+	require.Len(personResults, 1)
+	assert.False(personMore)
+	assert.Equal(&personscope.Provenance{
+		ParticipantIDs: []int64{participantID}, Roles: []personscope.Role{personscope.RoleFrom},
+		Directions: []personscope.Direction{personscope.FromPerson},
+	}, personResults[0].PersonProvenance)
 }
 
 func TestResolveDocumentVectorSearchOccurrencesBoundsUnicodeExcerpt(t *testing.T) {
@@ -635,11 +659,12 @@ func TestResolveDocumentVectorSearchOccurrencesBoundsUnicodeExcerpt(t *testing.T
 	require.Len(claims, 1)
 	require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
 
-	results, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
+	results, truncated, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
 		{Token: claims[0].Token, Score: .9, Rank: 1},
 	}, store.DocumentSearchRequest{}, 10)
 	require.NoError(err)
 	require.Len(results, 1)
+	assert.False(truncated)
 	assert.Equal(strings.Repeat("界", 320), results[0].Excerpt)
 	assert.Zero(results[0].HighlightStart)
 	assert.Zero(results[0].HighlightEnd)
@@ -729,11 +754,12 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 			require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
 			test.mutate(t, f, claims[0])
 
-			results, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
+			results, truncated, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
 				{Token: claims[0].Token, Score: .9, Rank: 1},
 			}, store.DocumentSearchRequest{}, 10)
 			require.NoError(err)
 			assert.Empty(results)
+			assert.False(truncated)
 			var publications int
 			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
 				SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ? AND token = ?`),

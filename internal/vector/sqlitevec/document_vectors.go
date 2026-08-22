@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	documentVectorBatchLimit = 1000
-	documentVectorTokenLimit = 1024
+	documentVectorBatchLimit      = 1000
+	documentVectorTokenLimit      = 1024
+	documentVectorTieOversampling = 32
 )
 
 // DocumentBackend is the independent attachment-document vector store. It
@@ -170,9 +171,9 @@ func (b *DocumentBackend) Search(ctx context.Context, generationID document.Gene
 		return []document.Hit{}, nil
 	}
 	// vec0 chooses its own top-k before the metadata join can apply token
-	// ordering. Request the complete generation so equal cosine scores are
-	// globally ordered by opaque token before the caller's k is applied; a
-	// bounded inner approximation would make ties nondeterministic.
+	// ordering. Keep that work proportional to the requested result count while
+	// retaining a bounded pool for stable token ordering within ordinary ties.
+	innerK := documentVectorSearchProbeLimit(count, k)
 	q := fmt.Sprintf(`
 		WITH knn AS MATERIALIZED (
 			SELECT document_vector_id, distance FROM %s
@@ -185,7 +186,7 @@ func (b *DocumentBackend) Search(ctx context.Context, generationID document.Gene
 		WHERE m.generation_id = ? AND m.dimension = ?
 		ORDER BY score DESC, m.token ASC
 		LIMIT ?`, DocumentVectorTableName(dimension))
-	rows, err := b.db.QueryContext(ctx, q, int64(generationID), float32SliceBlob(query), count,
+	rows, err := b.db.QueryContext(ctx, q, int64(generationID), float32SliceBlob(query), innerK,
 		int64(generationID), dimension, k)
 	if err != nil {
 		return nil, fmt.Errorf("search document vectors: %w", err)
@@ -204,6 +205,10 @@ func (b *DocumentBackend) Search(ctx context.Context, generationID document.Gene
 		return nil, fmt.Errorf("iterate document vector hits: %w", err)
 	}
 	return hits, nil
+}
+
+func documentVectorSearchProbeLimit(count, k int) int {
+	return min(count, max(k*2, k+documentVectorTieOversampling))
 }
 
 func validateDocumentPut(generationID document.GenerationID, dimension int, embeddings []document.Embedding) error {

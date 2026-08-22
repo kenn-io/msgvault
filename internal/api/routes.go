@@ -627,7 +627,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("before", "Only messages before an RFC3339 or YYYY-MM-DD date", false),
 			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
 			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
-			queryStringParam("mode", "Search mode: auto, lexical, semantic, or hybrid", false),
+			queryStringParam("mode", "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider", false),
 			queryIntegerParam("candidate_limit", "Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)"),
 		}
 	case "getDocumentIndexStatus":

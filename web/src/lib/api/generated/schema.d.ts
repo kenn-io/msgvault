@@ -10020,7 +10020,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque cursor from the previous document search page */
                 cursor?: string;
-                /** @description Search mode: auto, lexical, semantic, or hybrid */
+                /** @description Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider */
                 mode?: string;
                 /** @description Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000) */
                 candidate_limit?: number;
