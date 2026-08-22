@@ -228,21 +228,23 @@ func (s *Store) splitPersonMergeOnce(
 			aliasDisposition = personSplitAliasRetargeted
 		}
 
-		lineageArgs := []any{splitID, request.MergeID}
+		lineageArgs := []any{splitID, request.SourcePersonID}
 		lineageArgs = append(lineageArgs, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
 		if _, err := tx.ExecContext(ctx, `UPDATE person_merge_participants SET split_id = ?
-			WHERE merge_id = ? AND participant_id IN (`+
+			WHERE split_id IS NULL AND merge_id IN (
+				SELECT id FROM person_merges WHERE current_person_id = ?
+			) AND participant_id IN (`+
 			personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, lineageArgs...); err != nil {
 			return fmt.Errorf("mark split participant lineage: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_merges
 			SET current_person_id = NULL
-			WHERE id = ? AND current_person_id = ? AND NOT EXISTS (
+			WHERE current_person_id = ? AND NOT EXISTS (
 				SELECT 1 FROM person_merge_participants lineage
 				WHERE lineage.merge_id = person_merges.id
 				  AND lineage.origin_side = 'absorbed'
 				  AND lineage.split_id IS NULL
-			)`, request.MergeID, request.SourcePersonID); err != nil {
+			)`, request.SourcePersonID); err != nil {
 			return fmt.Errorf("close fully split merge lineage: %w", err)
 		}
 		identityRevision, err := s.bumpIdentityRevisionContext(ctx, tx)

@@ -895,6 +895,48 @@ func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t 
 	assert.Equal(earlierSplit.NewPerson.ID, nameOwner)
 }
 
+func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	first := mustPromotedPerson(t, st, "split-chain-first@example.com", "First")
+	second := mustPromotedPerson(t, st, "split-chain-second@example.com", "Second")
+	third := mustPromotedPerson(t, st, "split-chain-third@example.com", "Third")
+
+	firstMerge, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: first.ID, AbsorbedID: second.ID,
+		ExpectedSurvivorRevision: first.Revision,
+		ExpectedAbsorbedRevision: second.Revision,
+		IdempotencyKey:           "split-chain-first-merge", Actor: "test",
+	})
+	require.NoError(err)
+	secondMerge, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: third.ID, AbsorbedID: firstMerge.Person.ID,
+		ExpectedSurvivorRevision: third.Revision,
+		ExpectedAbsorbedRevision: firstMerge.Person.Revision,
+		IdempotencyKey:           "split-chain-second-merge", Actor: "test",
+	})
+	require.NoError(err)
+
+	secondSplit, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: secondMerge.Person.ID, MergeID: secondMerge.Merge.ID,
+		ParticipantIDs:         second.ParticipantIDs,
+		ExpectedSourceRevision: secondMerge.Person.Revision,
+		IdempotencyKey:         "split-chain-second-participant", Actor: "test",
+	})
+	require.NoError(err)
+	firstSplit, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: secondSplit.SourcePerson.ID, MergeID: secondMerge.Merge.ID,
+		ParticipantIDs:         first.ParticipantIDs,
+		ExpectedSourceRevision: secondSplit.SourcePerson.Revision,
+		IdempotencyKey:         "split-chain-first-participant", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(st.DeletePersonContext(
+		ctx, firstSplit.SourcePerson.ID, firstSplit.SourcePerson.Revision,
+	))
+}
+
 func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowEdits(t *testing.T) {
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
