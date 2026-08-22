@@ -388,7 +388,7 @@ func openPostgresDB(dbURL string, readOnly bool) (*sql.DB, func(), error) {
 
 	dsn := stdlib.RegisterConnConfig(connConfig)
 	cleanup := func() { stdlib.UnregisterConnConfig(dsn) }
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open(postgresDriverName, dsn)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("open PostgreSQL: %w", err)
@@ -499,7 +499,7 @@ func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) (returnEr
 // Engine factories use this to choose between the SQLite and PostgreSQL
 // query paths.
 func (s *Store) IsPostgreSQL() bool {
-	return s.dialect.DriverName() == "pgx"
+	return s.dialect.DriverName() == postgresDriverName
 }
 
 // WithExclusiveLock executes fn while holding an exclusive write lock on the
@@ -1041,6 +1041,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
+	}
+	if err := s.ensureDocumentVectorPublicationRecoverySchema(ctx); err != nil {
+		return fmt.Errorf("preserve document vector publication recovery: %w", err)
+	}
+	if err := s.ensureDocumentVectorRebuildSchema(ctx); err != nil {
+		return fmt.Errorf("enable document vector rebuilds: %w", err)
 	}
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.

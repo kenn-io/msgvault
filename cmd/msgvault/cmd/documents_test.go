@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
 func TestProbeMistralCommandWritesCompleteSanitizedManifest(t *testing.T) {
@@ -404,6 +405,16 @@ func TestDocumentsSearchDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) 
 		t.Context(), documentindex.DocumentAttachmentConsumerKey,
 	)
 	require.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
+}
+
+func TestDocumentsSearchLocalExplicitSemanticNeverMasqueradesAsLexical(t *testing.T) {
+	fixture := storetest.New(t)
+	command := newDocumentsCmd(documentsCommandDeps{
+		openStore: func() (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+	})
+	command.SetArgs([]string{"search", "evidence", "--mode", "semantic", "--candidate-limit", "25"})
+	err := command.ExecuteContext(t.Context())
+	require.ErrorIs(t, err, vectordocument.ErrSemanticSearchUnavailable)
 }
 
 func TestDocumentsSearchUsesConfiguredReadClient(t *testing.T) {

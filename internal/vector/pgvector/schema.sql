@@ -144,7 +144,6 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor   TEXT NOT NULL DEFAULT ''
 );
-
 -- Visual vectors share the PostgreSQL database with their authoritative
 -- publication rows but remain independently keyed by an opaque publication
 -- token. A prepared vector cannot be searched until visual_publications points
@@ -159,3 +158,81 @@ CREATE INDEX IF NOT EXISTS idx_visual_vectors_hnsw_d1024
     ON visual_vectors
     USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
     WHERE dimension = 1024;
+
+-- Independent attachment-document vectors. Tokens are opaque globally unique
+-- publication identities; generation IDs intentionally do not reference the
+-- message-vector index_generations table.
+CREATE TABLE IF NOT EXISTS document_vector_backend_generations (
+    generation_id BIGINT PRIMARY KEY,
+    dimension     INTEGER NOT NULL CHECK (dimension > 0),
+    UNIQUE (generation_id, dimension)
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_embeddings (
+    token         TEXT PRIMARY KEY,
+    generation_id BIGINT NOT NULL,
+    dimension     INTEGER NOT NULL CHECK (dimension > 0),
+    embedding     vector NOT NULL,
+    CONSTRAINT document_vector_embeddings_generation_dimension_fkey
+        FOREIGN KEY (generation_id, dimension)
+        REFERENCES document_vector_backend_generations(generation_id, dimension)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_generation
+    ON document_vector_embeddings(generation_id, dimension, token);
+
+-- Upgrade databases created before generation-level dimension authority. A
+-- conflicting legacy generation is unsafe to guess at, so fail migration
+-- rather than bless one dimension and leave the other searchable.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM document_vector_embeddings
+        GROUP BY generation_id
+        HAVING MIN(dimension) <> MAX(dimension)
+    ) THEN
+        RAISE EXCEPTION 'document vector generation contains multiple dimensions';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM document_vector_embeddings e
+        JOIN document_vector_backend_generations g USING (generation_id)
+        WHERE e.dimension <> g.dimension
+    ) THEN
+        RAISE EXCEPTION 'document vector generation authority conflicts with stored embeddings';
+    END IF;
+END
+$$;
+
+INSERT INTO document_vector_backend_generations (generation_id, dimension)
+SELECT generation_id, MIN(dimension)
+FROM document_vector_embeddings
+GROUP BY generation_id
+ON CONFLICT (generation_id) DO NOTHING;
+
+-- CREATE TABLE IF NOT EXISTS does not retrofit constraints onto an existing
+-- table, so add and validate the internal authority FK explicitly on upgrade.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'document_vector_embeddings'::regclass
+          AND conname = 'document_vector_embeddings_generation_dimension_fkey'
+    ) THEN
+        ALTER TABLE document_vector_embeddings
+            ADD CONSTRAINT document_vector_embeddings_generation_dimension_fkey
+            FOREIGN KEY (generation_id, dimension)
+            REFERENCES document_vector_backend_generations(generation_id, dimension)
+            NOT VALID;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'document_vector_embeddings'::regclass
+          AND conname = 'document_vector_embeddings_generation_dimension_fkey'
+          AND NOT convalidated
+    ) THEN
+        ALTER TABLE document_vector_embeddings
+            VALIDATE CONSTRAINT document_vector_embeddings_generation_dimension_fkey;
+    END IF;
+END
+$$;

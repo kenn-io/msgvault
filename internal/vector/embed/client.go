@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // ErrPermanent4xx marks a non-retryable HTTP 4xx response from the
@@ -21,7 +23,7 @@ import (
 // it; the error message still carries the status code and a bounded
 // response body. 429 (rate-limited) and 5xx are NOT wrapped — they
 // flow through the retry loop as transient errors.
-var ErrPermanent4xx = errors.New("embed: non-retryable 4xx response")
+var ErrPermanent4xx = vector.ErrPermanent4xx
 
 // Config controls an embeddings Client. The zero value is not usable; callers
 // must set Endpoint, Model, and Dimension at a minimum.
@@ -45,6 +47,9 @@ type Config struct {
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
 	BeforeRequest BeforeRequestFunc
+	// RejectRedirects prevents provider responses from replaying embedding input
+	// to another URL. BeforeRequest clients always reject redirects as well.
+	RejectRedirects bool
 }
 
 // Client calls an OpenAI-compatible /v1/embeddings endpoint.
@@ -61,7 +66,7 @@ func NewClient(cfg Config) *Client {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
 	}
-	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
+	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest, cfg.RejectRedirects)}
 }
 
 // embeddingRequest is the JSON body sent to the server.

@@ -165,7 +165,7 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 	var jsonOutput bool
 	var semanticEmbeddings bool
 	command := &cobra.Command{
-		Use:   "consent",
+		Use:   cmdUseConsent,
 		Short: "Consent to the exact people inference policy",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {

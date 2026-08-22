@@ -924,6 +924,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/vectors/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get document vector generation, consent, usage, and failure status */
+        get: operations["getDocumentVectorStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/domains/search": {
         parameters: {
             query?: never;
@@ -3765,11 +3782,15 @@ export interface components {
             [key: string]: unknown;
         };
         DocumentSearchResponse: {
+            effective_mode?: string;
             next_cursor?: string;
             results: components["schemas"]["DocumentSearchResult"][] | null;
             /** Format: int64 */
             revision: number;
             truncated?: boolean;
+            vector_generation_fingerprint?: string;
+            /** Format: int64 */
+            vector_generation_id?: number;
         } & {
             [key: string]: unknown;
         };
@@ -3788,6 +3809,8 @@ export interface components {
             filename?: string;
             /** Format: int64 */
             first_unit_index: number;
+            /** Format: double */
+            fusion_score?: number;
             heading_path?: string[] | null;
             /** Format: int64 */
             highlight_end: number;
@@ -3795,6 +3818,8 @@ export interface components {
             highlight_start: number;
             /** Format: int64 */
             last_unit_index: number;
+            /** Format: int64 */
+            lexical_rank?: number;
             matched_signals: string[] | null;
             /** Format: int64 */
             message_id: number;
@@ -3811,10 +3836,142 @@ export interface components {
             /** Format: int64 */
             rank: number;
             /** Format: int64 */
+            semantic_rank?: number;
+            /** Format: double */
+            semantic_score?: number;
+            /** Format: int64 */
             source_id: number;
             source_message_id?: string;
             source_part_key?: string;
             truncated: boolean;
+            /** Format: int64 */
+            vector_dimension?: number;
+            vector_embedding_profile?: string;
+            vector_generation_fingerprint?: string;
+            /** Format: int64 */
+            vector_generation_id?: number;
+            vector_model?: string;
+            vector_token?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorConsent: {
+            /** Format: date-time */
+            consented_at: string;
+            /** Format: int64 */
+            dimension: number;
+            egress_fingerprint: string;
+            embedding_profile: string;
+            fingerprint: string;
+            model: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorCoverage: {
+            /** Format: int64 */
+            ready: number;
+            /** Format: int64 */
+            required: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorFailureDiagnostic: {
+            /** Format: int64 */
+            attempt_count: number;
+            error_code: string;
+            /** Format: date-time */
+            next_retry_at?: string;
+            terminal: boolean;
+            token: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGeneration: {
+            /** Format: date-time */
+            activated_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            dimension: number;
+            embedding_profile: string;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            model: string;
+            /** Format: date-time */
+            retired_at?: string;
+            state: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGenerationSpec: {
+            /** Format: int64 */
+            dimension: number;
+            embedding_profile: string;
+            fingerprint: string;
+            model: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGenerationStatus: {
+            /** Format: int64 */
+            cleanup_pending: number;
+            /** Format: int64 */
+            failure_after_generation_id?: number;
+            failure_after_token?: string;
+            failures: components["schemas"]["DocumentVectorFailureDiagnostic"][] | null;
+            failures_exhausted: boolean;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            ready_live: number;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale_obsolete: number;
+            state: string;
+            /** Format: int64 */
+            terminal: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorOperationsResponse: {
+            configured: boolean;
+            enabled: boolean;
+            scheduled_registration_requires_restart?: boolean;
+            status?: components["schemas"]["DocumentVectorOperationsStatus"];
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorOperationsStatus: {
+            active?: components["schemas"]["DocumentVectorGeneration"];
+            building?: components["schemas"]["DocumentVectorGeneration"];
+            configured_egress_fingerprint: string;
+            configured_spec: components["schemas"]["DocumentVectorGenerationSpec"];
+            consent?: components["schemas"]["DocumentVectorConsent"];
+            coverage?: components["schemas"]["DocumentVectorCoverage"];
+            selected?: components["schemas"]["DocumentVectorGenerationStatus"];
+            usage: components["schemas"]["DocumentVectorProviderUsage"];
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorProviderUsage: {
+            fingerprint: string;
+            /** Format: int64 */
+            provider_calls: number;
+            /** Format: int64 */
+            provider_chunks: number;
+            /** Format: int64 */
+            provider_documents: number;
+            /** Format: int64 */
+            provider_input_chars: number;
+            /** Format: date-time */
+            updated_at?: string;
         } & {
             [key: string]: unknown;
         };
@@ -9864,6 +10021,10 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque cursor from the previous document search page */
                 cursor?: string;
+                /** @description Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider */
+                mode?: string;
+                /** @description Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000) */
+                candidate_limit?: number;
             };
             header?: never;
             path?: never;
@@ -9970,6 +10131,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentIndexStatusResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getDocumentVectorStatus: {
+        parameters: {
+            query?: {
+                /** @description Generation whose bounded failures to inspect */
+                generation_id?: number;
+                /** @description Stable failure cursor token */
+                after_token?: string;
+                /** @description Maximum failure diagnostics (default 20, max 1000) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentVectorOperationsResponse"];
                 };
             };
             /** @description Error */

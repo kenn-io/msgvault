@@ -278,8 +278,8 @@ func (c *DocumentsConfig) Validate() error {
 	if !c.LexicalEnabled() || !c.StoresChunkText() {
 		return errors.New("attachments.documents.index.lexical and store_chunk_text must both be true until document vector publication lands")
 	}
-	if c.Index.Embeddings.Enabled {
-		return errors.New("attachments.documents.index.embeddings.enabled is not available until document vector publication lands")
+	if c.Index.Embeddings.Enabled && c.Index.Embeddings.Profile != "vector.embeddings" {
+		return fmt.Errorf("attachments.documents.index.embeddings.profile must be %q when embeddings are enabled", "vector.embeddings")
 	}
 	if slices.Contains(c.Scope.MessageTypes, "") {
 		return errors.New("attachments.documents.scope.message_types contains an empty value")

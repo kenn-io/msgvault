@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -31,6 +33,8 @@ func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
 		assert.Equal(int64(41), request.AttachmentID)
 		assert.Equal(int64(42), request.MessageID)
 		assert.Equal(7, request.PageSize)
+		assert.Equal("auto", request.SearchMode)
+		assert.Equal(55, request.CandidateLimit)
 		assert.Equal("opaque", request.Cursor)
 		return store.DocumentSearchResponse{
 			Revision: 12, NextCursor: "next",
@@ -41,7 +45,7 @@ func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
 		}, nil
 	}
 	request := httptest.NewRequest(http.MethodGet,
-		"/api/v1/documents/search?q=shipping+damage&source_id=4,9&message_type=email,mms&attachment_id=41&message_id=42&limit=7&cursor=opaque",
+		"/api/v1/documents/search?q=shipping+damage&source_id=4,9&message_type=email,mms&attachment_id=41&message_id=42&limit=7&cursor=opaque&mode=auto&candidate_limit=55",
 		nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -78,6 +82,21 @@ func TestDocumentSearchHTTPResolvesDurablePersonScope(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
+func TestDocumentSearchHTTPExplicitSemanticUnavailableDoesNotFallBack(t *testing.T) {
+	server, catalog := newTestServerWithMockStore(t)
+	calls := 0
+	catalog.documentSearchFunc = func(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
+		calls++
+		return store.DocumentSearchResponse{}, nil
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence&mode=semantic&candidate_limit=25", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	assert.Contains(t, response.Body.String(), "semantic_search_unavailable")
+	assert.Zero(t, calls)
 }
 
 func TestDocumentSearchHTTPMapsCursorRevisionConflict(t *testing.T) {
@@ -230,8 +249,35 @@ func TestOpenAPIDocumentSearchParameters(t *testing.T) {
 		names = append(names, parameter.Name)
 	}
 	assert.ElementsMatch(t,
-		[]string{"q", "source_id", "message_type", "attachment_id", "message_id", "person_id", "participant_id", "direction", "after", "before", "limit", "cursor"},
+		[]string{"q", "source_id", "message_type", "attachment_id", "message_id", "person_id", "participant_id", "direction", "after", "before", "limit", "cursor", "mode", "candidate_limit"},
 		names)
+}
+
+func TestDocumentVectorStatusHTTPIsUsefulBeforeTargetConfiguration(t *testing.T) {
+	fixture := storetest.New(t)
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = true
+	c.Attachments.Documents.Index.Embeddings.Enabled = true
+	server := NewServerWithOptions(ServerOptions{Config: c, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler)})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/vectors/status", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(t, `{"enabled":true,"configured":false}`, response.Body.String())
+}
+
+func TestOpenAPIDocumentVectorStatusUsesSnakeCaseCoverage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	document := OpenAPIDocument()
+	operation := document.Paths["/api/v1/documents/vectors/status"].Get
+	requirements.NotNil(operation)
+	coverage := document.Components.Schemas.Map()["DocumentVectorCoverage"]
+	requirements.NotNil(coverage)
+	assertions.ElementsMatch([]string{"required", "ready"}, slices.Collect(maps.Keys(coverage.Properties)))
+	encoded, err := json.Marshal(store.DocumentVectorCoverage{Required: 4, Ready: 3})
+	requirements.NoError(err)
+	assertions.JSONEq(`{"required":4,"ready":3}`, string(encoded))
 }
 
 func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {

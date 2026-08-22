@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/sqldialect"
 )
 
+const postgresDriverName = "pgx"
+
 // PostgreSQLDialect implements Dialect for PostgreSQL.
 //
 // The zero value is ready to use, and every method except ReadWatermarkBounds
@@ -31,7 +33,7 @@ type PostgreSQLDialect struct {
 	fullyVisibleBound time.Time
 }
 
-func (d *PostgreSQLDialect) DriverName() string { return "pgx" }
+func (d *PostgreSQLDialect) DriverName() string { return postgresDriverName }
 
 // Rebind converts ? placeholders to PostgreSQL $1, $2, ... numbered
 // placeholders. Delegates to sqldialect so the query package's

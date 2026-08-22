@@ -2338,6 +2338,8 @@ components:
     DocumentSearchResponse:
       additionalProperties: true
       properties:
+        effective_mode:
+          type: string
         next_cursor:
           type: string
         results:
@@ -2351,6 +2353,11 @@ components:
           type: integer
         truncated:
           type: boolean
+        vector_generation_fingerprint:
+          type: string
+        vector_generation_id:
+          format: int64
+          type: integer
       required:
         - results
         - revision
@@ -2382,6 +2389,9 @@ components:
         first_unit_index:
           format: int64
           type: integer
+        fusion_score:
+          format: double
+          type: number
         heading_path:
           items:
             type: string
@@ -2395,6 +2405,9 @@ components:
           format: int64
           type: integer
         last_unit_index:
+          format: int64
+          type: integer
+        lexical_rank:
           format: int64
           type: integer
         matched_signals:
@@ -2427,6 +2440,12 @@ components:
         rank:
           format: int64
           type: integer
+        semantic_rank:
+          format: int64
+          type: integer
+        semantic_score:
+          format: double
+          type: number
         source_id:
           format: int64
           type: integer
@@ -2436,6 +2455,20 @@ components:
           type: string
         truncated:
           type: boolean
+        vector_dimension:
+          format: int64
+          type: integer
+        vector_embedding_profile:
+          type: string
+        vector_generation_fingerprint:
+          type: string
+        vector_generation_id:
+          format: int64
+          type: integer
+        vector_model:
+          type: string
+        vector_token:
+          type: string
       required:
         - attachment_id
         - message_id
@@ -2458,6 +2491,244 @@ components:
         - matched_signals
         - truncated
         - rank
+      type: object
+    DocumentVectorConsent:
+      additionalProperties: true
+      properties:
+        consented_at:
+          format: date-time
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        egress_fingerprint:
+          type: string
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        model:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - consented_at
+        - egress_fingerprint
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorCoverage:
+      additionalProperties: true
+      properties:
+        ready:
+          format: int64
+          type: integer
+        required:
+          format: int64
+          type: integer
+      required:
+        - required
+        - ready
+      type: object
+    DocumentVectorFailureDiagnostic:
+      additionalProperties: true
+      properties:
+        attempt_count:
+          format: int64
+          type: integer
+        error_code:
+          type: string
+        next_retry_at:
+          format: date-time
+          type: string
+        terminal:
+          type: boolean
+        token:
+          type: string
+      required:
+        - token
+        - attempt_count
+        - terminal
+        - error_code
+      type: object
+    DocumentVectorGeneration:
+      additionalProperties: true
+      properties:
+        activated_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        retired_at:
+          format: date-time
+          type: string
+        state:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - id
+        - state
+        - created_at
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorGenerationSpec:
+      additionalProperties: true
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        model:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorGenerationStatus:
+      additionalProperties: true
+      properties:
+        cleanup_pending:
+          format: int64
+          type: integer
+        failure_after_generation_id:
+          format: int64
+          type: integer
+        failure_after_token:
+          type: string
+        failures:
+          items:
+            $ref: "#/components/schemas/DocumentVectorFailureDiagnostic"
+          type:
+            - array
+            - "null"
+        failures_exhausted:
+          type: boolean
+        generation_id:
+          format: int64
+          type: integer
+        pending:
+          format: int64
+          type: integer
+        ready_live:
+          format: int64
+          type: integer
+        retryable:
+          format: int64
+          type: integer
+        stale_obsolete:
+          format: int64
+          type: integer
+        state:
+          type: string
+        terminal:
+          format: int64
+          type: integer
+      required:
+        - generation_id
+        - state
+        - pending
+        - retryable
+        - terminal
+        - ready_live
+        - stale_obsolete
+        - cleanup_pending
+        - failures
+        - failures_exhausted
+      type: object
+    DocumentVectorOperationsResponse:
+      additionalProperties: true
+      properties:
+        configured:
+          type: boolean
+        enabled:
+          type: boolean
+        scheduled_registration_requires_restart:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/DocumentVectorOperationsStatus"
+      required:
+        - enabled
+        - configured
+      type: object
+    DocumentVectorOperationsStatus:
+      additionalProperties: true
+      properties:
+        active:
+          $ref: "#/components/schemas/DocumentVectorGeneration"
+        building:
+          $ref: "#/components/schemas/DocumentVectorGeneration"
+        configured_egress_fingerprint:
+          type: string
+        configured_spec:
+          $ref: "#/components/schemas/DocumentVectorGenerationSpec"
+        consent:
+          $ref: "#/components/schemas/DocumentVectorConsent"
+        coverage:
+          $ref: "#/components/schemas/DocumentVectorCoverage"
+        selected:
+          $ref: "#/components/schemas/DocumentVectorGenerationStatus"
+        usage:
+          $ref: "#/components/schemas/DocumentVectorProviderUsage"
+      required:
+        - configured_spec
+        - configured_egress_fingerprint
+        - usage
+      type: object
+    DocumentVectorProviderUsage:
+      additionalProperties: true
+      properties:
+        fingerprint:
+          type: string
+        provider_calls:
+          format: int64
+          type: integer
+        provider_chunks:
+          format: int64
+          type: integer
+        provider_documents:
+          format: int64
+          type: integer
+        provider_input_chars:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - fingerprint
+        - provider_calls
+        - provider_documents
+        - provider_chunks
+        - provider_input_chars
       type: object
     DomainContextSummaryHTTPResponse:
       additionalProperties: true
@@ -12218,6 +12489,17 @@ paths:
           name: cursor
           schema:
             type: string
+        - description: "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider"
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: Maximum candidates; semantic candidates are globally ranked before scope filters (default 100, max 1000)
+          in: query
+          name: candidate_limit
+          schema:
+            format: int64
+            type: integer
       responses:
         "200":
           content:
@@ -12343,6 +12625,69 @@ paths:
       security:
         - apiKey: []
       summary: Get extracted document index status
+      tags:
+        - API
+  /api/v1/documents/vectors/status:
+    get:
+      operationId: getDocumentVectorStatus
+      parameters:
+        - description: Generation whose bounded failures to inspect
+          in: query
+          name: generation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Stable failure cursor token
+          in: query
+          name: after_token
+          schema:
+            type: string
+        - description: Maximum failure diagnostics (default 20, max 1000)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentVectorOperationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get document vector generation, consent, usage, and failure status
       tags:
         - API
   /api/v1/domains/search:

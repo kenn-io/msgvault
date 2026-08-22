@@ -24,6 +24,9 @@ type VoyageConfig struct {
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
 	BeforeRequest BeforeRequestFunc
+	// RejectRedirects prevents provider responses from replaying embedding input
+	// to another URL. BeforeRequest clients always reject redirects as well.
+	RejectRedirects bool
 }
 
 // VoyageClient calls Voyage's nested contextualized embeddings endpoint.
@@ -50,7 +53,7 @@ func NewVoyageClient(cfg VoyageConfig) *VoyageClient {
 		cfg.Limits.MaxUTF8Bytes = defaultVoyageRequestLimits.MaxUTF8Bytes
 	}
 	cfg.Limits = capVoyageRequestLimits(cfg.Limits)
-	return &VoyageClient{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
+	return &VoyageClient{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest, cfg.RejectRedirects)}
 }
 
 type voyageRequest struct {

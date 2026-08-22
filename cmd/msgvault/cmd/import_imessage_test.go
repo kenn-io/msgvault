@@ -42,14 +42,14 @@ func TestResolveImessageSource(t *testing.T) {
 		{
 			name:           "no existing sources — creates local",
 			seedSources:    nil,
-			wantIdentifier: "local",
+			wantIdentifier: localValue,
 		},
 		{
 			name: "only local exists — reuses local",
 			seedSources: []struct{ sourceType, identifier string }{
-				{"apple_messages", "local"},
+				{"apple_messages", localValue},
 			},
-			wantIdentifier: "local",
+			wantIdentifier: localValue,
 		},
 		{
 			name: "only legacy exists — reuses legacy",
@@ -61,7 +61,7 @@ func TestResolveImessageSource(t *testing.T) {
 		{
 			name: "both legacy and local — prefers legacy",
 			seedSources: []struct{ sourceType, identifier string }{
-				{"apple_messages", "local"},
+				{"apple_messages", localValue},
 				{"apple_messages", "+15551234567"},
 			},
 			wantIdentifier: "+15551234567",
@@ -69,7 +69,7 @@ func TestResolveImessageSource(t *testing.T) {
 		{
 			name: "multiple legacy — picks first non-local",
 			seedSources: []struct{ sourceType, identifier string }{
-				{"apple_messages", "local"},
+				{"apple_messages", localValue},
 				{"apple_messages", "alice@icloud.com"},
 				{"apple_messages", "+15551234567"},
 			},

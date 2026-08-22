@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
@@ -35,6 +36,7 @@ type embeddingRuntime struct {
 	PersonQueryClient personsearch.QueryEmbedder
 	Convergence       scheduler.ConvergenceChecker
 	PersonGate        vector.SemanticPersonEmbeddingGate
+	SemanticClient    embed.SemanticClient
 }
 
 type embeddingRuntimeDeps struct {
@@ -245,6 +247,9 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
 		}
 		messageClient := embed.NewClient(clientConfig)
+		documentClientConfig := clientConfig
+		documentClientConfig.RejectRedirects = true
+		documentClient := embed.NewClient(documentClientConfig)
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewClient(clientConfig)
 		messageWorker := embed.NewWorker(embed.WorkerDeps{
@@ -263,7 +268,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{
 			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
-			Convergence: checker, PersonGate: personGate,
+			Convergence: checker, PersonGate: personGate, SemanticClient: documentClient,
 		}, nil
 	case vector.APIFormatVoyageContextual:
 		if vectorCfg.Embeddings.Model != "voyage-context-4" {
@@ -282,6 +287,9 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
 		}
 		messageClient := embed.NewVoyageClient(clientConfig)
+		documentClientConfig := clientConfig
+		documentClientConfig.RejectRedirects = true
+		documentClient := embed.NewVoyageClient(documentClientConfig)
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewVoyageClient(clientConfig)
 		policy := embed.AssemblyPolicy{
@@ -304,7 +312,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{
 			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
-			Convergence: checker, PersonGate: personGate,
+			Convergence: checker, PersonGate: personGate, SemanticClient: documentClient,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)
@@ -439,9 +447,10 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 
 	var (
-		backend   vector.Backend
-		vectorsDB *sql.DB
-		closeFn   func() error
+		backend         vector.Backend
+		documentBackend vectordocument.Backend
+		vectorsDB       *sql.DB
+		closeFn         func() error
 	)
 	if store.IsPostgresURL(mainPath) {
 		// Same database handle as the main store: pgvector embeddings
@@ -466,6 +475,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			return nil, fmt.Errorf("open pgvector backend: %w", err)
 		}
 		backend = pgb
+		documentBackend = pgb.DocumentBackend()
 		vectorsDB = pgb.DB()
 		closeFn = pgb.Close
 	} else {
@@ -492,11 +502,14 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			return nil, fmt.Errorf("open vectors.db: %w", err)
 		}
 		backend = sb
+		documentBackend = sb.DocumentBackend()
 		vectorsDB = sb.DB()
 		closeFn = sb.Close
 	}
 
-	features := &vectorFeatures{Backend: backend, Cfg: vecCfg, Close: closeFn}
+	features := &vectorFeatures{
+		Backend: backend, DocumentBackend: documentBackend, Cfg: vecCfg, Close: closeFn,
+	}
 	if vecCfg.Enabled {
 		personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
 			vecCfg, currentSemanticPersonVectorConfigSource(), mainStore,
@@ -512,6 +525,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		}
 		features.Runner = runtime.Runner
 		features.Convergence = runtime.Convergence
+		features.SemanticClient = runtime.SemanticClient
 		features.HybridEngine = hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
 			ExpectedFingerprint: vecCfg.GenerationFingerprint(),
 			RRFK:                vecCfg.Search.RRFK,
@@ -542,6 +556,39 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 				Gate:                runtime.PersonGate,
 			},
 		)
+		if cfg.Attachments.Documents.Index.Embeddings.Enabled {
+			target, targetErr := mainStore.GetDocumentVectorTargetProfileID(ctx)
+			if targetErr != nil && !errors.Is(targetErr, store.ErrDocumentVectorInvalidGenerationState) {
+				_ = closeFn()
+				return nil, fmt.Errorf("read document vector target profile: %w", targetErr)
+			}
+			if targetErr == nil {
+				desired := store.DocumentVectorGenerationSpec{
+					Fingerprint:               vectordocument.Fingerprint(target, vecCfg),
+					TargetExtractionProfileID: target,
+					EmbeddingProfile:          "vector.embeddings",
+					Model:                     vecCfg.Embeddings.Model,
+					Dimension:                 vecCfg.Embeddings.Dimension,
+				}
+				egressFingerprint, fingerprintErr := vectordocument.EgressFingerprint(target, vecCfg)
+				if fingerprintErr != nil {
+					_ = closeFn()
+					return nil, fingerprintErr
+				}
+				consent, consentErr := mainStore.GetDocumentVectorConsent(ctx, egressFingerprint)
+				if consentErr != nil {
+					_ = closeFn()
+					return nil, fmt.Errorf("read document vector consent: %w", consentErr)
+				}
+				if consent != nil && consent.DocumentVectorGenerationSpec == desired &&
+					consent.EgressFingerprint == egressFingerprint {
+					features.DocumentSearch = vectordocument.NewSearchService(vectordocument.SearchDeps{
+						Ledger: mainStore, Embedder: runtime.SemanticClient, Backend: documentBackend,
+						ExpectedFingerprint: desired.Fingerprint,
+					})
+				}
+			}
+		}
 	}
 	if vecCfg.Multimodal.Enabled && !readOnly {
 		if len(openers) == 0 || openers[0] == nil {

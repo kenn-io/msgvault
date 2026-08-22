@@ -6,6 +6,8 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -45,6 +47,9 @@ type vectorFeatures struct {
 	PersonSearchEngine *personsearch.Engine
 	Runner             scheduler.EmbedRunner
 	Convergence        scheduler.ConvergenceChecker
+	DocumentBackend    vectordocument.Backend
+	DocumentSearch     *vectordocument.SearchService
+	SemanticClient     embed.SemanticClient
 	Cfg                vector.Config
 	Visual             *visualFeatures
 	// Close releases the backend's resources: on SQLite it closes the

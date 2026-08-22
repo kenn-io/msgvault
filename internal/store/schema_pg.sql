@@ -1919,6 +1919,8 @@ CREATE INDEX IF NOT EXISTS idx_document_extractions_owner
     ON document_extractions(profile_id, canonical_blob_hash, extraction_input_key, state);
 CREATE INDEX IF NOT EXISTS idx_document_extractions_lease
     ON document_extractions(state, lease_until);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_extractions_vector_identity
+    ON document_extractions(id, profile_id, canonical_blob_hash, extraction_input_key, source_sequence);
 
 CREATE TABLE IF NOT EXISTS document_extraction_claims (
     profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,
@@ -1982,6 +1984,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     CHECK (first_unit_index >= 0 AND last_unit_index >= first_unit_index),
     CHECK (synthetic_prefix_len >= 0 AND char_count >= 0)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_chunks_vector_identity
+    ON document_chunks(id, extraction_id, chunk_key, checksum);
 
 CREATE INDEX IF NOT EXISTS idx_document_chunks_search_fts
     ON document_chunks USING GIN(search_fts);
@@ -2032,6 +2036,76 @@ CREATE TABLE IF NOT EXISTS document_index_state (
 );
 INSERT INTO document_index_state(singleton, revision) VALUES (1, 0)
 ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS document_vector_generations (
+    id                           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fingerprint                  TEXT NOT NULL,
+    target_extraction_profile_id TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    state                        TEXT NOT NULL CHECK (state IN ('building', 'active', 'retired')),
+    created_at                   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    activated_at                 TIMESTAMPTZ,
+    retired_at                   TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_building
+    ON document_vector_generations(state) WHERE state = 'building';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_active
+    ON document_vector_generations(state) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_document_vector_generations_live_fingerprint
+    ON document_vector_generations(fingerprint) WHERE state <> 'retired';
+
+CREATE TABLE IF NOT EXISTS document_vector_consents (
+    egress_fingerprint           TEXT PRIMARY KEY,
+    generation_fingerprint       TEXT NOT NULL,
+    target_extraction_profile_id  TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    consented_at                 TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_provider_usage (
+    fingerprint          TEXT PRIMARY KEY,
+    provider_calls       BIGINT NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
+    provider_documents   BIGINT NOT NULL DEFAULT 0 CHECK (provider_documents >= 0),
+    provider_chunks      BIGINT NOT NULL DEFAULT 0 CHECK (provider_chunks >= 0),
+    provider_input_chars BIGINT NOT NULL DEFAULT 0 CHECK (provider_input_chars >= 0),
+    updated_at           TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_build_progress (
+    generation_id  BIGINT PRIMARY KEY REFERENCES document_vector_generations(id) ON DELETE CASCADE,
+    after_chunk_id BIGINT NOT NULL CHECK (after_chunk_id > 0),
+    updated_at     TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_publications (
+    generation_id                BIGINT NOT NULL REFERENCES document_vector_generations(id) ON DELETE RESTRICT,
+    extraction_id                TEXT NOT NULL,
+    extraction_profile_id        TEXT NOT NULL,
+    canonical_blob_hash          TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    extraction_input_key         TEXT NOT NULL,
+    chunk_id                     BIGINT NOT NULL,
+    chunk_key                    TEXT NOT NULL,
+    chunk_checksum               TEXT NOT NULL,
+    source_sequence              BIGINT NOT NULL,
+    token                        TEXT NOT NULL UNIQUE,
+    state                        TEXT NOT NULL CHECK (state IN ('pending', 'ready', 'failed')),
+    lease_owner                  TEXT,
+    lease_fence                  BIGINT NOT NULL DEFAULT 0,
+    lease_until                  TIMESTAMPTZ,
+    attempt_count                INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_retry_at                TIMESTAMPTZ,
+    error_code                   TEXT,
+    backend_cleaned_at           TIMESTAMPTZ,
+    created_at                   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, extraction_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_publications_cleanup
+    ON document_vector_publications(generation_id, backend_cleaned_at, token);
 
 -- Foreign-key cascades can remove occurrences before asynchronous attachment
 -- reconciliation observes the deletion. Invalidate search cursors at the
