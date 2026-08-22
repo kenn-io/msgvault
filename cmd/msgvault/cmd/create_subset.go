@@ -117,8 +117,13 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata, plus their employment history and the referenced organizations' profiles, contacts, and media.")
 	}
 	if subsetIncludeVCardResources {
-		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-vcard-resources copies every included person's complete native vCard bodies, retired-UID aliases, and complete merge packets. Merge packets retain immutable merge-time values even after later redaction. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset.")
+		warning := "WARNING: --include-vcard-resources copies every included person's complete native vCard bodies and retired-UID aliases. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset."
+		if subsetIncludeAttributes {
+			warning += " Complete merge packets are also copied when their dependency closure is present; packets retain immutable merge-time values even after later redaction."
+		} else {
+			warning += " Merge packets require --include-attributes and will be reported as omitted."
+		}
+		fmt.Fprintln(os.Stderr, warning)
 	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,

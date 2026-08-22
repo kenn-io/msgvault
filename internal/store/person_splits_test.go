@@ -902,6 +902,13 @@ func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T
 	first := mustPromotedPerson(t, st, "split-chain-first@example.com", "First")
 	second := mustPromotedPerson(t, st, "split-chain-second@example.com", "Second")
 	third := mustPromotedPerson(t, st, "split-chain-third@example.com", "Third")
+	secondName, err := st.AddPersonNameContext(ctx, second.ID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: new("Second Profile"),
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	second, err = st.GetPersonContext(ctx, second.ID)
+	require.NoError(err)
 
 	firstMerge, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
 		SurvivorID: first.ID, AbsorbedID: second.ID,
@@ -918,6 +925,14 @@ func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T
 	})
 	require.NoError(err)
 
+	_, err = st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: secondMerge.Person.ID, MergeID: secondMerge.Merge.ID,
+		ParticipantIDs:         first.ParticipantIDs,
+		ExpectedSourceRevision: secondMerge.Person.Revision,
+		IdempotencyKey:         "split-chain-survivor-first", Actor: "test",
+	})
+	require.ErrorIs(err, store.ErrPersonSplitParticipants)
+
 	secondSplit, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: secondMerge.Person.ID, MergeID: secondMerge.Merge.ID,
 		ParticipantIDs:         second.ParticipantIDs,
@@ -925,6 +940,10 @@ func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T
 		IdempotencyKey:         "split-chain-second-participant", Actor: "test",
 	})
 	require.NoError(err)
+	secondProfile, err := st.GetPersonProfileContext(ctx, secondSplit.NewPerson.ID)
+	require.NoError(err)
+	require.Len(secondProfile.Names, 1)
+	assert.Equal(t, secondName.Envelope.ID, secondProfile.Names[0].Envelope.ID)
 	firstSplit, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: secondSplit.SourcePerson.ID, MergeID: secondMerge.Merge.ID,
 		ParticipantIDs:         first.ParticipantIDs,

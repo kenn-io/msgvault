@@ -13888,9 +13888,9 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ErrorResponse"
+                anyOf:
                   - $ref: "#/components/schemas/PersonMergeRequiredError"
+                  - $ref: "#/components/schemas/ErrorResponse"
           description: Conflict
         default:
           content:
@@ -13983,9 +13983,9 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ErrorResponse"
+                anyOf:
                   - $ref: "#/components/schemas/PersonMergeRequiredError"
+                  - $ref: "#/components/schemas/ErrorResponse"
           description: Conflict
         "503":
           content:

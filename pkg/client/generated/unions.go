@@ -470,11 +470,11 @@ func (s *SearchFiles_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
-type LinkIdentityParticipants_ErrorResponse_OneOf struct {
-	runtime.Either[ErrorResponse, PersonMergeRequiredError]
+type LinkIdentityParticipants_ErrorResponse_AnyOf struct {
+	runtime.Either[PersonMergeRequiredError, ErrorResponse]
 }
 
-func (l *LinkIdentityParticipants_ErrorResponse_OneOf) Validate() error {
+func (l *LinkIdentityParticipants_ErrorResponse_AnyOf) Validate() error {
 	if l.IsA() {
 		if v, ok := any(l.A).(runtime.Validator); ok {
 			return v.Validate()
@@ -488,11 +488,11 @@ func (l *LinkIdentityParticipants_ErrorResponse_OneOf) Validate() error {
 	return nil
 }
 
-type AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf struct {
-	runtime.Either[ErrorResponse, PersonMergeRequiredError]
+type AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf struct {
+	runtime.Either[PersonMergeRequiredError, ErrorResponse]
 }
 
-func (a *AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf) Validate() error {
+func (a *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error {
 	if a.IsA() {
 		if v, ok := any(a.A).(runtime.Validator); ok {
 			return v.Validate()

@@ -98,10 +98,12 @@ func CopySubset(
 // people outside the subset, and residue no structured table represents —
 // which is why it needs its own authorization instead of riding
 // IncludeProfiles. Complete merge packets also contain immutable merge-time
-// snapshots, including values later redacted from live profile tables. It
-// requires IncludeProfiles, whose structured fields the
-// body projects into; asking for the bodies without the profiles is an error
-// rather than a silent no-op.
+// snapshots, including values later redacted from live profile tables. Packets
+// require IncludeAttributes in addition to IncludeProfiles and
+// IncludeVCardResources; without it, scoped packets are counted as omitted.
+// Native bodies require IncludeProfiles, whose structured fields they project
+// into; asking for the bodies without the profiles is an error rather than a
+// silent no-op.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
@@ -871,7 +873,7 @@ func copyPersonMergePackets(
 	)`); err != nil {
 		return fmt.Errorf("create selected person merges: %w", err)
 	}
-	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
+	if options.IncludeProfiles && options.IncludeVCardResources {
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM src.person_merges merge_record
 			WHERE merge_record.current_person_id IN (SELECT id FROM persons)
 			   OR EXISTS (SELECT 1 FROM src.person_splits split_record
@@ -885,6 +887,8 @@ func copyPersonMergePackets(
 		).Scan(&result.PersonMergePackets); err != nil {
 			return fmt.Errorf("count scoped person merge packets: %w", err)
 		}
+	}
+	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
 		if _, err := tx.Exec(`INSERT INTO selected_person_merges (id)
 			SELECT merge_record.id FROM src.person_merges merge_record
 			WHERE merge_record.current_person_id IN (SELECT id FROM persons)

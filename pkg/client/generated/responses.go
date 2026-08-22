@@ -1086,7 +1086,7 @@ type GetHealthErrorResponse = ErrorResponse
 type LinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type LinkIdentityParticipantsErrorResponse struct {
-	LinkIdentityParticipants_ErrorResponse_OneOf *LinkIdentityParticipants_ErrorResponse_OneOf `json:"-"`
+	LinkIdentityParticipants_ErrorResponse_AnyOf *LinkIdentityParticipants_ErrorResponse_AnyOf `json:"-"`
 }
 
 func (r LinkIdentityParticipantsErrorResponse) Error() string {
@@ -1097,9 +1097,9 @@ func (l LinkIdentityParticipantsErrorResponse) MarshalJSON() ([]byte, error) {
 	var parts []json.RawMessage
 
 	{
-		b, err := runtime.MarshalJSON(l.LinkIdentityParticipants_ErrorResponse_OneOf)
+		b, err := runtime.MarshalJSON(l.LinkIdentityParticipants_ErrorResponse_AnyOf)
 		if err != nil {
-			return nil, fmt.Errorf("LinkIdentityParticipants_ErrorResponse_OneOf marshal: %w", err)
+			return nil, fmt.Errorf("LinkIdentityParticipants_ErrorResponse_AnyOf marshal: %w", err)
 		}
 		parts = append(parts, b)
 	}
@@ -1116,12 +1116,12 @@ func (l *LinkIdentityParticipantsErrorResponse) UnmarshalJSON(data []byte) error
 		return fmt.Errorf("empty JSON input")
 	}
 
-	if l.LinkIdentityParticipants_ErrorResponse_OneOf == nil {
-		l.LinkIdentityParticipants_ErrorResponse_OneOf = &LinkIdentityParticipants_ErrorResponse_OneOf{}
+	if l.LinkIdentityParticipants_ErrorResponse_AnyOf == nil {
+		l.LinkIdentityParticipants_ErrorResponse_AnyOf = &LinkIdentityParticipants_ErrorResponse_AnyOf{}
 	}
 
-	if err := runtime.UnmarshalJSON(data, l.LinkIdentityParticipants_ErrorResponse_OneOf); err != nil {
-		return fmt.Errorf("LinkIdentityParticipants_ErrorResponse_OneOf unmarshal: %w", err)
+	if err := runtime.UnmarshalJSON(data, l.LinkIdentityParticipants_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("LinkIdentityParticipants_ErrorResponse_AnyOf unmarshal: %w", err)
 	}
 
 	return nil
@@ -1136,16 +1136,16 @@ type AcceptIdentityMatchCandidateResponse = IdentityMatchAcceptResponse
 type AcceptIdentityMatchCandidateErrorResponse = ErrorResponse
 
 type AcceptIdentityMatchCandidateErrorResponseJSON struct {
-	AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf *AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf `json:"-"`
+	AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf `json:"-"`
 }
 
 func (a AcceptIdentityMatchCandidateErrorResponseJSON) MarshalJSON() ([]byte, error) {
 	var parts []json.RawMessage
 
 	{
-		b, err := runtime.MarshalJSON(a.AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf)
+		b, err := runtime.MarshalJSON(a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf)
 		if err != nil {
-			return nil, fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf marshal: %w", err)
+			return nil, fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf marshal: %w", err)
 		}
 		parts = append(parts, b)
 	}
@@ -1162,12 +1162,12 @@ func (a *AcceptIdentityMatchCandidateErrorResponseJSON) UnmarshalJSON(data []byt
 		return fmt.Errorf("empty JSON input")
 	}
 
-	if a.AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf == nil {
-		a.AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf = &AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf{}
+	if a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf == nil {
+		a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf = &AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf{}
 	}
 
-	if err := runtime.UnmarshalJSON(data, a.AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf); err != nil {
-		return fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_OneOf unmarshal: %w", err)
+	if err := runtime.UnmarshalJSON(data, a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf); err != nil {
+		return fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf unmarshal: %w", err)
 	}
 
 	return nil

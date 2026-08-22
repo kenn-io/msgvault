@@ -654,10 +654,12 @@ func TestSubsetMergeAliasIsOmittedWithoutAttributes(t *testing.T) {
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
 	fixture := seedSubsetPersonMerge(t, sourcePath, false)
 	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
+	result, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
 		IncludeIdentity: true, IncludeProfiles: true, IncludeVCardResources: true,
 	})
 	require.NoError(err)
+	assert.Zero(t, result.PersonMergePackets)
+	assert.Equal(t, int64(1), result.OmittedPersonMergePackets)
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(destination.Close()) })
@@ -930,7 +932,7 @@ func TestSubsetPersonMergePacketWithOmittedSplitOwnerIsOmitted(t *testing.T) {
 	require.NoError(err)
 	_, err = source.SplitPersonMergeContext(ctx, PersonSplitRequest{
 		SourcePersonID: outerMerge.Person.ID, MergeID: outerMerge.Merge.ID,
-		ParticipantIDs:         []int64{3},
+		ParticipantIDs:         innerAbsorbed.ParticipantIDs,
 		ExpectedSourceRevision: outerMerge.Person.Revision,
 		IdempotencyKey:         "subset-split-outer-partial", Actor: "test",
 	})

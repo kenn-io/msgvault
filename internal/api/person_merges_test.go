@@ -357,10 +357,10 @@ func TestPersonMergeRequiredOpenAPIContract(t *testing.T) {
 		require.NotNil(conflict)
 		media := conflict.Content[applicationJSONMediaType]
 		require.NotNil(media)
-		require.Len(media.Schema.OneOf, 2)
-		refs := []string{media.Schema.OneOf[0].Ref, media.Schema.OneOf[1].Ref}
-		assert.Contains(t, refs, "#/components/schemas/PersonMergeRequiredError")
-		assert.Contains(t, refs, "#/components/schemas/ErrorResponse")
+		require.Empty(media.Schema.OneOf)
+		require.Len(media.Schema.AnyOf, 2)
+		assert.Equal(t, "#/components/schemas/PersonMergeRequiredError", media.Schema.AnyOf[0].Ref)
+		assert.Equal(t, "#/components/schemas/ErrorResponse", media.Schema.AnyOf[1].Ref)
 	}
 }
 

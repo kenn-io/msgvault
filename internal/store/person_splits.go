@@ -26,6 +26,13 @@ type personSplitLineage struct {
 	personID      sql.NullInt64
 }
 
+type personSplitAncestorRestoration struct {
+	merge          *PersonMerge
+	snapshot       personMergeSnapshot
+	absorbedRoot   personMergeSnapshotPerson
+	participantIDs []int64
+}
+
 type personSplitJournalRow struct {
 	tableName     string
 	originalRowID sql.NullInt64
@@ -42,8 +49,9 @@ type personSplitJournalRow struct {
 
 // SplitPersonMergeContext moves selected absorbed-origin participant
 // lineages from a merged person into a fresh person. Aggregate profile rows
-// are restored only when all absorbed lineages are selected; a partial split
-// moves only participant-exact evidence and reports the rows left behind.
+// are restored when the selection completes their owning merge; a partial
+// split otherwise moves only participant-exact evidence and reports the rows
+// left behind.
 func (s *Store) SplitPersonMergeContext(
 	ctx context.Context, request PersonSplitRequest,
 ) (*PersonSplitResult, error) {
@@ -138,6 +146,11 @@ func (s *Store) splitPersonMergeOnce(
 				return ErrPersonSplitReviewed
 			}
 		}
+		ancestorRestorations, transferredMergeIDs, err :=
+			s.loadPersonSplitAncestorRestorationsTx(ctx, tx, request)
+		if err != nil {
+			return err
+		}
 
 		absorbedRoot, err := absorbedPersonMergeSnapshotRoot(snapshot)
 		if err != nil {
@@ -200,6 +213,42 @@ func (s *Store) splitPersonMergeOnce(
 		if err != nil {
 			return err
 		}
+		for _, ancestor := range ancestorRestorations {
+			ancestorAmbiguous, err := s.restorePersonSplitRowsTx(
+				ctx, tx, ancestor.merge.ID, splitID, request.SourcePersonID,
+				newPersonID, ancestor.snapshot.Persons[0].ID, ancestor.absorbedRoot.ID,
+				sourceUID, newUID, ancestor.participantIDs, true, ancestor.snapshot,
+				&unrestored,
+			)
+			if err != nil {
+				return err
+			}
+			ambiguous = append(ambiguous, ancestorAmbiguous...)
+			if ancestor.absorbedRoot.DisplayName != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE persons
+					SET display_name = COALESCE(display_name, ?) WHERE id = ?`,
+					*ancestor.absorbedRoot.DisplayName, newPersonID); err != nil {
+					return fmt.Errorf("restore ancestor split display name: %w", err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET
+				state = 'rejected', reviewed_by = ?, reviewed_at = `+s.dialect.Now()+`
+				WHERE merge_id = ? AND state = 'pending'`, request.Actor, ancestor.merge.ID); err != nil {
+				return fmt.Errorf("finalize ancestor-split review candidates: %w", err)
+			}
+			aliasResult, err := tx.ExecContext(ctx, `UPDATE person_uid_aliases
+				SET surviving_person_id = ? WHERE retired_uid = ? AND surviving_person_id = ?`,
+				newPersonID, ancestor.merge.AbsorbedVCardUID, request.SourcePersonID)
+			if err != nil {
+				return fmt.Errorf("retarget ancestor split retired UID alias: %w", err)
+			}
+			if changed, err := aliasResult.RowsAffected(); err != nil {
+				return fmt.Errorf("count ancestor split retired UID alias: %w", err)
+			} else if changed != 1 {
+				return fmt.Errorf("%w: ancestor absorbed UID alias is not owned by source",
+					ErrPersonSplitParticipants)
+			}
+		}
 		if exact {
 			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET
 				state = 'rejected', reviewed_by = ?, reviewed_at = `+s.dialect.Now()+`
@@ -226,6 +275,13 @@ func (s *Store) splitPersonMergeOnce(
 				return fmt.Errorf("%w: absorbed UID alias is not owned by source", ErrPersonSplitParticipants)
 			}
 			aliasDisposition = personSplitAliasRetargeted
+		}
+		for _, mergeID := range transferredMergeIDs {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merges
+				SET current_person_id = ? WHERE id = ? AND current_person_id = ?`,
+				newPersonID, mergeID, request.SourcePersonID); err != nil {
+				return fmt.Errorf("transfer nested merge lineage: %w", err)
+			}
 		}
 
 		lineageArgs := []any{splitID, request.SourcePersonID}
@@ -431,6 +487,108 @@ func (s *Store) loadPersonSplitLineageTx(
 		return nil, fmt.Errorf("iterate person split lineage: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Store) loadPersonSplitAncestorRestorationsTx(
+	ctx context.Context, tx *loggedTx, request PersonSplitRequest,
+) ([]personSplitAncestorRestoration, []int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM person_merges
+		WHERE current_person_id = ? AND id < ? ORDER BY id`,
+		request.SourcePersonID, request.MergeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load earlier active person merges: %w", err)
+	}
+	mergeIDs := []int64{}
+	for rows.Next() {
+		var mergeID int64
+		if err := rows.Scan(&mergeID); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("scan earlier active person merge: %w", err)
+		}
+		mergeIDs = append(mergeIDs, mergeID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, nil, fmt.Errorf("iterate earlier active person merges: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("close earlier active person merges: %w", err)
+	}
+
+	selected := make(map[int64]struct{}, len(request.ParticipantIDs))
+	for _, participantID := range request.ParticipantIDs {
+		selected[participantID] = struct{}{}
+	}
+	restorations := []personSplitAncestorRestoration{}
+	transfers := []int64{}
+	for _, mergeID := range mergeIDs {
+		lineage, err := s.loadPersonSplitLineageTx(ctx, tx, mergeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		sourceBindings := 0
+		selectedBindings := 0
+		absorbedSelected := []int64{}
+		survivorSelected := false
+		for _, item := range lineage {
+			if !item.personID.Valid || item.personID.Int64 != request.SourcePersonID {
+				continue
+			}
+			sourceBindings++
+			if _, ok := selected[item.participantID]; !ok {
+				continue
+			}
+			selectedBindings++
+			if item.originSide == personMergeOriginAbsorbed && !item.splitID.Valid {
+				absorbedSelected = append(absorbedSelected, item.participantID)
+			}
+			survivorSelected = survivorSelected || item.originSide == personMergeOriginSurvivor
+		}
+		if selectedBindings == 0 {
+			continue
+		}
+		if selectedBindings == sourceBindings {
+			transfers = append(transfers, mergeID)
+			continue
+		}
+		if survivorSelected {
+			return nil, nil, ErrPersonSplitParticipants
+		}
+		if len(absorbedSelected) == 0 {
+			continue
+		}
+		exact, err := validatePersonSplitLineage(
+			lineage, request.SourcePersonID, absorbedSelected,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !exact {
+			return nil, nil, ErrPersonSplitParticipants
+		}
+		merge, snapshot, err := s.loadPersonSplitMergeTx(ctx, tx, mergeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		reviewed, err := personSplitHasPostMergeAcceptedCandidateTx(
+			ctx, tx, mergeID, snapshot,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		if reviewed {
+			return nil, nil, ErrPersonSplitReviewed
+		}
+		absorbedRoot, err := absorbedPersonMergeSnapshotRoot(snapshot)
+		if err != nil {
+			return nil, nil, err
+		}
+		restorations = append(restorations, personSplitAncestorRestoration{
+			merge: merge, snapshot: snapshot, absorbedRoot: absorbedRoot,
+			participantIDs: absorbedSelected,
+		})
+	}
+	return restorations, transfers, nil
 }
 
 func validatePersonSplitLineage(

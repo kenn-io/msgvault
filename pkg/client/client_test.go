@@ -38,6 +38,31 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
+	requirements := require.New(t)
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	payload, err := json.Marshal(generated.PersonMergeRequiredError{
+		ErrorData: "person_merge_required",
+		Message:   "These identities belong to different profiles",
+		Profiles: []generated.PersonMergeProfile{{
+			Etag: `"person-7-rev-3"`,
+			Person: generated.Person{
+				ID: 7, Revision: 3, VcardUID: "person-7",
+				ParticipantIds: []int64{11}, CreatedAt: now, UpdatedAt: now,
+			},
+		}},
+	})
+	requirements.NoError(err)
+
+	var response generated.LinkIdentityParticipantsErrorResponse
+	requirements.NoError(json.Unmarshal(payload, &response))
+	conflict := response.LinkIdentityParticipants_ErrorResponse_AnyOf
+	requirements.NotNil(conflict)
+	requirements.True(conflict.IsA())
+	requirements.Len(conflict.A.Profiles, 1)
+	assert.Equal(t, int64(7), conflict.A.Profiles[0].Person.ID)
+}
+
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

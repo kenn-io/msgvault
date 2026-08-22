@@ -408,9 +408,9 @@ func personMergeConflictResponseFor(api huma.API) *huma.Response {
 		Description: http.StatusText(http.StatusConflict),
 		Content: map[string]*huma.MediaType{
 			applicationJSONMediaType: {
-				Schema: &huma.Schema{OneOf: []*huma.Schema{
-					schemaFor[ErrorResponse](api),
+				Schema: &huma.Schema{AnyOf: []*huma.Schema{
 					schemaFor[PersonMergeRequiredError](api),
+					schemaFor[ErrorResponse](api),
 				}},
 			},
 		},
