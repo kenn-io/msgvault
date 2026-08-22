@@ -361,13 +361,6 @@ func (c *ActionController) OpenAttachment(att query.AttachmentInfo) tea.Cmd {
 				}
 				return msg
 			}
-			if err := validateDownloadedAttachmentOpen(att, exported.Path); err != nil {
-				return ExportResultMsg{
-					Title:  "Open Blocked",
-					Result: fmt.Sprintf("%v\n\nThe attachment was downloaded to:\n%s", err, exported.Path),
-					Err:    err,
-				}
-			}
 			target = exported.Path
 			savedPath = exported.Path
 		}
