@@ -86,7 +86,7 @@ func withDocumentVectorStore(deps documentsCommandDeps, fn func(*store.Store) er
 func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 	var yes bool
 	command := &cobra.Command{
-		Use:   "consent",
+		Use:   cmdUseConsent,
 		Short: "Consent to hosted embedding for the configured document policy",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
