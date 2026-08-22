@@ -204,12 +204,12 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 	changed := false
 
 	switch key {
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		if m.cursor > 0 {
 			m.cursor--
 			changed = true
 		}
-	case keyNameDown, "j":
+	case keyNameDown, "j", "ctrl+n":
 		if m.cursor < itemCount-1 {
 			m.cursor++
 			changed = true

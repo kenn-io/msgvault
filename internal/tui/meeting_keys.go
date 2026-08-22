@@ -187,9 +187,9 @@ func (m Model) handleMeetingDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		m.meetingState.detailLoading = false
 		m.updateMeetingLoading()
 		return m, nil
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		m.meetingState.detailScroll = max(m.meetingState.detailScroll-1, 0)
-	case keyNameDown, "j":
+	case keyNameDown, "j", "ctrl+n":
 		m.meetingState.detailScroll++
 	case "pgup", "ctrl+u":
 		m.meetingState.detailScroll = max(m.meetingState.detailScroll-m.visibleRows(), 0)
@@ -341,12 +341,12 @@ func (m *Model) navigateMeetingList(key string) bool {
 	count := len(m.meetingState.messages)
 	changed := false
 	switch key {
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		if m.meetingState.cursor > 0 {
 			m.meetingState.cursor--
 			changed = true
 		}
-	case keyNameDown, "j":
+	case keyNameDown, "j", "ctrl+n":
 		if m.meetingState.cursor < count-1 {
 			m.meetingState.cursor++
 			changed = true
