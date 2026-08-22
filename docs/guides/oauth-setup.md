@@ -123,7 +123,7 @@ To make an existing account read-only, remove its access and grant it again:
 2. `rm ~/.msgvault/tokens/you@gmail.com.json`
 3. `msgvault add-account you@gmail.com --readonly`
 
-Revoking clears every Google scope for that account, so re-run whichever commands granted them — `msgvault add-calendar` for Calendar, `msgvault add-synctech-sms-drive` for Drive. Your archived mail is untouched: this replaces credentials, not data.
+Revoking also clears Calendar and Drive access granted through the same OAuth app. Reauthorize those integrations separately. The current `add-synctech-sms-drive` command cannot restore a missing Drive scope when a token already exists. Your archived mail is untouched: this replaces credentials, not data.
 
 Confirm the result by reading the token's scopes:
 
