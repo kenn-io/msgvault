@@ -1015,12 +1015,37 @@ func (s *Store) batchPopulateContext(ctx context.Context, messages []APIMessage,
 	return nil
 }
 
-// batchGetRecipients loads recipients for multiple messages in a single query.
+// batchQueryIDChunk caps how many message ids batchGetRecipients and
+// batchGetLabels bind into a single IN-list statement. SQLite refuses a
+// statement carrying more than 32766 bound parameters by default, and one id
+// is one parameter here; eval's FTS mode over-fetches a ranked page well past
+// that at a large -n (the same over-fetch plan documented on rankedKeys).
+// Mirrors messageSummaryIDChunk in internal/query — same limit, same cause,
+// a different package's copy of the batch-hydration pattern.
+const batchQueryIDChunk = 500
+
+// batchGetRecipients loads recipients for multiple messages, chunked to stay
+// under the SQLite bound-parameter ceiling.
 func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, recipientType string) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
 		return map[int64][]string{}, nil
 	}
+	result := make(map[int64][]string, len(messageIDs))
+	for start := 0; start < len(messageIDs); start += batchQueryIDChunk {
+		end := min(start+batchQueryIDChunk, len(messageIDs))
+		if err := s.fetchRecipientsInto(ctx, messageIDs[start:end], recipientType, result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
 
+// fetchRecipientsInto runs one chunk's IN-list query and merges its rows
+// into result, keyed by message id. Every id belongs to exactly one chunk,
+// so no key is ever written by more than one call.
+func (s *Store) fetchRecipientsInto(
+	ctx context.Context, messageIDs []int64, recipientType string, result map[int64][]string,
+) error {
 	placeholders := make([]string, len(messageIDs))
 	args := make([]any, 0, len(messageIDs)+1)
 	for i, id := range messageIDs {
@@ -1038,33 +1063,45 @@ func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, reci
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("batch get recipients: %w", err)
+		return fmt.Errorf("batch get recipients: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	result := make(map[int64][]string, len(messageIDs))
 	for rows.Next() {
 		var msgID int64
 		var display string
 		if err := rows.Scan(&msgID, &display); err != nil {
-			return nil, fmt.Errorf("scan recipient: %w", err)
+			return fmt.Errorf("scan recipient: %w", err)
 		}
 		if display != "" {
 			result[msgID] = append(result[msgID], display)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate recipients: %w", err)
+		return fmt.Errorf("iterate recipients: %w", err)
 	}
-	return result, nil
+	return nil
 }
 
-// batchGetLabels loads labels for multiple messages in a single query.
+// batchGetLabels loads labels for multiple messages, chunked to stay under
+// the SQLite bound-parameter ceiling.
 func (s *Store) batchGetLabels(ctx context.Context, messageIDs []int64) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
 		return map[int64][]string{}, nil
 	}
+	result := make(map[int64][]string, len(messageIDs))
+	for start := 0; start < len(messageIDs); start += batchQueryIDChunk {
+		end := min(start+batchQueryIDChunk, len(messageIDs))
+		if err := s.fetchLabelsInto(ctx, messageIDs[start:end], result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
 
+// fetchLabelsInto runs one chunk's IN-list query and merges its rows into
+// result, keyed by message id.
+func (s *Store) fetchLabelsInto(ctx context.Context, messageIDs []int64, result map[int64][]string) error {
 	placeholders := make([]string, len(messageIDs))
 	args := make([]any, 0, len(messageIDs))
 	for i, id := range messageIDs {
@@ -1081,23 +1118,22 @@ func (s *Store) batchGetLabels(ctx context.Context, messageIDs []int64) (map[int
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("batch get labels: %w", err)
+		return fmt.Errorf("batch get labels: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	result := make(map[int64][]string, len(messageIDs))
 	for rows.Next() {
 		var msgID int64
 		var name string
 		if err := rows.Scan(&msgID, &name); err != nil {
-			return nil, fmt.Errorf("scan label: %w", err)
+			return fmt.Errorf("scan label: %w", err)
 		}
 		result[msgID] = append(result[msgID], name)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate labels: %w", err)
+		return fmt.Errorf("iterate labels: %w", err)
 	}
-	return result, nil
+	return nil
 }
 
 // Single-message helpers (still used by GetMessage for single PK lookups)
