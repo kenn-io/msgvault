@@ -755,13 +755,55 @@ func (s *Store) rollbackOversizedCardDAVPublicationConflictContext(
 			current.PendingOperation != pending.PendingOperation ||
 			current.AddressBookID != pending.AddressBookID || current.Href != pending.Href ||
 			current.MappingRevision != pending.MappingRevision ||
-			current.PreviousMappingRevision != pending.PreviousMappingRevision ||
-			current.PendingOperation == CardDAVMutationCreate || current.PreviousMappingRevision <= 0 {
+			current.PreviousMappingRevision != pending.PreviousMappingRevision {
 			return ErrCardDAVConflictStale
 		}
 		resource, err := findCardDAVResourceForPersonTx(ctx, tx, current.AddressBookID,
 			current.PersonID, s.dialect.SelectForUpdate())
 		if err != nil || resource.Href != current.Href || resource.MappingRevision != current.MappingRevision {
+			return ErrCardDAVConflictStale
+		}
+		if current.PendingOperation == CardDAVMutationCreate {
+			if current.MappingRevision <= 0 || current.PreviousMappingRevision != current.MappingRevision ||
+				resource.RemoteSemanticHash == current.OutgoingSemanticHash {
+				return ErrCardDAVConflictStale
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
+				WHERE (left_kind = ? AND left_id = ?) OR (right_kind = ? AND right_id = ?)`,
+				IdentityMatchCardDAVResource, resource.ID, IdentityMatchCardDAVResource, resource.ID); err != nil {
+				return fmt.Errorf("delete oversized CardDAV create collision candidates: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM vcard_resource_envelopes
+				WHERE source_ref = ? AND source_resource_uid = ?`,
+				fmt.Sprintf("carddav:%d", current.AddressBookID), current.Href); err != nil {
+				return fmt.Errorf("delete oversized CardDAV create collision envelope: %w", err)
+			}
+			result, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
+				local_hash = remote_semantic_hash, mapping_status = ?,
+				mapping_revision = mapping_revision + 1, governance = ?,
+				person_id = NULL, person_revision_at_bind = NULL,
+				updated_at = `+s.dialect.Now()+`
+				WHERE id = ? AND person_id = ? AND mapping_revision = ?`,
+				CardDAVMappingUnbound, CardDAVGovernanceNone, resource.ID,
+				current.PersonID, current.MappingRevision)
+			if err != nil {
+				return fmt.Errorf("demote oversized CardDAV create collision: %w", err)
+			}
+			if affected, _ := result.RowsAffected(); affected != 1 {
+				return ErrCardDAVConflictStale
+			}
+			result, err = tx.ExecContext(ctx, `DELETE FROM carddav_publications
+				WHERE person_id = ? AND mutation_revision = ? AND pending_operation = ?`,
+				current.PersonID, current.MutationRevision, CardDAVMutationCreate)
+			if err != nil {
+				return fmt.Errorf("cancel oversized CardDAV create publication: %w", err)
+			}
+			if affected, _ := result.RowsAffected(); affected != 1 {
+				return ErrCardDAVConflictStale
+			}
+			return nil
+		}
+		if current.PreviousMappingRevision <= 0 {
 			return ErrCardDAVConflictStale
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET

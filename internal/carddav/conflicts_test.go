@@ -1243,6 +1243,46 @@ func TestOversized412RestoresMappingFenceAndClearsKnownUnappliedIntent(t *testin
 	assert.Empty(conflicts)
 }
 
+func TestOversizedCreateCollisionCanBeCanceledWithoutDeletingRemote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	remoteBody := oversizedConflictCard("remote-owner")
+	putCount := 0
+	deleteCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			putCount++
+			w.WriteHeader(http.StatusPreconditionFailed)
+		case http.MethodGet:
+			w.Header().Set("ETag", `"remote-owner"`)
+			_, err := w.Write(remoteBody)
+			assert.NoError(err)
+		case http.MethodDelete:
+			deleteCount++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	service, st, personID, book := seededMutationServiceForServer(t, server)
+
+	err := service.PublishPerson(t.Context(), personID)
+	require.ErrorIs(err, store.ErrCardDAVConflictTooLarge)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+	require.NoError(err)
+	assert.Equal(remoteBody, resource.RemoteBody)
+	assert.Nil(resource.PersonID)
+	assert.Equal(store.CardDAVMappingUnbound, resource.MappingStatus)
+	assert.Equal(store.CardDAVGovernanceNone, resource.Governance)
+	require.NoError(service.UnpublishPerson(t.Context(), personID))
+	_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
+	require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
+	assert.Equal(1, putCount)
+	assert.Zero(deleteCount)
+}
+
 func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
