@@ -77,6 +77,21 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   'vector.embeddings.max_retries': entry('search', 'Embedding retries', 'Maximum transient request retries.'),
   'vector.embeddings.max_input_chars': entry('search', 'Maximum input characters', 'Per-chunk text limit.'),
   'vector.embeddings.eta_window': entry('search', 'ETA window', 'Recent samples used for ETA smoothing.'),
+  'vector.people.enabled': entry(
+    'search',
+    'Semantic person embeddings',
+    'Allow exact-consented curated fields for every durable person to use the embedding provider.'
+  ),
+  'vector.people.retention_posture': entry(
+    'search',
+    'Person embedding retention assertion',
+    'Operator assertion describing provider retention for curated person embeddings.'
+  ),
+  'vector.people.training_posture': entry(
+    'search',
+    'Person embedding training assertion',
+    'Operator assertion describing provider training use for curated person embeddings.'
+  ),
   'vector.embed.schedule.cron': entry('search', 'Embedding schedule', 'Cron schedule for background embedding.'),
   'vector.embed.schedule.run_after_sync': entry('search', 'Embed after sync', 'Run embedding after a successful source sync.'),
   'vector.embed.scope.message_types': entry('search', 'Embedded message types', 'Optional message-type scope.'),

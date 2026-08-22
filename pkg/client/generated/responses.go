@@ -1563,6 +1563,10 @@ type CreatePersonErrorResponse = ErrorResponse
 
 type CreatePersonErrorResponseJSON = ErrorResponse
 
+type SearchPeopleResponse = PersonSearchResponse
+
+type SearchPeopleErrorResponse = ErrorResponse
+
 type DeletePersonErrorResponse = ErrorResponse
 
 type DeletePersonErrorResponseJSON = ErrorResponse
@@ -3427,6 +3431,14 @@ type CreatePersonResp struct {
 	Headers201   *CreatePersonResp201Headers
 	JSON409      *CreatePersonErrorResponse
 	JSON503      *CreatePersonErrorResponseJSON
+}
+
+type SearchPeopleResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchPeopleResponse
+	JSON503      *SearchPeopleErrorResponse
 }
 
 type DeletePersonResp struct {

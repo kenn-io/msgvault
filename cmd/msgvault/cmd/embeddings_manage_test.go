@@ -40,7 +40,13 @@ func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliat
 		ChangeSequence: 12, ReconcileCursor: "done:12",
 	}}
 	checker := &contextualConvergenceChecker{
-		legacy: &legacyConvergenceChecker{store: mainStore}, publisher: publisher,
+		legacy: &legacyConvergenceChecker{
+			store: mainStore,
+			personGate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error {
+				return nil
+			}),
+		},
+		publisher: publisher,
 	}
 	state, err := checker.CheckConvergence(t.Context(), 3)
 	require.NoError(t, err)
@@ -65,6 +71,7 @@ func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliat
 func TestConvergenceResultRefusesEachIncompleteDimension(t *testing.T) {
 	complete := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
+		PersonCoverageComplete:  true,
 		LatestJournalSequence:   4,
 		ConsumedJournalSequence: 4,
 		ReconciliationComplete:  true,
@@ -80,6 +87,12 @@ func TestConvergenceResultRefusesEachIncompleteDimension(t *testing.T) {
 	unreconciled := complete
 	unreconciled.ReconciliationComplete = false
 	assert.False(t, unreconciled.Complete())
+	peopleMissing := complete
+	peopleMissing.PersonCoverageComplete = false
+	assert.False(t, peopleMissing.Complete())
+	peopleRejected := complete
+	peopleRejected.PersonCoverageRejected = 1
+	assert.False(t, peopleRejected.Complete())
 }
 
 func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *testing.T) {
@@ -133,6 +146,71 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	embeddingsActivateForce = true
 	require.NoError(t, runEmbeddingsActivate(cmd, []string{genArg}))
 	assert.Contains(t, output.String(), "Generation "+genArg+" activated")
+}
+
+// TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage catches the
+// standalone activation command bypassing exact curated-person convergence
+// for an otherwise message-complete OpenAI-format generation.
+func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	vectorPath := filepath.Join(dir, "vectors.db")
+	c := config.NewDefaultConfig()
+	c.HomeDir = dir
+	c.Data.DataDir = dir
+	c.Vector.Enabled = true
+	c.Vector.DBPath = vectorPath
+	c.Vector.Embeddings.Endpoint = "https://example.invalid/v1"
+	c.Vector.Embeddings.Model = "text-embedding-test"
+	c.Vector.Embeddings.Dimension = 4
+	c.Vector.People = vector.PeopleConfig{
+		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+	}
+	withTestConfig(t, c)
+	require.NoError(t, c.Save())
+
+	mainStore, err := store.Open(mainPath)
+	require.NoError(t, err)
+	require.NoError(t, mainStore.InitSchema())
+	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
+	require.NoError(t, err)
+	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
+	require.NoError(t, err)
+	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
+		t.Context(), semanticProfile.Fingerprint, "test",
+	)
+	require.NoError(t, err)
+	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
+		"urn:uuid:00000000-0000-0000-0000-000000000002", "Synthetic Missing Person")
+	require.NoError(t, err)
+	require.NoError(t, sqlitevec.RegisterExtension())
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
+	})
+	require.NoError(t, err)
+	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
+	require.NoError(t, err)
+	require.NoError(t, backend.Close())
+	require.NoError(t, mainStore.Close())
+
+	oldYes, oldForce := embeddingsActivateYes, embeddingsActivateForce
+	t.Cleanup(func() { embeddingsActivateYes, embeddingsActivateForce = oldYes, oldForce })
+	embeddingsActivateYes = true
+	embeddingsActivateForce = false
+	previousContext := embeddingsActivateCmd.Context()
+	embeddingsActivateCmd.SetContext(t.Context())
+	t.Cleanup(func() { embeddingsActivateCmd.SetContext(previousContext) })
+
+	err = runEmbeddingsActivate(embeddingsActivateCmd,
+		[]string{strconv.FormatInt(int64(gen), 10)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "person_coverage_complete=false")
+	assert.NotContains(t, err.Error(), "needing embedding",
+		"person-only incompleteness must not suggest message recovery")
+	assert.Contains(t, err.Error(), "msgvault embeddings resume --backstop")
+	assert.Contains(t, err.Error(), "--force")
+	assert.NotContains(t, err.Error(), "activate automatically")
+	assertManualGenerationState(t, gen, vector.GenerationBuilding)
 }
 
 func setupManualContextualGeneration(t *testing.T, fingerprint string, retire bool) vector.GenerationID {

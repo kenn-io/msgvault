@@ -36,6 +36,9 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	if err := migrateDocumentLedger(ctx, db); err != nil {
 		return fmt.Errorf("migrate document ledger: %w", err)
 	}
+	if err := migratePersonEmbeddings(ctx, db); err != nil {
+		return fmt.Errorf("migrate person embeddings: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
@@ -74,12 +77,15 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 		return fmt.Errorf("migrate vec tables to chunked layout: %w", err)
 	}
 	// defaultDim is informational, mirroring pgvector: a multimodal-only
-	// configuration has no text embedding dimension, and text generations
-	// create their dimension-specific table in CreateGeneration anyway.
+	// configuration has no text/person embedding dimension, and text
+	// generations create their dimension-specific table in CreateGeneration.
 	if defaultDim <= 0 {
 		return nil
 	}
-	return EnsureVectorTable(ctx, db, defaultDim)
+	if err := EnsureVectorTable(ctx, db, defaultDim); err != nil {
+		return err
+	}
+	return EnsurePersonVectorTable(ctx, db, defaultDim)
 }
 
 // migrateEmbeddingsToChunked detects the pre-chunking schema (no

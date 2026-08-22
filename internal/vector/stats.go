@@ -34,6 +34,10 @@ type StatsView struct {
 	// generations contribute zero. Replaces the former pending-embeddings queue
 	// total under the scan-and-fill design.
 	MissingEmbeddingsTotal int64 `json:"missing_embeddings_total"`
+
+	// PersonCoverageRejected is the number of current terminal person
+	// publications that could not produce a searchable vector.
+	PersonCoverageRejected int64 `json:"person_coverage_rejected"`
 }
 
 // GenerationSummary reports the serving state for the active index
@@ -89,10 +93,15 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 	var buildingExists bool
 	var activePending int64
 	var activeStatsOK bool
+	var activeID GenerationID
+	var activeExists bool
+	var personTarget GenerationID
 
 	active, err := b.ActiveGeneration(ctx)
 	switch {
 	case err == nil:
+		activeID = active.ID
+		activeExists = true
 		s, sErr := b.Stats(ctx, active.ID)
 		if sErr != nil {
 			errs = append(errs, fmt.Errorf("stats for active generation %d: %w", active.ID, sErr))
@@ -120,6 +129,7 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 		errs = append(errs, fmt.Errorf("building generation: %w", err))
 	} else if building != nil {
 		buildingExists = true
+		personTarget = building.ID
 		s, sErr := b.Stats(ctx, building.ID)
 		if sErr != nil {
 			errs = append(errs, fmt.Errorf("stats for building generation %d: %w", building.ID, sErr))
@@ -139,6 +149,19 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 	}
 	if !buildingExists && activeStatsOK {
 		out.MissingEmbeddingsTotal = activePending
+	}
+	if !buildingExists && activeExists {
+		personTarget = activeID
+	}
+	if personTarget != 0 {
+		if counter, ok := b.(PersonCoverageCounter); ok {
+			count, countErr := counter.CountRejectedPersons(ctx, personTarget)
+			if countErr != nil {
+				errs = append(errs, fmt.Errorf("rejected person coverage for generation %d: %w", personTarget, countErr))
+			} else {
+				out.PersonCoverageRejected = count
+			}
+		}
 	}
 	return out, errors.Join(errs...)
 }

@@ -110,6 +110,13 @@ var settingsCatalog = []settingDefinition{
 	intSetting("vector.embeddings.max_retries", "search", func(c *config.Config) int { return c.Vector.Embeddings.MaxRetries }),
 	intSetting("vector.embeddings.max_input_chars", "search", func(c *config.Config) int { return c.Vector.Embeddings.MaxInputChars }),
 	intSetting("vector.embeddings.eta_window", "search", func(c *config.Config) int { return c.Vector.Embeddings.ETAWindow }),
+	boolSetting("vector.people.enabled", "search", func(c *config.Config) bool { return c.Vector.People.Enabled }),
+	stringSetting("vector.people.retention_posture", "search", nil, func(c *config.Config) string {
+		return c.Vector.People.RetentionPosture
+	}),
+	stringSetting("vector.people.training_posture", "search", nil, func(c *config.Config) string {
+		return c.Vector.People.TrainingPosture
+	}),
 	stringSetting("vector.embed.schedule.cron", "search", nil, func(c *config.Config) string { return c.Vector.Embed.Schedule.Cron }),
 	boolSetting("vector.embed.schedule.run_after_sync", "search", func(c *config.Config) bool { return c.Vector.Embed.Schedule.RunAfterSync }),
 	stringArraySetting("vector.embed.scope.message_types", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.MessageTypes }),

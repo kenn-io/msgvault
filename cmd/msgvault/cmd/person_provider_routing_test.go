@@ -24,6 +24,8 @@ func TestPersonProviderFrontendRoutesExactCommandsAndCredential(t *testing.T) {
 			wantArgs: []string{"person", "provider", "consent", "--yes"}},
 		{name: "revoke", args: []string{"revoke"},
 			wantArgs: []string{"person", "provider", "revoke"}},
+		{name: "semantic consent", args: []string{"consent", "--semantic-embeddings", "--yes"},
+			wantArgs: []string{"person", "provider", "consent", "--semantic-embeddings", "--yes"}},
 		{name: "check without key", args: []string{"check", "--json"},
 			wantArgs: []string{"person", "provider", "check", "--json"}, wantLookups: 1},
 		{name: "check with key", args: []string{"check"}, keyValue: "caller-key",

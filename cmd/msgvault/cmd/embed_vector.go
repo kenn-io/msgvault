@@ -147,19 +147,23 @@ func runEmbed(cmd *cobra.Command) error {
 		_, _ = fmt.Fprintln(errOut, "Embedding scope matched 0 live messages.")
 	}
 	totalPending := int(missing)
+	personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
+		cfg.Vector, currentSemanticPersonVectorConfigSource(), s,
+	)
 
 	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
 		Backend: backend, VectorsDB: vectorsDB, MainDB: s.DB(), Store: s,
 		Rebind: rebind, LastModifiedExpr: lastModifiedExpr,
 		TotalPending: totalPending,
 		Progress:     newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
+		PersonGate:   personGate,
 	})
 	if err != nil {
 		return fmt.Errorf("configure embedding runtime: %w", err)
 	}
 
 	res, err := runEmbeddingPasses(ctx, runtime.Runner, gen, embedBackstop,
-		cfg.Vector.Embeddings.EffectiveAPIFormat())
+		cfg.Vector.Embeddings.EffectiveAPIFormat(), errOut)
 	if err != nil {
 		return fmt.Errorf("embed run: %w", err)
 	}
@@ -189,6 +193,7 @@ func runEmbeddingPasses(
 	gen vector.GenerationID,
 	backstop bool,
 	apiFormat vector.EmbeddingAPIFormat,
+	stderr io.Writer,
 ) (embed.RunResult, error) {
 	var total embed.RunResult
 	first := true
@@ -199,6 +204,12 @@ func runEmbeddingPasses(
 			pass, err = runner.RunBackstop(ctx, gen)
 		} else {
 			pass, err = runner.RunOnce(ctx, gen)
+		}
+		if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
+			if generationErr.Person != nil {
+				_, _ = fmt.Fprintf(stderr, "Person embedding run failed: %v\n", generationErr.Person)
+			}
+			err = generationErr.Message
 		}
 		if err != nil {
 			return total, err
@@ -232,7 +243,7 @@ func activateBuiltGeneration(
 		return false, fmt.Errorf("check generation convergence: %w", err)
 	}
 	if !state.Complete() {
-		if apiFormat == vector.APIFormatOpenAI {
+		if apiFormat == vector.APIFormatOpenAI && state.PersonCoverageComplete {
 			_, _ = fmt.Fprint(stderr, remainingCoverageHint(gen, state.MessageCoverageMissing))
 		} else {
 			_, _ = fmt.Fprintln(stderr, convergenceError(gen, state))

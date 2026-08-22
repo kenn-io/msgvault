@@ -1905,6 +1905,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search durable people semantically
+         * @description Searches only the curated person vector corpus and returns durable person roots in relevance order.
+         */
+        post: operations["searchPeople"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}": {
         parameters: {
             query?: never;
@@ -5594,6 +5614,26 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonSearchRequest: {
+            /**
+             * Format: int64
+             * @default 20
+             */
+            limit: number;
+            query: string;
+        };
+        PersonSearchResponse: {
+            results: components["schemas"]["PersonSearchResult"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonSearchResult: {
+            person: components["schemas"]["Person"];
+            /** Format: double */
+            score: number;
+        } & {
+            [key: string]: unknown;
+        };
         PersonSummary: {
             /** Format: int64 */
             activity_count: number;
@@ -6195,6 +6235,8 @@ export interface components {
             enabled: boolean;
             /** Format: int64 */
             missing_embeddings_total: number;
+            /** Format: int64 */
+            person_coverage_rejected: number;
         } & {
             [key: string]: unknown;
         };
@@ -13624,6 +13666,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchPeople: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonSearchResponse"];
                 };
             };
             /** @description Error */

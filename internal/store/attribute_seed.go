@@ -386,6 +386,27 @@ func (s *Store) reconcileSeededDefinitionWith(
 	if !seededDefinitionDiffers(existing, validated) {
 		return nil
 	}
+	if existing.ValueType != validated.ValueType {
+		queryer, ok := execer.(interface {
+			QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+		})
+		if !ok {
+			return fmt.Errorf("count existing values for seeded attribute definition %s: query rows unsupported", seed.Slug)
+		}
+		var valueCount int64
+		err := queryer.QueryRowContext(ctx, `
+			SELECT
+				(SELECT COUNT(*) FROM person_attribute_values WHERE definition_id = ?) +
+				(SELECT COUNT(*) FROM organization_attribute_values WHERE definition_id = ?)
+		`, existing.ID, existing.ID).Scan(&valueCount)
+		if err != nil {
+			return fmt.Errorf("count existing values for seeded attribute definition %s: %w", seed.Slug, err)
+		}
+		if valueCount > 0 {
+			return fmt.Errorf("cannot reconcile seeded attribute definition %s value_type from %s to %s: definition has existing values",
+				seed.Slug, existing.ValueType, validated.ValueType)
+		}
+	}
 	options, err := marshalAttributeOptions(validated.Options)
 	if err != nil {
 		return err

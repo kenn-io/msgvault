@@ -30,13 +30,19 @@ const (
 	VectorStatusStale VectorStatus = "stale"
 )
 
-// SetVectorFeatures installs the vector components into a running server.
-// The serve daemon calls this from its background init goroutine once
-// migrations and the embed_gen backfill complete.
-func (s *Server) SetVectorFeatures(engine *hybrid.Engine, backend vector.Backend, cfg vector.Config) {
+// SetVectorFeatures atomically installs every vector search component before
+// publishing ready. The daemon uses this path so a request can never observe
+// ready vector status before semantic person search exists.
+func (s *Server) SetVectorFeatures(
+	engine *hybrid.Engine,
+	personEngine PersonSearchEngine,
+	backend vector.Backend,
+	cfg vector.Config,
+) {
 	s.vectorMu.Lock()
 	defer s.vectorMu.Unlock()
 	s.hybridEngine = engine
+	s.personSearchEngine = personEngine
 	s.backend = backend
 	s.vectorCfg = cfg
 	s.vectorStatus = VectorStatusReady
@@ -310,6 +316,12 @@ func (s *Server) vectorComponents() (*hybrid.Engine, vector.Backend, vector.Conf
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()
 	return s.hybridEngine, s.backend, s.vectorCfg
+}
+
+func (s *Server) personSearchComponent() PersonSearchEngine {
+	s.vectorMu.RLock()
+	defer s.vectorMu.RUnlock()
+	return s.personSearchEngine
 }
 
 // writeVectorUnavailable reports why vector search cannot serve a request

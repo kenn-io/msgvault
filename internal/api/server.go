@@ -313,15 +313,16 @@ type Server struct {
 	// vectorMu guards the vector subsystem state: the daemon installs
 	// hybridEngine/backend/vectorCfg from a background init goroutine
 	// after the server is already handling requests.
-	vectorMu     sync.RWMutex
-	hybridEngine *hybrid.Engine
-	vectorCfg    vector.Config
-	backend      vector.Backend
-	visualSearch *visual.SearchService
-	visualBuild  func(context.Context) error
-	visualRun    func(context.Context) error
-	visualRetry  func(context.Context, int64, string) error
-	visualStatus func(context.Context, bool) (visual.Status, error)
+	vectorMu           sync.RWMutex
+	hybridEngine       *hybrid.Engine
+	vectorCfg          vector.Config
+	backend            vector.Backend
+	personSearchEngine PersonSearchEngine
+	visualSearch       *visual.SearchService
+	visualBuild        func(context.Context) error
+	visualRun          func(context.Context) error
+	visualRetry        func(context.Context, int64, string) error
+	visualStatus       func(context.Context, bool) (visual.Status, error)
 	// visualCoverageScan serializes the archive-wide coverage scan behind
 	// GET /multimodal/status?coverage=1.
 	visualCoverageScan sync.Mutex
@@ -438,6 +439,8 @@ type ServerOptions struct {
 	HybridEngine   *hybrid.Engine
 	VectorCfg      vector.Config
 	Backend        vector.Backend
+	// PersonSearchEngine is the optional semantic people service.
+	PersonSearchEngine PersonSearchEngine
 	// VectorStatus is the initial vector subsystem status. Zero value
 	// derives it: ready when Backend is non-nil, disabled otherwise. The
 	// serve daemon passes VectorStatusInitializing and installs the
@@ -517,6 +520,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		hybridEngine:             opts.HybridEngine,
 		vectorCfg:                opts.VectorCfg,
 		backend:                  opts.Backend,
+		personSearchEngine:       opts.PersonSearchEngine,
 		scheduler:                opts.Scheduler,
 		logger:                   opts.Logger,
 		requestTimeout:           timeout,

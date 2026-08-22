@@ -214,6 +214,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_person_inference_consents_active
     ON person_inference_consents(profile_fingerprint)
     WHERE revoked_at IS NULL;
 
+-- Curated-person semantic embedding is a distinct outbound-data purpose from
+-- people-sweep inference. Separate profile and grant tables make cross-purpose
+-- authorization impossible even if two policies happened to hash alike.
+CREATE TABLE IF NOT EXISTS person_semantic_embedding_profiles (
+    fingerprint             TEXT PRIMARY KEY,
+    purpose                 TEXT NOT NULL,
+    destination             TEXT NOT NULL,
+    api_format              TEXT NOT NULL,
+    model                   TEXT NOT NULL,
+    api_key_env             TEXT NOT NULL,
+    retention_posture       TEXT NOT NULL,
+    training_posture        TEXT NOT NULL,
+    renderer_policy         TEXT NOT NULL,
+    disclosed_field_classes JSON NOT NULL,
+    corpus_scope            TEXT NOT NULL,
+    policy_json             JSON NOT NULL,
+    created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_semantic_embedding_consents (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_semantic_embedding_profiles(fingerprint),
+    granted_by          TEXT NOT NULL,
+    granted_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by          TEXT,
+    revoked_at          DATETIME,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_semantic_embedding_consents_active
+    ON person_semantic_embedding_consents(profile_fingerprint)
+    WHERE revoked_at IS NULL;
+
 -- Lossless native vCard resources. Typed profile tables remain the semantic
 -- source of truth; this table retains exact wire bodies and normalized
 -- occurrence metadata for future CardDAV layers.

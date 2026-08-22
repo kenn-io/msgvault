@@ -13,9 +13,15 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/personsearch"
 )
 
-const peoplePath = "/api/v1/people"
+const (
+	peoplePath               = "/api/v1/people"
+	defaultPersonSearchLimit = 20
+	maximumPersonSearchLimit = 100
+)
 
 // PersonProfileStore is the feature-local capability for durable curated
 // people. The daemon adapter passes these calls directly to *store.Store.
@@ -42,7 +48,36 @@ type PeopleResponse struct {
 	People []store.Person `json:"people"`
 }
 
+// PersonSearchEngine is the semantic people service consumed by the HTTP
+// route. Production installs the concrete personsearch engine with the vector
+// subsystem; tests can supply a focused service double.
+type PersonSearchEngine interface {
+	Search(ctx context.Context, query string, limit int) ([]personsearch.Result, error)
+}
+
+type PersonSearchRequest struct {
+	Query string `json:"query" minLength:"1"`
+	Limit int    `json:"limit,omitempty" minimum:"0" maximum:"100" default:"20"`
+}
+
+type PersonSearchResult struct {
+	Person store.Person `json:"person"`
+	Score  float64      `json:"score"`
+}
+
+type PersonSearchResponse struct {
+	Results []PersonSearchResult `json:"results"`
+}
+
 func (s *Server) registerPersonProfileRoutes(api huma.API) {
+	search := rawAPIV1Operation("searchPeople", http.MethodPost, "/people/search",
+		"Search durable people semantically")
+	search.Description = "Searches only the curated person vector corpus and returns durable person roots in relevance order."
+	search.RequestBody = jsonRequestBodyFor[PersonSearchRequest](api)
+	search.Responses = jsonResponsesFor[PersonSearchResponse](api)
+	addErrorResponses(api, search.Responses, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, search, s.handleSemanticPersonSearch)
+
 	list := rawAPIV1Operation("listPeople", http.MethodGet, "/people", "List durable person profiles")
 	list.Description = "Durable people are curated profiles; /api/v1/participants exposes observed analytical groupings. " +
 		"The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
@@ -88,6 +123,91 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 		http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired,
 		http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, remove, s.handleDeletePerson)
+}
+
+func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var request PersonSearchRequest
+	if !decodePersonRequest(w, r, &request) {
+		return
+	}
+	request.Query = strings.TrimSpace(request.Query)
+	if request.Query == "" {
+		writeError(w, http.StatusBadRequest, "invalid_query", "query must contain non-whitespace text")
+		return
+	}
+	if request.Limit < 0 || request.Limit > maximumPersonSearchLimit {
+		writeError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 0 and 100")
+		return
+	}
+	if request.Limit == 0 {
+		request.Limit = defaultPersonSearchLimit
+	}
+
+	if !s.vectorSearchPreflight(r.Context(), w) {
+		return
+	}
+	status, _ := s.VectorStatus()
+	if status != VectorStatusReady {
+		s.writeVectorUnavailable(w)
+		return
+	}
+	engine := s.personSearchComponent()
+	if engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
+			"Semantic person search is not configured on this server")
+		return
+	}
+	results, err := engine.Search(r.Context(), request.Query, request.Limit)
+	if err != nil {
+		s.writePersonSearchError(w, err)
+		return
+	}
+	response := PersonSearchResponse{Results: make([]PersonSearchResult, len(results))}
+	for i, result := range results {
+		response.Results[i] = PersonSearchResult{Person: result.Person, Score: result.Score}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) writePersonSearchError(w http.ResponseWriter, err error) {
+	if s.writeIfContextError(w, err) {
+		return
+	}
+	switch {
+	case errors.Is(err, vector.ErrSemanticPersonEmbeddingsDisabled):
+		writeError(w, http.StatusServiceUnavailable, "person_embeddings_disabled",
+			"Semantic person search requires [vector.people] enabled = true")
+	case errors.Is(err, vector.ErrSemanticPersonEmbeddingConsentRequired):
+		writeError(w, http.StatusServiceUnavailable, "person_embedding_consent_required",
+			"Semantic person search requires active exact consent; run `msgvault person provider consent --semantic-embeddings` to review and grant the current policy")
+	case errors.Is(err, vector.ErrSemanticPersonEmbeddingPolicyUnavailable):
+		s.logger.Error("semantic person embedding policy unavailable", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "person_embedding_policy_unavailable",
+			"Semantic person search cannot verify the current semantic person embedding policy or exact consent; check the live configuration and consent store")
+	case errors.Is(err, vector.ErrNotEnabled):
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
+	case errors.Is(err, vector.ErrIndexStale):
+		writeError(w, http.StatusServiceUnavailable, "index_stale", "The vector index does not match configured embedding settings")
+	case errors.Is(err, personsearch.ErrPersonCoverageIncomplete):
+		var coverageErr *personsearch.CoverageIncompleteError
+		if errors.As(err, &coverageErr) && coverageErr.Rejected > 0 {
+			writeError(w, http.StatusServiceUnavailable, "index_building", fmt.Sprintf(
+				"The semantic person index has %d terminally rejected curated person profile record(s); run `msgvault embeddings resume --backstop` first to reconcile current profiles; if terminal rejections remain, correct or edit the affected current profiles so their source revisions change, then rerun the command",
+				coverageErr.Rejected))
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "index_building",
+			"The semantic person index is incomplete; run `msgvault embeddings resume --backstop` to embed curated person profiles")
+	case errors.Is(err, vector.ErrIndexBuilding):
+		writeError(w, http.StatusServiceUnavailable, "index_building", "The vector index is still being built")
+	case errors.Is(err, vector.ErrEmbeddingTimeout):
+		writeError(w, http.StatusServiceUnavailable, "embedding_timeout", "The embedding endpoint did not respond in time")
+	default:
+		s.logger.Error("semantic person search failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "semantic_search_unavailable",
+			"Semantic person search could not resolve candidates")
+	}
 }
 
 func (s *Server) handleCreatePerson(w http.ResponseWriter, r *http.Request) {

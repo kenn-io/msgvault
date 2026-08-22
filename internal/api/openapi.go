@@ -215,7 +215,11 @@ import (
 // clients check this version before asking a daemon to perform a scoped sync.
 // 2.5.0 adds durable-person attachment retrieval across metadata, document,
 // and visual lanes while keeping participant references compatible.
-const APISchemaVersion = "2.5.0"
+// 2.6.0 adds protected semantic search over durable curated people. Ranked
+// results contain only the durable person root and semantic score; person
+// projection text and raw profile details remain internal.
+// Additive (minor bump): existing person and participant routes are unchanged.
+const APISchemaVersion = "2.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -247,8 +251,19 @@ func baseOpenAPIDocument() *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
 	return doc
+}
+
+func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	response := doc.Components.Schemas.Map()["PersonSearchResponse"]
+	if response != nil && response.Properties["results"] != nil {
+		response.Properties["results"].Nullable = false
+	}
 }
 
 func hardenPersonRelationshipSchemas(doc *huma.OpenAPI) {

@@ -43,6 +43,11 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	require.NotNil(byKey["vector.embeddings.api_format"].Value.String)
 	assert.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
 	assert.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
+	require.NotNil(byKey["vector.people.enabled"].Value)
+	require.NotNil(byKey["vector.people.enabled"].Value.Boolean)
+	assert.False(*byKey["vector.people.enabled"].Value.Boolean)
+	require.NotNil(byKey["vector.people.retention_posture"].Value)
+	require.NotNil(byKey["vector.people.training_posture"].Value)
 	require.NotNil(byKey["server.trusted_proxies"].Value)
 	assert.NotNil(byKey["server.trusted_proxies"].Value.Strings)
 	assert.NotContains(byKey, "unsupported.private_value")
@@ -56,6 +61,29 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assert.NotContains(resp.Body.String(), "test-api-key")
 	assert.NotContains(resp.Body.String(), "task-secret")
 	assert.NotContains(resp.Body.String(), "must-not-leak")
+}
+
+func TestPatchSettingsExposesCompleteSemanticPersonOptInPolicy(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	srv, path := newSettingsTestServer(t, "[vector]\n"+
+		"enabled = true\n"+
+		"[vector.embeddings]\n"+
+		"endpoint = \"https://embedding.example.test/v1\"\n"+
+		"model = \"synthetic-model\"\n"+
+		"dimension = 4\n")
+	response := patchSettings(t, srv, `{"updates":[
+		{"key":"vector.people.enabled","value":{"boolean":true}},
+		{"key":"vector.people.retention_posture","value":{"string":"zero_data_retention"}},
+		{"key":"vector.people.training_posture","value":{"string":"no_training"}}
+	]}`)
+	must.Equal(http.StatusOK, response.Code, response.Body.String())
+
+	got, err := os.ReadFile(path)
+	must.NoError(err)
+	check.Contains(string(got), "people.enabled = true")
+	check.Contains(string(got), `people.retention_posture = "zero_data_retention"`)
+	check.Contains(string(got), `people.training_posture = "no_training"`)
 }
 
 func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {

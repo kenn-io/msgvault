@@ -125,6 +125,9 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 		if err := EnsureVectorIndex(ctx, db, defaultDim); err != nil {
 			return err
 		}
+		if err := EnsurePersonVectorIndex(ctx, db, defaultDim); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -149,7 +152,6 @@ func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
 		   WHERE dimension = %d`,
 		dim, dim, dim,
 	)
-
 	// Wrap the CREATE INDEX in a transaction that disables the pool-wide 30s
 	// statement_timeout: EnsureVectorIndex is also called lazily from
 	// CreateGeneration over a possibly-populated embeddings table, and HNSW

@@ -6188,6 +6188,52 @@ func (p PersonRelationshipsResponse) Validate() error {
 	return errors
 }
 
+type PersonSearchRequest struct {
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+	Query string `json:"query" validate:"required,min=1"`
+}
+
+func (p PersonSearchRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonSearchResponse struct {
+	Results []PersonSearchResult `json:"results" validate:"required"`
+}
+
+func (p PersonSearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonSearchResult struct {
+	Person Person  `json:"person"`
+	Score  float64 `json:"score"`
+}
+
+func (p PersonSearchResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonSummary struct {
 	ActivityCount int64              `json:"activity_count"`
 	CacheRevision string             `json:"cache_revision" validate:"required"`
@@ -7555,6 +7601,7 @@ type StatsView struct {
 	BuildingGeneration     *BuildingSummary  `json:"building_generation,omitempty"`
 	Enabled                bool              `json:"enabled"`
 	MissingEmbeddingsTotal int64             `json:"missing_embeddings_total"`
+	PersonCoverageRejected int64             `json:"person_coverage_rejected"`
 }
 
 func (s StatsView) Validate() error {

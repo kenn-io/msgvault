@@ -211,6 +211,38 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 	assert.Len(all, 15)
 }
 
+func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"email", "seed-type-guard@example.invalid", "Seed Type Guard")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	value := "distributed systems"
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: store.AttributeSlugAskMeAbout,
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &value},
+		Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE attribute_definitions
+		SET value_type = 'record_reference', field_type = 'person', record_target = 'person'
+		WHERE universal_id = ?
+	`), store.AttributeUniversalIDAskMeAbout)
+	require.NoError(err)
+
+	err = st.EnsureSeededAttributeDefinitionsContext(ctx)
+	require.ErrorContains(err, "value_type")
+	require.ErrorContains(err, "has existing values")
+	drifted, getErr := st.GetAttributeDefinitionBySlugContext(
+		ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+	require.NoError(getErr)
+	assert.Equal(t, store.AttributeValueRecordReference, drifted.ValueType)
+}
+
 func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

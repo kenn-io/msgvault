@@ -114,6 +114,8 @@ type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
 
+type SearchPeopleBody = PersonSearchRequest
+
 type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest

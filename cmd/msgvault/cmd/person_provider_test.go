@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func personProviderTestConfig() peoplesweep.Config {
@@ -58,6 +59,52 @@ func localPersonProviderDeps(
 		},
 		isDaemonSubprocess: func() bool { return true },
 	}
+}
+
+func semanticPersonProviderTestConfig() vector.Config {
+	return vector.Config{
+		Enabled: true,
+		Backend: "sqlite-vec",
+		Embeddings: vector.EmbeddingsConfig{
+			Endpoint: "https://embedding.example.test/v1", APIFormat: vector.APIFormatOpenAI,
+			Model: "semantic-person-model", APIKeyEnv: "SEMANTIC_PERSON_KEY",
+			Dimension: 4, BatchSize: 8,
+		},
+		People: vector.PeopleConfig{
+			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		},
+	}
+}
+
+func historicalSemanticPersonProviderProfile(t *testing.T) vector.SemanticPersonEmbeddingProfile {
+	t.Helper()
+	profile := vector.SemanticPersonEmbeddingProfile{
+		Fingerprint:      "f002512c98b050443ebd3c113fc18199c48ed6ef2d27d70b62328c6bbac3d250",
+		Purpose:          "semantic_person_embeddings",
+		Destination:      "https://embedding.example.test/v1/embeddings",
+		APIFormat:        vector.APIFormatOpenAI,
+		Model:            "semantic-person-model",
+		APIKeyEnv:        "SEMANTIC_PERSON_KEY",
+		RetentionPosture: "zero_data_retention",
+		TrainingPosture:  "no_training",
+		RendererPolicy:   "person-semantic-v1",
+		DisclosedFieldClasses: []string{
+			"active_relationship_counterpart_labels_and_display_names",
+			"current_employment_title_role_department_location_description",
+			"current_organization_alternate_names_categories_description_domain_kind",
+			"current_organization_coarse_locations",
+			"current_organization_name",
+			"person_alternate_names",
+			"person_categories",
+			"person_coarse_locations",
+			"person_display_name",
+			"person_searchable_non_sensitive_custom_attributes_excluding_email_phone_date_timestamp",
+		},
+		CorpusScope: "all_durable_people",
+		PolicyJSON:  json.RawMessage(`{"purpose":"semantic_person_embeddings","destination":"https://embedding.example.test/v1/embeddings","api_format":"openai","model":"semantic-person-model","api_key_env":"SEMANTIC_PERSON_KEY","retention_posture":"zero_data_retention","training_posture":"no_training","renderer_policy":"person-semantic-v1","disclosed_field_classes":["active_relationship_counterpart_labels_and_display_names","current_employment_title_role_department_location_description","current_organization_alternate_names_categories_description_domain_kind","current_organization_coarse_locations","current_organization_name","person_alternate_names","person_categories","person_coarse_locations","person_display_name","person_searchable_non_sensitive_custom_attributes_excluding_email_phone_date_timestamp"],"corpus_scope":"all_durable_people"}`),
+	}
+	require.NoError(t, profile.Validate())
+	return profile
 }
 
 func executePersonProviderCommand(
@@ -138,6 +185,151 @@ func TestPersonProviderConsentDisclosesBeforeConfirmationAndIsIdempotent(t *test
 	require.NoError(json.Unmarshal([]byte(second), &secondStatus))
 	require.NotNil(secondStatus.Consent.Consent)
 	assert.Equal(firstStatus.Consent.Consent.ID, secondStatus.Consent.Consent.ID)
+}
+
+// TestPersonProviderSemanticSelectorDisclosesGlobalCorpusAndPersistsOnlyExactPolicy
+// catches the CLI hiding curated egress scope or granting people-sweep consent
+// instead of the selected semantic-person policy.
+func TestPersonProviderSemanticSelectorDisclosesGlobalCorpusAndPersistsOnlyExactPolicy(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := localPersonProviderDeps(personProviderTestConfig(), st, nil)
+	semanticConfig := semanticPersonProviderTestConfig()
+	deps.vectorConfig = func() vector.Config { return semanticConfig }
+	t.Setenv("SEMANTIC_PERSON_KEY", "credential-value-must-not-be-disclosed")
+
+	disclosure, err := executePersonProviderCommand(
+		t, deps, "consent", "--semantic-embeddings",
+	)
+	must.ErrorContains(err, "--yes")
+	profile, profileErr := semanticConfig.SemanticPersonEmbeddingProfile()
+	must.NoError(profileErr)
+	check.Contains(disclosure, "Semantic person embedding provider disclosure")
+	check.Contains(disclosure, "Purpose: semantic_person_embeddings")
+	check.Contains(disclosure, "Fingerprint: "+profile.Fingerprint)
+	check.Contains(disclosure, "Destination: https://embedding.example.test/v1/embeddings")
+	check.Contains(disclosure, "API format: openai")
+	check.Contains(disclosure, "Model: semantic-person-model")
+	check.Contains(disclosure, "Authentication: environment variable SEMANTIC_PERSON_KEY")
+	check.Contains(disclosure, "Provider assertions: retention=zero_data_retention, training=no_training")
+	check.Contains(disclosure, "Renderer policy: person-semantic-v1")
+	check.Contains(disclosure, "Disclosed curated document field classes:")
+	check.Contains(disclosure,
+		"Caller-supplied query egress: free-text semantic person search queries are sent to the embedding provider.")
+	check.Contains(disclosure, "Corpus scope: all_durable_people")
+	check.Contains(disclosure, "[vector.embed.scope] does not filter curated people")
+	const queryDisclosureToken = "caller_supplied_free_text_query_for_semantic_person_search"
+	for _, field := range vector.SemanticPersonDisclosedFieldClasses() {
+		if field == queryDisclosureToken {
+			continue
+		}
+		check.Contains(disclosure, "- "+field)
+	}
+	check.NotContains(disclosure, "- "+queryDisclosureToken)
+	check.NotContains(disclosure, "credential-value-must-not-be-disclosed")
+	statusDisclosure, err := executePersonProviderCommand(
+		t, deps, "status", "--semantic-embeddings",
+	)
+	must.NoError(err)
+	check.Contains(statusDisclosure, "Corpus scope: all_durable_people")
+	check.Contains(statusDisclosure, "Consent: inactive")
+
+	status, err := st.GetPersonSemanticEmbeddingConsentStatus(t.Context(), profile.Fingerprint)
+	must.NoError(err)
+	check.False(status.ProfileExists, "disclosure without --yes must not persist")
+
+	output, err := executePersonProviderCommand(
+		t, deps, "consent", "--semantic-embeddings", "--yes", "--json",
+	)
+	must.NoError(err)
+	var got personSemanticProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(output), &got))
+	check.Equal(profile.Fingerprint, got.Profile.Fingerprint)
+	check.True(got.Consent.Active)
+	inferenceProfiles, err := st.ListPersonInferenceProfiles(t.Context())
+	must.NoError(err)
+	check.Empty(inferenceProfiles, "semantic selector must not create a people-sweep grant")
+
+	_, err = executePersonProviderCommand(
+		t, deps, "revoke", "--semantic-embeddings", "--json",
+	)
+	must.NoError(err)
+	active, err := st.HasActivePersonSemanticEmbeddingConsent(t.Context(), profile.Fingerprint)
+	must.NoError(err)
+	check.False(active)
+}
+
+// TestSemanticPersonProviderStatusAllPreservesHistoricalQueryDisclosure
+// catches status --all claiming that a stored pre-expansion profile disclosed
+// caller search queries when its immutable policy did not.
+func TestSemanticPersonProviderStatusAllPreservesHistoricalQueryDisclosure(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	historical := historicalSemanticPersonProviderProfile(t)
+	_, err := st.EnsurePersonSemanticEmbeddingProfile(t.Context(), historical)
+	must.NoError(err)
+	deps := localPersonProviderDeps(personProviderTestConfig(), st, nil)
+
+	output, err := executePersonProviderCommand(
+		t, deps, "status", "--semantic-embeddings", "--all",
+	)
+	must.NoError(err)
+	check.Contains(output, "Fingerprint: "+historical.Fingerprint)
+	check.Contains(output, "Disclosed curated document field classes:")
+	check.NotContains(output, "Caller-supplied query egress:")
+	check.NotContains(output, "caller_supplied_free_text_query_for_semantic_person_search")
+
+	profiles, err := st.ListPersonSemanticEmbeddingProfiles(t.Context())
+	must.NoError(err)
+	must.Len(profiles, 1)
+	check.Equal(historical.Fingerprint, profiles[0].Fingerprint)
+	check.Equal(historical.DisclosedFieldClasses, profiles[0].DisclosedFieldClasses)
+	check.JSONEq(string(historical.PolicyJSON), string(profiles[0].PolicyJSON))
+}
+
+func TestSemanticPersonProviderStatusAndRevokeResolveDisabledCurrentPolicy(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	semanticConfig := semanticPersonProviderTestConfig()
+	profile, err := semanticConfig.SemanticPersonEmbeddingProfile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
+	must.NoError(err)
+	_, _, err = st.GrantPersonSemanticEmbeddingConsent(
+		t.Context(), profile.Fingerprint, "cli",
+	)
+	must.NoError(err)
+	semanticConfig.Enabled = false
+	semanticConfig.People.Enabled = false
+	deps := localPersonProviderDeps(personProviderTestConfig(), st, nil)
+	deps.vectorConfig = func() vector.Config { return semanticConfig }
+
+	statusOutput, err := executePersonProviderCommand(
+		t, deps, "status", "--semantic-embeddings", "--json",
+	)
+	must.NoError(err)
+	var status personSemanticProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(statusOutput), &status))
+	checks.Equal(profile.Fingerprint, status.Profile.Fingerprint)
+	checks.True(status.Consent.Active)
+
+	revokeOutput, err := executePersonProviderCommand(
+		t, deps, "revoke", "--semantic-embeddings", "--json",
+	)
+	must.NoError(err)
+	var revoked personSemanticProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(revokeOutput), &revoked))
+	checks.Equal(profile.Fingerprint, revoked.Profile.Fingerprint)
+	checks.False(revoked.Consent.Active)
+
+	_, err = executePersonProviderCommand(
+		t, deps, "consent", "--semantic-embeddings", "--yes",
+	)
+	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled,
+		"only consent requires semantic person embeddings to be enabled")
 }
 
 func TestPersonProviderRevokeIsIdempotent(t *testing.T) {

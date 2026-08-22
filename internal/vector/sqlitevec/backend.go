@@ -156,6 +156,9 @@ func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, f
 	if err := EnsureVectorTable(ctx, b.db, dim); err != nil {
 		return 0, err
 	}
+	if err := EnsurePersonVectorTable(ctx, b.db, dim); err != nil {
+		return 0, err
+	}
 	fp := fingerprint
 	if fp == "" {
 		// Defensive default: a missing fingerprint loses the staleness

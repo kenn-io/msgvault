@@ -19,6 +19,9 @@ describe('settings catalog', () => {
     expect(settingsCatalog['vector.embed.scope.accounts'].group).toBe('search');
     expect(settingsCatalog['vector.multimodal.enabled'].group).toBe('search');
     expect(settingsCatalog['vector.multimodal.provider'].options).toEqual(['voyage']);
+    expect(settingsCatalog['vector.people.enabled'].description).toContain('every durable person');
+    expect(settingsCatalog['vector.people.retention_posture'].group).toBe('search');
+    expect(settingsCatalog['vector.people.training_posture'].group).toBe('search');
     expect(settingsCatalog['beeper.schedule'].group).toBe('sources');
     expect(settingsCatalog['integrations.tasks.api_key'].secret).toBe(true);
   });

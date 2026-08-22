@@ -12,11 +12,17 @@ import (
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
-func newConvergenceChecker(vector.Config, *store.Store, vector.Backend) (scheduler.ConvergenceChecker, error) {
+func newConvergenceChecker(
+	vector.Config, *store.Store, vector.Backend, vector.SemanticPersonEmbeddingGate,
+) (scheduler.ConvergenceChecker, error) {
 	return nil, errVectorBuildUnsupported(cfg.DatabaseDSN())
 }
 
 func convergenceError(vector.GenerationID, scheduler.ConvergenceResult) error {
+	return errVectorBuildUnsupported(cfg.DatabaseDSN())
+}
+
+func manualConvergenceError(vector.GenerationID, scheduler.ConvergenceResult) error {
 	return errVectorBuildUnsupported(cfg.DatabaseDSN())
 }
 

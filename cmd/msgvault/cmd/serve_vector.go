@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/personsearch"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -29,9 +30,11 @@ import (
 const contextualDocumentUTF8Limit = 100_000
 
 type embeddingRuntime struct {
-	Runner      scheduler.EmbedRunner
-	QueryClient hybrid.EmbeddingClient
-	Convergence scheduler.ConvergenceChecker
+	Runner            scheduler.EmbedRunner
+	QueryClient       hybrid.EmbeddingClient
+	PersonQueryClient personsearch.QueryEmbedder
+	Convergence       scheduler.ConvergenceChecker
+	PersonGate        vector.SemanticPersonEmbeddingGate
 }
 
 type embeddingRuntimeDeps struct {
@@ -44,11 +47,14 @@ type embeddingRuntimeDeps struct {
 	TotalPending     int
 	Progress         func(embed.ProgressReport)
 	Log              *slog.Logger
+	PersonGate       vector.SemanticPersonEmbeddingGate
 }
 
 type legacyConvergenceChecker struct {
-	store *store.Store
-	scope vector.BuildScope
+	store         *store.Store
+	scope         vector.BuildScope
+	personBackend vector.PersonBackend
+	personGate    vector.SemanticPersonEmbeddingGate
 }
 
 func (c *legacyConvergenceChecker) CheckConvergence(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
@@ -56,11 +62,66 @@ func (c *legacyConvergenceChecker) CheckConvergence(ctx context.Context, gen vec
 	if err != nil {
 		return scheduler.ConvergenceResult{}, fmt.Errorf("message coverage: %w", err)
 	}
-	return scheduler.ConvergenceResult{
+	state := scheduler.ConvergenceResult{
 		MessageCoverageComplete: missing == 0,
 		MessageCoverageMissing:  missing,
 		ReconciliationComplete:  true,
-	}, nil
+		PersonCoverageComplete:  true,
+	}
+	coverage, err := c.CheckPersonCoverage(ctx, gen)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, err
+	}
+	state.PersonCoverageMismatched = coverage.Mismatched
+	state.PersonCoverageRejected = coverage.Rejected
+	state.PersonCoverageComplete = coverage.Complete()
+	return state, nil
+}
+
+func (c *legacyConvergenceChecker) CheckPersonCoverage(
+	ctx context.Context, gen vector.GenerationID,
+) (personsearch.Coverage, error) {
+	if c.personGate == nil {
+		return personsearch.Coverage{}, errors.New("semantic person embedding convergence gate is not configured")
+	}
+	if err := c.personGate.Check(ctx); err != nil {
+		if vector.SemanticPersonEmbeddingAuthorizationUnavailable(err) {
+			return personsearch.Coverage{}, nil
+		}
+		return personsearch.Coverage{}, fmt.Errorf("semantic person embedding convergence gate: %w", err)
+	}
+	if c.personBackend == nil {
+		return personsearch.Coverage{}, nil
+	}
+	documents, err := c.store.ListPersonSemanticDocumentsContext(ctx)
+	if err != nil {
+		return personsearch.Coverage{}, fmt.Errorf("person semantic documents: %w", err)
+	}
+	revisions, err := c.personBackend.ListPersonRevisions(ctx, gen)
+	if err != nil {
+		return personsearch.Coverage{}, fmt.Errorf("person vector revisions: %w", err)
+	}
+	rejected, err := c.personBackend.CountRejectedPersons(ctx, gen)
+	if err != nil {
+		return personsearch.Coverage{}, fmt.Errorf("rejected person vectors: %w", err)
+	}
+	coverage := personsearch.Coverage{Rejected: rejected}
+	current := make(map[int64]string, len(documents))
+	for _, document := range documents {
+		if document.Text == "" {
+			continue
+		}
+		current[document.PersonID] = document.Revision
+		if revisions[document.PersonID] != document.Revision {
+			coverage.Mismatched++
+		}
+	}
+	for personID := range revisions {
+		if _, ok := current[personID]; !ok {
+			coverage.Mismatched++
+		}
+	}
+	return coverage, nil
 }
 
 type contextualConvergenceChecker struct {
@@ -87,6 +148,12 @@ func (c *contextualConvergenceChecker) CheckConvergence(ctx context.Context, gen
 	return state, nil
 }
 
+func (c *contextualConvergenceChecker) CheckPersonCoverage(
+	ctx context.Context, gen vector.GenerationID,
+) (personsearch.Coverage, error) {
+	return c.legacy.CheckPersonCoverage(ctx, gen)
+}
+
 func contextualReconciliationComplete(cursor string) bool {
 	value, ok := strings.CutPrefix(cursor, "done:")
 	if !ok {
@@ -97,8 +164,50 @@ func contextualReconciliationComplete(cursor string) bool {
 }
 
 func convergenceError(gen vector.GenerationID, state scheduler.ConvergenceResult) error {
-	return fmt.Errorf("generation %d has not converged: message_coverage_complete=%t (missing=%d), journal=%d/%d, reconciliation_complete=%t",
-		gen, state.MessageCoverageComplete, state.MessageCoverageMissing, state.ConsumedJournalSequence,
+	message := convergenceStateMessage(gen, state)
+	if !state.MessageCoverageComplete {
+		message += "; " + strings.TrimSpace(remainingCoverageHint(gen, state.MessageCoverageMissing))
+	}
+	if guidance := personCoverageGuidance(gen, state); guidance != "" {
+		message += "; " + guidance
+	}
+	return errors.New(message)
+}
+
+func manualConvergenceError(gen vector.GenerationID, state scheduler.ConvergenceResult) error {
+	message := convergenceStateMessage(gen, state)
+	if !state.MessageCoverageComplete {
+		message += fmt.Sprintf("; generation still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to process them",
+			state.MessageCoverageMissing)
+	}
+	if guidance := personCoverageGuidance(gen, state); guidance != "" {
+		message += "; " + guidance
+	}
+	if state.PersonCoverageRejected == 0 {
+		message += "; or pass `--force` to activate anyway"
+	}
+	return errors.New(message)
+}
+
+func personCoverageGuidance(gen vector.GenerationID, state scheduler.ConvergenceResult) string {
+	guidance := make([]string, 0, 2)
+	if state.PersonCoverageMismatched > 0 ||
+		(!state.PersonCoverageComplete && state.PersonCoverageRejected == 0) {
+		guidance = append(guidance,
+			"run `msgvault embeddings resume --backstop` to retry curated person profiles")
+	}
+	if state.PersonCoverageRejected > 0 {
+		guidance = append(guidance, fmt.Sprintf(
+			"%d terminal curated person profile(s) will not be retried at the same source revision; source revision must change before retrying, or run `msgvault embeddings activate %d --force` to activate anyway",
+			state.PersonCoverageRejected, gen))
+	}
+	return strings.Join(guidance, "; ")
+}
+
+func convergenceStateMessage(gen vector.GenerationID, state scheduler.ConvergenceResult) string {
+	return fmt.Sprintf("generation %d has not converged: message_coverage_complete=%t (missing=%d), person_coverage_complete=%t (mismatched=%d, rejected=%d), journal=%d/%d, reconciliation_complete=%t",
+		gen, state.MessageCoverageComplete, state.MessageCoverageMissing, state.PersonCoverageComplete,
+		state.PersonCoverageMismatched, state.PersonCoverageRejected, state.ConsumedJournalSequence,
 		state.LatestJournalSequence, state.ReconciliationComplete)
 }
 
@@ -116,26 +225,46 @@ func embeddingPreprocessConfig(cfg vector.Config) embed.PreprocessConfig {
 }
 
 func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*embeddingRuntime, error) {
-	checker, err := newConvergenceChecker(vectorCfg, deps.Store, deps.Backend)
+	personBackend, ok := deps.Backend.(vector.PersonBackend)
+	if !ok {
+		return nil, errors.New("person embeddings require a person vector backend")
+	}
+	personGate := deps.PersonGate
+	if personGate == nil {
+		return nil, errors.New("semantic person embedding runtime gate is required")
+	}
+	checker, err := newConvergenceChecker(vectorCfg, deps.Store, deps.Backend, personGate)
 	if err != nil {
 		return nil, err
 	}
 	switch vectorCfg.Embeddings.EffectiveAPIFormat() {
 	case vector.APIFormatOpenAI:
-		client := embed.NewClient(embed.Config{
+		clientConfig := embed.Config{
 			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
 			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
-		})
-		worker := embed.NewWorker(embed.WorkerDeps{
+		}
+		messageClient := embed.NewClient(clientConfig)
+		clientConfig.BeforeRequest = personGate.Check
+		personClient := embed.NewClient(clientConfig)
+		messageWorker := embed.NewWorker(embed.WorkerDeps{
 			Backend: deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
-			Store: deps.Store, Client: client, Preprocess: embeddingPreprocessConfig(vectorCfg),
+			Store: deps.Store, Client: messageClient, Preprocess: embeddingPreprocessConfig(vectorCfg),
 			MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
 			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			Rebind: deps.Rebind, LastModifiedExpr: deps.LastModifiedExpr,
 			TotalPending: deps.TotalPending, Progress: deps.Progress, Log: deps.Log,
 		})
-		return &embeddingRuntime{Runner: worker, QueryClient: client, Convergence: checker}, nil
+		personWorker := embed.NewPersonWorker(embed.PersonWorkerDeps{
+			Store: deps.Store, Backend: personBackend, Client: personClient,
+			Gate:      personGate,
+			BatchSize: vectorCfg.Embeddings.BatchSize, MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
+		})
+		worker := embed.NewGenerationWorker(messageWorker, personWorker)
+		return &embeddingRuntime{
+			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
+			Convergence: checker, PersonGate: personGate,
+		}, nil
 	case vector.APIFormatVoyageContextual:
 		if vectorCfg.Embeddings.Model != "voyage-context-4" {
 			return nil, fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
@@ -145,33 +274,60 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		if !ok {
 			return nil, errors.New("voyage contextual embeddings require a document publisher backend")
 		}
-		client := embed.NewVoyageClient(embed.VoyageConfig{
+		clientConfig := embed.VoyageConfig{
 			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
 			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
 			Limits: embed.RequestLimits{MaxDocuments: vectorCfg.Embeddings.BatchSize,
 				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
-		})
+		}
+		messageClient := embed.NewVoyageClient(clientConfig)
+		clientConfig.BeforeRequest = personGate.Check
+		personClient := embed.NewVoyageClient(clientConfig)
 		policy := embed.AssemblyPolicy{
 			MaxChunkRunes:        vectorCfg.Embeddings.MaxInputChars,
 			MaxDocumentUTF8Bytes: contextualDocumentUTF8Limit,
 			Preprocess:           embeddingPreprocessConfig(vectorCfg),
 		}
 		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
-		worker := embed.NewContextWorker(embed.ContextWorkerDeps{
+		messageWorker := embed.NewContextWorker(embed.ContextWorkerDeps{
 			Backend: deps.Backend, Publisher: publisher, Store: deps.Store,
-			Assembler: assembler, Client: client, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
+			Assembler: assembler, Client: messageClient, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			ChangeBatchSize:    vectorCfg.Embeddings.BatchSize,
 			ReconcileBatchSize: vectorCfg.Embeddings.BatchSize,
 		})
-		return &embeddingRuntime{Runner: worker, QueryClient: client, Convergence: checker}, nil
+		personWorker := embed.NewPersonWorker(embed.PersonWorkerDeps{
+			Store: deps.Store, Backend: personBackend, Client: personClient,
+			Gate:      personGate,
+			BatchSize: vectorCfg.Embeddings.BatchSize, MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
+		})
+		worker := embed.NewGenerationWorker(messageWorker, personWorker)
+		return &embeddingRuntime{
+			Runner: worker, QueryClient: messageClient, PersonQueryClient: personClient,
+			Convergence: checker, PersonGate: personGate,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)
 	}
 }
 
-func newConvergenceChecker(vectorCfg vector.Config, mainStore *store.Store, backend vector.Backend) (scheduler.ConvergenceChecker, error) {
-	legacy := &legacyConvergenceChecker{store: mainStore, scope: vectorCfg.Embed.Scope.BuildScope()}
+func newConvergenceChecker(
+	vectorCfg vector.Config,
+	mainStore *store.Store,
+	backend vector.Backend,
+	personGate vector.SemanticPersonEmbeddingGate,
+) (scheduler.ConvergenceChecker, error) {
+	personBackend, ok := backend.(vector.PersonBackend)
+	if !ok {
+		return nil, errors.New("person embeddings require a person vector backend")
+	}
+	if personGate == nil {
+		return nil, errors.New("semantic person embedding convergence gate is required")
+	}
+	legacy := &legacyConvergenceChecker{
+		store: mainStore, scope: vectorCfg.Embed.Scope.BuildScope(),
+		personBackend: personBackend, personGate: personGate,
+	}
 	if vectorCfg.Embeddings.EffectiveAPIFormat() != vector.APIFormatVoyageContextual {
 		return legacy, nil
 	}
@@ -342,9 +498,13 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 
 	features := &vectorFeatures{Backend: backend, Cfg: vecCfg, Close: closeFn}
 	if vecCfg.Enabled {
+		personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
+			vecCfg, currentSemanticPersonVectorConfigSource(), mainStore,
+		)
 		runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
 			Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
 			Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
+			PersonGate: personGate,
 		})
 		if err != nil {
 			_ = closeFn()
@@ -364,6 +524,24 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			Rebind:     dialect.Rebind,
 			BuildScope: vecCfg.Embed.Scope.BuildScope(),
 		})
+		personSearchBackend, ok := backend.(personsearch.Backend)
+		if !ok {
+			_ = closeFn()
+			return nil, errors.New("person search requires a person vector backend")
+		}
+		personCoverage, ok := runtime.Convergence.(personsearch.CoverageChecker)
+		if !ok {
+			_ = closeFn()
+			return nil, errors.New("person search requires a person coverage checker")
+		}
+		features.PersonSearchEngine = personsearch.NewEngine(
+			personSearchBackend, mainStore, runtime.PersonQueryClient,
+			personsearch.Config{
+				ExpectedFingerprint: vecCfg.GenerationFingerprint(),
+				PersonCoverage:      personCoverage.CheckPersonCoverage,
+				Gate:                runtime.PersonGate,
+			},
+		)
 	}
 	if vecCfg.Multimodal.Enabled && !readOnly {
 		if len(openers) == 0 || openers[0] == nil {

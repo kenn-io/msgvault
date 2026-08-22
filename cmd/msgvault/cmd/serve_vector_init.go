@@ -138,7 +138,9 @@ func startVectorInit(
 		h.vf = vf
 		h.mu.Unlock()
 		if cfg.Vector.Enabled {
-			apiServer.SetVectorFeatures(vf.HybridEngine, vf.Backend, vf.Cfg)
+			apiServer.SetVectorFeatures(
+				vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
+			)
 			// Preflight drift detection: vector-search requests re-resolve the
 			// durable account scope (throttled) so drift latches index_stale
 			// even on daemons whose embed job never runs (empty cron,

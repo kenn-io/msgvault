@@ -21,6 +21,7 @@ type statsFakeBackend struct {
 	buildErr   error
 	statsByGen map[GenerationID]Stats
 	statsErr   map[GenerationID]error
+	rejected   map[GenerationID]int64
 }
 
 func (f *statsFakeBackend) ActiveGeneration(context.Context) (Generation, error) {
@@ -45,6 +46,10 @@ func (f *statsFakeBackend) Stats(_ context.Context, gen GenerationID) (Stats, er
 		return Stats{}, err
 	}
 	return f.statsByGen[gen], nil
+}
+
+func (f *statsFakeBackend) CountRejectedPersons(_ context.Context, gen GenerationID) (int64, error) {
+	return f.rejected[gen], nil
 }
 
 func (f *statsFakeBackend) CreateGeneration(context.Context, string, int, string) (GenerationID, error) {
@@ -109,12 +114,14 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 		statsByGen: map[GenerationID]Stats{
 			5: {EmbeddingCount: 100, PendingCount: 7},
 		},
+		rejected: map[GenerationID]int64{5: 2},
 	}
 
 	sv, err := CollectStats(context.Background(), b)
 	require.NoError(err, "CollectStats")
 	require.NotNil(sv, "CollectStats returned nil StatsView")
 	assert.True(sv.Enabled)
+	assert.Equal(int64(2), sv.PersonCoverageRejected)
 	require.NotNil(sv.ActiveGeneration, "ActiveGeneration is nil")
 	ag := sv.ActiveGeneration
 	assert.Equal(GenerationID(5), ag.ID)

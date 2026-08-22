@@ -67,7 +67,7 @@ func TestSetVectorFeaturesTransitionsToReady(t *testing.T) {
 	srv := NewServerWithOptions(opts)
 
 	backend := &minimalVectorBackend{}
-	srv.SetVectorFeatures(nil, backend, vector.Config{})
+	srv.SetVectorFeatures(nil, nil, backend, vector.Config{})
 
 	status, errMsg := srv.VectorStatus()
 	assert.Equal(t, VectorStatusReady, status)
@@ -202,7 +202,7 @@ func TestHealthClearsStaleAfterReactivation(t *testing.T) {
 	opts := testServerOptions(t, backend)
 	opts.VectorStatus = VectorStatusInitializing
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"")
 
 	// Sanity: status is stale before the health check re-validates.
@@ -235,7 +235,7 @@ func TestScopeDriftStaleSurvivesRefresh(t *testing.T) {
 	opts := testServerOptions(t, backend)
 	opts.VectorStatus = VectorStatusInitializing
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	srv.SetVectorScopeDrift("configured embedding scope now resolves to \"src-9\" but vector search was initialized with \"src-7\"")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -250,7 +250,7 @@ func TestScopeDriftStaleSurvivesRefresh(t *testing.T) {
 		"a matching startup fingerprint must not clear scope-drift stale")
 	assert.Contains(body.Vector.Error, "src-9")
 
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	status, errMsg := srv.VectorStatus()
 	assert.Equal(VectorStatusReady, status, "reinit clears the latch")
 	assert.Empty(errMsg)
@@ -270,7 +270,7 @@ func TestVectorSearchEndpointsGateOnScopeDrift(t *testing.T) {
 		opts.VectorStatus = VectorStatusInitializing
 		opts.Store = &mockStore{}
 		srv := NewServerWithOptions(opts)
-		srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), backend, cfg)
+		srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), nil, backend, cfg)
 		srv.SetVectorScopeDrift("configured embedding scope now resolves to \"src-9\" but vector search was initialized with \"src-7\"")
 		return srv
 	}
@@ -324,7 +324,7 @@ func TestVectorSearchPreflightDetectsScopeDrift(t *testing.T) {
 	opts.VectorStatus = VectorStatusInitializing
 	opts.Store = &mockStore{}
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), backend, cfg)
+	srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), nil, backend, cfg)
 
 	checks := 0
 	srv.SetVectorScopeCheck(func(context.Context) (string, error) {
@@ -365,7 +365,7 @@ func TestVectorSearchPreflightThrottlesScopeCheck(t *testing.T) {
 	opts.VectorStatus = VectorStatusInitializing
 	opts.Store = &mockStore{}
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), backend, cfg)
+	srv.SetVectorFeatures(hybrid.NewEngine(backend, nil, nil, hybrid.Config{}), nil, backend, cfg)
 
 	checks := 0
 	srv.SetVectorScopeCheck(func(context.Context) (string, error) {
@@ -402,7 +402,7 @@ func TestHealthFlipsReadyToStaleAfterForeignActivation(t *testing.T) {
 	opts := testServerOptions(t, backend)
 	opts.VectorStatus = VectorStatusInitializing
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 
 	health := func() string {
 		rec := httptest.NewRecorder()
@@ -450,7 +450,7 @@ func TestHealthDetectsScopeDrift(t *testing.T) {
 	opts := testServerOptions(t, backend)
 	opts.VectorStatus = VectorStatusInitializing
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	checks := 0
 	srv.SetVectorScopeCheck(func(context.Context) (string, error) {
 		checks++
@@ -482,7 +482,7 @@ func TestHealthKeepsStaleWhenStillMismatched(t *testing.T) {
 	opts := testServerOptions(t, backend)
 	opts.VectorStatus = VectorStatusInitializing
 	srv := NewServerWithOptions(opts)
-	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	srv.SetVectorStale("active=\"still-old:1\" configured=\"new:2\"")
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -509,7 +509,7 @@ func TestSetVectorFeaturesConcurrentReads(t *testing.T) {
 			_, _ = srv.VectorStatus()
 		}
 	}()
-	srv.SetVectorFeatures(nil, &fakeVectorBackend{}, vector.Config{})
+	srv.SetVectorFeatures(nil, nil, &fakeVectorBackend{}, vector.Config{})
 	<-done
 
 	status, _ := srv.VectorStatus()

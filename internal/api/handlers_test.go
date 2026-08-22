@@ -6772,6 +6772,7 @@ type fakeVectorBackend struct {
 	searchLimit   int
 	chunkHits     map[int64][]vector.ChunkHit
 	chunkScoreIDs []int64
+	rejected      int64
 }
 
 func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
@@ -6823,6 +6824,9 @@ func (f *fakeVectorBackend) ResetWatermarkBelow(_ context.Context, _ int64) erro
 func (f *fakeVectorBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, errors.New("not implemented")
 }
+func (f *fakeVectorBackend) CountRejectedPersons(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return f.rejected, nil
+}
 func (f *fakeVectorBackend) Close() error { return nil }
 
 func TestHandleStats_VectorDisabled(t *testing.T) {
@@ -6854,7 +6858,8 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 			Fingerprint: "nomic-embed:768",
 			State:       vector.GenerationActive,
 		},
-		stats: vector.Stats{EmbeddingCount: 100, PendingCount: 7, StorageBytes: 4096},
+		stats:    vector.Stats{EmbeddingCount: 100, PendingCount: 7, StorageBytes: 4096},
+		rejected: 3,
 	}
 
 	store := &mockStore{
@@ -6891,6 +6896,7 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 
 	assert.Equal(true, vs["enabled"], "enabled")
 	assert.InDelta(float64(7), vs["missing_embeddings_total"], 1e-9, "missing_embeddings_total")
+	assert.InDelta(float64(3), vs["person_coverage_rejected"], 1e-9, "person_coverage_rejected")
 
 	active, ok := vs["active_generation"].(map[string]any)
 	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
@@ -7524,7 +7530,7 @@ func TestStatsReportsTextLaneSeparatelyFromMultimodal(t *testing.T) {
 		Store:  &mockStore{},
 		Logger: testLogger(),
 	})
-	srv.SetVectorFeatures(nil, nil, vector.Config{Multimodal: vector.MultimodalConfig{Enabled: true}})
+	srv.SetVectorFeatures(nil, nil, nil, vector.Config{Multimodal: vector.MultimodalConfig{Enabled: true}})
 	srv.SetVisualSearch(&visual.SearchService{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)

@@ -271,9 +271,21 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		        '["conversation_text"]', '2025-01-01', '{}');
 		INSERT INTO person_inference_consents
 			(profile_fingerprint, granted_by)
+		VALUES (?, 'cli');
+		INSERT INTO person_semantic_embedding_profiles
+			(fingerprint, purpose, destination, api_format, model, api_key_env,
+			 retention_posture, training_posture, renderer_policy,
+			 disclosed_field_classes, corpus_scope, policy_json)
+		VALUES (?, 'semantic_person_embeddings', 'https://embedding.example.test/v1/embeddings',
+		        'openai', 'synthetic-model', 'TEST_KEY', 'zero_data_retention',
+		        'no_training', 'person-semantic-v1', '["person_display_name"]',
+		        'all_durable_people', '{}');
+		INSERT INTO person_semantic_embedding_consents
+			(profile_fingerprint, granted_by)
 		VALUES (?, 'cli')`,
 		fingerprint, fingerprint, strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
 		strings.Repeat("e", 64), strings.Repeat("e", 64),
+		strings.Repeat("f", 64), strings.Repeat("f", 64),
 	)
 	require.NoError(err)
 	require.NoError(db.Close())
@@ -289,6 +301,7 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		"document_extraction_heads", "document_units", "document_chunks", "document_chunk_spans",
 		"document_occurrences", "document_extraction_claims",
 		"person_inference_profiles", "person_inference_consents",
+		"person_semantic_embedding_profiles", "person_semantic_embedding_consents",
 	} {
 		var count int
 		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)

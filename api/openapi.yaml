@@ -6980,6 +6980,43 @@ components:
       required:
         - relationships
       type: object
+    PersonSearchRequest:
+      additionalProperties: false
+      properties:
+        limit:
+          default: 20
+          format: int64
+          maximum: 100
+          minimum: 0
+          type: integer
+        query:
+          minLength: 1
+          type: string
+      required:
+        - query
+      type: object
+    PersonSearchResponse:
+      additionalProperties: true
+      properties:
+        results:
+          items:
+            $ref: "#/components/schemas/PersonSearchResult"
+          type: array
+      required:
+        - results
+      type: object
+    PersonSearchResult:
+      additionalProperties: true
+      properties:
+        person:
+          $ref: "#/components/schemas/Person"
+        score:
+          format: double
+          type: number
+      required:
+        - person
+        - score
+      type: object
     PersonSummary:
       additionalProperties: true
       properties:
@@ -8402,10 +8439,14 @@ components:
         missing_embeddings_total:
           format: int64
           type: integer
+        person_coverage_rejected:
+          format: int64
+          type: integer
       required:
         - enabled
         - active_generation
         - missing_embeddings_total
+        - person_coverage_rejected
       type: object
     Status:
       additionalProperties: true
@@ -9309,7 +9350,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.5.0
+  version: 2.6.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -15528,6 +15569,40 @@ paths:
       security:
         - apiKey: []
       summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/search:
+    post:
+      description: Searches only the curated person vector corpus and returns durable person roots in relevance order.
+      operationId: searchPeople
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonSearchResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search durable people semantically
       tags:
         - API
   /api/v1/people/{id}:

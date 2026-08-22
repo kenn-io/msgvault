@@ -84,6 +84,7 @@ type Config struct {
 	Search     SearchConfig     `toml:"search"`
 	Embed      EmbedConfig      `toml:"embed"`
 	Multimodal MultimodalConfig `toml:"multimodal"`
+	People     PeopleConfig     `toml:"people"`
 
 	// SkipExtensionCreate skips the `CREATE EXTENSION IF NOT EXISTS
 	// vector` step on the pgvector backend while still letting Migrate
@@ -403,6 +404,10 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // so two cap values produce two different embedding layouts and must
 // not share one generation.
 //
+// Person renderer policy is deliberately excluded: it is part of every
+// person document revision, so changing it rebuilds only the bounded person
+// corpus instead of forcing a paid full-message generation rebuild.
+//
 // embed_policy (the embedPolicyVersion constant) covers worker-side
 // changes that shift the vector layout for the same Preprocess output
 // — most notably the switch from one-vector-per-message-with-truncation
@@ -411,7 +416,8 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // would silently accept new chunked entries from an upgraded worker.
 func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
-		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
+		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars,
+		embedPolicyVersion)
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {
 		fp = fmt.Sprintf("%s:a%s:v%d", fp, APIFormatVoyageContextual, contextPolicyVersion)
 	}
@@ -510,6 +516,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Embeddings.BatchSize <= 0 {
 		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", c.Embeddings.BatchSize)
+	}
+	if c.People.Enabled {
+		if _, err := c.SemanticPersonEmbeddingProfile(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
