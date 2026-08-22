@@ -126,6 +126,16 @@ func TestPersonProfileHTTPDelete(t *testing.T) {
 	assert.Equal(http.StatusNotFound, deletedAgain.Code)
 }
 
+func TestPersonProfileHTTPDeleteReportsCardDAVPublication(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	response := httptest.NewRecorder()
+
+	srv.writePersonError(response, store.ErrPersonCardDAVPublished)
+
+	assert.Equal(t, http.StatusConflict, response.Code)
+	assert.Contains(t, response.Body.String(), `"person_carddav_published"`)
+}
+
 func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

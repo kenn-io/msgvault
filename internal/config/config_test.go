@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,9 +9,46 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCardDAVConfigLoadsWithoutSerializingAPassword(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[carddav]
+base_url = "https://contacts.example/dav"
+username = "alice"
+schedule = "15 */6 * * *"
+enabled = true
+`), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal(CardDAVConfig{
+		BaseURL: "https://contacts.example/dav", Username: "alice",
+		Schedule: "15 */6 * * *", Enabled: true,
+	}, cfg.CardDAV)
+
+	var encoded bytes.Buffer
+	require.NoError(toml.NewEncoder(&encoded).Encode(cfg))
+	assert.NotContains(encoded.String(), "password")
+}
+
+func TestCardDAVConfigRejectsPasswordField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[carddav]
+base_url = "https://contacts.example/dav"
+username = "alice"
+password = "must-not-live-here"
+`), 0o600))
+
+	_, err := Load(path, "")
+	require.ErrorContains(t, err, "tokens/carddav.json")
+	assert.NotContains(t, err.Error(), "must-not-live-here")
+}
 
 func TestServerConfigDefaults(t *testing.T) {
 	// Create a temp dir without a config file

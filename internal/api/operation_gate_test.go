@@ -706,14 +706,40 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 	}
 }
 
+func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault sync")
+	require.True(ok, "occupy operation gate")
+	defer release()
+
+	called := false
+	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, cardDAVAccountTestPath, strings.NewReader(`{}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.True(called, "CardDAV connection test should bypass the held operation gate")
+	assert.Equal(http.StatusNoContent, resp.Code, "status")
+}
+
 // TestReadOnlyPostRoutePatternsMatchExplorationRoutes pins the gate's
 // read-only POST table to the registered analytical routes: every POST
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image
-// proxy is the one pinned non-Exploration entry — POST purely for the CSRF
-// unsafe-method machinery, reading no archive state — and it must remain a
-// registered POST route for its table entry to stay valid.
+// proxy and CardDAV account test are the pinned non-Exploration entries;
+// both must remain registered POST routes for their table entries to stay
+// valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require := require.New(t)
 	doc := OpenAPIDocument()
@@ -721,8 +747,12 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(remoteImage, "remote-image proxy route must exist")
 	require.NotNil(remoteImage.Post, "remote-image proxy must be registered as POST")
 	require.Nil(remoteImage.Get, "remote-image proxy must not be reachable via GET")
+	cardDAVAccountTest := doc.Paths[cardDAVAccountTestPath]
+	require.NotNil(cardDAVAccountTest, "CardDAV account test route must exist")
+	require.NotNil(cardDAVAccountTest.Post, "CardDAV account test must be registered as POST")
+	require.Nil(cardDAVAccountTest.Get, "CardDAV account test must not be reachable via GET")
 
-	expected := []string{remoteImagePath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
@@ -733,7 +763,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	slices.Sort(table)
 	assert.Equal(t, expected, table,
 		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration plus the "+
-			"remote-image proxy; classify new analytical routes consciously in operation_gate.go")
+			"pinned read-only POSTs; classify new analytical routes consciously in operation_gate.go")
 }
 
 // gateAnalyticsEngine backs the read-only analytical routes with minimal

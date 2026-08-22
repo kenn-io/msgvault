@@ -111,6 +111,126 @@ type EndBackupFreezeResponse = BackupFreezeEndResponse
 
 type EndBackupFreezeErrorResponse = ErrorResponse
 
+type SaveCardDAVAccountResponse = CardDAVAccountResponse
+
+type SaveCardDAVAccountErrorResponse = ErrorResponse
+
+type SaveCardDAVAccountErrorResponseJSON = ErrorResponse
+
+type SaveCardDAVAccountErrorResponseJSON500 = ErrorResponse
+
+type SaveCardDAVAccountErrorResponseJSON502 = ErrorResponse
+
+type SaveCardDAVAccountErrorResponseJSON503 = ErrorResponse
+
+type TestCardDAVAccountResponse = CardDAVAccountResponse
+
+type TestCardDAVAccountErrorResponse = ErrorResponse
+
+type TestCardDAVAccountErrorResponseJSON = ErrorResponse
+
+type TestCardDAVAccountErrorResponseJSON502 = ErrorResponse
+
+type TestCardDAVAccountErrorResponseJSON503 = ErrorResponse
+
+type ListCardDAVBooksResponse = CardDAVBooksResponse
+
+type ListCardDAVBooksErrorResponse = ErrorResponse
+
+type ListCardDAVBooksErrorResponseJSON = ErrorResponse
+
+type UpdateCardDAVBookRolesResponse = CardDAVBookResponse
+
+type UpdateCardDAVBookRolesErrorResponse = ErrorResponse
+
+type UpdateCardDAVBookRolesErrorResponseJSON = ErrorResponse
+
+type UpdateCardDAVBookRolesErrorResponseJSON409 = ErrorResponse
+
+type UpdateCardDAVBookRolesErrorResponseJSON500 = ErrorResponse
+
+type UpdateCardDAVBookRolesErrorResponseJSON503 = ErrorResponse
+
+type ListCardDAVConflictsResponse = CardDAVConflictsResponse
+
+type ListCardDAVConflictsErrorResponse = ErrorResponse
+
+type ListCardDAVConflictsErrorResponseJSON = ErrorResponse
+
+type GetCardDAVConflictResponse = CardDAVConflictDetailResponse
+
+type GetCardDAVConflictErrorResponse = ErrorResponse
+
+type GetCardDAVConflictErrorResponseJSON = ErrorResponse
+
+type GetCardDAVConflictErrorResponseJSON500 = ErrorResponse
+
+type GetCardDAVConflictErrorResponseJSON503 = ErrorResponse
+
+type ResolveCardDAVConflictResponse = CardDAVConflictResolutionResponse
+
+type ResolveCardDAVConflictErrorResponse = ErrorResponse
+
+type ResolveCardDAVConflictErrorResponseJSON = ErrorResponse
+
+type ResolveCardDAVConflictErrorResponseJSON409 = ErrorResponse
+
+type ResolveCardDAVConflictErrorResponseJSON500 = ErrorResponse
+
+type ResolveCardDAVConflictErrorResponseJSON502 = ErrorResponse
+
+type ResolveCardDAVConflictErrorResponseJSON503 = ErrorResponse
+
+type UnpublishCardDAVPersonResponse = CardDAVPublicationResponse
+
+type UnpublishCardDAVPersonErrorResponse = ErrorResponse
+
+type UnpublishCardDAVPersonErrorResponseJSON = ErrorResponse
+
+type UnpublishCardDAVPersonErrorResponseJSON409 = ErrorResponse
+
+type UnpublishCardDAVPersonErrorResponseJSON500 = ErrorResponse
+
+type UnpublishCardDAVPersonErrorResponseJSON502 = ErrorResponse
+
+type UnpublishCardDAVPersonErrorResponseJSON503 = ErrorResponse
+
+type GetCardDAVPublicationResponse = CardDAVPublicationResponse
+
+type GetCardDAVPublicationErrorResponse = ErrorResponse
+
+type GetCardDAVPublicationErrorResponseJSON = ErrorResponse
+
+type GetCardDAVPublicationErrorResponseJSON500 = ErrorResponse
+
+type GetCardDAVPublicationErrorResponseJSON503 = ErrorResponse
+
+type PublishCardDAVPersonResponse = CardDAVPublicationResponse
+
+type PublishCardDAVPersonErrorResponse = ErrorResponse
+
+type PublishCardDAVPersonErrorResponseJSON = ErrorResponse
+
+type PublishCardDAVPersonErrorResponseJSON409 = ErrorResponse
+
+type PublishCardDAVPersonErrorResponseJSON500 = ErrorResponse
+
+type PublishCardDAVPersonErrorResponseJSON502 = ErrorResponse
+
+type PublishCardDAVPersonErrorResponseJSON503 = ErrorResponse
+
+type SyncCardDAVResponse = SyncResult
+
+type SyncCardDAVErrorResponse = ErrorResponse
+
+type SyncCardDAVErrorResponseJSON = ErrorResponse
+
+type SyncCardDAVErrorResponseJSON500 = ErrorResponse
+
+type SyncCardDAVErrorResponseJSON502 = ErrorResponse
+
+type SyncCardDAVErrorResponseJSON503 = ErrorResponse
+
 type UpdateCLIAccountResponse = UpdateResult
 
 type UpdateCLIAccountErrorResponse = APIHTTPError
@@ -2334,6 +2454,187 @@ type EndBackupFreezeResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *EndBackupFreezeResponse
+}
+
+type SaveCardDAVAccountResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type SaveCardDAVAccountResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SaveCardDAVAccountResponse
+	JSON400      *SaveCardDAVAccountErrorResponse
+	JSON409      *SaveCardDAVAccountErrorResponseJSON
+	JSON500      *SaveCardDAVAccountErrorResponseJSON500
+	JSON502      *SaveCardDAVAccountErrorResponseJSON502
+	JSON503      *SaveCardDAVAccountErrorResponseJSON503
+	Headers503   *SaveCardDAVAccountResp503Headers
+}
+
+type TestCardDAVAccountResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type TestCardDAVAccountResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *TestCardDAVAccountResponse
+	JSON400      *TestCardDAVAccountErrorResponse
+	JSON500      *TestCardDAVAccountErrorResponseJSON
+	JSON502      *TestCardDAVAccountErrorResponseJSON502
+	JSON503      *TestCardDAVAccountErrorResponseJSON503
+	Headers503   *TestCardDAVAccountResp503Headers
+}
+
+type ListCardDAVBooksResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ListCardDAVBooksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCardDAVBooksResponse
+	JSON500      *ListCardDAVBooksErrorResponse
+	JSON503      *ListCardDAVBooksErrorResponseJSON
+	Headers503   *ListCardDAVBooksResp503Headers
+}
+
+type UpdateCardDAVBookRolesResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type UpdateCardDAVBookRolesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UpdateCardDAVBookRolesResponse
+	JSON400      *UpdateCardDAVBookRolesErrorResponse
+	JSON404      *UpdateCardDAVBookRolesErrorResponseJSON
+	JSON409      *UpdateCardDAVBookRolesErrorResponseJSON409
+	JSON500      *UpdateCardDAVBookRolesErrorResponseJSON500
+	JSON503      *UpdateCardDAVBookRolesErrorResponseJSON503
+	Headers503   *UpdateCardDAVBookRolesResp503Headers
+}
+
+type ListCardDAVConflictsResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ListCardDAVConflictsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCardDAVConflictsResponse
+	JSON500      *ListCardDAVConflictsErrorResponse
+	JSON503      *ListCardDAVConflictsErrorResponseJSON
+	Headers503   *ListCardDAVConflictsResp503Headers
+}
+
+type GetCardDAVConflictResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type GetCardDAVConflictResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCardDAVConflictResponse
+	JSON400      *GetCardDAVConflictErrorResponse
+	JSON404      *GetCardDAVConflictErrorResponseJSON
+	JSON500      *GetCardDAVConflictErrorResponseJSON500
+	JSON503      *GetCardDAVConflictErrorResponseJSON503
+	Headers503   *GetCardDAVConflictResp503Headers
+}
+
+type ResolveCardDAVConflictResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ResolveCardDAVConflictResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ResolveCardDAVConflictResponse
+	JSON400      *ResolveCardDAVConflictErrorResponse
+	JSON404      *ResolveCardDAVConflictErrorResponseJSON
+	JSON409      *ResolveCardDAVConflictErrorResponseJSON409
+	JSON500      *ResolveCardDAVConflictErrorResponseJSON500
+	JSON502      *ResolveCardDAVConflictErrorResponseJSON502
+	JSON503      *ResolveCardDAVConflictErrorResponseJSON503
+	Headers503   *ResolveCardDAVConflictResp503Headers
+}
+
+type UnpublishCardDAVPersonResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type UnpublishCardDAVPersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnpublishCardDAVPersonResponse
+	JSON400      *UnpublishCardDAVPersonErrorResponse
+	JSON404      *UnpublishCardDAVPersonErrorResponseJSON
+	JSON409      *UnpublishCardDAVPersonErrorResponseJSON409
+	JSON500      *UnpublishCardDAVPersonErrorResponseJSON500
+	JSON502      *UnpublishCardDAVPersonErrorResponseJSON502
+	JSON503      *UnpublishCardDAVPersonErrorResponseJSON503
+	Headers503   *UnpublishCardDAVPersonResp503Headers
+}
+
+type GetCardDAVPublicationResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type GetCardDAVPublicationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCardDAVPublicationResponse
+	JSON400      *GetCardDAVPublicationErrorResponse
+	JSON404      *GetCardDAVPublicationErrorResponseJSON
+	JSON500      *GetCardDAVPublicationErrorResponseJSON500
+	JSON503      *GetCardDAVPublicationErrorResponseJSON503
+	Headers503   *GetCardDAVPublicationResp503Headers
+}
+
+type PublishCardDAVPersonResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type PublishCardDAVPersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PublishCardDAVPersonResponse
+	JSON400      *PublishCardDAVPersonErrorResponse
+	JSON404      *PublishCardDAVPersonErrorResponseJSON
+	JSON409      *PublishCardDAVPersonErrorResponseJSON409
+	JSON500      *PublishCardDAVPersonErrorResponseJSON500
+	JSON502      *PublishCardDAVPersonErrorResponseJSON502
+	JSON503      *PublishCardDAVPersonErrorResponseJSON503
+	Headers503   *PublishCardDAVPersonResp503Headers
+}
+
+type SyncCardDAVResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type SyncCardDAVResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SyncCardDAVResponse
+	JSON400      *SyncCardDAVErrorResponse
+	JSON409      *SyncCardDAVErrorResponseJSON
+	JSON500      *SyncCardDAVErrorResponseJSON500
+	JSON502      *SyncCardDAVErrorResponseJSON502
+	JSON503      *SyncCardDAVErrorResponseJSON503
+	Headers503   *SyncCardDAVResp503Headers
 }
 
 type UpdateCLIAccountResp struct {

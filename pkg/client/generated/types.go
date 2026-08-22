@@ -766,6 +766,153 @@ func (c Candidate) Validate() error {
 	return errors
 }
 
+type CardDAVAccountRequest struct {
+	BaseURL  string  `json:"base_url" validate:"required"`
+	Enabled  bool    `json:"enabled"`
+	Password *string `json:"password,omitempty"`
+	Schedule *string `json:"schedule,omitempty"`
+	Username string  `json:"username" validate:"required"`
+}
+
+func (c CardDAVAccountRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVAccountResponse struct {
+	BaseURL  string  `json:"base_url" validate:"required"`
+	Books    int64   `json:"books"`
+	Enabled  bool    `json:"enabled"`
+	Schedule *string `json:"schedule,omitempty"`
+	Username string  `json:"username" validate:"required"`
+}
+
+func (c CardDAVAccountResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVBookResponse struct {
+	ID                 int64  `json:"id"`
+	LookupSource       bool   `json:"lookup_source"`
+	Name               string `json:"name" validate:"required"`
+	NeedsFullReconcile bool   `json:"needs_full_reconcile"`
+	Subscribed         bool   `json:"subscribed"`
+	URL                string `json:"url" validate:"required"`
+	WriteTarget        bool   `json:"write_target"`
+}
+
+func (c CardDAVBookResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVBookRolesRequest struct {
+	LookupSource bool `json:"lookup_source"`
+	Subscribed   bool `json:"subscribed"`
+	WriteTarget  bool `json:"write_target"`
+}
+
+type CardDAVBooksResponse struct {
+	Books []CardDAVBookResponse `json:"books,omitempty" validate:"required"`
+}
+
+func (c CardDAVBooksResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Books {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Books[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CardDAVConflictDetailResponse struct {
+	AddressBookID   int64   `json:"address_book_id"`
+	Href            string  `json:"href" validate:"required"`
+	ID              int64   `json:"id"`
+	LocalTombstone  bool    `json:"local_tombstone"`
+	LocalVcard      *string `json:"local_vcard,omitempty"`
+	RemoteTombstone bool    `json:"remote_tombstone"`
+	RemoteVcard     *string `json:"remote_vcard,omitempty"`
+	Status          string  `json:"status" validate:"required"`
+}
+
+func (c CardDAVConflictDetailResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVConflictResolutionResponse struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status" validate:"required"`
+}
+
+func (c CardDAVConflictResolutionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVConflictResponse struct {
+	AddressBookID   int64  `json:"address_book_id"`
+	Href            string `json:"href" validate:"required"`
+	ID              int64  `json:"id"`
+	LocalTombstone  bool   `json:"local_tombstone"`
+	RemoteTombstone bool   `json:"remote_tombstone"`
+	Status          string `json:"status" validate:"required"`
+}
+
+func (c CardDAVConflictResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVConflictsResponse struct {
+	Conflicts []CardDAVConflictResponse `json:"conflicts,omitempty" validate:"required"`
+}
+
+func (c CardDAVConflictsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Conflicts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Conflicts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CardDAVPublicationResponse struct {
+	Desired          bool    `json:"desired"`
+	Href             *string `json:"href,omitempty"`
+	PendingOperation *string `json:"pending_operation,omitempty"`
+	PersonID         int64   `json:"person_id"`
+}
+
+type CardDAVResolveRequest struct {
+	Choice CardDAVResolveRequestChoice `json:"choice" validate:"required"`
+}
+
+func (c CardDAVResolveRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Choice).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Choice", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CardDAVSyncRequest struct {
+	Full *bool `json:"full,omitempty"`
+}
+
 type ChangedMessageJSON struct {
 	AttachmentCount     int64      `json:"attachment_count"`
 	ContentChangedAt    time.Time  `json:"content_changed_at" validate:"required"`
@@ -7778,6 +7925,13 @@ func (s Summary) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SyncResult struct {
+	Books   int64 `json:"books"`
+	Created int64 `json:"created"`
+	Removed int64 `json:"removed"`
+	Updated int64 `json:"updated"`
 }
 
 type SyncRunItemStatus struct {

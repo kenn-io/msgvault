@@ -2187,6 +2187,21 @@ func TestGenericJobShutdownContextFinishesCleanly(t *testing.T) {
 	}
 }
 
+func TestRemoveJobClearsStableGenericScheduleAndRunner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s := New(nil)
+	require.NoError(s.AddJob(Job{Name: "carddav", Schedule: "0 1 * * *", Run: func(context.Context) error { return nil }}))
+	require.True(s.IsJobScheduled("carddav"))
+
+	s.RemoveJob("carddav")
+
+	assert.False(s.IsJobScheduled("carddav"))
+	assert.Empty(s.JobStatus())
+	require.ErrorContains(s.TriggerJob("carddav"), "not scheduled")
+}
+
 func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

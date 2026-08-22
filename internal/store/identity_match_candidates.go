@@ -13,16 +13,18 @@ import (
 type IdentityMatchEndpointKind string
 
 const (
-	IdentityMatchParticipant  IdentityMatchEndpointKind = "participant"
-	IdentityMatchPerson       IdentityMatchEndpointKind = "person"
-	IdentityMatchObservation  IdentityMatchEndpointKind = "observation"
-	IdentityMatchContactPoint IdentityMatchEndpointKind = "contact_point"
+	IdentityMatchParticipant     IdentityMatchEndpointKind = "participant"
+	IdentityMatchPerson          IdentityMatchEndpointKind = "person"
+	IdentityMatchObservation     IdentityMatchEndpointKind = "observation"
+	IdentityMatchContactPoint    IdentityMatchEndpointKind = "contact_point"
+	IdentityMatchCardDAVResource IdentityMatchEndpointKind = "carddav_resource"
 )
 
 func (k IdentityMatchEndpointKind) valid() bool {
 	switch k {
 	case IdentityMatchParticipant, IdentityMatchPerson,
-		IdentityMatchObservation, IdentityMatchContactPoint:
+		IdentityMatchObservation, IdentityMatchContactPoint,
+		IdentityMatchCardDAVResource:
 		return true
 	default:
 		return false
@@ -236,6 +238,8 @@ func validateIdentityMatchEndpointTx(
 		table = "participant_contact_observations"
 	case IdentityMatchContactPoint:
 		table = "person_contact_points"
+	case IdentityMatchCardDAVResource:
+		table = "carddav_resources"
 	default:
 		return ErrInvalidIdentityMatchEndpoint
 	}

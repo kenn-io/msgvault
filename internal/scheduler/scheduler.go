@@ -226,6 +226,23 @@ func (s *Scheduler) AddJob(job Job) error {
 	return nil
 }
 
+// RemoveJob removes a generic job's cron entry and callable registration.
+// An invocation already running is allowed to finish under the normal work
+// gate; no future cron or manual invocation can start after removal returns.
+func (s *Scheduler) RemoveJob(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entryID, exists := s.genericJobs[name]; exists {
+		s.cron.Remove(entryID)
+	}
+	delete(s.genericJobs, name)
+	delete(s.genericSchedules, name)
+	delete(s.genericFuncs, name)
+	delete(s.genericLastRun, name)
+	delete(s.genericLastErr, name)
+	s.logger.Info("removed scheduled job", "job", name)
+}
+
 // RemoveAccount removes the schedule for an account.
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()

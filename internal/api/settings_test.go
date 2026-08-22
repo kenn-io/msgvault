@@ -11,11 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
@@ -55,7 +59,8 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 		assert.True(setting.RestartRequired, setting.Key)
 		wantReadOnly := setting.Key == "vector.embeddings.api_key_env" ||
 			setting.Key == "vector.multimodal.api_key_env" ||
-			setting.Key == "vector.multimodal.capabilities_file"
+			setting.Key == "vector.multimodal.capabilities_file" ||
+			strings.HasPrefix(setting.Key, "carddav.")
 		assert.Equal(wantReadOnly, setting.ReadOnly, setting.Key)
 	}
 	assert.NotContains(resp.Body.String(), "test-api-key")
@@ -84,6 +89,90 @@ func TestPatchSettingsExposesCompleteSemanticPersonOptInPolicy(t *testing.T) {
 	check.Contains(string(got), "people.enabled = true")
 	check.Contains(string(got), `people.retention_posture = "zero_data_retention"`)
 	check.Contains(string(got), `people.training_posture = "no_training"`)
+}
+
+func TestGetSettingsExposesReadOnlyCardDAVAccountStateWithoutCredential(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	srv, _ := newSettingsTestServer(t, `[carddav]
+base_url = "https://contacts.example/dav"
+username = "alice"
+schedule = "0 3 * * *"
+enabled = true
+`)
+	st := testutil.NewTestStore(t)
+	account, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: srv.cfg.CardDAV.BaseURL, Username: srv.cfg.CardDAV.Username,
+		PrincipalURL: "https://contacts.example/principal/alice/",
+		HomeURL:      "https://contacts.example/books/alice/",
+		Books: []store.CardDAVDiscoveredBook{{
+			CanonicalURL: "https://contacts.example/books/alice/personal/",
+		}},
+	})
+	require.NoError(err)
+	require.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
+		Password: "must-not-cross-api", BaseURL: srv.cfg.CardDAV.BaseURL,
+		Username: srv.cfg.CardDAV.Username, ConnectionGeneration: account.ConnectionGeneration,
+	}))
+	srv.cardDAV, err = NewCardDAVController(srv.cfg, st)
+	require.NoError(err)
+
+	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	byKey := settingsByKey(body.Settings)
+	for _, key := range []string{"carddav.base_url", "carddav.username", "carddav.schedule", "carddav.enabled", "carddav.password"} {
+		require.Contains(byKey, key)
+		assert.True(byKey[key].ReadOnly, key)
+	}
+	assert.Equal(&SecretSettingState{Configured: true}, byKey["carddav.password"].Secret)
+	assert.NotContains(resp.Body.String(), "must-not-cross-api")
+
+	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
+		[]byte(`{"updates":[{"key":"carddav.enabled","value":{"boolean":false}}]}`),
+		resp.Header().Get("ETag"), "")
+	assert.Equal(http.StatusBadRequest, patch.Code, patch.Body.String())
+}
+
+func TestGetSettingsReportsStaleCardDAVCredentialAsNotConfigured(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	srv, _ := newSettingsTestServer(t, `[carddav]
+base_url = "https://contacts.example/dav"
+username = "alice"
+enabled = true
+`)
+	st := testutil.NewTestStore(t)
+	discovery := store.CardDAVDiscoveryInput{
+		BaseURL: srv.cfg.CardDAV.BaseURL, Username: srv.cfg.CardDAV.Username,
+		PrincipalURL: "https://contacts.example/principal/alice/",
+		HomeURL:      "https://contacts.example/books/alice/",
+		Books: []store.CardDAVDiscoveredBook{{
+			CanonicalURL: "https://contacts.example/books/alice/personal/",
+		}},
+	}
+	account, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), discovery)
+	require.NoError(err)
+	require.NoError(carddav.SaveCredential(srv.cfg.TokensDir(), carddav.Credential{
+		Password: "stale-password", BaseURL: srv.cfg.CardDAV.BaseURL,
+		Username: srv.cfg.CardDAV.Username, ConnectionGeneration: account.ConnectionGeneration,
+	}))
+	discovery.CredentialsChanged = true
+	account, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), discovery)
+	require.NoError(err)
+	assert.Equal(int64(2), account.ConnectionGeneration)
+	srv.cardDAV, err = NewCardDAVController(srv.cfg, st)
+	require.NoError(err)
+
+	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assert.Equal(&SecretSettingState{Configured: false}, settingsByKey(body.Settings)["carddav.password"].Secret)
+	assert.NotContains(resp.Body.String(), "stale-password")
 }
 
 func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {

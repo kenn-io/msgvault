@@ -179,7 +179,195 @@ describe('SettingsWorkspace', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('network unavailable');
     expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('tests CardDAV credentials through the dedicated account endpoint', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings') return settingsResponse(cardDAVSettings(), '"etag-a"');
+      if (path === '/api/v1/carddav/account/test') {
+        return Response.json({
+          base_url: 'https://dav.example.test/',
+          username: 'alice',
+          enabled: true,
+          schedule: '0 3 * * *',
+          books: 2
+        });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    expect(await screen.findByRole('heading', { name: 'CardDAV account' })).toBeDefined();
+    expect(screen.getByLabelText('Base URL')).toBeDefined();
+    expect(screen.getByLabelText('Username')).toBeDefined();
+    expect(screen.getByLabelText('Password')).toBeDefined();
+    expect(screen.getByLabelText('Enabled')).toBeDefined();
+    expect(screen.getByLabelText('Schedule')).toBeDefined();
+    expect(screen.queryByText('CardDAV server')).toBeNull();
+
+    await fireEvent.input(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://dav.example.test/' }
+    });
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'changed-password' } });
+    await fireEvent.click(screen.getByLabelText('Enabled'));
+    await fireEvent.input(screen.getByLabelText('Schedule'), { target: { value: '0 3 * * *' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    const request = fetchFn.mock.calls[1]?.[0] as Request;
+    expect(request.method).toBe('POST');
+    expect(new URL(request.url).pathname).toBe('/api/v1/carddav/account/test');
+    await expect(request.clone().json()).resolves.toEqual({
+      base_url: 'https://dav.example.test/',
+      username: 'alice',
+      password: 'changed-password',
+      enabled: true,
+      schedule: '0 3 * * *'
+    });
+    expect((await screen.findByRole('status')).textContent).toContain('Found 2 address books');
+  });
+
+  it('saves CardDAV credentials through PUT without a generic settings PATCH', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings') return settingsResponse(cardDAVSettings(), '"etag-a"');
+      if (path === '/api/v1/carddav/account') {
+        return Response.json({
+          base_url: 'https://dav.example.test/',
+          username: 'alice',
+          enabled: false,
+          schedule: '0 2 * * *',
+          books: 1
+        });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await screen.findByLabelText('Base URL');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    const request = fetchFn.mock.calls[1]?.[0] as Request;
+    expect(request.method).toBe('PUT');
+    expect(new URL(request.url).pathname).toBe('/api/v1/carddav/account');
+    await expect(request.clone().json()).resolves.toEqual({
+      base_url: 'https://old.example.test/',
+      username: 'alice',
+      enabled: false,
+      schedule: '0 2 * * *'
+    });
+    expect(
+      fetchFn.mock.calls.some(([candidate]) => candidate instanceof Request && candidate.method === 'PATCH')
+    ).toBe(false);
+    expect((await screen.findByRole('status')).textContent).toContain('CardDAV account saved');
+  });
+
+  it('requires a password before testing an unconfigured CardDAV account', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"etag-a"');
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await fireEvent.input(await screen.findByLabelText('Base URL'), {
+      target: { value: 'https://dav.example.test/' }
+    });
+    await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'alice' } });
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(password.required).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(screen.getByRole('alert').textContent).toContain('Password is required');
+  });
+
+  it('requires a password when a configured CardDAV identity changes', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings') return settingsResponse(cardDAVSettings(), '"etag-a"');
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    const baseURL = await screen.findByLabelText('Base URL');
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(password.required).toBe(false);
+
+    await fireEvent.input(baseURL, { target: { value: 'https://changed.example.test/' } });
+    expect(password.required).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(screen.getByRole('alert').textContent).toContain('Password is required');
+  });
+
+  it('reuses the persisted CardDAV password after the first successful save', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"etag-a"');
+      if (path === '/api/v1/carddav/account') {
+        requests.push(request);
+        const body = (await request.clone().json()) as Record<string, unknown>;
+        return Response.json({
+          base_url: body.base_url,
+          username: body.username,
+          enabled: body.enabled,
+          schedule: body.schedule,
+          books: 1
+        });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await fireEvent.input(await screen.findByLabelText('Base URL'), {
+      target: { value: 'https://dav.example.test/' }
+    });
+    await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'alice' } });
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'first-password' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await screen.findByRole('status');
+
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(password.value).toBe('');
+    expect(password.required).toBe(false);
+    await fireEvent.input(screen.getByLabelText('Schedule'), { target: { value: '0 4 * * *' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+
+    await expect(requests[0].clone().json()).resolves.toMatchObject({ password: 'first-password' });
+    await expect(requests[1].clone().json()).resolves.toEqual({
+      base_url: 'https://dav.example.test/',
+      username: 'alice',
+      enabled: false,
+      schedule: '0 4 * * *'
+    });
+  });
 });
+
+function cardDAVSettings(): object {
+  return {
+    settings: [
+      ...initialSettings.settings,
+      setting('carddav.base_url', 'https://old.example.test/'),
+      setting('carddav.username', 'alice'),
+      setting('carddav.password', undefined, { kind: 'secret', secret: { configured: true } }),
+      setting('carddav.enabled', false, { kind: 'boolean' }),
+      setting('carddav.schedule', '0 2 * * *')
+    ],
+    pending_restart: false
+  };
+}
 
 function setting(
   key: string,

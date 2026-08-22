@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -106,7 +107,7 @@ var personListCmd = &cobra.Command{
 		_, _ = fmt.Fprintln(w, "ID\tDISPLAY NAME\tVCARD UID\tPARTICIPANTS\tREVISION")
 		for _, person := range resp.JSON200.People {
 			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\n", person.ID,
-				personDisplayName(person.DisplayName), person.VcardUID,
+				personDisplayName(person.DisplayName), textutil.SanitizeTerminal(person.VcardUID),
 				len(person.ParticipantIds), person.Revision)
 		}
 		return w.Flush()
@@ -228,7 +229,7 @@ func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Person: %d\nDisplay name: %s\nvCard UID: %s\nParticipants: %v\nRevision: %d\n",
-		person.ID, personDisplayName(person.DisplayName), person.VcardUID,
+		person.ID, personDisplayName(person.DisplayName), textutil.SanitizeTerminal(person.VcardUID),
 		person.ParticipantIds, person.Revision)
 	return nil
 }
@@ -237,7 +238,11 @@ func personDisplayName(name *string) string {
 	if name == nil {
 		return "-"
 	}
-	return *name
+	safe := textutil.SanitizeTerminal(*name)
+	if strings.TrimSpace(safe) == "" {
+		return "-"
+	}
+	return safe
 }
 
 func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {

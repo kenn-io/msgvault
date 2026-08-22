@@ -14,6 +14,16 @@ type UploadTokenBody = TokenUploadRequest
 
 type EndBackupFreezeBody = BackupFreezeEndRequest
 
+type SaveCardDAVAccountBody = CardDAVAccountRequest
+
+type TestCardDAVAccountBody = CardDAVAccountRequest
+
+type UpdateCardDAVBookRolesBody = CardDAVBookRolesRequest
+
+type ResolveCardDAVConflictBody = CardDAVResolveRequest
+
+type SyncCardDAVBody = CardDAVSyncRequest
+
 type UpdateCLIAccountBody = UpdateRequest
 
 type PlanCLIAddCalendarBody = CLIAddCalendarPlanRequest
