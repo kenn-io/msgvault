@@ -140,7 +140,6 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor TEXT NOT NULL DEFAULT ''
 );
-
 -- Visual vectors remain opaque in vectors.db. Ownership, source evidence,
 -- publication state, and model inputs stay in the authoritative archive.
 -- The fixed 1,024 dimension is the voyage-multimodal-3.5 contract.
@@ -153,3 +152,15 @@ CREATE TABLE IF NOT EXISTS visual_vectors (
 CREATE VIRTUAL TABLE IF NOT EXISTS visual_vectors_vec USING vec0(
     embedding float[1024] distance_metric=cosine
 );
+
+-- Independent attachment-document vectors. Publication tokens are globally
+-- unique opaque identities; generation IDs belong to the main document-vector
+-- ledger and intentionally do not reference message index_generations.
+CREATE TABLE IF NOT EXISTS document_vector_embeddings (
+    document_vector_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token              TEXT NOT NULL UNIQUE,
+    generation_id      INTEGER NOT NULL,
+    dimension          INTEGER NOT NULL CHECK (dimension > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_generation
+    ON document_vector_embeddings(generation_id, dimension, token);

@@ -42,6 +42,10 @@ message_types = ["EMAIL", "chat", "email"]
 [attachments.documents.index]
 lexical = true
 store_chunk_text = true
+
+[attachments.documents.index.embeddings]
+enabled = true
+profile = "vector.embeddings"
 `)
 	require.NoError(t, os.WriteFile(path, content, 0o600))
 
@@ -57,6 +61,38 @@ store_chunk_text = true
 	assert.Equal([]string{"chat", "email"}, documents.Scope.MessageTypes)
 	assert.True(documents.LexicalEnabled())
 	assert.True(documents.StoresChunkText())
+	assert.True(documents.Index.Embeddings.Enabled)
+	assert.Equal("vector.embeddings", documents.Index.Embeddings.Profile)
+}
+
+func TestLoadRejectsUnknownDocumentEmbeddingProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := []byte(`
+[attachments.documents.index.embeddings]
+enabled = true
+profile = "other.embeddings"
+`)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	_, err := Load(path, "")
+	assert.ErrorContains(t, err, "profile must be \"vector.embeddings\"")
+}
+
+func TestLoadDefaultsOmittedEnabledDocumentEmbeddingProfile(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	requirements.NoError(os.WriteFile(path, []byte(`
+[attachments.documents.index.embeddings]
+enabled = true
+`), 0o600))
+
+	loaded, err := Load(path, "")
+	requirements.NoError(err)
+	assertions.True(loaded.Attachments.Documents.Index.Embeddings.Enabled)
+	assertions.Equal("vector.embeddings", loaded.Attachments.Documents.Index.Embeddings.Profile)
 }
 
 func TestLoadRejectsInvalidDocumentAttachmentConfigWithoutResolvingKey(t *testing.T) {

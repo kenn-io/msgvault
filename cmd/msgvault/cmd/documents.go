@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
 const (
@@ -90,6 +91,7 @@ type documentsCommandDeps struct {
 	openStore             func() (*store.Store, func(), error)
 	openAttachments       func(*store.Store) (documentindex.DocumentAttachmentOpener, func() error, error)
 	openReadClient        func(context.Context) (documentReadClient, func(), error)
+	runDocumentVector     func(context.Context, *store.Store, int64, int) (vectordocument.ReconcileResult, error)
 }
 
 type documentReadClient interface {
@@ -110,6 +112,7 @@ func defaultDocumentsCommandDeps() documentsCommandDeps {
 		validateProbeFixtures: mistral.ValidateProbeFixtures,
 		runCapabilityProbe:    mistral.RunCapabilityProbe,
 		openStore:             openWritableStoreAndInit,
+		runDocumentVector:     runConfiguredDocumentVectorGeneration,
 		openAttachments:       openDocumentAttachments,
 		openReadClient: func(ctx context.Context) (documentReadClient, func(), error) {
 			client, _, err := OpenHTTPStore(ctx)
@@ -135,6 +138,7 @@ func newDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	parent.AddCommand(newRetryDocumentCmd(deps))
 	parent.AddCommand(newRetireDocumentProfileCmd(deps))
 	parent.AddCommand(newPurgeDocumentDerivedCmd(deps))
+	parent.AddCommand(newDocumentVectorsCmd(deps))
 	return parent
 }
 
@@ -194,6 +198,8 @@ func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	command.Flags().StringVar(&beforeValue, "before", "", "Only messages before YYYY-MM-DD or RFC3339")
 	command.Flags().IntVarP(&request.PageSize, "limit", "n", 20, "Maximum results to return")
 	command.Flags().StringVar(&request.Cursor, "cursor", "", "Opaque cursor from the previous page")
+	command.Flags().StringVar(&request.SearchMode, "mode", "auto", "Search mode: auto, lexical, semantic, or hybrid")
+	command.Flags().IntVar(&request.CandidateLimit, "candidate-limit", 100, "Maximum lexical/vector candidates to fuse (1-1000)")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
 }
@@ -1080,6 +1086,13 @@ func (c localDocumentReadClient) SearchDocuments(
 			return store.DocumentSearchResponse{}, err
 		}
 		request.Person = &resolved.Scope
+	}
+	mode, err := vectordocument.ParseSearchMode(request.SearchMode)
+	if err != nil {
+		return store.DocumentSearchResponse{}, fmt.Errorf("%w: %w", store.ErrDocumentSearchInvalidRequest, err)
+	}
+	if mode == vectordocument.SearchModeSemantic || mode == vectordocument.SearchModeHybrid {
+		return store.DocumentSearchResponse{}, vectordocument.ErrSemanticSearchUnavailable
 	}
 	if err := reconcileDocumentOccurrencesForSearch(ctx, c.store); err != nil {
 		return store.DocumentSearchResponse{}, err

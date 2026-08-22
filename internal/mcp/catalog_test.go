@@ -314,7 +314,7 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 				if shape.document {
 					checks.Equal(
-						[]string{"after", "attachment_id", "before", "cursor", "directions", "limit", "message_id", "message_types", "participant_id", "person_id", "query", "source_ids"},
+						[]string{"after", "attachment_id", "before", "candidate_limit", "cursor", "directions", "limit", "message_id", "message_types", "mode", "participant_id", "person_id", "query", "source_ids"},
 						toolPropertyNames(t, byName[ToolSearchDocuments]),
 					)
 				}

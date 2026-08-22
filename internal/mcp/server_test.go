@@ -427,6 +427,7 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 		"directions": []any{"from_person", "group"},
 		"after":      "2026-08-01", "before": "2026-08-20",
 		"limit": float64(5), "cursor": "opaque",
+		"mode": "hybrid", "candidate_limit": float64(55),
 	})
 	assert.Equal("carton damage", searcher.request.Query)
 	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
@@ -439,6 +440,8 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	require.NotNil(searcher.request.Before)
 	assert.Equal(5, searcher.request.PageSize)
 	assert.Equal("opaque", searcher.request.Cursor)
+	assert.Equal("hybrid", searcher.request.SearchMode)
+	assert.Equal(55, searcher.request.CandidateLimit)
 	require.Len(response.Results, 1)
 	assert.Equal("inspection.xlsx", response.Results[0].Filename)
 	assert.Equal("mistral", response.Results[0].Provider)

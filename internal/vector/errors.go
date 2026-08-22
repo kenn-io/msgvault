@@ -5,6 +5,10 @@ import "errors"
 // Sentinel errors used across the vector package. Callers should use
 // errors.Is to check for these.
 var (
+	// ErrPermanent4xx marks a non-retryable HTTP 4xx response from an
+	// embeddings provider. Rate limits and server errors remain transient.
+	ErrPermanent4xx = errors.New("embed: non-retryable 4xx response")
+
 	// ErrNotEnabled is returned when vector search is requested but
 	// [vector] is not configured.
 	ErrNotEnabled = errors.New("vector search not enabled")

@@ -365,6 +365,12 @@ type SearchDocumentsQuery struct {
 
 	// Cursor Opaque cursor from the previous document search page
 	Cursor *string `json:"cursor,omitempty"`
+
+	// Mode Search mode: auto, lexical, semantic, or hybrid
+	Mode *string `json:"mode,omitempty"`
+
+	// CandidateLimit Maximum lexical/vector candidates to fuse (default 100, max 1000)
+	CandidateLimit *int64 `json:"candidate_limit,omitempty"`
 }
 
 func (s SearchDocumentsQuery) Validate() error {
@@ -387,6 +393,17 @@ type GetDocumentIndexStatusQuery struct {
 
 func (g GetDocumentIndexStatusQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetDocumentVectorStatusQuery struct {
+	// GenerationID Generation whose bounded failures to inspect
+	GenerationID *int64 `json:"generation_id,omitempty"`
+
+	// AfterToken Stable failure cursor token
+	AfterToken *string `json:"after_token,omitempty"`
+
+	// Limit Maximum failure diagnostics (default 20, max 1000)
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListIdentityMatchCandidatesQuery struct {

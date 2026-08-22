@@ -627,6 +627,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("before", "Only messages before an RFC3339 or YYYY-MM-DD date", false),
 			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
 			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
+			queryStringParam("mode", "Search mode: auto, lexical, semantic, or hybrid", false),
+			queryIntegerParam("candidate_limit", "Maximum lexical/vector candidates to fuse (default 100, max 1000)"),
 		}
 	case "getDocumentIndexStatus":
 		mediaTypes := queryRefArrayParam("media_type", "Allowed document media types")
@@ -636,6 +638,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("input_key", "Exact extraction input key", true),
 			mediaTypes,
 			queryRefArrayParam("message_type", "Allowed message types"),
+		}
+	case "getDocumentVectorStatus":
+		return []*huma.Param{
+			queryIntegerParam("generation_id", "Generation whose bounded failures to inspect"),
+			queryStringParam("after_token", "Stable failure cursor token", false),
+			queryIntegerParam("limit", "Maximum failure diagnostics (default 20, max 1000)"),
 		}
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}

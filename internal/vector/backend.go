@@ -8,6 +8,12 @@ import (
 // GenerationID identifies one index generation.
 type GenerationID int64
 
+// DocumentInput preserves one document boundary around its ordered embedding
+// inputs. Providers may partially complete only a leading document prefix.
+type DocumentInput struct {
+	Chunks []string
+}
+
 // SourceBasis identifies the source text used for chunk offsets.
 type SourceBasis uint8
 

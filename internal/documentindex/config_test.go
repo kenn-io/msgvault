@@ -51,6 +51,24 @@ func TestDocumentsConfigRejectsUnavailableIndexOptOut(t *testing.T) {
 	assert.False(t, config.StoresChunkText())
 }
 
+func TestDocumentsConfigAllowsNamedEmbeddingProfileWithLexicalFallback(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "vector.embeddings"
+
+	require.NoError(t, config.Validate())
+	assert.True(t, config.LexicalEnabled())
+	assert.True(t, config.StoresChunkText())
+}
+
+func TestDocumentsConfigRejectsUnknownEmbeddingProfile(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "other.embeddings"
+
+	require.ErrorContains(t, config.Validate(), "profile must be \"vector.embeddings\"")
+}
+
 func TestDocumentsConfigRejectsUnsafePolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -74,7 +92,10 @@ func TestDocumentsConfigRejectsUnsafePolicy(t *testing.T) {
 		{name: "training", mutate: func(c *DocumentsConfig) { c.TrainingPosture = "never" }, want: "training_posture"},
 		{name: "lexical without text", mutate: func(c *DocumentsConfig) { disabled := false; c.Index.StoreChunkText = &disabled }, want: "must both be true"},
 		{name: "stored text without lexical", mutate: func(c *DocumentsConfig) { disabled := false; c.Index.Lexical = &disabled }, want: "must both be true"},
-		{name: "premature vectors", mutate: func(c *DocumentsConfig) { c.Index.Embeddings.Enabled = true }, want: "not available"},
+		{name: "unknown embedding profile", mutate: func(c *DocumentsConfig) {
+			c.Index.Embeddings.Enabled = true
+			c.Index.Embeddings.Profile = "other.embeddings"
+		}, want: "profile must be \"vector.embeddings\""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -153,6 +174,32 @@ func TestDocumentsProfileFingerprintIsDeterministicAndPolicyBound(t *testing.T) 
 	seventh, err := config.ProfileFingerprint(changedManifest, []string{"application/pdf", "text/csv"})
 	require.NoError(err)
 	assert.NotEqual(first, seventh)
+}
+
+func TestDocumentsProfileFingerprintExcludesEmbeddingOptIn(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	requirements.NoError(err)
+	manifest := testCapabilityManifest(t, policy)
+
+	before, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+	beforePolicy, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "vector.embeddings"
+	after, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+	afterPolicy, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+
+	assertions.Equal(before, after)
+	assertions.Equal(string(beforePolicy), string(afterPolicy))
 }
 
 func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {

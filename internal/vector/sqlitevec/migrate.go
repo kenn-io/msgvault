@@ -554,3 +554,26 @@ func EnsureVectorTable(ctx context.Context, db *sql.DB, dim int) error {
 func VectorTableName(dim int) string {
 	return fmt.Sprintf("vectors_vec_d%d", dim)
 }
+
+// EnsureDocumentVectorTable lazily creates the dedicated cosine vec0 table
+// for one document-vector dimension. Its row IDs join only to
+// document_vector_embeddings and never to message embeddings.
+func EnsureDocumentVectorTable(ctx context.Context, db *sql.DB, dim int) error {
+	if dim <= 0 {
+		return fmt.Errorf("invalid document vector dimension %d", dim)
+	}
+	q := fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0(
+		generation_id     INTEGER PARTITION KEY,
+		document_vector_id INTEGER PRIMARY KEY,
+		embedding          FLOAT[%d] distance_metric=cosine
+	)`, DocumentVectorTableName(dim), dim)
+	if _, err := db.ExecContext(ctx, q); err != nil {
+		return fmt.Errorf("create %s: %w", DocumentVectorTableName(dim), err)
+	}
+	return nil
+}
+
+// DocumentVectorTableName returns the dedicated dimension-specific vec0 name.
+func DocumentVectorTableName(dim int) string {
+	return fmt.Sprintf("document_vectors_vec_d%d", dim)
+}
