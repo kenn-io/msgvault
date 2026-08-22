@@ -1327,6 +1327,14 @@ type GetOrganizationProfileMediaContentErrorResponseJSON500 = ErrorResponse
 
 type GetOrganizationProfileMediaContentErrorResponseJSON503 = ErrorResponse
 
+type CompleteParticipantsResponse = ParticipantCompletionHTTPResponse
+
+type CompleteParticipantsErrorResponse = ErrorResponse
+
+type CompleteParticipantsErrorResponseJSON = ErrorResponse
+
+type CompleteParticipantsErrorResponseJSON503 = ErrorResponse
+
 type SearchParticipantsResponse = ParticipantSearchHTTPResponse
 
 type SearchParticipantsErrorResponse = ErrorResponse
@@ -1458,6 +1466,50 @@ func (s *SearchParticipantFilesErrorResponseJSON503) UnmarshalJSON(data []byte) 
 
 	if err := runtime.UnmarshalJSON(data, s.SearchParticipantFiles_ErrorResponse_503_AnyOf); err != nil {
 		return fmt.Errorf("SearchParticipantFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ListParticipantInboxesResponse = PersonInboxResponse
+
+type ListParticipantInboxesErrorResponse struct {
+	ListParticipantInboxes_ErrorResponse_AnyOf *ListParticipantInboxes_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r ListParticipantInboxesErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (l ListParticipantInboxesErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(l.ListParticipantInboxes_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("ListParticipantInboxes_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (l *ListParticipantInboxesErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if l.ListParticipantInboxes_ErrorResponse_AnyOf == nil {
+		l.ListParticipantInboxes_ErrorResponse_AnyOf = &ListParticipantInboxes_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, l.ListParticipantInboxes_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("ListParticipantInboxes_ErrorResponse_AnyOf unmarshal: %w", err)
 	}
 
 	return nil
@@ -1720,6 +1772,16 @@ func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error
 
 	return nil
 }
+
+type AppendPersonNoteResponse = PersonAttributeWrite
+
+type AppendPersonNoteErrorResponse = ErrorResponse
+
+type AppendPersonNoteErrorResponseJSON = ErrorResponse
+
+type AppendPersonNoteErrorResponseJSON409 = ErrorResponse
+
+type AppendPersonNoteErrorResponseJSON503 = ErrorResponse
 
 type GetPersonStructuredProfileResponse = StructuredPersonProfile
 
@@ -2163,7 +2225,7 @@ type ListTextConversationMessagesResponse = TextMessagesResponse
 
 type ListTextConversationMessagesErrorResponse = ErrorResponse
 
-type SearchTextMessagesResponse = TextMessagesResponse
+type SearchTextMessagesResponse = TextSearchResponse
 
 type SearchTextMessagesErrorResponse = ErrorResponse
 
@@ -3355,6 +3417,16 @@ type GetOrganizationProfileMediaContentResp struct {
 	JSON503      *GetOrganizationProfileMediaContentErrorResponseJSON503
 }
 
+type CompleteParticipantsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CompleteParticipantsResponse
+	JSON400      *CompleteParticipantsErrorResponse
+	JSON500      *CompleteParticipantsErrorResponseJSON
+	JSON503      *CompleteParticipantsErrorResponseJSON503
+}
+
 type SearchParticipantsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3383,6 +3455,14 @@ type SearchParticipantFilesResp struct {
 	JSON409      *SearchParticipantFilesErrorResponseJSON409
 	JSON422      *SearchParticipantFilesErrorResponseJSON422
 	JSON503      *SearchParticipantFilesErrorResponseJSON503
+}
+
+type ListParticipantInboxesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListParticipantInboxesResponse
+	JSON503      *ListParticipantInboxesErrorResponse
 }
 
 type GetParticipantContextSummaryResp struct {
@@ -3574,6 +3654,17 @@ type SearchPersonFilesResp struct {
 	JSON409      *SearchPersonFilesErrorResponseJSON409
 	JSON422      *SearchPersonFilesErrorResponseJSON422
 	JSON503      *SearchPersonFilesErrorResponseJSON503
+}
+
+type AppendPersonNoteResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *AppendPersonNoteResponse
+	JSON400      *AppendPersonNoteErrorResponse
+	JSON404      *AppendPersonNoteErrorResponseJSON
+	JSON409      *AppendPersonNoteErrorResponseJSON409
+	JSON503      *AppendPersonNoteErrorResponseJSON503
 }
 
 type GetPersonStructuredProfileResp200Headers struct {

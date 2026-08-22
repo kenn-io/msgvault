@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
 )
@@ -21,11 +22,13 @@ var deprecatedTUIForceSQL bool
 var deprecatedTUISkipCacheBuild bool
 var deprecatedTUINoSQLiteScanner bool
 
+var _ peoplebrowser.Backend = (*daemonclient.PeopleBrowser)(nil)
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
 	Long: `Open an interactive terminal UI for browsing email, text messages,
-and meeting transcripts.
+meeting transcripts, and people.
 
 Email mode provides aggregate views by:
   - Senders: Who sends you the most email
@@ -34,16 +37,17 @@ Email mode provides aggregate views by:
   - Labels: Gmail label distribution
   - Time: Message volume over time
 
-Press 'm' to cycle through Email, Texts, and Meetings. Texts is skipped when
-its engine is unavailable. Meetings shows a read-only list of Granola and
-Circleback transcripts and remains available before a source is configured.
+Press 'm' to cycle through Email, Texts, Meetings, and People. Texts is skipped
+when its engine is unavailable. Meetings remains available before a source is
+configured. People browses every observed contact and remains available when
+Texts is absent.
 
 Navigation:
   ↑/k, ↓/j    Move up/down
   PgUp/PgDn   Page up/down
   Enter       Drill down / view message
   Esc         Go back
-  m           Cycle Email / Texts / Meetings
+  m           Cycle Email / Texts / Meetings / People
   g           Cycle aggregate view (Email and Texts)
   /           Search; find within an open meeting transcript
   A           Filter by account, or meeting source in Meetings mode
@@ -78,11 +82,10 @@ HTTP Mode:
 			fmt.Printf("Connected to remote: %s\n", cfg.Remote.URL)
 		}
 
-		// Check if engine supports text queries
-		var textEngine query.TextEngine
-		if te, ok := backend.engine.(query.TextEngine); ok {
-			textEngine = te
-		}
+		// The shipped daemon engine provides Texts directly. People uses the
+		// focused wrapper because Engine.Search has a different query contract.
+		var textEngine query.TextEngine = backend.engine
+		peopleBackend := daemonclient.NewPeopleBrowser(backend.engine)
 
 		notice := analyticsCacheNotice(cmd.Context(), backend.client)
 		if notice != "" {
@@ -94,6 +97,7 @@ HTTP Mode:
 			DataDir:          cfg.Data.DataDir,
 			Version:          Version,
 			TextEngine:       textEngine,
+			PeopleBackend:    peopleBackend,
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
 			AnalyticsNotice:  notice,
@@ -139,7 +143,7 @@ func (o tuiAttachmentOpener) OpenAttachment(ctx context.Context, contentHash str
 }
 
 type tuiBackend struct {
-	engine  query.Engine
+	engine  *daemonclient.Engine
 	client  *daemonclient.Client
 	info    HTTPStoreInfo
 	cleanup func()

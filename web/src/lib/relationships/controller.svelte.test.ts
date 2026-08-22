@@ -33,6 +33,7 @@ function person(id: number): PersonSummary {
     partial_label: false,
     identifiers: [],
     activity_count: 1,
+    meeting_count: 0,
     file_count: 0,
     source_counts: [],
     first_at: when,

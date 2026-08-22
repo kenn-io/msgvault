@@ -228,6 +228,48 @@ func ValidateAttributeSlug(slug string) error {
 	return nil
 }
 
+func deriveAttributeSlug(label string) string {
+	var b strings.Builder
+	separator := false
+	for _, r := range strings.ToLower(strings.TrimSpace(label)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if separator && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			separator = false
+			b.WriteRune(r)
+		default:
+			separator = b.Len() > 0
+		}
+	}
+	base := strings.Trim(b.String(), "_")
+	if base == "" {
+		base = "field"
+	}
+	if base[0] < 'a' || base[0] > 'z' {
+		base = "field_" + base
+	}
+	return base[:min(len(base), 63)]
+}
+
+func derivedAttributeSlugCandidate(base string, attempt int) string {
+	if attempt == 1 {
+		return base
+	}
+	suffix := "_" + strconv.Itoa(attempt)
+	return base[:min(len(base), 63-len(suffix))] + suffix
+}
+
+// PrepareAttributeDefinitionInput applies server-side create defaults shared
+// by persistent and local validation paths.
+func PrepareAttributeDefinitionInput(input AttributeDefinitionInput) AttributeDefinitionInput {
+	if input.Slug == "" {
+		input.Slug = deriveAttributeSlug(input.Label)
+	}
+	return input
+}
+
 // ValidateAttributeDefinitionInput runs the full definition validation
 // without touching a database, so local dry-run previews reject exactly what
 // the server-side create path rejects — except conflicts with existing
@@ -241,6 +283,7 @@ func ValidateAttributeDefinitionInput(
 func validateAttributeDefinitionInput(
 	input AttributeDefinitionInput,
 ) (AttributeDefinitionInput, error) {
+	input = PrepareAttributeDefinitionInput(input)
 	invalid := func(format string, args ...any) (AttributeDefinitionInput, error) {
 		return AttributeDefinitionInput{}, fmt.Errorf(
 			"%w: %s", ErrAttributeDefinitionInvalid, fmt.Sprintf(format, args...))
@@ -530,18 +573,28 @@ const attributeDefinitionColumns = `
 func (s *Store) CreateAttributeDefinitionContext(
 	ctx context.Context, input AttributeDefinitionInput,
 ) (*AttributeDefinition, error) {
+	generatedSlug := input.Slug == ""
 	validated, err := validateAttributeDefinitionInput(input)
 	if err != nil {
 		return nil, err
 	}
 	var definition *AttributeDefinition
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		var createErr error
-		definition, createErr = s.createAttributeDefinitionTx(ctx, tx, validated)
-		if createErr != nil {
-			return createErr
+		for attempt := 1; ; attempt++ {
+			candidate := validated
+			if generatedSlug {
+				candidate.Slug = derivedAttributeSlugCandidate(validated.Slug, attempt)
+			}
+			var createErr error
+			definition, createErr = s.createAttributeDefinitionTx(ctx, tx, candidate)
+			if errors.Is(createErr, ErrAttributeDefinitionSlugConflict) && generatedSlug {
+				continue
+			}
+			if createErr != nil {
+				return createErr
+			}
+			return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 		}
-		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 	})
 	if err != nil {
 		return nil, err

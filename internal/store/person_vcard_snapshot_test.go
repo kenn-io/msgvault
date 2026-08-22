@@ -75,10 +75,21 @@ func TestPersonVCardSnapshotLoadsAllProjectionInputsDeterministically(t *testing
 	require.Len(first.MediaData, 1)
 	assert.Equal(media.Envelope.ID, first.MediaData[0].MediaID)
 	assert.Equal([]byte("synthetic-photo"), first.MediaData[0].Data)
-	require.Len(first.Attributes, 1)
-	assert.Equal("X-FAVORITE-GENRE", *first.Attributes[0].Definition.VCardProperty)
-	require.Len(first.Attributes[0].Values, 1)
-	assert.Equal("ambient", *first.Attributes[0].Values[0].Value.Text)
+	attributes := make(map[string]store.PersonVCardAttribute, len(first.Attributes))
+	for _, attribute := range first.Attributes {
+		attributes[attribute.Definition.Slug] = attribute
+	}
+	customAttribute, ok := attributes[definition.Slug]
+	require.True(ok, "custom vCard attribute is present")
+	require.NotNil(customAttribute.Definition.VCardProperty)
+	assert.Equal("X-FAVORITE-GENRE", *customAttribute.Definition.VCardProperty)
+	require.Len(customAttribute.Values, 1)
+	assert.Equal("ambient", *customAttribute.Values[0].Value.Text)
+	notesAttribute, ok := attributes[store.AttributeSlugNotes]
+	require.True(ok, "standard Notes vCard attribute is present")
+	require.NotNil(notesAttribute.Definition.VCardProperty)
+	assert.Equal("NOTE", *notesAttribute.Definition.VCardProperty)
+	assert.Empty(notesAttribute.Values)
 	require.Len(first.Employments, 1)
 	assert.Equal(organization.ID, first.Employments[0].Organization.Organization.ID)
 	require.Len(first.Relationships, 1)
@@ -96,6 +107,32 @@ func TestPersonVCardSnapshotLoadsAllProjectionInputsDeterministically(t *testing
 	changed, err := st.LoadPersonVCardSnapshotContext(ctx, person.ID)
 	require.NoError(err)
 	assert.NotEqual(first.Fingerprint, changed.Fingerprint)
+}
+
+func TestPersonNotesSnapshotCarriesVCardDefinitionAndValue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	person := createEnvelopePerson(t, st, "notes@example.test")
+	note := "line one\nline two"
+	written, err := st.SetPersonAttributeValueContext(t.Context(),
+		store.PersonAttributeValueInput{
+			PersonID: person.ID, DefinitionSlug: store.AttributeSlugNotes,
+			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &note},
+			Source: store.ProvenanceUser,
+		})
+	require.NoError(err)
+
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
+	require.Len(snapshot.Attributes, 1)
+	attribute := snapshot.Attributes[0]
+	require.NotNil(attribute.Definition.VCardProperty)
+	assert.Equal("NOTE", *attribute.Definition.VCardProperty)
+	require.Len(attribute.Values, 1)
+	assert.Equal(written.Value.ID, attribute.Values[0].ID)
+	require.NotNil(attribute.Values[0].Value.Text)
+	assert.Equal(note, *attribute.Values[0].Value.Text)
 }
 
 // A snapshot's employment set doubles as the projection's retention set, so a

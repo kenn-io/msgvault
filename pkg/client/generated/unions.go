@@ -524,6 +524,24 @@ func (s *SearchParticipantFiles_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
+type ListParticipantInboxes_ErrorResponse_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (l *ListParticipantInboxes_ErrorResponse_AnyOf) Validate() error {
+	if l.IsA() {
+		if v, ok := any(l.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if l.IsB() {
+		if v, ok := any(l.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type GetParticipantContextSummary_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }

@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
 )
@@ -47,8 +48,10 @@ func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(HTTPStoreConfiguredRemote, backend.info.Kind)
 	assert.Equal(srv.URL, backend.info.URL)
-	_, ok := backend.engine.(query.TextEngine)
-	assert.True(ok, "TUI backend should expose daemon-backed text queries")
+	assert.Implements((*query.TextEngine)(nil), backend.engine,
+		"TUI backend should expose daemon-backed text queries")
+	assert.Implements((*peoplebrowser.Backend)(nil), daemonclient.NewPeopleBrowser(backend.engine),
+		"TUI backend should expose the daemon-backed People wrapper")
 	assert.Equal("remote@example.com", accounts[0].Identifier)
 	assert.Equal("gmail", accounts[0].SourceType)
 	assert.Equal(int32(1), requests.Load())
@@ -108,8 +111,10 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(HTTPStoreLocalDaemon, backend.info.Kind)
 	assert.Equal(srv.URL, backend.info.URL)
-	_, ok := backend.engine.(query.TextEngine)
-	assert.True(ok, "TUI backend should expose daemon-backed text queries")
+	assert.Implements((*query.TextEngine)(nil), backend.engine,
+		"TUI backend should expose daemon-backed text queries")
+	assert.Implements((*peoplebrowser.Backend)(nil), daemonclient.NewPeopleBrowser(backend.engine),
+		"TUI backend should expose the daemon-backed People wrapper")
 	assert.Equal("local@example.com", accounts[0].Identifier)
 	assert.Equal("gmail", accounts[0].SourceType)
 	assert.Equal(int32(1), requests.Load())

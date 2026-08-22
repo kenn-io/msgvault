@@ -102,8 +102,16 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.modal = modalHelp
 		return m, nil, true
 	case "m":
+		leavingPeople := m.mode == modePeople
+		if leavingPeople {
+			m.settlePeopleDirectoryLoad()
+			m.swapPeopleMeetingState()
+			m.swapPeopleTextState()
+		}
+		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil)
+		m.switchMessageReaderState(next)
 		m.presentationGeneration++
-		m.mode = nextMode(m.mode, m.textEngine != nil)
+		m.mode = next
 		// A frozen view and the email search loading flags describe the mode
 		// being left. Do not let them obscure or animate the destination mode.
 		m.transitionBuffer = ""
@@ -131,6 +139,71 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.meetingState.searchSnapshotInvalid = true
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadMeetingMessages()), true
+		case modePeople:
+			m.swapPeopleMeetingState()
+			m.swapPeopleTextState()
+			m.peopleState.directoryLoading = false
+			m.peopleState.loadingMore = false
+			m.peopleState.contactLoading = false
+			if m.peopleState.level != peopleLevelDirectory {
+				if m.peopleState.contact != nil {
+					if m.peopleState.level == peopleLevelMeetingDetail &&
+						m.meetingState.detail == nil &&
+						m.peopleState.selectedContentMessage > 0 {
+						m.peopleState.requestID++
+						m.peopleState.meetingsErr = nil
+						m.meetingState.detailLoading = true
+						m.loading = true
+						return m, tea.Batch(
+							m.startSpinner(),
+							m.loadPeopleMeeting(m.peopleState.selectedContentMessage),
+						), true
+					}
+					if m.peopleState.level == peopleLevelActivityMessage &&
+						m.messageDetail == nil &&
+						m.peopleState.selectedContentMessage > 0 {
+						m.peopleState.requestID++
+						m.peopleState.activityErr = nil
+						m.peopleState.messageLoading = true
+						m.loading = true
+						return m, tea.Batch(
+							m.startSpinner(),
+							m.loadPeopleActivityMessage(m.peopleState.selectedContentMessage),
+						), true
+					}
+					if (m.peopleState.tab == peopleTabMeetings &&
+						!m.peopleState.meetingsLoaded) ||
+						(m.peopleState.tab == peopleTabFiles &&
+							!m.peopleState.filesLoaded) ||
+						(m.peopleState.tab == peopleTabActivity &&
+							!m.peopleState.activityLoaded) {
+						updated, cmd := m.activatePeopleTab(m.peopleState.tab)
+						return updated, cmd, true
+					}
+					m.loading = false
+					return m, nil, true
+				}
+				m.peopleState.requestID++
+				m.peopleState.err = nil
+				m.peopleState.contactLoading = true
+				m.loading = true
+				spinCmd := m.startSpinner()
+				return m, tea.Batch(
+					spinCmd,
+					m.loadPeopleContact(m.peopleState.participantID),
+				), true
+			}
+			if m.peopleState.initialized {
+				m.loading = false
+				return m, nil, true
+			}
+			m.peopleState.requestID++
+			m.peopleState.paginationRestarted = false
+			m.peopleState.err = nil
+			m.peopleState.directoryLoading = true
+			m.loading = true
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadPeopleDirectory("", false)), true
 		default:
 			m.loading = true
 			m.aggregateRequestID++

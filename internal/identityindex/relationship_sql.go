@@ -29,6 +29,7 @@ WITH filtered_facts AS (
 	       f.source_id::BIGINT AS source_id,
 	       f.source_type::VARCHAR AS source_type,
 	       f.occurred_at::TIMESTAMP AS occurred_at,
+	       f.message_type::VARCHAR AS message_type,
 	       f.entry_kind::VARCHAR AS entry_kind,
 	       f.is_from_me::BOOLEAN AS is_from_me,
 	       f.attachment_count::BIGINT AS attachment_count
@@ -45,6 +46,9 @@ WITH filtered_facts AS (
 	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::VARCHAR
 	           AS source_type,
 	       max(f.occurred_at)::TIMESTAMP AS occurred_at,
+	       arg_max(f.message_type,
+	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::VARCHAR
+	           AS message_type,
 	       'conversation'::VARCHAR AS entry_kind,
 	       arg_max(f.is_from_me,
 	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::BOOLEAN
@@ -355,7 +359,7 @@ func buildLogicalActivityMaterializationSQL(path string) string {
 	return logicalActivitySQL(path, "true") + `
 SELECT 1::UTINYINT AS relation_kind,
        p.entry_key, p.anchor_message_id, p.conversation_id, p.source_id,
-       p.source_type, p.occurred_at, p.entry_kind, p.is_from_me,
+       p.source_type, p.occurred_at, p.message_type, p.entry_kind, p.is_from_me,
        p.attachment_count, p.canonical_id, p.is_author, p.is_owner,
        p.with_owner, NULL::VARCHAR AS domain
 FROM logical_people p
@@ -364,7 +368,7 @@ UNION ALL
 
 SELECT 2::UTINYINT AS relation_kind,
        u.entry_key, u.anchor_message_id, u.conversation_id, u.source_id,
-       u.source_type, u.occurred_at, u.entry_kind, u.is_from_me,
+       u.source_type, u.occurred_at, u.message_type, u.entry_kind, u.is_from_me,
        u.attachment_count, NULL::BIGINT AS canonical_id,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
        NULL::BOOLEAN AS with_owner, k.domain
@@ -378,7 +382,8 @@ SELECT 3::UTINYINT AS relation_kind,
        p.entry_key, NULL::BIGINT AS anchor_message_id,
        NULL::BIGINT AS conversation_id, NULL::BIGINT AS source_id,
        NULL::VARCHAR AS source_type, NULL::TIMESTAMP AS occurred_at,
-       NULL::VARCHAR AS entry_kind, NULL::BOOLEAN AS is_from_me,
+       NULL::VARCHAR AS message_type, NULL::VARCHAR AS entry_kind,
+       NULL::BOOLEAN AS is_from_me,
        NULL::BIGINT AS attachment_count, p.canonical_id,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
        NULL::BOOLEAN AS with_owner, p.domain

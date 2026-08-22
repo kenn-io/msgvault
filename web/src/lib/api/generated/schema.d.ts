@@ -1796,6 +1796,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/participants/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete observed people by typed contact primitives
+         * @description Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
+         */
+        post: operations["completeParticipants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/participants/search": {
         parameters: {
             query?: never;
@@ -1841,6 +1861,23 @@ export interface paths {
         put?: never;
         /** Search one participant cluster's analytical files */
         post: operations["searchParticipantFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}/inboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one participant cluster's messaging inboxes */
+        get: operations["listParticipantInboxes"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2061,6 +2098,23 @@ export interface paths {
         put?: never;
         /** Search one durable person's analytical files */
         post: operations["searchPersonFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/notes/append": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append to a person's notes */
+        post: operations["appendPersonNote"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2798,6 +2852,15 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        AppendPersonNoteRequest: {
+            actor?: string;
+            /** Format: double */
+            confidence?: number;
+            /** @enum {string} */
+            source?: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string;
+            text: string;
+        };
         AttachmentInfo: {
             content_hash?: string;
             filename: string;
@@ -3486,7 +3549,7 @@ export interface components {
             object_type: "person" | "organization";
             options?: components["schemas"]["AttributeOptions"];
             record_target?: string;
-            slug: string;
+            slug?: string;
             value_type: string;
             vcard_property?: string;
         };
@@ -5083,6 +5146,28 @@ export interface components {
             /** Format: int64 */
             year?: number;
         };
+        ParticipantCompletionHTTPRequest: {
+            /** Format: int64 */
+            limit?: number;
+            query: string;
+        };
+        ParticipantCompletionHTTPResponse: {
+            cache_revision: string;
+            rows: components["schemas"]["ParticipantCompletionHTTPRow"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ParticipantCompletionHTTPRow: {
+            display_label: string;
+            /** @enum {string} */
+            kind: "name" | "phone" | "email" | "username" | "impp" | "organization" | "title" | "role";
+            /** Format: int64 */
+            participant_id: number;
+            source: string;
+            value: string;
+        } & {
+            [key: string]: unknown;
+        };
         ParticipantContactObservation: {
             address_kind: string;
             envelope: components["schemas"]["ValueEnvelope"];
@@ -5462,6 +5547,34 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonInboxResponse: {
+            cache_revision: string;
+            /** Format: int64 */
+            identity_revision: number;
+            rows: components["schemas"]["PersonInboxRow"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonInboxRow: {
+            /** Format: int64 */
+            conversation_count: number;
+            /** Format: date-time */
+            latest_at: string;
+            /** Format: date-time */
+            latest_received_at?: string;
+            /** Format: date-time */
+            latest_sent_at?: string;
+            /** Format: int64 */
+            received_count: number;
+            /** Format: int64 */
+            sent_count: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
         PersonMedia: {
             /** Format: int64 */
             byte_size?: number;
@@ -5650,6 +5763,8 @@ export interface components {
             identifiers: components["schemas"]["PersonIdentifier"][] | null;
             /** Format: date-time */
             last_at: string;
+            /** Format: int64 */
+            meeting_count: number;
             partial_label: boolean;
             profile?: components["schemas"]["PersonProfile"];
             source_counts: components["schemas"]["SourceCount"][] | null;
@@ -6431,6 +6546,7 @@ export interface components {
             [key: string]: unknown;
         };
         TextConversationsResponse: {
+            cache_revision: string;
             conversations: components["schemas"]["TextConversationRow"][] | null;
             /** Format: int64 */
             count: number;
@@ -6443,6 +6559,19 @@ export interface components {
             [key: string]: unknown;
         };
         TextMessagesResponse: {
+            cache_revision: string;
+            /** Format: int64 */
+            count: number;
+            has_more: boolean;
+            /** Format: int64 */
+            limit: number;
+            messages: components["schemas"]["CLIQueryMessageSummary"][] | null;
+            /** Format: int64 */
+            offset: number;
+        } & {
+            [key: string]: unknown;
+        };
+        TextSearchResponse: {
             /** Format: int64 */
             count: number;
             has_more: boolean;
@@ -13278,6 +13407,66 @@ export interface operations {
             };
         };
     };
+    completeParticipants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParticipantCompletionHTTPRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantCompletionHTTPResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     searchParticipants: {
         parameters: {
             query?: never;
@@ -13438,6 +13627,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listParticipantInboxes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Observed participant cluster member ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonInboxResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -14576,6 +14806,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    appendPersonNote: {
+        parameters: {
+            query?: {
+                /** @description Validate and preview without writing */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppendPersonNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -16979,6 +17284,8 @@ export interface operations {
             query?: {
                 /** @description Source ID */
                 source_id?: number;
+                /** @description Exact participant cluster member IDs */
+                participant_id?: number[];
                 /** @description Sender phone/address filter */
                 contact_phone?: string;
                 /** @description Sender display-name filter */
@@ -17035,6 +17342,8 @@ export interface operations {
             query?: {
                 /** @description Source ID */
                 source_id?: number;
+                /** @description Exact participant cluster member IDs */
+                participant_id?: number[];
                 /** @description Sender phone/address filter */
                 contact_phone?: string;
                 /** @description Sender display-name filter */
@@ -17111,7 +17420,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TextMessagesResponse"];
+                    "application/json": components["schemas"]["TextSearchResponse"];
                 };
             };
             /** @description Error */

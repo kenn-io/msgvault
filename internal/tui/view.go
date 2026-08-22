@@ -1193,7 +1193,7 @@ var rawHelpLines = []string{
 	"  A           Select account",
 	"  f           Filter (attachments, deleted)",
 	"  e           Export attachments (in message view)",
-	"  m           Cycle Email/Texts/Meetings",
+	"  m           Cycle Email/Texts/Meetings/People",
 	"  q           Quit",
 	"",
 	"[↑/↓] Scroll  [Any other key] Close",
@@ -1217,7 +1217,7 @@ var meetingHelpLines = []string{
 	"  r           Reverse sort order",
 	"",
 	"Other",
-	"  m           Cycle Email/Texts/Meetings",
+	"  m           Cycle Email/Texts/Meetings/People",
 	"  ?           Show this help",
 	"  q           Quit",
 	"",
@@ -1226,7 +1226,34 @@ var meetingHelpLines = []string{
 	"[↑/↓] Scroll  [Any other key] Close",
 }
 
+var peopleHelpLines = []string{
+	"People Shortcuts",
+	"",
+	"Navigation",
+	"  ↑/k, ↓/j    Move selection",
+	"  PgUp/PgDn   Page up/down",
+	"  Home/End    Go to first/last contact",
+	"  Enter       Open selected contact",
+	"  Esc         Clear search or go back",
+	"  Tab         Cycle contact tabs",
+	"  Shift-Tab   Cycle contact tabs backward",
+	"",
+	"Browse & Search",
+	"  /           Search names and identifiers",
+	"  r           Retry a failed directory load",
+	"",
+	"Other",
+	"  m           Cycle Email/Texts/Meetings/People",
+	"  ?           Show this help",
+	"  q           Quit",
+	"",
+	"[↑/↓] Scroll  [Any other key] Close",
+}
+
 func (m Model) activeHelpLines() []string {
+	if m.mode == modePeople {
+		return peopleHelpLines
+	}
 	if m.mode == modeMeetings {
 		return meetingHelpLines
 	}

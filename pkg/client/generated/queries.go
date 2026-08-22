@@ -673,6 +673,11 @@ type ListPersonEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type AppendPersonNoteQuery struct {
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
+}
+
 type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
 }
@@ -993,6 +998,9 @@ type ListTextConversationsQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
+
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`
 
@@ -1033,6 +1041,9 @@ type ListTextConversationsQuery struct {
 type ListTextConversationMessagesQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
+
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
 
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`

@@ -42,23 +42,10 @@ type viewState struct {
 	msgListComplete    bool // True when all pages have been loaded (no more data)
 
 	// Data
-	rows          []query.AggregateRow
-	messages      []query.MessageSummary
-	messageDetail *query.MessageDetail
+	rows     []query.AggregateRow
+	messages []query.MessageSummary
 
-	// Detail view specific
-	detailScroll         int
-	detailLineCount      int
-	detailMessageIndex   int
-	detailFromThread     bool
-	pendingDetailSubject string
-
-	// Detail search (find-in-page)
-	detailSearchActive     bool
-	detailSearchInput      textinput.Model
-	detailSearchQuery      string
-	detailSearchMatches    []int // Line indices with matches
-	detailSearchMatchIndex int   // Current match index
+	messageReaderState
 
 	// Thread view specific
 	threadConversationID int64
@@ -66,6 +53,25 @@ type viewState struct {
 	threadCursor         int
 	threadScrollOffset   int
 	threadTruncated      bool
+}
+
+// messageReaderState is the complete state of the shared message-detail
+// renderer. Each top-level mode owns one independent instance even though the
+// rendering and key handling are shared.
+type messageReaderState struct {
+	messageDetail *query.MessageDetail
+
+	detailScroll         int
+	detailLineCount      int
+	detailMessageIndex   int
+	detailFromThread     bool
+	pendingDetailSubject string
+
+	detailSearchActive     bool
+	detailSearchInput      textinput.Model
+	detailSearchQuery      string
+	detailSearchMatches    []int
+	detailSearchMatchIndex int
 }
 
 // navigationSnapshot stores state for navigation history.

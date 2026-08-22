@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/update"
@@ -53,8 +54,12 @@ type Options struct {
 	ThreadMessageLimit int
 
 	// TextEngine provides text message query operations.
-	// When non-nil, the 'm' key toggles between Email and Texts mode.
+	// When non-nil, Texts participates in the top-level mode cycle.
 	TextEngine query.TextEngine
+
+	// PeopleBackend provides the People directory and contact workspace.
+	// When nil, embedders retain the three existing modes.
+	PeopleBackend peoplebrowser.Backend
 
 	// ManifestSaver saves staged deletion manifests. When nil, manifests are
 	// saved under DataDir for tests or direct embedding.
@@ -131,8 +136,16 @@ type Model struct {
 	// Texts mode state (separate from email viewState)
 	textState textState
 
+	// Shared message-detail rendering has independent state per top-level mode.
+	// messageReaderState in viewState is the active mode's instance.
+	parkedMessageReaders [modeCount]messageReaderState
+
 	// Meetings mode state (separate from email and text navigation state)
 	meetingState meetingState
+
+	// People mode dependencies and state remain separate from every other mode.
+	peopleBackend peoplebrowser.Backend
+	peopleState   peopleState
 
 	// Version info for title bar
 	version string
@@ -256,6 +269,14 @@ func New(engine query.Engine, opts Options) Model {
 	meetingDetailInput.Placeholder = "find in transcript"
 	meetingDetailInput.CharLimit = 200
 	meetingDetailInput.SetWidth(40)
+	peopleMeetingDetailInput := textinput.New()
+	peopleMeetingDetailInput.Placeholder = "find in transcript"
+	peopleMeetingDetailInput.CharLimit = 200
+	peopleMeetingDetailInput.SetWidth(40)
+	peopleInput := textinput.New()
+	peopleInput.Placeholder = "search names and identifiers"
+	peopleInput.CharLimit = 200
+	peopleInput.SetWidth(50)
 
 	aggLimit := opts.AggregateLimit
 	if aggLimit == 0 {
@@ -275,8 +296,9 @@ func New(engine query.Engine, opts Options) Model {
 	}
 
 	return Model{
-		engine:     engine,
-		textEngine: textEngine,
+		engine:        engine,
+		textEngine:    textEngine,
+		peopleBackend: opts.PeopleBackend,
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
 			DataDir:          opts.DataDir,
 			ManifestSaver:    opts.ManifestSaver,
@@ -298,6 +320,10 @@ func New(engine query.Engine, opts Options) Model {
 		meetingState: meetingState{
 			searchInput:       meetingInput,
 			detailSearchInput: meetingDetailInput,
+		},
+		peopleState: peopleState{
+			searchInput: peopleInput, location: time.Local,
+			parkedMeetingState: meetingState{detailSearchInput: peopleMeetingDetailInput},
 		},
 		pageSize:      20,
 		loading:       true,
@@ -1003,6 +1029,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnalyticsNoticeMsg:
 		m.analyticsNotice = msg.Notice
 		return m, nil
+	// People messages are delegated before the shared Email handlers.
+	case peopleSearchDebounceMsg:
+		return m.handlePeopleSearchDebounce(msg)
+	case peopleCompletionLoadedMsg:
+		return m.handlePeopleCompletionLoaded(msg)
+	case peopleDirectoryLoadedMsg:
+		return m.handlePeopleDirectoryLoaded(msg)
+	case peopleContactLoadedMsg:
+		return m.handlePeopleContactLoaded(msg)
+	case peoplePromotedMsg:
+		return m.handlePeoplePromoted(msg)
+	case peopleAttributesLoadedMsg:
+		return m.handlePeopleAttributesLoaded(msg)
+	case peopleFieldCreatedMsg:
+		return m.handlePeopleFieldCreated(msg)
+	case peopleAttributeSetMsg:
+		return m.handlePeopleAttributeSet(msg)
+	case peopleInboxesLoadedMsg:
+		return m.handlePeopleInboxesLoaded(msg)
+	case peopleConversationsLoadedMsg:
+		return m.handlePeopleConversationsLoaded(msg)
+	case peopleConversationMessagesLoadedMsg:
+		return m.handlePeopleConversationMessagesLoaded(msg)
+	case peopleMessageLoadedMsg:
+		return m.handlePeopleMessageLoaded(msg)
+	case peopleMeetingsLoadedMsg:
+		return m.handlePeopleMeetingsLoaded(msg)
+	case peopleMeetingLoadedMsg:
+		return m.handlePeopleMeetingLoaded(msg)
+	case peopleFilesLoadedMsg:
+		return m.handlePeopleFilesLoaded(msg)
+	case peopleFileMessageLoadedMsg:
+		return m.handlePeopleFileMessageLoaded(msg)
+	case peopleFileExportedMsg:
+		return m.handlePeopleFileExported(msg)
+	case peopleActivityLoadedMsg:
+		return m.handlePeopleActivityLoaded(msg)
+	case peopleActivityMessageLoadedMsg:
+		return m.handlePeopleActivityMessageLoaded(msg)
+	case ExportResultMsg:
+		return m.handleExportResult(exportResultMsg{result: msg.Result, err: msg.Err})
 	case messagesLoadedMsg:
 		return m.handleMessagesLoaded(msg)
 	case messageDetailLoadedMsg:
@@ -1026,6 +1093,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTextAggregateLoaded(msg)
 	case textMessagesLoadedMsg:
 		return m.handleTextMessagesLoaded(msg)
+	case textMessageLoadedMsg:
+		return m.handleTextMessageLoaded(msg)
 	case textSearchResultMsg:
 		return m.handleTextSearchResult(msg)
 	case textStatsLoadedMsg:
@@ -1162,32 +1231,23 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m.height = 0
 	}
 	m.pageSize = max(m.height-headerFooterLines, 1)
-	// Recalculate detail line count if in detail view (width affects wrapping)
-	if m.level == levelMessageDetail && m.messageDetail != nil {
-		m.updateDetailLineCount()
-		// Recompute detail search matches since line indices depend on text wrapping
-		if m.detailSearchQuery != "" {
-			m.findDetailMatches()
-			// Clamp match index to new match count
-			if m.detailSearchMatchIndex >= len(m.detailSearchMatches) {
-				if len(m.detailSearchMatches) > 0 {
-					m.detailSearchMatchIndex = len(m.detailSearchMatches) - 1
-				} else {
-					m.detailSearchMatchIndex = 0
-				}
-			}
-		}
-		m.clampDetailScroll()
+	if m.messageDetail != nil {
+		m.reflowMessageDetail()
 	}
-	if m.mode == modeMeetings && m.meetingState.level == meetingLevelDetail && m.meetingState.detail != nil {
-		if m.meetingState.detailSearchQuery != "" {
-			matchIndex := m.meetingState.detailSearchMatchIndex
-			m.findMeetingDetailMatches()
-			if len(m.meetingState.detailSearchMatches) > 0 {
-				m.meetingState.detailSearchMatchIndex = min(matchIndex, len(m.meetingState.detailSearchMatches)-1)
-			}
+	for mode := modeEmail; mode < modeCount; mode++ {
+		if m.parkedMessageReaders[mode].messageDetail != nil {
+			m.parkedMessageReaders[mode] = m.reflowMessageReader(
+				m.parkedMessageReaders[mode],
+			)
 		}
-		m.clampMeetingDetailScroll()
+	}
+	if m.meetingState.detail != nil {
+		m.reflowMeetingDetail()
+	}
+	if m.peopleState.parkedMeetingState.detail != nil {
+		m.peopleState.parkedMeetingState = m.reflowMeetingReader(
+			m.peopleState.parkedMeetingState,
+		)
 	}
 	return m, nil
 }
@@ -1347,10 +1407,18 @@ func (m Model) handleMessageDetailLoaded(msg messageDetailLoadedMsg) (tea.Model,
 				m.modal = modalNone
 			}
 		}
-		m.messageDetail = msg.detail
-		m.detailScroll = 0
-		m.pendingDetailSubject = "" // Clear pending subject
-		m.updateDetailLineCount()   // Calculate line count for scroll bounds
+		if m.mode == modeEmail {
+			m.messageDetail = msg.detail
+			m.detailScroll = 0
+			m.pendingDetailSubject = ""
+			m.reflowMessageDetail()
+		} else {
+			reader := m.parkedMessageReaders[modeEmail]
+			reader.messageDetail = msg.detail
+			reader.detailScroll = 0
+			reader.pendingDetailSubject = ""
+			m.parkedMessageReaders[modeEmail] = m.reflowMessageReader(reader)
+		}
 	}
 	return m, nil
 }
@@ -1540,6 +1608,9 @@ func (m Model) handleSpinnerTick() (tea.Model, tea.Cmd) {
 
 // handleKeyPress processes keyboard input.
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.mode == modePeople {
+		return m.handlePeopleKeyPress(msg)
+	}
 	// Route to Texts mode handler when active
 	if m.mode == modeTexts {
 		return m.handleTextKeyPress(msg)
@@ -1600,6 +1671,46 @@ func (m *Model) clampDetailScroll() {
 	if m.detailScroll > maxScroll {
 		m.detailScroll = maxScroll
 	}
+}
+
+func (m *Model) reflowMessageDetail() {
+	m.updateDetailLineCount()
+	if m.detailSearchQuery != "" {
+		m.findDetailMatches()
+		if m.detailSearchMatchIndex >= len(m.detailSearchMatches) {
+			if len(m.detailSearchMatches) > 0 {
+				m.detailSearchMatchIndex = len(m.detailSearchMatches) - 1
+			} else {
+				m.detailSearchMatchIndex = 0
+			}
+		}
+	}
+	m.clampDetailScroll()
+}
+
+func (m Model) reflowMessageReader(reader messageReaderState) messageReaderState {
+	m.messageReaderState = reader
+	m.reflowMessageDetail()
+	return m.messageReaderState
+}
+
+func (m *Model) reflowMeetingDetail() {
+	matchIndex := m.meetingState.detailSearchMatchIndex
+	if m.meetingState.detailSearchQuery != "" {
+		m.findMeetingDetailMatches()
+		if len(m.meetingState.detailSearchMatches) > 0 {
+			m.meetingState.detailSearchMatchIndex = min(
+				matchIndex, len(m.meetingState.detailSearchMatches)-1,
+			)
+		}
+	}
+	m.clampMeetingDetailScroll()
+}
+
+func (m Model) reflowMeetingReader(reader meetingState) meetingState {
+	m.meetingState = reader
+	m.reflowMeetingDetail()
+	return m.meetingState
 }
 
 // findDetailMatches finds all lines matching the detail search query.
@@ -1752,6 +1863,9 @@ func (m Model) View() tea.View {
 // Separated from View() so transitions can capture the current output
 // before changing state (for the transitionBuffer pattern).
 func (m Model) renderView() string {
+	if m.mode == modePeople {
+		return m.renderPeopleView()
+	}
 	if m.mode == modeTexts {
 		return m.renderTextView()
 	}

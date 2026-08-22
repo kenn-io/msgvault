@@ -35,6 +35,7 @@ func TestInitSchemaSeedsTheSystemPersonCatalog(t *testing.T) {
 		store.AttributeSlugContactFrequency,
 		store.AttributeSlugAskMeAbout,
 		store.AttributeSlugLastContacted,
+		store.AttributeSlugNotes,
 		"location", "birthplace", "membership", "religion", "politics",
 		"personality", "family_pets", "interests_fun_now",
 		"interests_fun_growing_up", "favorites_food", "favorites_place",
@@ -98,6 +99,37 @@ func TestSeededAttributeDefinitionsIncludeExpandedPersonCatalog(t *testing.T) {
 			seenIDs[definition.UniversalID] = struct{}{}
 		})
 	}
+}
+
+func TestSeededAttributeDefinitionsIncludeNotes(t *testing.T) {
+	notes := definitionBySlug(t, store.SeededAttributeDefinitions(), store.AttributeSlugNotes)
+	assert.Equal(t, "b72b3cf7-509f-4286-a0f0-bb039c85ff40", notes.UniversalID)
+	assert.Equal(t, store.AttributeValueText, notes.ValueType)
+	assert.Equal(t, store.AttributeFieldTextarea, notes.FieldType)
+	assert.Equal(t, store.AttributeCardinalitySingle, notes.Cardinality)
+	assert.Equal(t, store.AttributeOwnershipSystem, notes.Ownership)
+	assert.True(t, notes.UICreatable)
+	assert.True(t, notes.UIEditable)
+	assert.True(t, notes.APIMutable)
+	assert.True(t, notes.IsSensitive)
+	assert.False(t, notes.IsSearchable)
+	assert.True(t, notes.IsAudited)
+	assert.False(t, notes.IsDeletable)
+	require.NotNil(t, notes.VCardProperty)
+	assert.Equal(t, "NOTE", *notes.VCardProperty)
+}
+
+func definitionBySlug(
+	t *testing.T, definitions []store.AttributeDefinitionInput, slug string,
+) store.AttributeDefinitionInput {
+	t.Helper()
+	for _, definition := range definitions {
+		if definition.Slug == slug {
+			return definition
+		}
+	}
+	require.FailNow(t, "seeded attribute definition not found", "slug=%s", slug)
+	return store.AttributeDefinitionInput{}
 }
 
 func TestSeededDefinitionsCarryTheirDocumentedShape(t *testing.T) {
@@ -208,7 +240,7 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 	all, err := st.ListAttributeDefinitionsContext(ctx,
 		store.AttributeDefinitionFilter{ObjectType: store.AttributeObjectPerson})
 	require.NoError(err)
-	assert.Len(all, 15)
+	assert.Len(all, len(store.SeededAttributeDefinitions()))
 }
 
 func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
@@ -255,7 +287,9 @@ func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
 
-	legacy := store.SeededAttributeDefinitions()[4]
+	legacy := definitionBySlug(
+		t, store.SeededAttributeDefinitions(), store.AttributeSlugLocation,
+	)
 	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
 	legacy.Label = "Legacy location notes"
 	legacy.FieldType = store.AttributeFieldTextarea
@@ -305,7 +339,7 @@ func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
 	definitions, err := st.ListAttributeDefinitionsContext(ctx,
 		store.AttributeDefinitionFilter{ObjectType: store.AttributeObjectPerson})
 	require.NoError(err)
-	assert.Len(definitions, 16)
+	assert.Len(definitions, len(store.SeededAttributeDefinitions())+1)
 	var canonical *store.AttributeDefinition
 	for i := range definitions {
 		if definitions[i].UniversalID == store.AttributeUniversalIDLocation {
@@ -340,7 +374,9 @@ func TestInitSchemaUsesNextFallbackWhenSeedFallbackSlugIsOccupied(t *testing.T) 
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
-	legacy := store.SeededAttributeDefinitions()[4]
+	legacy := definitionBySlug(
+		t, store.SeededAttributeDefinitions(), store.AttributeSlugLocation,
+	)
 	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
 	legacy.Ownership = store.AttributeOwnershipUser
 	legacy.IsDeletable = true
@@ -403,7 +439,9 @@ func TestInitSchemaResolvesCombinedSeedSlugAndUniversalIDCollision(t *testing.T)
 		WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
-	legacy := store.SeededAttributeDefinitions()[4]
+	legacy := definitionBySlug(
+		t, store.SeededAttributeDefinitions(), store.AttributeSlugLocation,
+	)
 	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
 	legacy.Ownership = store.AttributeOwnershipUser
 	legacy.IsDeletable = true
@@ -498,7 +536,9 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentFallbackSeed(t *testin
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
-	legacy := store.SeededAttributeDefinitions()[4]
+	legacy := definitionBySlug(
+		t, store.SeededAttributeDefinitions(), store.AttributeSlugLocation,
+	)
 	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
 	legacy.Ownership = store.AttributeOwnershipUser
 	legacy.IsDeletable = true

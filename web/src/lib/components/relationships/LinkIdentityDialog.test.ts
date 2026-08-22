@@ -12,7 +12,7 @@ function person(id: number, label: string): PersonSummary {
   return {
     id, display_label: label, partial_label: false,
     identifiers: [{ type: 'email', value: `${label.toLowerCase()}@example.com`, participant_id: id, is_primary: true, provenance: 'participant_identifiers' }],
-    activity_count: 3, file_count: 1, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
+    activity_count: 3, meeting_count: 0, file_count: 1, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
   };
 }
 

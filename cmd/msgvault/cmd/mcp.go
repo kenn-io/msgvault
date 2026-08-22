@@ -82,6 +82,7 @@ Add to Claude Desktop config:
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
 	opts := mcpserver.ServeOptions{
 		Engine:             daemonclient.NewEngineAdapter(st),
+		PeopleBackend:      daemonclient.NewPeopleBrowser(daemonclient.NewEngineAdapter(st)),
 		AttachmentsDir:     cfg.AttachmentsDir(),
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
@@ -261,9 +262,9 @@ func init() {
 			"key, any reachable client can read your archive; only set this behind "+
 			"a trusted network boundary or authenticating reverse proxy.")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
-		"Expose write-class MCP tools over HTTP. This permits clients to create "+
-			"attachment exports and deletion manifests; enable it only for trusted, "+
-			"authenticated clients.")
+		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
+			"deletion manifests, person promotion, and private Notes writes; enable it "+
+			"only for trusted, authenticated clients.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

@@ -74,6 +74,73 @@ func TestPersonAttributesHTTPListsDefinitionsSetsHistoryAndClears(t *testing.T) 
 	require.Equal(http.StatusOK, cleared.Code, cleared.Body.String())
 }
 
+func TestHTTPAppendPersonNoteUsesAtomicStorePath(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	participant := st.mustParticipant(
+		t, "notes-append@example.test", "Notes Person", "example.test",
+	)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	path := fmt.Sprintf("%s/%d/notes/append", peoplePath, person.ID)
+
+	first := attributeRequest(t, srv, http.MethodPost, path,
+		[]byte(`{"text":"first fact"}`), "")
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var firstWrite store.PersonAttributeWrite
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstWrite))
+	require.NotNil(firstWrite.Value)
+	assert.Equal(store.ProvenanceUser, firstWrite.Value.Source)
+	require.NotNil(firstWrite.Value.Value.Text)
+	assert.Equal("first fact", *firstWrite.Value.Value.Text)
+	assert.Equal("no-store", first.Header().Get("Cache-Control"))
+
+	second := attributeRequest(t, srv, http.MethodPost, path,
+		[]byte(`{"text":"second fact"}`), "")
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+	var secondWrite store.PersonAttributeWrite
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &secondWrite))
+	require.NotNil(secondWrite.Value)
+	require.NotNil(secondWrite.Value.Value.Text)
+	assert.Equal("first fact\nsecond fact", *secondWrite.Value.Value.Text)
+	require.NotNil(secondWrite.Superseded)
+	assert.Equal(firstWrite.Value.ID, secondWrite.Superseded.ID)
+
+	history := attributeRequest(t, srv, http.MethodGet,
+		personAttributesPath(person.ID)+"?history=true&slug="+store.AttributeSlugNotes,
+		nil, "")
+	require.Equal(http.StatusOK, history.Code, history.Body.String())
+	groups := decodePersonAttributes(t, history.Body.Bytes())
+	assert.Len(groups[store.AttributeSlugNotes].History, 2)
+
+	blank := attributeRequest(t, srv, http.MethodPost, path,
+		[]byte(`{"text":"  \n\t "}`), "")
+	require.Equal(http.StatusBadRequest, blank.Code, blank.Body.String())
+	assert.Contains(blank.Body.String(), `"error":"attribute_value_invalid"`)
+
+	missing := attributeRequest(t, srv, http.MethodPost,
+		fmt.Sprintf("%s/%d/notes/append", peoplePath, 999_999),
+		[]byte(`{"text":"missing"}`), "")
+	assert.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
+
+	preview := attributeRequest(t, srv, http.MethodPost, path+"?dry_run=true",
+		[]byte(`{"text":"preview fact"}`), "")
+	require.Equal(http.StatusOK, preview.Code, preview.Body.String())
+	var previewWrite store.PersonAttributeWrite
+	require.NoError(json.Unmarshal(preview.Body.Bytes(), &previewWrite))
+	assert.True(previewWrite.DryRun)
+	require.NotNil(previewWrite.Value)
+	assert.Zero(previewWrite.Value.ID)
+	require.NotNil(previewWrite.Value.Value.Text)
+	assert.Equal("first fact\nsecond fact\npreview fact", *previewWrite.Value.Value.Text)
+
+	operationPath := OpenAPIDocument().Paths["/api/v1/people/{id}/notes/append"]
+	require.NotNil(operationPath)
+	require.NotNil(operationPath.Post)
+	assert.Equal("appendPersonNote", operationPath.Post.OperationID)
+}
+
 func TestPersonAttributesHTTPClearRejectsStaleExpectedValueID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -116,7 +183,9 @@ func TestPersonAttributesHTTPPreservesLegacySlugAcrossSeedCollision(t *testing.T
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
-	legacy := store.SeededAttributeDefinitions()[4]
+	legacy := seededAttributeDefinitionInputBySlug(
+		t, store.SeededAttributeDefinitions(), store.AttributeSlugLocation,
+	)
 	legacy.UniversalID = "994e8d78-4711-42ec-9801-e3348e6fd133"
 	legacy.Ownership = store.AttributeOwnershipUser
 	legacy.IsDeletable = true
@@ -140,6 +209,19 @@ func TestPersonAttributesHTTPPreservesLegacySlugAcrossSeedCollision(t *testing.T
 	require.Len(group.Current, 1)
 	require.NotNil(group.Current[0].Value.Text)
 	assert.Equal("Old town", *group.Current[0].Value.Text)
+}
+
+func seededAttributeDefinitionInputBySlug(
+	t *testing.T, definitions []store.AttributeDefinitionInput, slug string,
+) store.AttributeDefinitionInput {
+	t.Helper()
+	for _, definition := range definitions {
+		if definition.Slug == slug {
+			return definition
+		}
+	}
+	require.FailNow(t, "seeded attribute definition not found", "slug=%s", slug)
+	return store.AttributeDefinitionInput{}
 }
 
 func TestPersonAttributesHTTPRejectsDerivedInvalidUnknownAndSupportsDryRun(t *testing.T) {

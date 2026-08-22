@@ -161,6 +161,16 @@ func APIResponseWithStatuses[R any](
 	})
 }
 
+func apiResponseWithErrorDecoder[R any](
+	c *Client,
+	request func(*apiclient.Client) (R, error),
+	decodeErrorBody func(status int, body []byte) error,
+) (R, error) {
+	return generatedResponse(c, request, func(resp any, err error) error {
+		return responseError(resp, err, []int{http.StatusOK}, decodeErrorBody)
+	})
+}
+
 // APIResponseWithNotFound executes a generated request and allows callers to
 // translate 404 responses into domain-specific not-found errors.
 func APIResponseWithNotFound[R any](

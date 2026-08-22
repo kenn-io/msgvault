@@ -23,6 +23,9 @@ type PersonAttributeStore interface {
 	SetPersonAttributeValueContext(
 		ctx context.Context, input store.PersonAttributeValueInput,
 	) (*store.PersonAttributeWrite, error)
+	AppendPersonNoteContext(
+		ctx context.Context, input store.PersonNoteAppendInput,
+	) (*store.PersonAttributeWrite, error)
 	SupersedePersonAttributeValueContext(
 		ctx context.Context, input store.PersonAttributeSupersedeInput,
 	) (*store.PersonAttributeWrite, error)
@@ -54,6 +57,15 @@ type SetPersonAttributeRequest struct {
 	ExpectedValueID *int64               `json:"expected_value_id,omitempty"`
 }
 
+// AppendPersonNoteRequest carries one note fragment and its provenance.
+type AppendPersonNoteRequest struct {
+	Text       string   `json:"text"`
+	Source     string   `json:"source,omitempty" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
+	SourceRef  *string  `json:"source_ref,omitempty"`
+	Confidence *float64 `json:"confidence,omitempty"`
+	Actor      *string  `json:"actor,omitempty"`
+}
+
 func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonAttributes", http.MethodGet,
 		"/people/{id}/attributes", "List a person's typed attributes")
@@ -76,6 +88,17 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	addErrorResponses(api, set.Responses, http.StatusBadRequest, http.StatusConflict,
 		http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, set, s.handleSetPersonAttribute)
+
+	appendNote := rawAPIV1Operation("appendPersonNote", http.MethodPost,
+		"/people/{id}/notes/append", "Append to a person's notes")
+	addPersonIDParameter(&appendNote)
+	appendNote.Parameters = append(appendNote.Parameters,
+		queryBooleanParam("dry_run", "Validate and preview without writing"))
+	appendNote.RequestBody = jsonRequestBodyFor[AppendPersonNoteRequest](api)
+	appendNote.Responses = jsonResponsesFor[store.PersonAttributeWrite](api)
+	addErrorResponses(api, appendNote.Responses, http.StatusBadRequest, http.StatusConflict,
+		http.StatusNotFound, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, appendNote, s.handleAppendPersonNote)
 
 	clearOperation := rawAPIV1Operation("clearPersonAttribute", http.MethodDelete,
 		"/people/{id}/attributes/{slug}", "Supersede a person's attribute value")
@@ -267,6 +290,41 @@ func (s *Server) handleClearPersonAttribute(w http.ResponseWriter, r *http.Reque
 			PersonID: personID, DefinitionSlug: slug, Ordinal: ordinal,
 			ExpectedValueID: expectedValueIDPtr, DryRun: dryRun,
 		})
+	if err != nil {
+		s.writeAttributeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, write)
+}
+
+func (s *Server) handleAppendPersonNote(w http.ResponseWriter, r *http.Request) {
+	attributes, ok := s.personAttributeStore(w)
+	if !ok {
+		return
+	}
+	personID, ok := personProfileID(w, r)
+	if !ok {
+		return
+	}
+	dryRun, _, err := queryBool(r, "dry_run")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	var request AppendPersonNoteRequest
+	if !decodeAttributeRequest(w, r, &request) {
+		return
+	}
+	source := store.Provenance(strings.TrimSpace(request.Source))
+	if source == "" {
+		source = store.ProvenanceUser
+	}
+	write, err := attributes.AppendPersonNoteContext(r.Context(), store.PersonNoteAppendInput{
+		PersonID: personID, Text: request.Text, Source: source,
+		SourceRef: request.SourceRef, Confidence: request.Confidence,
+		Actor: request.Actor, DryRun: dryRun,
+	})
 	if err != nil {
 		s.writeAttributeError(w, err)
 		return

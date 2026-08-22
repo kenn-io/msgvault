@@ -22,9 +22,13 @@ import (
 // 18 adds participant-directory revision tracking; version 19 exports
 // attachment_metadata for raw attachment queries; version 20 rebuilds
 // relationship activity with message-relative owner attribution; version 21
-// preserves the exact message-relative owner participant in message Parquet.
+// preserves the exact message-relative owner participant in message Parquet;
+// version 22 adds message_type to logical relationship activity and derived
+// meeting_count fields to relationship people and their source rollups;
+// version 23 adds typed search primitives to relationship people for bounded,
+// explainable contact completion without reopening archive tables.
 // Schema bumps force a full rebuild before readers use an older publication.
-const CacheSchemaVersion = 21
+const CacheSchemaVersion = 23
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

@@ -2,8 +2,13 @@ package query
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"hash"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +17,155 @@ import (
 
 // Compile-time interface assertion.
 var _ TextEngine = (*SQLiteEngine)(nil)
+var _ TextSnapshotter = (*SQLiteEngine)(nil)
+
+// TextSnapshotRevision hashes the complete ordered metadata result behind a
+// text page in one read transaction. Pagination and message bodies are not
+// part of the logical list identity.
+func (e *SQLiteEngine) TextSnapshotRevision(
+	ctx context.Context, scope TextSnapshotScope,
+) (revision string, err error) {
+	tx, err := e.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "", fmt.Errorf("begin text snapshot: %w", err)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); err == nil && rollbackErr != nil && rollbackErr != sql.ErrTxDone {
+			err = fmt.Errorf("finish text snapshot: %w", rollbackErr)
+		}
+	}()
+
+	hasher := sha256.New()
+	identity, err := textSnapshotFilterIdentity(scope)
+	if err != nil {
+		return "", err
+	}
+	writeSnapshotField(hasher, identity)
+
+	query, args := e.sqliteTextSnapshotQuery(scope)
+	rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
+	if err != nil {
+		return "", fmt.Errorf("query text snapshot: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", fmt.Errorf("read text snapshot columns: %w", err)
+	}
+	values := make([]sql.RawBytes, len(columns))
+	dest := make([]any, len(columns))
+	for i := range values {
+		dest[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return "", fmt.Errorf("scan text snapshot: %w", err)
+		}
+		for _, value := range values {
+			writeSnapshotField(hasher, value)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate text snapshot: %w", err)
+	}
+	return "text-" + hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func textSnapshotFilterIdentity(scope TextSnapshotScope) ([]byte, error) {
+	filter := scope.Filter
+	filter.Pagination = Pagination{}
+	filter.ParticipantIDs = slices.Clone(filter.ParticipantIDs)
+	slices.Sort(filter.ParticipantIDs)
+	if filter.After != nil {
+		value := filter.After.UTC()
+		filter.After = &value
+	}
+	if filter.Before != nil {
+		value := filter.Before.UTC()
+		filter.Before = &value
+	}
+	identity, err := json.Marshal(struct {
+		ConversationID *int64
+		Filter         TextFilter
+	}{ConversationID: scope.ConversationID, Filter: filter})
+	if err != nil {
+		return nil, fmt.Errorf("encode text snapshot scope: %w", err)
+	}
+	return identity, nil
+}
+
+func writeSnapshotField(hasher hash.Hash, value []byte) {
+	_, _ = fmt.Fprintf(hasher, "%d:", len(value))
+	_, _ = hasher.Write(value)
+}
+
+func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string, []any) {
+	where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
+	if scope.ConversationID != nil {
+		where += " AND m.conversation_id = ?"
+		args = append(args, *scope.ConversationID)
+		direction := sqliteDirection(scope.Filter.SortDirection)
+		return fmt.Sprintf(`
+			SELECT
+				m.id,
+				COALESCE(m.source_message_id, ''),
+				COALESCE(m.conversation_id, 0),
+				COALESCE(c.source_conversation_id, ''),
+				COALESCE(m.subject, ''),
+				COALESCE(m.snippet, ''),
+				COALESCE(p_sender.email_address, ''),
+				COALESCE(p_sender.display_name, ''),
+				COALESCE(p_sender.phone_number, ''),
+				COALESCE(CAST(m.sent_at AS TEXT), ''),
+				COALESCE(m.size_estimate, 0),
+				COALESCE(m.has_attachments, 0),
+				COALESCE(m.attachment_count, 0),
+				COALESCE(CAST(m.deleted_from_source_at AS TEXT), ''),
+				COALESCE(m.message_type, ''),
+				COALESCE(c.title, '')
+			FROM messages m
+			LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
+			LEFT JOIN conversations c ON c.id = m.conversation_id
+			WHERE %s
+			ORDER BY m.sent_at %s, m.id %s
+		`, where, direction, direction), args
+	}
+
+	var orderBy string
+	switch scope.Filter.SortField {
+	case TextSortByCount:
+		orderBy = "message_count"
+	case TextSortByName:
+		orderBy = "title"
+	default:
+		orderBy = "last_message_at"
+	}
+	orderBy += " " + sqliteDirection(scope.Filter.SortDirection) + ", c.id DESC"
+	return fmt.Sprintf(`
+		SELECT
+			c.id,
+			COALESCE(c.title, '') AS title,
+			COALESCE(s.source_type, '') AS source_type,
+			COUNT(*) AS message_count,
+			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
+			COALESCE(CAST(MAX(m.sent_at) AS TEXT), '') AS last_message_at,
+			COALESCE(
+				(SELECT m2.snippet FROM messages m2
+				 WHERE m2.conversation_id = c.id
+				   AND %s
+				 ORDER BY m2.sent_at DESC, m2.id DESC LIMIT 1),
+				''
+			) AS last_preview,
+			COALESCE(SUM(m.size_estimate), 0) AS total_size
+		FROM conversations c
+		JOIN messages m ON m.conversation_id = c.id
+		LEFT JOIN sources s ON s.id = m.source_id
+		WHERE %s
+		GROUP BY c.id, c.title, s.source_type
+		ORDER BY %s
+	`, textMsgTypeFilterAlias("m2"), where, orderBy), args
+}
 
 // sqliteTimestampLayouts lists the datetime string formats emitted by SQLite
 // and the go-sqlite3 driver. More specific formats come first.
@@ -69,6 +223,17 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 	if filter.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")
 		args = append(args, *filter.SourceID)
+	}
+	if len(filter.ParticipantIDs) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(filter.ParticipantIDs)), ",")
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM conversation_participants cp
+			WHERE cp.conversation_id = m.conversation_id
+			  AND cp.participant_id IN (`+placeholders+`)
+		)`)
+		for _, id := range filter.ParticipantIDs {
+			args = append(args, id)
+		}
 	}
 	if filter.ContactPhone != "" {
 		conditions = append(conditions, `EXISTS (
@@ -393,16 +558,14 @@ func (e *SQLiteEngine) ListConversationMessages(
 			m.attachment_count,
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, '') AS message_type,
-			COALESCE(c.title, '') AS conv_title,
-			COALESCE(mb.body_text, m.snippet, '') AS body_text
+			COALESCE(c.title, '') AS conv_title
 		FROM messages m
 		LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE %s
-		ORDER BY m.sent_at %s
+		ORDER BY m.sent_at %s, m.id %s
 		LIMIT ? OFFSET ?
-	`, where, sqliteDirection(filter.SortDirection))
+	`, where, sqliteDirection(filter.SortDirection), sqliteDirection(filter.SortDirection))
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -412,7 +575,7 @@ func (e *SQLiteEngine) ListConversationMessages(
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanMessageSummariesWithBody(rows)
+	return scanMessageSummaries(rows)
 }
 
 // sanitizeTextSearchMatch tokenizes a raw user query and builds an FTS5

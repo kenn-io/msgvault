@@ -418,6 +418,47 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require.NotNil(value, "person attribute value path")
 	assert.NotNil(value.Put, "person attribute set operation")
 	assert.NotNil(value.Delete, "person attribute clear operation")
+
+	createSchema := operationBodySchema(t, doc, definitions.Post)
+	assert.Contains(createSchema.Properties, "slug")
+	assert.NotContains(createSchema.Required, "slug",
+		"the server generates a slug when the client omits it")
+}
+
+func TestOpenAPIParticipantInboxAndTextScopeContracts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := OpenAPIDocument()
+
+	inboxes := doc.Paths["/api/v1/participants/{id}/inboxes"]
+	requirements.NotNil(inboxes)
+	requirements.NotNil(inboxes.Get)
+	requirements.Len(inboxes.Get.Parameters, 1)
+	assertions.Equal("id", inboxes.Get.Parameters[0].Name)
+	assertions.Equal("path", inboxes.Get.Parameters[0].In)
+	assertions.True(inboxes.Get.Parameters[0].Required)
+
+	for _, path := range []string{
+		"/api/v1/text/conversations",
+		"/api/v1/text/conversations/{id}/messages",
+	} {
+		operation := doc.Paths[path].Get
+		requirements.NotNil(operation, path)
+		var participantIDs *huma.Param
+		for _, parameter := range operation.Parameters {
+			if parameter.Name == "participant_id" {
+				participantIDs = parameter
+				break
+			}
+		}
+		requirements.NotNil(participantIDs, path)
+		assertions.Equal("query", participantIDs.In)
+		requirements.NotNil(participantIDs.Schema)
+		assertions.Equal(huma.TypeArray, participantIDs.Schema.Type)
+		requirements.NotNil(participantIDs.Schema.Items)
+		assertions.Equal(huma.TypeInteger, participantIDs.Schema.Items.Type)
+		assertions.Equal("int64", participantIDs.Schema.Items.Format)
+	}
 }
 
 func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
@@ -820,6 +861,23 @@ func TestOpenAPIClientServiceEnumsPreserveExistingGoNames(t *testing.T) {
 		requirements.NotNil(schema.Properties[property], property)
 		assertions.Equal(want, schema.Properties[property].Extensions["x-enum-names"], property)
 	}
+}
+
+func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["AppendPersonNoteRequest"]
+	requirements.NotNil(schema)
+	requirements.NotNil(schema.Properties["source"])
+	assertions.Equal([]any{
+		"AppendPersonNoteRequestSourceUser",
+		"AppendPersonNoteRequestSourceCarddavImport",
+		"AppendPersonNoteRequestSourceVcardImport",
+		"AppendPersonNoteRequestSourceArchiveObservation",
+		"AppendPersonNoteRequestSourceExtraction",
+		"AppendPersonNoteRequestSourceEnrichment",
+		"AppendPersonNoteRequestSourceSystem",
+	}, schema.Properties["source"].Extensions["x-enum-names"])
 }
 
 func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {

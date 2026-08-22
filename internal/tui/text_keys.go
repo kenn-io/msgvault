@@ -37,6 +37,8 @@ func (m Model) handleTextKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleTextListKeys(msg)
 	case textLevelTimeline:
 		return m.handleTextTimelineKeys(msg)
+	case textLevelDetail:
+		return m.handleTextDetailKeys(msg)
 	}
 	return m, nil
 }
@@ -120,6 +122,8 @@ func (m Model) handleTextTimelineKeys(
 	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case keyNameEnter:
+		return m.textDrillDown()
 	case "r":
 		// Reverse chronological order
 		if m.textState.filter.SortDirection == query.SortAsc {
@@ -192,6 +196,18 @@ func (m Model) handleTextTimelineKeys(
 	return m, nil
 }
 
+func (m Model) handleTextDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if !m.detailSearchActive && m.detailSearchQuery == "" {
+		switch msg.String() {
+		case keyNameEsc, "backspace":
+			return m.textGoBack()
+		case "left", "h", "right", "l", "T":
+			return m, nil
+		}
+	}
+	return m.handleMessageDetailKeys(msg)
+}
+
 // handleTextInlineSearchKeys handles keys when inline search is
 // active in Texts mode. Enter commits the search; Esc cancels.
 func (m Model) handleTextInlineSearchKeys(
@@ -204,8 +220,8 @@ func (m Model) handleTextInlineSearchKeys(
 		if queryStr == "" {
 			return m, nil
 		}
-		// In timeline view, filter locally (messages already loaded
-		// with full body text). In other views, use global FTS.
+		// In timeline view, filter the loaded metadata/snippets locally. In
+		// other views, use global FTS.
 		if m.textState.level == textLevelTimeline {
 			// Save unfiltered messages on first search so repeated
 			// searches filter from the original set, not stacked results.
@@ -487,13 +503,56 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case textLevelTimeline:
-		// Drill-down doesn't fire from the timeline level (no children).
+		if m.textState.cursor < 0 || m.textState.cursor >= len(m.textState.messages) {
+			return m, nil
+		}
+		message := m.textState.messages[m.textState.cursor]
+		m.textState.breadcrumbs = append(m.textState.breadcrumbs, textNavSnapshot{
+			level: m.textState.level, viewType: m.textState.viewType,
+			cursor: m.textState.cursor, scrollOffset: m.textState.scrollOffset,
+			filter: m.textState.filter, selectedConvID: m.textState.selectedConvID,
+			selectedMessageID: m.textState.selectedMessageID,
+		})
+		m.textState.selectedMessageID = message.ID
+		m.textState.level = textLevelDetail
+		m.messageDetail = nil
+		m.detailScroll = 0
+		m.detailSearchActive = false
+		m.detailSearchQuery = ""
+		m.detailSearchMatches = nil
+		m.detailSearchMatchIndex = 0
+		m.loading = true
+		return m, m.loadTextMessage(message.ID)
+
+	case textLevelDetail:
+		return m, nil
 	}
 	return m, nil
 }
 
 // textGoBack returns to the previous text navigation state.
 func (m Model) textGoBack() (tea.Model, tea.Cmd) {
+	if m.textState.level == textLevelDetail {
+		if len(m.textState.breadcrumbs) == 0 {
+			return m, nil
+		}
+		snap := m.textState.breadcrumbs[len(m.textState.breadcrumbs)-1]
+		m.textState.breadcrumbs = m.textState.breadcrumbs[:len(m.textState.breadcrumbs)-1]
+		m.textState.level = snap.level
+		m.textState.viewType = snap.viewType
+		m.textState.cursor = snap.cursor
+		m.textState.scrollOffset = snap.scrollOffset
+		m.textState.filter = snap.filter
+		m.textState.selectedConvID = snap.selectedConvID
+		m.textState.selectedMessageID = snap.selectedMessageID
+		m.messageDetail = nil
+		m.detailSearchActive = false
+		m.detailSearchQuery = ""
+		m.detailSearchMatches = nil
+		m.detailSearchMatchIndex = 0
+		m.loading = false
+		return m, nil
+	}
 	// If we have unfiltered messages (from a timeline search), restore
 	// them directly without reloading. This is instant and avoids
 	// re-querying the database.

@@ -318,6 +318,11 @@ type SearchParticipantFilesPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListParticipantInboxesPath struct {
+	// ID Observed participant cluster member ID
+	ID int64 `json:"id"`
+}
+
 type GetParticipantContextSummaryPath struct {
 	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
@@ -408,6 +413,11 @@ type ListPersonEmploymentsPath struct {
 }
 
 type SearchPersonFilesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type AppendPersonNotePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
 }

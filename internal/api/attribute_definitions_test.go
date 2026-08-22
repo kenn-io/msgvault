@@ -39,7 +39,7 @@ func TestAttributeDefinitionsHTTPListsSeedsAndRejectsUniqueness(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var listed AttributeDefinitionsResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &listed))
-	require.Len(listed.Definitions, 15)
+	require.Len(listed.Definitions, len(store.SeededAttributeDefinitions()))
 	assert.NotContains(response.Body.String(), "is_unique")
 
 	rejected := attributeRequest(t, srv, http.MethodPost,
@@ -93,6 +93,27 @@ func TestAttributeDefinitionsHTTPCreateRenameAndDelete(t *testing.T) {
 		fmt.Sprintf("/api/v1/attribute-definitions/%d", created.ID), nil,
 		renamedResponse.Header().Get("ETag"))
 	assert.Equal(http.StatusNoContent, removed.Code, removed.Body.String())
+}
+
+func TestAttributeDefinitionsHTTPCreateDerivesSlug(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, _ := newIdentityLinkTestServer(t)
+
+	body, err := json.Marshal(CreateAttributeDefinitionRequest{
+		ObjectType: "person", Label: "Favorite color",
+		ValueType: "text", FieldType: "text",
+		Cardinality: "single",
+	})
+	require.NoError(err)
+	assert.NotContains(string(body), `"slug"`)
+
+	response := attributeRequest(t, srv, http.MethodPost,
+		"/api/v1/attribute-definitions", body, "")
+	require.Equal(http.StatusCreated, response.Code, response.Body.String())
+	var created store.AttributeDefinition
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &created))
+	assert.Equal("favorite_color", created.Slug)
 }
 
 func TestAttributeDefinitionsHTTPProtectsSeedAndRejectsUnknownFields(t *testing.T) {
