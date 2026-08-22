@@ -97,24 +97,28 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 			&file.AttachmentRole, &file.RoleSource, &file.SourcePartKey, &file.ContentID); err != nil {
 			return nil, fmt.Errorf("scan file metadata: %w", err)
 		}
-		lowerPath := strings.ToLower(file.StoragePath)
-		switch {
-		case strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://"):
-			file.URL = file.StoragePath
-			file.StoragePath = ""
-			file.ContentHash = ""
-		case file.ContentHash == "":
-			// Duplicate-content aliases (see normalizeDiscordAttachmentRefs)
-			// keep a trusted CAS path with an empty hash. Recover the hash so
-			// the file endpoints classify the alias as locally available.
-			if pathHash, ok := casPathHash(file.StoragePath); ok {
-				file.ContentHash = pathHash
-			}
-		}
+		normalizeFileMetadataStorage(&file)
 		result[file.ID] = file
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate file metadata: %w", err)
 	}
 	return result, nil
+}
+
+func normalizeFileMetadataStorage(file *FileMetadata) {
+	lowerPath := strings.ToLower(file.StoragePath)
+	switch {
+	case strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://"):
+		file.URL = file.StoragePath
+		file.StoragePath = ""
+		file.ContentHash = ""
+	case file.ContentHash == "":
+		// Duplicate-content aliases (see normalizeDiscordAttachmentRefs)
+		// keep a trusted CAS path with an empty hash. Recover the hash so
+		// the file endpoints classify the alias as locally available.
+		if pathHash, ok := casPathHash(file.StoragePath); ok {
+			file.ContentHash = pathHash
+		}
+	}
 }

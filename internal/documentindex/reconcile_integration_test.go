@@ -2,6 +2,7 @@ package documentindex
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -188,14 +189,18 @@ func TestConcurrentOccurrenceReconciliationKeepsHighestSourceSequence(t *testing
 	assert.Equal(t, int64(100), sequence)
 }
 
-func TestSQLiteOccurrenceReconciliationWaitsForWriterSlot(t *testing.T) {
+func TestSQLiteOccurrenceReconciliationReadsAfterWriterSlot(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
 		t.Skip("SQLite writer-slot regression")
 	}
 	messageID := f.CreateMessage("document-reconcile-writer-slot")
 	attachmentID := createReconcileAttachment(t, f, messageID, "1")
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 9)
+	require.NoError(err)
+	require.True(eligible)
 
 	holder, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err)
@@ -208,37 +213,131 @@ func TestSQLiteOccurrenceReconciliationWaitsForWriterSlot(t *testing.T) {
 	})
 	_, err = holder.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(err)
-	_, err = holder.ExecContext(t.Context(), `
-		INSERT INTO archive_metadata (key, value)
-		VALUES ('test.document-writer-slot', 'held')`)
-	require.NoError(err)
 
-	result := make(chan error, 1)
+	type reconcileResult struct {
+		eligible bool
+		err      error
+	}
+	result := make(chan reconcileResult, 1)
 	go func() {
-		_, _, reconcileErr := f.Store.ReconcileDocumentOccurrence(
+		_, reconciledEligible, reconcileErr := f.Store.ReconcileDocumentOccurrence(
 			t.Context(), attachmentID, 10,
 		)
-		result <- reconcileErr
+		result <- reconcileResult{eligible: reconciledEligible, err: reconcileErr}
 	}()
 	require.Eventually(func() bool {
 		return f.Store.DB().Stats().InUse >= 2 || len(result) > 0
 	}, time.Second, time.Millisecond)
 	select {
-	case reconcileErr := <-result:
-		require.NoError(reconcileErr, "reconciliation returned while the SQLite writer slot was held")
+	case <-result:
+		require.Fail("reconciliation returned while the SQLite writer slot was held")
 	default:
 	}
 	require.GreaterOrEqual(f.Store.DB().Stats().InUse, 2)
 
 	select {
-	case reconcileErr := <-result:
-		require.NoError(reconcileErr, "reconciliation returned while the SQLite writer slot was held")
+	case <-result:
+		require.Fail("reconciliation returned while the SQLite writer slot was held")
 	case <-time.After(50 * time.Millisecond):
 	}
+	_, err = holder.ExecContext(t.Context(), `
+		UPDATE attachments SET attachment_role = ? WHERE id = ?`,
+		store.AttachmentRoleInline, attachmentID)
+	require.NoError(err)
+	_, err = holder.ExecContext(t.Context(), `
+		DELETE FROM document_occurrences
+		WHERE attachment_id = ? AND source_sequence <= ?`, attachmentID, 11)
+	require.NoError(err)
 	_, err = holder.ExecContext(t.Context(), "COMMIT")
 	require.NoError(err)
 	held = false
-	require.NoError(<-result)
+	reconciled := <-result
+	require.NoError(reconciled.err)
+	assert.False(reconciled.eligible)
+	assert.Empty(documentOccurrenceAttachmentIDs(t, f))
+}
+
+func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory-lock regression")
+	}
+	messageID := f.CreateMessage("document-reconcile-advisory-lock")
+	attachmentID := createReconcileAttachment(t, f, messageID, "2")
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 9)
+	require.NoError(err)
+	require.True(eligible)
+
+	holder, err := f.Store.DB().Conn(t.Context())
+	require.NoError(err)
+	lockName := "msgvault.document_occurrence.attachment:" + strconv.FormatInt(attachmentID, 10)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_, _ = holder.ExecContext(context.Background(), f.Store.Rebind(`
+				SELECT pg_advisory_unlock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
+		}
+		_ = holder.Close()
+	})
+	_, err = holder.ExecContext(t.Context(), f.Store.Rebind(`
+		SELECT pg_advisory_lock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
+	require.NoError(err)
+	var waitingBefore int
+	require.NoError(f.Store.DB().QueryRow(`
+		SELECT COUNT(*) FROM pg_locks
+		WHERE locktype = 'advisory' AND NOT granted`).Scan(&waitingBefore))
+
+	type reconcileResult struct {
+		eligible bool
+		err      error
+	}
+	lower := make(chan reconcileResult, 1)
+	go func() {
+		_, reconciledEligible, reconcileErr := f.Store.ReconcileDocumentOccurrence(
+			t.Context(), attachmentID, 10,
+		)
+		lower <- reconcileResult{eligible: reconciledEligible, err: reconcileErr}
+	}()
+	require.Eventually(func() bool {
+		var waiting int
+		err := f.Store.DB().QueryRow(`
+			SELECT COUNT(*) FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted`).Scan(&waiting)
+		return err == nil && waiting >= waitingBefore+1
+	}, time.Second, time.Millisecond)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE attachments SET attachment_role = ? WHERE id = ?`),
+		store.AttachmentRoleInline, attachmentID)
+	require.NoError(err)
+	higher := make(chan reconcileResult, 1)
+	go func() {
+		_, reconciledEligible, reconcileErr := f.Store.ReconcileDocumentOccurrence(
+			t.Context(), attachmentID, 11,
+		)
+		higher <- reconcileResult{eligible: reconciledEligible, err: reconcileErr}
+	}()
+	require.Eventually(func() bool {
+		var waiting int
+		err := f.Store.DB().QueryRow(`
+			SELECT COUNT(*) FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted`).Scan(&waiting)
+		return len(higher) > 0 || err == nil && waiting >= waitingBefore+2
+	}, time.Second, time.Millisecond)
+
+	_, err = holder.ExecContext(t.Context(), f.Store.Rebind(`
+		SELECT pg_advisory_unlock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
+	require.NoError(err)
+	held = false
+	lowResult := <-lower
+	highResult := <-higher
+	require.NoError(lowResult.err)
+	require.NoError(highResult.err)
+	assert.False(lowResult.eligible)
+	assert.False(highResult.eligible)
+	assert.Empty(documentOccurrenceAttachmentIDs(t, f))
 }
 
 func TestReconcilerRemovesCascadedOccurrenceFromJournalReplay(t *testing.T) {

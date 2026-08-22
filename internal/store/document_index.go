@@ -302,56 +302,98 @@ func (s *Store) ReconcileDocumentOccurrence(
 	if attachmentID <= 0 || sourceSequence < 0 {
 		return DocumentOccurrence{}, false, errors.New("document occurrence reconciliation has invalid coordinates")
 	}
-	file, err := s.GetFileMetadata(ctx, attachmentID)
+	var occurrence DocumentOccurrence
+	var eligible bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockDocumentOccurrenceAttachmentTx(ctx, tx, attachmentID); err != nil {
+			return err
+		}
+		file, found, err := s.getDocumentFileMetadataTx(ctx, tx, attachmentID)
+		if err != nil {
+			return err
+		}
+		if !found || !eligibleDocumentFile(file) {
+			return removeDocumentOccurrenceTx(tx, attachmentID, sourceSequence)
+		}
+		occurrence = DocumentOccurrence{
+			OccurrenceKey:     documentOccurrenceKey(file.MessageID, file.SourcePartKey, file.ID),
+			AttachmentID:      file.ID,
+			MessageID:         file.MessageID,
+			SourceID:          file.SourceID,
+			SourcePartKey:     file.SourcePartKey,
+			StableSourcePart:  file.SourcePartKey != "",
+			CanonicalBlobHash: file.ContentHash,
+			Filename:          file.Filename,
+			MIMEType:          file.MimeType,
+			AttachmentRole:    file.AttachmentRole,
+			RoleSource:        file.RoleSource,
+			SourceSequence:    sourceSequence,
+		}
+		if err := upsertDocumentOccurrenceTx(tx, occurrence); err != nil {
+			return err
+		}
+		eligible = true
+		return nil
+	})
 	if err != nil {
 		return DocumentOccurrence{}, false, err
 	}
-	live := false
-	if file != nil {
-		live, err = s.documentAttachmentIsLive(ctx, attachmentID)
-		if err != nil {
-			return DocumentOccurrence{}, false, err
-		}
-	}
-	if file == nil || !live || !eligibleDocumentFile(*file) {
-		if err := s.removeDocumentOccurrence(ctx, attachmentID, sourceSequence); err != nil {
-			return DocumentOccurrence{}, false, err
-		}
-		return DocumentOccurrence{}, false, nil
-	}
-	stable := file.SourcePartKey != ""
-	occurrence := DocumentOccurrence{
-		OccurrenceKey:     documentOccurrenceKey(file.MessageID, file.SourcePartKey, file.ID),
-		AttachmentID:      file.ID,
-		MessageID:         file.MessageID,
-		SourceID:          file.SourceID,
-		SourcePartKey:     file.SourcePartKey,
-		StableSourcePart:  stable,
-		CanonicalBlobHash: file.ContentHash,
-		Filename:          file.Filename,
-		MIMEType:          file.MimeType,
-		AttachmentRole:    file.AttachmentRole,
-		RoleSource:        file.RoleSource,
-		SourceSequence:    sourceSequence,
-	}
-	if err := s.upsertDocumentOccurrence(ctx, occurrence); err != nil {
-		return DocumentOccurrence{}, false, err
-	}
-	return occurrence, true, nil
+	return occurrence, eligible, nil
 }
 
-func (s *Store) documentAttachmentIsLive(ctx context.Context, attachmentID int64) (bool, error) {
-	var exists bool
-	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
-		SELECT EXISTS (
-			SELECT 1 FROM attachments a
-			JOIN messages m ON m.id = a.message_id
-			WHERE a.id = ? AND `+LiveMessagesWhere("m", true)+`
-		)`), attachmentID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check document attachment live state: %w", err)
+func (s *Store) lockDocumentOccurrenceAttachmentTx(
+	ctx context.Context, tx *loggedTx, attachmentID int64,
+) error {
+	if s.IsPostgreSQL() {
+		// The occurrence row may not exist yet, so there is no row to lock.
+		// Serialize the eligibility read and its write by attachment identity.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+			hashtextextended(CAST(? AS TEXT), 0))`,
+			fmt.Sprintf("msgvault.document_occurrence.attachment:%d", attachmentID),
+		); err != nil {
+			return fmt.Errorf("lock document occurrence attachment: %w", err)
+		}
+		return nil
 	}
-	return exists, nil
+	// Reserve SQLite's writer slot before reading attachment authority. A
+	// deferred transaction cannot upgrade a stale WAL snapshot after a
+	// concurrent reconciliation commits.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE document_index_state SET revision = revision WHERE singleton = 1`); err != nil {
+		return fmt.Errorf("lock document occurrence reconciliation: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) getDocumentFileMetadataTx(
+	ctx context.Context, tx *loggedTx, attachmentID int64,
+) (FileMetadata, bool, error) {
+	var file FileMetadata
+	err := tx.QueryRowContext(ctx, `
+		SELECT a.id, a.message_id, m.conversation_id,
+			m.source_id, COALESCE(m.source_message_id, ''),
+			COALESCE(m.message_type, ''), COALESCE(c.conversation_type, ''),
+			COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0),
+			COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''),
+			a.attachment_role, a.role_source,
+			COALESCE(a.source_part_key, ''), COALESCE(a.content_id, '')
+		FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE a.id = ? AND `+LiveMessagesWhere("m", true), attachmentID).Scan(
+		&file.ID, &file.MessageID, &file.ConversationID,
+		&file.SourceID, &file.SourceMessageID, &file.MessageType, &file.ConversationType,
+		&file.Filename, &file.MimeType, &file.Size, &file.ContentHash, &file.StoragePath,
+		&file.AttachmentRole, &file.RoleSource, &file.SourcePartKey, &file.ContentID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FileMetadata{}, false, nil
+	}
+	if err != nil {
+		return FileMetadata{}, false, fmt.Errorf("read document occurrence attachment metadata: %w", err)
+	}
+	normalizeFileMetadataStorage(&file)
+	return file, true, nil
 }
 
 func (s *Store) GetDocumentIndexRevision(ctx context.Context) (int64, error) {
@@ -1191,87 +1233,68 @@ func documentOccurrenceMediaScopeSQL(
 	return strings.Join(conditions, " AND "), args, nil
 }
 
-func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence DocumentOccurrence) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if s.IsPostgreSQL() {
-			// The occurrence row may not exist yet, so there is no row to lock.
-			// Serialize first inserts that share the attachment uniqueness key.
-			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
-				hashtextextended(CAST(? AS TEXT), 0))`,
-				fmt.Sprintf("msgvault.document_occurrence.attachment:%d", occurrence.AttachmentID),
-			); err != nil {
-				return fmt.Errorf("lock document occurrence attachment: %w", err)
-			}
-		} else {
-			// Reserve SQLite's writer slot before reading occurrence state. A
-			// deferred transaction cannot upgrade a stale WAL snapshot after a
-			// concurrent reconciliation commits.
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE document_index_state SET revision = revision WHERE singleton = 1`); err != nil {
-				return fmt.Errorf("lock document occurrence reconciliation: %w", err)
-			}
-		}
-		var existing DocumentOccurrence
-		err := tx.QueryRow(`
+func upsertDocumentOccurrenceTx(tx *loggedTx, occurrence DocumentOccurrence) error {
+	var existing DocumentOccurrence
+	err := tx.QueryRow(`
 			SELECT occurrence_key, attachment_id, message_id, source_id,
 			       COALESCE(source_part_key, ''), stable_source_part,
 			       canonical_blob_hash, COALESCE(filename, ''), COALESCE(mime_type, ''),
 			       attachment_role, role_source, source_sequence
 			FROM document_occurrences WHERE occurrence_key = ?`, occurrence.OccurrenceKey).Scan(
-			&existing.OccurrenceKey, &existing.AttachmentID, &existing.MessageID,
-			&existing.SourceID, &existing.SourcePartKey, &existing.StableSourcePart,
-			&existing.CanonicalBlobHash, &existing.Filename, &existing.MIMEType,
-			&existing.AttachmentRole, &existing.RoleSource, &existing.SourceSequence,
-		)
-		if err == nil {
-			existingSequence := existing.SourceSequence
-			existing.SourceSequence = occurrence.SourceSequence
-			if existing == occurrence {
-				if existingSequence >= occurrence.SourceSequence {
-					return nil
-				}
-				if _, err := tx.Exec(`
+		&existing.OccurrenceKey, &existing.AttachmentID, &existing.MessageID,
+		&existing.SourceID, &existing.SourcePartKey, &existing.StableSourcePart,
+		&existing.CanonicalBlobHash, &existing.Filename, &existing.MIMEType,
+		&existing.AttachmentRole, &existing.RoleSource, &existing.SourceSequence,
+	)
+	if err == nil {
+		existingSequence := existing.SourceSequence
+		existing.SourceSequence = occurrence.SourceSequence
+		if existing == occurrence {
+			if existingSequence >= occurrence.SourceSequence {
+				return nil
+			}
+			if _, err := tx.Exec(`
 					UPDATE document_occurrences
 					SET source_sequence = ?, reconciled_at = CURRENT_TIMESTAMP
 					WHERE occurrence_key = ? AND source_sequence = ?`,
-					occurrence.SourceSequence, occurrence.OccurrenceKey, existingSequence,
-				); err != nil {
-					return fmt.Errorf("advance document occurrence source sequence: %w", err)
-				}
-				return nil
+				occurrence.SourceSequence, occurrence.OccurrenceKey, existingSequence,
+			); err != nil {
+				return fmt.Errorf("advance document occurrence source sequence: %w", err)
 			}
-			existing.SourceSequence = existingSequence
-		}
-		if err == nil && existing.SourceSequence > occurrence.SourceSequence {
 			return nil
 		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read document occurrence: %w", err)
-		}
-		var attachmentSequence int64
-		err = tx.QueryRow(`
+		existing.SourceSequence = existingSequence
+	}
+	if err == nil && existing.SourceSequence > occurrence.SourceSequence {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read document occurrence: %w", err)
+	}
+	var attachmentSequence int64
+	err = tx.QueryRow(`
 			SELECT source_sequence FROM document_occurrences WHERE attachment_id = ?`,
-			occurrence.AttachmentID,
-		).Scan(&attachmentSequence)
-		if err == nil && attachmentSequence > occurrence.SourceSequence {
-			return nil
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read document occurrence attachment sequence: %w", err)
-		}
-		removedResult, err := tx.Exec(`
+		occurrence.AttachmentID,
+	).Scan(&attachmentSequence)
+	if err == nil && attachmentSequence > occurrence.SourceSequence {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read document occurrence attachment sequence: %w", err)
+	}
+	removedResult, err := tx.Exec(`
 			DELETE FROM document_occurrences
 			WHERE attachment_id = ? AND occurrence_key != ? AND source_sequence <= ?`,
-			occurrence.AttachmentID, occurrence.OccurrenceKey, occurrence.SourceSequence,
-		)
-		if err != nil {
-			return fmt.Errorf("remove replaced document occurrence: %w", err)
-		}
-		removed, err := removedResult.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read replaced document occurrence count: %w", err)
-		}
-		result, err := tx.Exec(`
+		occurrence.AttachmentID, occurrence.OccurrenceKey, occurrence.SourceSequence,
+	)
+	if err != nil {
+		return fmt.Errorf("remove replaced document occurrence: %w", err)
+	}
+	removed, err := removedResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read replaced document occurrence count: %w", err)
+	}
+	result, err := tx.Exec(`
 			INSERT INTO document_occurrences
 				(occurrence_key, attachment_id, message_id, source_id,
 				 source_part_key, stable_source_part, canonical_blob_hash,
@@ -1291,47 +1314,44 @@ func (s *Store) upsertDocumentOccurrence(ctx context.Context, occurrence Documen
 				source_sequence = EXCLUDED.source_sequence,
 				reconciled_at = CURRENT_TIMESTAMP
 			WHERE document_occurrences.source_sequence <= EXCLUDED.source_sequence`,
-			occurrence.OccurrenceKey, occurrence.AttachmentID, occurrence.MessageID,
-			occurrence.SourceID, nullIfEmpty(occurrence.SourcePartKey),
-			occurrence.StableSourcePart, occurrence.CanonicalBlobHash,
-			nullIfEmpty(occurrence.Filename), nullIfEmpty(occurrence.MIMEType),
-			occurrence.AttachmentRole, occurrence.RoleSource, occurrence.SourceSequence,
-		)
-		if err != nil {
-			return fmt.Errorf("upsert document occurrence: %w", err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read document occurrence upsert count: %w", err)
-		}
-		if changed == 0 {
-			return nil
-		}
-		if removed > 0 {
-			// The delete trigger already advanced the revision for this atomic
-			// replacement. One invalidation is sufficient for the new row too.
-			return nil
-		}
-		return bumpDocumentIndexRevision(tx)
-	})
+		occurrence.OccurrenceKey, occurrence.AttachmentID, occurrence.MessageID,
+		occurrence.SourceID, nullIfEmpty(occurrence.SourcePartKey),
+		occurrence.StableSourcePart, occurrence.CanonicalBlobHash,
+		nullIfEmpty(occurrence.Filename), nullIfEmpty(occurrence.MIMEType),
+		occurrence.AttachmentRole, occurrence.RoleSource, occurrence.SourceSequence,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert document occurrence: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read document occurrence upsert count: %w", err)
+	}
+	if changed == 0 {
+		return nil
+	}
+	if removed > 0 {
+		// The delete trigger already advanced the revision for this atomic
+		// replacement. One invalidation is sufficient for the new row too.
+		return nil
+	}
+	return bumpDocumentIndexRevision(tx)
 }
 
-func (s *Store) removeDocumentOccurrence(ctx context.Context, attachmentID, sourceSequence int64) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		result, err := tx.Exec(`
+func removeDocumentOccurrenceTx(tx *loggedTx, attachmentID, sourceSequence int64) error {
+	result, err := tx.Exec(`
 			DELETE FROM document_occurrences
 			WHERE attachment_id = ? AND source_sequence <= ?`, attachmentID, sourceSequence)
-		if err != nil {
-			return fmt.Errorf("remove document occurrence: %w", err)
-		}
-		_, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read removed document occurrence count: %w", err)
-		}
-		// The database trigger advances the revision when a row is removed,
-		// including when foreign-key cascades bypass this method.
-		return nil
-	})
+	if err != nil {
+		return fmt.Errorf("remove document occurrence: %w", err)
+	}
+	_, err = result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read removed document occurrence count: %w", err)
+	}
+	// The database trigger advances the revision when a row is removed,
+	// including when foreign-key cascades bypass this method.
+	return nil
 }
 
 func bumpDocumentIndexRevision(q querier) error {
