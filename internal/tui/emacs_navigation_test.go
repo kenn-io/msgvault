@@ -27,9 +27,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				model.cursor = start
 				return model
 			},
-			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
-				return applyAggregateKey(t, model, key)
-			},
+			apply:  applyAggregateKey,
 			cursor: func(model Model) int { return model.cursor },
 		},
 		{
@@ -43,6 +41,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleTextListKeys(key)
 				return asModel(t, updated)
 			},
@@ -59,6 +58,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleTextTimelineKeys(key)
 				return asModel(t, updated)
 			},
@@ -88,9 +88,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				model.detailScroll = start
 				return model
 			},
-			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
-				return applyDetailKey(t, model, key)
-			},
+			apply:  applyDetailKey,
 			cursor: func(model Model) int { return model.detailScroll },
 		},
 		{
@@ -107,6 +105,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleMeetingDetailKeys(key)
 				return asModel(t, updated)
 			},
@@ -122,6 +121,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleThreadViewKeys(key)
 				return asModel(t, updated)
 			},
@@ -139,6 +139,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleAccountSelectorKeys(key)
 				return asModel(t, updated)
 			},
@@ -153,6 +154,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleFilterToggleKeys(key)
 				return asModel(t, updated)
 			},
@@ -173,6 +175,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleExportAttachmentsKeys(key)
 				return asModel(t, updated)
 			},
@@ -187,6 +190,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 				return model
 			},
 			apply: func(t *testing.T, model Model, key tea.KeyPressMsg) Model {
+				t.Helper()
 				updated, _ := model.handleHelpKeys(key)
 				return asModel(t, updated)
 			},
@@ -215,6 +219,7 @@ func TestCtrlPNNavigateEveryVerticalSurface(t *testing.T) {
 }
 
 func TestFocusedInputKeepsNativeEmacsKeys(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().WithRows(
 		query.AggregateRow{Key: "one"},
 		query.AggregateRow{Key: "two"},
@@ -227,21 +232,21 @@ func TestFocusedInputKeepsNativeEmacsKeys(t *testing.T) {
 	model.searchInput.CursorEnd()
 	updated, _ := model.handleKeyPress(ctrlKey('a'))
 	model = asModel(t, updated)
-	assert.Equal(t, 0, model.searchInput.Position())
-	assert.Equal(t, 1, model.cursor)
+	assert.Equal(0, model.searchInput.Position())
+	assert.Equal(1, model.cursor)
 
 	updated, _ = model.handleKeyPress(ctrlKey('e'))
 	model = asModel(t, updated)
-	assert.Equal(t, len("alice"), model.searchInput.Position())
-	assert.Equal(t, 1, model.cursor)
+	assert.Equal(len("alice"), model.searchInput.Position())
+	assert.Equal(1, model.cursor)
 
 	updated, _ = model.handleKeyPress(ctrlKey('n'))
 	model = asModel(t, updated)
-	assert.Equal(t, 1, model.cursor, "focused input must not move the aggregate list")
+	assert.Equal(1, model.cursor, "focused input must not move the aggregate list")
 
 	updated, _ = model.handleKeyPress(ctrlKey('p'))
 	model = asModel(t, updated)
-	assert.Equal(t, 1, model.cursor, "focused input must not move the aggregate list")
+	assert.Equal(1, model.cursor, "focused input must not move the aggregate list")
 }
 
 func TestHelpAdvertisesEmacsNavigationKeys(t *testing.T) {
