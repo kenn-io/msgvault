@@ -25,18 +25,68 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Pin Go 1.26.6 until nixpkgs-unstable ships it.
+        # Pin Go 1.27.0 until the locked nixpkgs revision ships it.
         # Scoped to msgvault only — do NOT export via overlay, that would
         # invalidate every Go derivation in the transitive closure.
-        goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
-          version = "1.26.6";
+        goPinned = pkgs.go_1_26.overrideAttrs (old: rec {
+          version = "1.27.0";
           src = pkgs.fetchurl {
             url = "https://go.dev/dl/go${version}.src.tar.gz";
-            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+            hash = "sha256-cAJAPXzERSnvbSb2mkSBgmM5Xq18FsBaWAiuBH6+sOU=";
           };
+          patches =
+            builtins.filter (
+              patch: !(pkgs.lib.hasSuffix "go_no_vendor_checks-1.26.patch" (toString patch))
+            ) old.patches
+            ++ [
+              (pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/NixOS/nixpkgs/67a70befab1966b026701e8e94cf19b1543075c5/pkgs/development/compilers/go/go_no_vendor_checks-1.27.patch";
+                hash = "sha256-aTpc6kAX9bAyMMAHqzldcb2EEseCpke7QlJuQ1Bk6jc=";
+              })
+            ];
         });
 
         buildGoModule = pkgs.buildGoModule.override { go = goPinned; };
+
+        goplsPinned = (pkgs.gopls.override { buildGoLatestModule = buildGoModule; }).overrideAttrs (_: rec {
+          version = "0.23.0";
+          src = pkgs.fetchFromGitHub {
+            owner = "golang";
+            repo = "tools";
+            tag = "gopls/v${version}";
+            hash = "sha256-GTRZ0tS2a7Cx4qRf6PfxhkGVPYRoLYOmE+W/2x9Pttk=";
+          };
+          vendorHash = "sha256-rvm33C3z3T6moeEQ4C7aG+dT8ROqmpBFehIpwGFZMrU=";
+        });
+
+        golangciLintPinned =
+          (pkgs.golangci-lint.override { buildGo126Module = buildGoModule; }).overrideAttrs
+            (_: rec {
+              version = "2.13.1";
+              src = pkgs.fetchFromGitHub {
+                owner = "golangci";
+                repo = "golangci-lint";
+                tag = "v${version}";
+                hash = "sha256-8nWHSMAwIILfKMPfxWKMimxWt9N+kUsZEAaoAOPbRBE=";
+              };
+              vendorHash = "sha256-yZRqfht5rY2yyoZNtYttE57sB7EYjk71yrKw8dLYzNk=";
+            });
+
+        delvePinned = (pkgs.delve.override { inherit buildGoModule; }).overrideAttrs (_: rec {
+          version = "1.27.1";
+          src = pkgs.fetchFromGitHub {
+            owner = "go-delve";
+            repo = "delve";
+            tag = "v${version}";
+            hash = "sha256-H91QnLyqywgoc3zdTaclzzUxVPagNnxLzKub2gnL25w=";
+          };
+          checkFlags = [ "-skip=TestGeneratedDoc|TestTypecheckRPC" ];
+        });
+
+        gotoolsPinned = pkgs.gotools.override {
+          inherit buildGoModule;
+          go = goPinned;
+        };
 
         bunPinned = pkgs.bun.overrideAttrs (old: rec {
           version = "1.3.14";
@@ -91,10 +141,10 @@
         devShells.default = pkgs.mkShell {
           packages = [
             goPinned
-            pkgs.gopls
-            pkgs.gotools
-            pkgs.golangci-lint
-            pkgs.delve
+            goplsPinned
+            gotoolsPinned
+            golangciLintPinned
+            delvePinned
             pkgs.gcc
             pkgs.prek
             pkgs.sqlite-interactive

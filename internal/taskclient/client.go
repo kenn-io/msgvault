@@ -194,8 +194,7 @@ func (c *Client) HasAuthentication() bool    { return c.apiKey != "" || c.endpoi
 func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
 	var result Capabilities
 	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/capabilities", nil, nil, &result, http.StatusOK); err != nil {
-		var statusErr *httpStatusError
-		if errors.As(err, &statusErr) {
+		if statusErr, ok := errors.AsType[*httpStatusError](err); ok {
 			return Capabilities{}, &httpStatusError{
 				statusCode:     statusErr.statusCode,
 				classification: classifyCapabilityHTTPStatus(statusErr.statusCode),

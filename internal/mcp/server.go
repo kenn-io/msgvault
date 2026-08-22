@@ -136,8 +136,7 @@ func officialToolHandler(
 }
 
 func mapInternalError(err error) error {
-	var privateErr *internalError
-	if errors.As(err, &privateErr) {
+	if privateErr, ok := errors.AsType[*internalError](err); ok {
 		slog.Error("MCP operation failed", "operation", privateErr.operation, "error", privateErr.cause)
 	} else {
 		slog.Error("MCP operation failed with unclassified error", "error", err)

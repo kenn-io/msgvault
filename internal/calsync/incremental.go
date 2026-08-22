@@ -129,8 +129,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 			PageToken:    pageToken,
 		})
 		if err != nil {
-			var gone *gcal.GoneError
-			if errors.As(err, &gone) {
+			if _, ok := errors.AsType[*gcal.GoneError](err); ok {
 				_ = s.store.FailSync(syncID, ErrSyncTokenExpired.Error())
 				return ErrSyncTokenExpired
 			}

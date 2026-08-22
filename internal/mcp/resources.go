@@ -166,8 +166,7 @@ func registerAttachmentResources(server *sdkmcp.Server, h *handlers) {
 		}
 		payload, err := h.attachmentService().load(ctx, id)
 		if err != nil {
-			var unavailable *attachmentUnavailableError
-			if errors.As(err, &unavailable) {
+			if _, ok := errors.AsType[*attachmentUnavailableError](err); ok {
 				return nil, sdkmcp.ResourceNotFoundError(rawURI)
 			}
 			return nil, mapInternalError(err)

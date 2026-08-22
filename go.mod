@@ -1,6 +1,6 @@
 module go.kenn.io/msgvault
 
-go 1.26.6
+go 1.27.0
 
 replace github.com/emersion/go-imap/v2 => github.com/hstern/go-imap/v2 v2.0.0-beta.8.0.20260621192506-dabdeca47dc7
 
@@ -30,7 +30,7 @@ require (
 	github.com/jhillyerd/enmime v1.3.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mattn/go-runewidth v0.0.24
-	github.com/mattn/go-sqlite3 v1.14.47
+	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/robfig/cron/v3 v3.0.1

@@ -30,8 +30,6 @@ type Card struct {
 // blank logical lines, original line endings, or physical folding. The JSON
 // form is the persisted resource metadata shape; a RawValue that is not valid
 // UTF-8 (a CHARSET-declared legacy value) travels as raw_value_base64.
-//
-//nolint:recvcheck // encoding/json requires the pointer receiver for UnmarshalJSON
 type Property struct {
 	Group        string      `json:"group,omitempty"`
 	Name         string      `json:"name"`

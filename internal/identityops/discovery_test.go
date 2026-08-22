@@ -233,7 +233,7 @@ func TestDiscoverWithProviderExternalEvidencePreviewAndApplyUseSameMergedCandida
 	}}
 
 	preview, err := identityops.DiscoverWithExternalEvidence(t.Context(), previewStore, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 	}, evidence, nil)
 	requirements.NoError(err)
 
@@ -241,7 +241,7 @@ func TestDiscoverWithProviderExternalEvidencePreviewAndApplyUseSameMergedCandida
 	applyStore.pages = previewStore.pages
 	applyStore.identities = previewStore.identities
 	apply, err := identityops.DiscoverWithExternalEvidence(t.Context(), applyStore, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, evidence, nil)
 	requirements.NoError(err)
 
@@ -355,7 +355,7 @@ func TestDiscoverClassifiesStrongWeakConfirmedAndCaseVariants(t *testing.T) {
 	}}
 
 	got, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 	}, nil)
 	require.NoError(err)
 	require.Len(got.Candidates, 3)
@@ -380,8 +380,8 @@ func TestDiscoverApplyNeverConfirmsRecipientOnlyCandidate(t *testing.T) {
 	}}
 
 	_, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Apply:          true,
+		SourceID: 14,
+		Apply:    true,
 	}, nil)
 	require.NoError(err)
 	assert.Equal([]int64{14}, st.batchSourceIDs)
@@ -405,8 +405,8 @@ func TestDiscoverApplyDoesNotConfirmAmbiguousFromAddresses(t *testing.T) {
 	}}
 
 	got, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Apply:          true,
+		SourceID: 14,
+		Apply:    true,
 	}, nil)
 	require.NoError(err)
 	require.Len(got.Candidates, 2)
@@ -435,7 +435,7 @@ func TestDiscoverApplyMergesOnlyNewStrongSignalsIntoConfirmedCandidate(t *testin
 	}}
 
 	_, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 	require.NoError(err)
 	assert.Equal([]int64{14}, st.batchSourceIDs)
@@ -455,7 +455,7 @@ func TestDiscoverApplyMergesOnlyNewStrongSignalsIntoConfirmedCandidate(t *testin
 		}},
 	}}
 	_, err = identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 	require.NoError(err)
 	assert.Empty(st.batchCalls, "unchanged evidence must not start an empty write batch")
@@ -475,9 +475,9 @@ func TestDiscoverExplicitlyConfirmsOnlyCompletedWeakCandidate(t *testing.T) {
 	}}
 
 	got, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Apply:          true,
-		Confirm:        []string{"WEAK@example.test", "weak@example.test"},
+		SourceID: 14,
+		Apply:    true,
+		Confirm:  []string{"WEAK@example.test", "weak@example.test"},
 	}, nil)
 	require.NoError(err)
 	require.Len(got.Applied, 2)
@@ -495,9 +495,9 @@ func TestDiscoverExplicitlyConfirmsOnlyCompletedWeakCandidate(t *testing.T) {
 		},
 	}}
 	_, err = identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Apply:          true,
-		Confirm:        []string{"strong@example.test"},
+		SourceID: 14,
+		Apply:    true,
+		Confirm:  []string{"strong@example.test"},
 	}, nil)
 	require.ErrorContains(err, "weak candidate")
 	assert.Empty(st.batchCalls, "all explicit confirmations must validate before writing")
@@ -513,8 +513,8 @@ func TestDiscoverConfirmRequiresApply(t *testing.T) {
 	}}
 
 	_, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Confirm:        []string{"weak@example.test"},
+		SourceID: 14,
+		Confirm:  []string{"weak@example.test"},
 	}, nil)
 	require.ErrorContains(t, err, "requires apply")
 	assert.Empty(t, st.batchCalls)
@@ -696,7 +696,7 @@ func TestDiscoverRejectsUnsafeAddressesAndCountsDistinctMessages(t *testing.T) {
 	}}
 
 	got, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 	}, nil)
 	require.NoError(err)
 	require.Len(got.Candidates, 1)
@@ -734,7 +734,7 @@ func TestDiscoverCancellationAfterPageWritesNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
 	got, err := identityops.Discover(ctx, st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true, PageSize: 1,
+		SourceID: 14, Apply: true, PageSize: 1,
 	}, func(identityops.DiscoverProgress) error {
 		cancel()
 		return nil
@@ -763,7 +763,7 @@ func TestDiscoverInterruptedApplyRerunMatchesOneShot(t *testing.T) {
 		return outcomes, context.Canceled
 	}
 	_, err := identityops.Discover(t.Context(), resumed, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 	require.ErrorIs(err, context.Canceled)
 
@@ -772,7 +772,7 @@ func TestDiscoverInterruptedApplyRerunMatchesOneShot(t *testing.T) {
 		return mergeConfirmationState(resumedState, confirmations), nil
 	}
 	_, err = identityops.Discover(t.Context(), resumed, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 	require.NoError(err)
 
@@ -783,7 +783,7 @@ func TestDiscoverInterruptedApplyRerunMatchesOneShot(t *testing.T) {
 		return mergeConfirmationState(cleanState, confirmations), nil
 	}
 	_, err = identityops.Discover(t.Context(), clean, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 	require.NoError(err)
 	assert.Equal(cleanState, resumedState)
@@ -810,7 +810,7 @@ func TestDiscoverApplyErrorReturnsCommittedPrefix(t *testing.T) {
 	}
 
 	got, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14}, Apply: true,
+		SourceID: 14, Apply: true,
 	}, nil)
 
 	requirements.ErrorIs(err, applyErr)
@@ -888,8 +888,8 @@ func TestDiscoverApplyAfterParticipantMergeConfirmsOnlyEnvelopeAddress(t *testin
 	require.NoError(st.MergeParticipants(aliceID, bobID), "merge alice into bob")
 
 	result, err := identityops.Discover(t.Context(), st, identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: source.ID},
-		Apply:          true,
+		SourceID: source.ID,
+		Apply:    true,
 	}, nil)
 	require.NoError(err, "discover with apply")
 

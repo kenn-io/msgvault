@@ -464,8 +464,7 @@ func (s *Server) handleCreateDayEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDailyNoteRequestBytes))
 	if err != nil {
-		var maxBytes *http.MaxBytesError
-		if errors.As(err, &maxBytes) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large",
 				"daily entry request is too large")
 			return

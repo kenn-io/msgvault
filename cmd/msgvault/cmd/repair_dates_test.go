@@ -328,10 +328,8 @@ func TestApplyPlannedDateRepairsRecordsGuardFailure(t *testing.T) {
 	plan := &dateRepairPlan{
 		candidateCount: 1,
 		repairs: []plannedDateRepair{{
-			MessageDateRepair: store.MessageDateRepair{
-				ID:     messageID,
-				SentAt: time.Date(2007, 1, 2, 15, 4, 5, 0, time.UTC),
-			},
+			ID:     messageID,
+			SentAt: time.Date(2007, 1, 2, 15, 4, 5, 0, time.UTC),
 			source: mime.DateSourceReceived,
 			oldSentAt: sql.NullTime{
 				Time:  time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),

@@ -1876,8 +1876,7 @@ func (d *PostgreSQLDialect) MaintenanceTimeoutResetSQL() string {
 
 // isPgError checks if err is a pgconn.PgError with the given SQLSTATE code.
 func isPgError(err error, code string) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == code
 	}
 	return false

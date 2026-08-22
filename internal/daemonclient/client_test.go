@@ -155,10 +155,10 @@ func TestCLIIdentityDiscoverProviderStreamsConvertedEventsAndRequest(t *testing.
 	requirements.NoError(err)
 	var events []identityops.DiscoverEvent
 	err = client.DiscoverCLIIdentities(t.Context(), identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Apply:          true,
-		Provider:       true,
-		Confirm:        []string{"weak@example.test"},
+		SourceID: 14,
+		Apply:    true,
+		Provider: true,
+		Confirm:  []string{"weak@example.test"},
 	}, func(event identityops.DiscoverEvent) error {
 		events = append(events, event)
 		return nil
@@ -195,7 +195,7 @@ func TestCLIIdentityDiscoverRejectsStreamWithoutResult(t *testing.T) {
 	require.NoError(t, err)
 
 	err = client.DiscoverCLIIdentities(t.Context(), identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 	}, nil)
 
 	require.Error(t, err)
@@ -220,7 +220,7 @@ func TestCLIIdentityDiscoverConsumesSanitizedTerminalError(t *testing.T) {
 
 	var events []identityops.DiscoverEvent
 	err = client.DiscoverCLIIdentities(t.Context(), identityops.DiscoverRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 	}, func(event identityops.DiscoverEvent) error {
 		events = append(events, event)
 		return nil
@@ -290,7 +290,7 @@ func TestCLIIdentityImportSendsParsedEntriesAndConvertsResult(t *testing.T) {
 	client, err := New(Config{URL: srv.URL, AllowInsecure: true})
 	requirements.NoError(err)
 	result, err := client.ImportCLIIdentities(t.Context(), identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 		Entries: []identityops.ImportEntry{{
 			Identifier: "alias@example.test", State: "disabled",
 		}},

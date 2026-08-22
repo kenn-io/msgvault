@@ -259,8 +259,7 @@ func messageContentUnavailable(message discord.Message) bool {
 }
 
 func discordDiagnostic(err error) string {
-	var apiErr *discord.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*discord.APIError](err); ok {
 		switch apiErr.StatusCode {
 		case http.StatusUnauthorized:
 			return "authentication failed"

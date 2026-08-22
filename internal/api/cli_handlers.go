@@ -1768,8 +1768,7 @@ func (s *Server) cliDedupDeleteError(err error) *apiHTTPError {
 	if err == nil {
 		return nil
 	}
-	var requestErr *cliRequestError
-	if errors.As(err, &requestErr) {
+	if requestErr, ok := errors.AsType[*cliRequestError](err); ok {
 		return newAPIHTTPError(http.StatusBadRequest, requestErr.code, requestErr.message)
 	}
 	s.logger.Error("failed CLI dedup delete operation", "error", err)

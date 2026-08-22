@@ -474,8 +474,7 @@ func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs [
 				// Log but don't fail the batch - allow partial results.
 				// 404s are expected (message deleted between history scan and fetch),
 				// so log at debug level to avoid noise during incremental sync.
-				var nfe *NotFoundError
-				if errors.As(err, &nfe) {
+				if _, ok := errors.AsType[*NotFoundError](err); ok {
 					c.logger.Debug("message deleted before fetch", "id", id)
 				} else {
 					c.logger.Warn("failed to fetch message", "id", id, "error", err)

@@ -464,8 +464,7 @@ func translateDaemonRequestError(err error) *toolResult {
 }
 
 func dependencyError(operation string, err error) (*toolResult, error) {
-	var expected *expectedHandlerError
-	if errors.As(err, &expected) {
+	if expected, ok := errors.AsType[*expectedHandlerError](err); ok {
 		return toolErrorResult(expected.message), nil
 	}
 	if result := translateVectorErr(err); result != nil {
@@ -1787,8 +1786,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 
 	payload, err := h.attachmentService().load(ctx, id)
 	if err != nil {
-		var unavailable *attachmentUnavailableError
-		if errors.As(err, &unavailable) {
+		if unavailable, ok := errors.AsType[*attachmentUnavailableError](err); ok {
 			return toolErrorResult(unavailable.message), nil
 		}
 		return nil, err
@@ -1822,8 +1820,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*tool
 
 	payload, err := h.attachmentService().load(ctx, id)
 	if err != nil {
-		var unavailable *attachmentUnavailableError
-		if errors.As(err, &unavailable) {
+		if unavailable, ok := errors.AsType[*attachmentUnavailableError](err); ok {
 			return toolErrorResult(unavailable.message), nil
 		}
 		return nil, err
@@ -2001,7 +1998,7 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	}
 
 	viewTypeMap := map[string]query.ViewType{
-		"sender":    query.ViewSenders, //nolint:goconst // Stable public enum value shared with the MCP schema.
+		"sender":    query.ViewSenders,
 		"recipient": query.ViewRecipients,
 		"domain":    query.ViewDomains,
 		"label":     query.ViewLabels,

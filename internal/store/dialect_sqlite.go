@@ -1750,8 +1750,7 @@ func (d *SQLiteDialect) IsBusyError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var serr sqlite3.Error
-	if errors.As(err, &serr) {
+	if serr, ok := errors.AsType[sqlite3.Error](err); ok {
 		return serr.Code == sqlite3.ErrBusy || serr.Code == sqlite3.ErrLocked
 	}
 	var serrPtr *sqlite3.Error

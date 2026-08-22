@@ -388,9 +388,9 @@ func TestDocsScreenshotDockerfileGoVersionMatchesModule(t *testing.T) {
 	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
 	require.NoError(err)
 
-	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
+	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
 	require.Len(moduleGoVersion, 2)
-	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
+	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
 	require.Len(dockerGoVersion, 2)
 
 	assert.Equal(t, moduleGoVersion[1], dockerGoVersion[1])

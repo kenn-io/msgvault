@@ -480,8 +480,8 @@ func TestOrganizationHTTPProfileAcceptsInlineMediaBeyondGenericRequestLimit(t *t
 	require.NoError(json.Unmarshal(createdResponse.Body.Bytes(), &created))
 
 	profileBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", Data: bytes.Repeat([]byte("x"), 800*1024),
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", Data: bytes.Repeat([]byte("x"), 800*1024),
 	}}})
 	require.NoError(err)
 	assert.Greater(len(profileBody), 1<<20, "regression body must exceed the generic decoder limit")
@@ -509,9 +509,7 @@ func TestOrganizationHTTPProfileRejectsTooManyValues(t *testing.T) {
 	categories := make([]OrganizationCategoryBody, store.MaxOrganizationProfileValues+1)
 	for i := range categories {
 		categories[i] = OrganizationCategoryBody{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{
-				Source: string(store.ProvenanceUser),
-			},
+			Source:   string(store.ProvenanceUser),
 			Category: fmt.Sprintf("category-%d", i),
 		}
 	}
@@ -538,15 +536,13 @@ func TestOrganizationHTTPProfilePutRoundTripsEnvelopeMetadata(t *testing.T) {
 
 	activeFrom := time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)
 	name := OrganizationNameBody{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{
-			TypeLabel:  new("work"),
-			TypeTokens: []string{"work", "primary"},
-			Source:     string(store.ProvenanceExtraction),
-			SourceRef:  new("message:synthetic-1"),
-			Confidence: new(0.75),
-			ActiveFrom: &activeFrom,
-		},
-		Name: "Example Organisation", NameKind: "alias",
+		TypeLabel:  new("work"),
+		TypeTokens: []string{"work", "primary"},
+		Source:     string(store.ProvenanceExtraction),
+		SourceRef:  new("message:synthetic-1"),
+		Confidence: new(0.75),
+		ActiveFrom: &activeFrom,
+		Name:       "Example Organisation", NameKind: "alias",
 	}
 	firstBody, err := json.Marshal(OrganizationProfileBody{Names: []OrganizationNameBody{name}})
 	require.NoError(err)
@@ -569,8 +565,8 @@ func TestOrganizationHTTPProfilePutRoundTripsEnvelopeMetadata(t *testing.T) {
 	secondBody, err := json.Marshal(OrganizationProfileBody{
 		Names: []OrganizationNameBody{name},
 		Categories: []OrganizationCategoryBody{{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			Category:                 "vendor",
+			Source:   string(store.ProvenanceUser),
+			Category: "vendor",
 		}},
 	})
 	require.NoError(err)
@@ -604,12 +600,12 @@ func TestOrganizationHTTPProfileMediaContentRoundTrip(t *testing.T) {
 	logo := []byte("synthetic-logo-bytes")
 	profileBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{
 		{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			MediaKind:                "logo", MediaType: new("image/png"), Data: logo,
+			Source:    string(store.ProvenanceUser),
+			MediaKind: "logo", MediaType: new("image/png"), Data: logo,
 		},
 		{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Ordinal: new(1), Source: string(store.ProvenanceUser)},
-			MediaKind:                "photo", URI: new("https://example.com/photo.png"),
+			Ordinal: new(1), Source: string(store.ProvenanceUser),
+			MediaKind: "photo", URI: new("https://example.com/photo.png"),
 		},
 	}})
 	require.NoError(err)
@@ -665,8 +661,8 @@ func TestOrganizationHTTPProfilePutRetainsInlineMediaViaContentHash(t *testing.T
 	logo := []byte("synthetic-logo-bytes")
 	uri := "https://example.com/logo.png"
 	firstBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", MediaType: new("image/png"), URI: &uri, Data: logo,
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", MediaType: new("image/png"), URI: &uri, Data: logo,
 	}}})
 	require.NoError(err)
 	firstPut := organizationRequest(t, srv, http.MethodPut,
@@ -684,13 +680,13 @@ func TestOrganizationHTTPProfilePutRetainsInlineMediaViaContentHash(t *testing.T
 	// update re-sending it must keep the stored inline content.
 	secondBody, err := json.Marshal(OrganizationProfileBody{
 		Media: []OrganizationMediaBody{{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			MediaKind:                "logo", MediaType: new("image/png"), URI: &uri,
+			Source:    string(store.ProvenanceUser),
+			MediaKind: "logo", MediaType: new("image/png"), URI: &uri,
 			ContentHash: firstProfile.Media[0].ContentHash,
 		}},
 		Categories: []OrganizationCategoryBody{{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			Category:                 "vendor",
+			Source:   string(store.ProvenanceUser),
+			Category: "vendor",
 		}},
 	})
 	require.NoError(err)
@@ -715,8 +711,8 @@ func TestOrganizationHTTPProfilePutRetainsInlineMediaViaContentHash(t *testing.T
 	// A retention hash that matches no active row is a client error, not a
 	// silent hash-without-bytes insert.
 	staleBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", MediaType: new("image/png"), URI: &uri,
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", MediaType: new("image/png"), URI: &uri,
 		ContentHash: new("0000000000000000000000000000000000000000000000000000000000000000"),
 	}}})
 	require.NoError(err)
@@ -739,8 +735,8 @@ func TestOrganizationHTTPProfilePutEditsInlineMediaMetadataViaContentHash(t *tes
 
 	logo := []byte("metadata-edit-logo-bytes")
 	firstBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", MediaType: new("image/png"), Data: logo,
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", MediaType: new("image/png"), Data: logo,
 	}}})
 	require.NoError(err)
 	firstPut := organizationRequest(t, srv, http.MethodPut,
@@ -756,8 +752,8 @@ func TestOrganizationHTTPProfilePutEditsInlineMediaMetadataViaContentHash(t *tes
 	// stored bytes into the replacement row, not fail for lack of data.
 	uri := "https://example.com/logo.webp"
 	editBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", MediaType: new("image/webp"), URI: &uri,
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", MediaType: new("image/webp"), URI: &uri,
 		ContentHash: firstProfile.Media[0].ContentHash,
 	}}})
 	require.NoError(err)
@@ -795,8 +791,8 @@ func TestOrganizationHTTPProfilePutRetainsInlineOnlyMediaWithoutURI(t *testing.T
 
 	logo := []byte("inline-only-logo-bytes")
 	firstBody, err := json.Marshal(OrganizationProfileBody{Media: []OrganizationMediaBody{{
-		OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-		MediaKind:                "logo", MediaType: new("image/png"), Data: logo,
+		Source:    string(store.ProvenanceUser),
+		MediaKind: "logo", MediaType: new("image/png"), Data: logo,
 	}}})
 	require.NoError(err)
 	firstPut := organizationRequest(t, srv, http.MethodPut,
@@ -812,13 +808,13 @@ func TestOrganizationHTTPProfilePutRetainsInlineOnlyMediaWithoutURI(t *testing.T
 
 	secondBody, err := json.Marshal(OrganizationProfileBody{
 		Media: []OrganizationMediaBody{{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			MediaKind:                "logo", MediaType: new("image/png"),
+			Source:    string(store.ProvenanceUser),
+			MediaKind: "logo", MediaType: new("image/png"),
 			ContentHash: firstProfile.Media[0].ContentHash,
 		}},
 		Categories: []OrganizationCategoryBody{{
-			OrganizationEnvelopeBody: OrganizationEnvelopeBody{Source: string(store.ProvenanceUser)},
-			Category:                 "vendor",
+			Source:   string(store.ProvenanceUser),
+			Category: "vendor",
 		}},
 	})
 	require.NoError(err)

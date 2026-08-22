@@ -1,6 +1,7 @@
 version: "2"
 
 run:
+  go: "1.27"
   # Lint the build-tagged code, not just the untagged subset. The primary
   # build uses `fts5 sqlite_vec` (Makefile BUILD_TAGS) and the pgvector
   # backend is gated behind `pgvector`; without these tags golangci-lint
@@ -47,7 +48,7 @@ linters:
     - godot
     - goheader
     - gomoddirectives
-    - gomodguard
+    - gomodguard_v2
     - goprintffuncname
     - gosec
     - govet

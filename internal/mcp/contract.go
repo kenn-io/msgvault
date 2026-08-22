@@ -41,8 +41,7 @@ func (e *internalError) Unwrap() error {
 }
 
 func newInternalError(operation string, err error) error {
-	var privateErr *internalError
-	if errors.As(err, &privateErr) {
+	if _, ok := errors.AsType[*internalError](err); ok {
 		return err
 	}
 	return &internalError{operation: operation, cause: err}

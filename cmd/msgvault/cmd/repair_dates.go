@@ -322,13 +322,11 @@ func scanAndPlanDateRepairs(
 			continue
 		}
 		plan.repairs = append(plan.repairs, plannedDateRepair{
-			MessageDateRepair: store.MessageDateRepair{
-				ID:                     candidate.ID,
-				SentAt:                 resolved,
-				ExpectedLastModifiedAt: candidate.LastModifiedAt,
-			},
-			source:    source,
-			oldSentAt: candidate.SentAt,
+			ID:                     candidate.ID,
+			SentAt:                 resolved,
+			ExpectedLastModifiedAt: candidate.LastModifiedAt,
+			source:                 source,
+			oldSentAt:              candidate.SentAt,
 		})
 	}
 	return plan, nil

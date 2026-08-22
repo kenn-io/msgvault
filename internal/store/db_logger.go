@@ -314,11 +314,13 @@ func (t *loggedTx) QueryRowContext(
 type loggedRows struct {
 	*sql.Rows
 
-	query     string
-	args      []any
-	reqID     string
-	start     time.Time
-	finalized bool
+	query      string
+	args       []any
+	reqID      string
+	start      time.Time
+	finalized  bool
+	rowsErr    error
+	rowsErrSet bool
 }
 
 // Next delegates to the embedded *sql.Rows but, on the first
@@ -333,8 +335,19 @@ func (r *loggedRows) Next() bool {
 	if r.Rows.Next() {
 		return true
 	}
-	r.finalize(nil)
+	r.rowsErr = r.Rows.Err()
+	r.rowsErrSet = true
+	r.finalize(r.rowsErr)
 	return false
+}
+
+// Err returns the row error captured when iteration finished. Keeping that
+// result avoids a second Rows.Err call racing the context-close goroutine.
+func (r *loggedRows) Err() error {
+	if r.rowsErrSet {
+		return r.rowsErr
+	}
+	return r.Rows.Err()
 }
 
 // Close finalizes timing for the early-exit path (caller broke
@@ -344,25 +357,26 @@ func (r *loggedRows) Next() bool {
 // times.
 func (r *loggedRows) Close() error {
 	err := r.Rows.Close()
-	r.finalize(err)
+	if !r.rowsErrSet {
+		r.rowsErr = r.Rows.Err()
+		r.rowsErrSet = true
+	}
+	logErr := err
+	if logErr == nil {
+		logErr = r.rowsErr
+	}
+	r.finalize(logErr)
 	return err
 }
 
-// finalize emits the timing log line exactly once. closeErr is
-// the error returned by Rows.Close on the explicit-Close path
-// and nil on the end-of-scan path; either way, when no close
-// error is present we still consult Rows.Err() so iteration
-// failures (context cancellation, driver scan errors) get
-// logged as "sql error" instead of as a successful query.
-func (r *loggedRows) finalize(closeErr error) {
+// finalize emits the timing log line exactly once. logErr comes from
+// Rows.Close or Rows.Err so iteration failures are logged as "sql error"
+// instead of as a successful query.
+func (r *loggedRows) finalize(logErr error) {
 	if r.finalized {
 		return
 	}
 	r.finalized = true
-	logErr := closeErr
-	if logErr == nil {
-		logErr = r.Err()
-	}
 	logStmtWith("query", r.reqID, r.query, r.args, logErr, time.Since(r.start))
 }
 

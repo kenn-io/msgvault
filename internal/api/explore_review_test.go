@@ -1699,7 +1699,7 @@ func nextExploreCursor(t *testing.T, response *httptest.ResponseRecorder) string
 
 func tamperExploreCursor(t *testing.T, encoded, field string, value any) string {
 	t.Helper()
-	payload := strings.SplitN(encoded, ".", 2)[0]
+	payload, _, _ := strings.Cut(encoded, ".")
 	data, err := base64.RawURLEncoding.DecodeString(payload)
 	require.NoError(t, err)
 	var cursor map[string]any

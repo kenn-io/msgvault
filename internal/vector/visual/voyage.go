@@ -189,9 +189,8 @@ func mapVoyageError(ctx context.Context, err error) error {
 	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 		return err
 	}
-	var voyageErr *voyage.ProviderError
 	statusCode := 0
-	if errors.As(err, &voyageErr) {
+	if voyageErr, ok := errors.AsType[*voyage.ProviderError](err); ok {
 		statusCode = voyageErr.StatusCode
 	}
 	switch {
