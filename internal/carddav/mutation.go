@@ -279,7 +279,7 @@ func (s *Service) publicationHref(collectionURL, uid string) (string, error) {
 	if !sameOrigin(collection, &child) || !sameOrigin(s.client.origin, &child) {
 		return "", fmt.Errorf("CardDAV publication href: %w", ErrUnsafeTarget)
 	}
-	return child.String(), nil
+	return canonicalDAVURLIdentity(&child), nil
 }
 
 func publicationVersion(advertised []string) vcard.Version {
@@ -531,6 +531,11 @@ func (s *Service) captureCardDAVMutationConflict(
 }
 
 func (s *Service) fetchCanonical(ctx context.Context, href string) (store.CardDAVRemoteResource, bool, error) {
+	target, err := url.Parse(href)
+	if err != nil || !validHTTPURL(target) || !sameOrigin(s.client.origin, target) {
+		return store.CardDAVRemoteResource{}, false, ErrUnsafeTarget
+	}
+	href = canonicalDAVURLIdentity(target)
 	response, err := s.doRequest(ctx, Request{Method: http.MethodGet, URL: href})
 	if isAbsentStatus(err) {
 		return store.CardDAVRemoteResource{Href: href}, true, nil

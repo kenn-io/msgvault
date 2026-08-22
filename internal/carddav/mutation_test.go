@@ -26,10 +26,21 @@ func TestPublicationHrefBuildsEscapedDirectCollectionChild(t *testing.T) {
 		"https://contacts.example/books/personal?ignored=yes#fragment", "a/b?c#d",
 	)
 	require.NoError(t, err)
-	assert.Equal("https://contacts.example/books/personal/a%2Fb%3Fc%23d.vcf", href)
+	assert.Equal("https://contacts.example:443/books/personal/a%2Fb%3Fc%23d.vcf", href)
 
 	_, err = service.publicationHref("https://elsewhere.example/books/personal/", "person")
 	assert.ErrorIs(err, ErrUnsafeTarget)
+}
+
+func TestPublicationHrefUsesCanonicalDefaultHTTPSPort(t *testing.T) {
+	origin, err := url.Parse("https://contacts.example")
+	require.NoError(t, err)
+	service := &Service{client: &Client{origin: originURL(origin)}}
+
+	href, err := service.publicationHref("https://CONTACTS.example/books/personal/", "alice")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://contacts.example:443/books/personal/alice.vcf", href)
 }
 
 func TestStripServerOwnedPropertiesRemovesOnlyNamedProperties(t *testing.T) {

@@ -405,7 +405,39 @@ func TestMultigetMatchesEquivalentAbsoluteHref(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(missing)
 	require.Len(resources, 1)
-	assert.Equal(responseHref, resources[0].Href)
+	assert.Equal(requestedHref, resources[0].Href)
+}
+
+func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	var responseHref string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/books/personal/", r.URL.Path)
+		missing := `<D:response><D:href>` + responseHref +
+			`</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`
+		writeDAVXML(t, w, syncResponse(missing, ""))
+	}))
+	t.Cleanup(server.Close)
+	serverURL, err := url.Parse(server.URL)
+	require.NoError(err)
+	origin := mustParseURL(t, "http://contacts.example:"+serverURL.Port())
+	responseHref = "http://CONTACTS.example:" + serverURL.Port() + "/books/personal/alice.vcf"
+	resolver, _ := newFixtureResolver(t, netip.MustParseAddr("127.0.0.1"))
+	client, err := NewClient(ClientOptions{CredentialOrigin: origin, Resolver: resolver})
+	require.NoError(err)
+	client.allowPrivateOrigin = true
+	service := NewService(testutil.NewTestStore(t), client)
+	collection := mustParseURL(t, origin.String()+"/books/personal/")
+	requestedHref := origin.String() + "/books/personal/alice.vcf"
+
+	resources, missing, err := service.fetchMultiget(t.Context(), collection,
+		[]string{requestedHref}, &operationBudget{remaining: defaultOperationBytes})
+
+	require.NoError(err)
+	assert.Empty(resources)
+	assert.Equal([]string{requestedHref}, missing)
 }
 
 func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {

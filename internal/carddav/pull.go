@@ -321,13 +321,6 @@ func (s *Service) fetchSyncCollection(
 			if err != nil {
 				return store.CardDAVSyncPlan{}, err
 			}
-			for index := range cards {
-				resolved, err := url.Parse(cards[index].Href)
-				if err != nil {
-					return store.CardDAVSyncPlan{}, ErrIncompleteMultiget
-				}
-				cards[index].Href = canonicalDAVURLIdentity(resolved)
-			}
 			resources = append(resources, cards...)
 			removed = append(removed, missing...)
 		}
@@ -484,7 +477,7 @@ func (s *Service) fetchMultiget(
 			return nil, nil, err
 		}
 		identity := canonicalDAVURLIdentity(resolved)
-		href := resolved.String()
+		href := identity
 		if !wanted[identity] || seen[identity] {
 			return nil, nil, ErrIncompleteMultiget
 		}

@@ -125,6 +125,15 @@ func (s *Store) PrepareCardDAVPublicationContext(
 		if err != nil && !errors.Is(err, ErrCardDAVResourceNotFound) {
 			return err
 		}
+		if plan.Desired && resource == nil {
+			_, hrefErr := s.findCardDAVResourceTx(ctx, tx, plan.AddressBookID, plan.Href)
+			if hrefErr == nil {
+				return ErrCardDAVPublicationMismatch
+			}
+			if !errors.Is(hrefErr, ErrCardDAVResourceNotFound) {
+				return hrefErr
+			}
+		}
 		if !plan.Desired && errors.Is(err, ErrCardDAVResourceNotFound) {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM carddav_publications WHERE person_id = ?`, plan.PersonID); err != nil {
 				return fmt.Errorf("clear absent CardDAV publication: %w", err)
