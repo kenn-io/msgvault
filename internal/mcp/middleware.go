@@ -60,8 +60,7 @@ func errorIsolationMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 		if err == nil {
 			return result, nil
 		}
-		var protocolErr *jsonrpc.Error
-		if errors.As(err, &protocolErr) {
+		if _, ok := errors.AsType[*jsonrpc.Error](err); ok {
 			return result, err
 		}
 		slog.Error("MCP method failed with unexpected error", "method", method, "error", err)

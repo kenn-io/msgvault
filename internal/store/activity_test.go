@@ -2256,8 +2256,7 @@ func TestProjectActivityBatchReservesAbsentLegacyQueueAtomically(t *testing.T) {
 			successes++
 			continue
 		}
-		var stale *store.ErrActivityProjectionStale
-		if errors.As(err, &stale) {
+		if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 			staleErrors++
 			continue
 		}
@@ -2303,8 +2302,7 @@ func TestProjectActivityBatchConcurrentSameTokenCommitsOnce(t *testing.T) {
 			successes++
 			continue
 		}
-		var stale *store.ErrActivityProjectionStale
-		if errors.As(err, &stale) {
+		if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 			staleErrors++
 			continue
 		}

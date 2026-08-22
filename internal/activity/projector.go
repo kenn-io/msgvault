@@ -321,8 +321,7 @@ func (p *Projector) RecomputeStale(ctx context.Context) (RunResult, error) {
 		}
 		if err := p.store.RecomputeContactStateContext(
 			ctx, personIDs, current); err != nil {
-			var stale *store.ErrActivityProjectionStale
-			if errors.As(err, &stale) {
+			if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 				return result, errProjectionEpochChanged
 			}
 			return result, err
@@ -395,8 +394,7 @@ func (p *Projector) convergeTimezone(
 		}
 		if err := p.store.CompleteActivityTimezoneTransitionContext(
 			ctx, current); err != nil {
-			var stale *store.ErrActivityProjectionStale
-			if errors.As(err, &stale) {
+			if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 				continue
 			}
 			return err
@@ -404,8 +402,7 @@ func (p *Projector) convergeTimezone(
 		if direct.Active {
 			if err := p.store.CompleteActivityDirectLimitTransitionContext(
 				ctx, direct); err != nil {
-				var stale *store.ErrActivityProjectionStale
-				if errors.As(err, &stale) {
+				if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 					continue
 				}
 				return err
@@ -462,8 +459,7 @@ func (p *Projector) convergeDirectLimit(
 		}
 		if err := p.store.CompleteActivityDirectLimitTransitionContext(
 			ctx, current); err != nil {
-			var stale *store.ErrActivityProjectionStale
-			if errors.As(err, &stale) {
+			if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 				continue
 			}
 			return err
@@ -557,8 +553,7 @@ func (p *Projector) reconcileRevisions(
 		}
 		if err := p.store.CompareAndSetActivityReconciledRevisionsContext(
 			ctx, target); err != nil {
-			var stale *store.ErrActivityProjectionStale
-			if errors.As(err, &stale) {
+			if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
 				continue
 			}
 			return err
@@ -668,8 +663,7 @@ func (p *Projector) projectCandidates(
 			p.advanceWatermark(ctx, current, result)
 			return nil
 		}
-		var stale *store.ErrActivityProjectionStale
-		if !errors.As(err, &stale) {
+		if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); !ok {
 			return err
 		}
 		if attempt+1 == projectorStaleRetries {

@@ -107,8 +107,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
 		if err != nil {
 			// Check for 404 - history too old
-			var notFound *gmail.NotFoundError
-			if errors.As(err, &notFound) {
+			if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
 				s.logger.Info("gmail history expired; full sync required")
 				_ = s.store.FailSync(syncID, "history too old")
 				// Callers fall back to a full sync on ErrHistoryExpired.
@@ -390,8 +389,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 // to a debug-level message since deleted messages are expected during
 // incremental sync (e.g., spam auto-deleted between sync runs).
 func (s *Syncer) logLabelChangeError(action, messageID string, err error) {
-	var notFound *gmail.NotFoundError
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
 		s.logger.Debug("skipping label "+action+": message deleted from Gmail", "id", messageID)
 	} else {
 		s.logger.Warn("failed to handle label "+action, "id", messageID, "error", err)

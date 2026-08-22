@@ -405,8 +405,7 @@ func decodeProfilePatchRequest(
 	var patch store.PersonProfilePatch
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxPersonProfilePatchBytes))
 	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "profile_patch_too_large",
 				"Person profile patch is too large")
 			return patch, false

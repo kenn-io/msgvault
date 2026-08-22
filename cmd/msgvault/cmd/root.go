@@ -444,8 +444,7 @@ func wrapOAuthError(err error) error {
 // permanently invalid (expired or revoked), as opposed to a transient failure
 // like a network error or context cancellation.
 func isAuthInvalidError(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	if errors.As(err, &retrieveErr) {
+	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		// Google returns "invalid_grant" when refresh tokens are expired or revoked
 		return retrieveErr.ErrorCode == "invalid_grant"
 	}
@@ -586,8 +585,7 @@ func getTokenSourceWithReauth(
 	// AuthorizeManual validates the token and atomically saves it,
 	// so the old token is only overwritten after validation succeeds.
 	if authErr := authorizeManualForReauth(ctx, mgr, email); authErr != nil {
-		var mismatch *oauth.TokenMismatchError
-		if errors.As(authErr, &mismatch) {
+		if mismatch, ok := errors.AsType[*oauth.TokenMismatchError](authErr); ok {
 			return nil, fmt.Errorf(
 				"re-authorize %s: %w\n"+
 					"If this account uses an alias, remove "+

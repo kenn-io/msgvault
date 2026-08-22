@@ -85,8 +85,7 @@ const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous
 // SQLiteDialect's error predicates are thin wrappers around this helper; it also
 // services subset.go (which has not been migrated to Dialect).
 func isSQLiteError(err error, substr string) bool {
-	var sqliteErr sqlite3.Error
-	if errors.As(err, &sqliteErr) {
+	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
 		return strings.Contains(sqliteErr.Error(), substr)
 	}
 	var sqliteErrPtr *sqlite3.Error

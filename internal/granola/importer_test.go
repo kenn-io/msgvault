@@ -244,11 +244,9 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 
 	notes := []*Note{
 		{
-			NoteSummary: NoteSummary{
-				ID: "sparse-transcript-times", Title: "Sparse transcript times",
-				Owner:     User{Name: "Test User", Email: "user@example.com"},
-				CreatedAt: createdAt, UpdatedAt: createdAt,
-			},
+			ID: "sparse-transcript-times", Title: "Sparse transcript times",
+			Owner:     User{Name: "Test User", Email: "user@example.com"},
+			CreatedAt: createdAt, UpdatedAt: createdAt,
 			Transcript: []TranscriptSegment{
 				{Speaker: Speaker{Name: "Untimed"}, Text: "No timestamp"},
 				{Speaker: Speaker{Name: "Timed"}, Text: "First timestamp", StartTime: firstTranscriptAt},
@@ -256,11 +254,9 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 			},
 		},
 		{
-			NoteSummary: NoteSummary{
-				ID: "missing-transcript-times", Title: "Missing transcript times",
-				Owner:     User{Name: "Test User", Email: "user@example.com"},
-				CreatedAt: createdAt.Add(time.Hour), UpdatedAt: createdAt.Add(time.Hour),
-			},
+			ID: "missing-transcript-times", Title: "Missing transcript times",
+			Owner:     User{Name: "Test User", Email: "user@example.com"},
+			CreatedAt: createdAt.Add(time.Hour), UpdatedAt: createdAt.Add(time.Hour),
 			Transcript: []TranscriptSegment{{
 				Speaker: Speaker{Name: "Untimed"}, Text: "Created-at fallback",
 			}},

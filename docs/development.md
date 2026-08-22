@@ -5,7 +5,7 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
-Source builds require Go 1.26+, Bun 1.3.14+, and a C/C++ compiler. The Make
+Source builds require Go 1.27+, Bun 1.3.14+, and a C/C++ compiler. The Make
 targets install the pinned browser dependencies when `web/package.json` or
 `web/bun.lock` changes, then embed the production UI in the Go binary.
 

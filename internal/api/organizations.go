@@ -718,8 +718,7 @@ func organizationAttributeTarget(w http.ResponseWriter, r *http.Request) (int64,
 func decodeOrganizationProfileRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxOrganizationProfileRequestBytes))
 	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "organization_profile_too_large",
 				"Organization profile request is too large")
 			return false

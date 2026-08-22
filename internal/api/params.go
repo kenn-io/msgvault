@@ -26,8 +26,7 @@ func newParamError(param, message string) *paramError {
 // rejectBadParam writes a 400 for an invalid query parameter, using the
 // parameter-specific error code (invalid_<param>) when err is a paramError.
 func (s *Server) rejectBadParam(w http.ResponseWriter, err error) {
-	var pe *paramError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*paramError](err); ok {
 		writeError(w, http.StatusBadRequest, "invalid_"+pe.param, pe.message)
 		return
 	}
@@ -38,8 +37,7 @@ func (s *Server) rejectBadParam(w http.ResponseWriter, err error) {
 // that surface errors through writeAPIHTTPError. It preserves the
 // parameter-specific error code so the response envelope matches rejectBadParam.
 func apiHTTPErrorFromParam(err error) *apiHTTPError {
-	var pe *paramError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*paramError](err); ok {
 		return newAPIHTTPError(http.StatusBadRequest, "invalid_"+pe.param, pe.message)
 	}
 	return newAPIHTTPError(http.StatusBadRequest, "invalid_parameter", err.Error())

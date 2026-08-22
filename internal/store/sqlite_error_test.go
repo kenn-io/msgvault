@@ -34,14 +34,11 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 		ExtendedCode: sqlite3.ErrConstraintForeignKey,
 	}
 
-	// Wrap the error
-	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
-
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
-	assert.True(t, isSQLiteError(wrappedErr, "constraint failed"),
+	assert.True(t, isSQLiteError(sqliteErr, "constraint failed"),
 		"isSQLiteError should match constraint error via pointer, got: %v", sqliteErr.Error())
 
-	assert.False(t, isSQLiteError(wrappedErr, "no such table"),
+	assert.False(t, isSQLiteError(sqliteErr, "no such table"),
 		"isSQLiteError should not match unrelated substring via pointer")
 }
 

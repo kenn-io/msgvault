@@ -435,8 +435,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("service account token for %s: %w", email, saErr)
 		}
 		if saErr := oauth.ValidateTokenEmail(cmd.Context(), ts, email); saErr != nil {
-			var mismatch *oauth.TokenMismatchError
-			if errors.As(saErr, &mismatch) {
+			if mismatch, ok := errors.AsType[*oauth.TokenMismatchError](saErr); ok {
 				existing, lookupErr := findGmailSource(s, email)
 				if lookupErr != nil && !errors.Is(lookupErr, errGmailSourceNotFound) {
 					return fmt.Errorf("service account validation failed: %w (also: %w)", saErr, lookupErr)

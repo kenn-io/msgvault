@@ -77,7 +77,7 @@ func jsonFields(
 		if !field.IsExported() {
 			continue
 		}
-		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		switch name {
 		case "-":
 			continue

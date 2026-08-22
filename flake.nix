@@ -25,15 +25,25 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Pin Go 1.26.6 until nixpkgs-unstable ships it.
+        # Pin Go 1.27.0 until the locked nixpkgs revision ships it.
         # Scoped to msgvault only — do NOT export via overlay, that would
         # invalidate every Go derivation in the transitive closure.
-        goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
-          version = "1.26.6";
+        goPinned = pkgs.go_1_26.overrideAttrs (old: rec {
+          version = "1.27.0";
           src = pkgs.fetchurl {
             url = "https://go.dev/dl/go${version}.src.tar.gz";
-            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+            hash = "sha256-cAJAPXzERSnvbSb2mkSBgmM5Xq18FsBaWAiuBH6+sOU=";
           };
+          patches =
+            builtins.filter (
+              patch: !(pkgs.lib.hasSuffix "go_no_vendor_checks-1.26.patch" (toString patch))
+            ) old.patches
+            ++ [
+              (pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/NixOS/nixpkgs/67a70befab1966b026701e8e94cf19b1543075c5/pkgs/development/compilers/go/go_no_vendor_checks-1.27.patch";
+                hash = "sha256-aTpc6kAX9bAyMMAHqzldcb2EEseCpke7QlJuQ1Bk6jc=";
+              })
+            ];
         });
 
         buildGoModule = pkgs.buildGoModule.override { go = goPinned; };

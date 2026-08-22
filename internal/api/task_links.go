@@ -127,8 +127,7 @@ func (s *Server) handleCreateOrLinkMessageTask(w http.ResponseWriter, r *http.Re
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Task request is too large")
 			return
 		}
@@ -169,7 +168,7 @@ func (s *Server) handleListMessageTasks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if s.taskLinkOperations == nil {
-		writeJSON(w, http.StatusOK, taskLinkLookupResponse(identity, tasklinks.LookupResult{IndexStatus: tasklinks.IndexStatus{State: tasklinks.StateUnavailable, Complete: false, Reason: tasklinks.ReasonUnavailable}, Tasks: []tasklinks.TaskSummary{}}))
+		writeJSON(w, http.StatusOK, taskLinkLookupResponse(identity, tasklinks.LookupResult{State: tasklinks.StateUnavailable, Complete: false, Reason: tasklinks.ReasonUnavailable, Tasks: []tasklinks.TaskSummary{}}))
 		return
 	}
 	writeJSON(w, http.StatusOK, taskLinkLookupResponse(identity, s.taskLinkOperations.Lookup(r.Context(), identity)))

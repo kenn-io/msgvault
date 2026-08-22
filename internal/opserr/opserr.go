@@ -33,8 +33,7 @@ func (e *Error) Unwrap() error {
 
 // KindOf returns the operation error kind, defaulting to internal errors.
 func KindOf(err error) Kind {
-	var opErr *Error
-	if errors.As(err, &opErr) {
+	if opErr, ok := errors.AsType[*Error](err); ok {
 		return opErr.Kind
 	}
 	return KindInternal

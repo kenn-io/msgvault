@@ -1431,7 +1431,7 @@ func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
 		backend:   backend,
 		vectorCfg: vector.Config{},
 	}
-	items := []searchMessageItem{{MessageSummary: query.MessageSummary{ID: messageID}}}
+	items := []searchMessageItem{{ID: messageID}}
 
 	require.NoError(t, h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0))
 

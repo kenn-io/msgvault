@@ -464,10 +464,10 @@ func (imp *Importer) importerContainers(
 			continue
 		}
 		containers = append(containers, importerContainer{
-			CatalogContainer: CatalogContainer{Channel: Channel{
+			Channel: Channel{
 				ID: containerID, GuildID: guildID,
 				MemberCount: storedContainerMemberCount(storedMetadata[containerID]),
-			}},
+			},
 			preserveMetadata: true,
 		})
 	}

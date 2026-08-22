@@ -80,8 +80,8 @@ func TestIdentityImportPreviewAndApplyShareDeterministicCandidates(t *testing.T)
 	}}
 
 	preview, err := identityops.Import(t.Context(), previewStore, identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Entries:        entries,
+		SourceID: 14,
+		Entries:  entries,
 	})
 	requirements.NoError(err)
 	assertions.Empty(previewStore.batchCalls)
@@ -97,9 +97,9 @@ func TestIdentityImportPreviewAndApplyShareDeterministicCandidates(t *testing.T)
 	applyStore := newDiscoveryFakeStore()
 	applyStore.identities = previewStore.identities
 	apply, err := identityops.Import(t.Context(), applyStore, identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Entries:        entries,
-		Apply:          true,
+		SourceID: 14,
+		Entries:  entries,
+		Apply:    true,
 	})
 	requirements.NoError(err)
 	assertions.Equal(preview.Candidates, apply.Candidates)
@@ -141,10 +141,10 @@ func TestIdentityImportValidatesEveryRowAndSignalBeforeWriting(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			st := newDiscoveryFakeStore()
 			_, err := identityops.Import(t.Context(), st, identityops.ImportRequest{
-				SourceSelector: identityops.SourceSelector{SourceID: 14},
-				Entries:        test.entries,
-				Signal:         test.signal,
-				Apply:          true,
+				SourceID: 14,
+				Entries:  test.entries,
+				Signal:   test.signal,
+				Apply:    true,
 			})
 
 			require.ErrorContains(t, err, test.want)
@@ -164,7 +164,7 @@ func TestIdentityImportApplyIsSourceScopedStateIndependentAndIdempotent(t *testi
 	requirements.NoError(st.AddAccountIdentity(source.ID, "Old@Example.test", "manual"))
 	requirements.NoError(st.AddAccountIdentity(other.ID, "other-alias@example.test", "manual"))
 	req := identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: source.ID},
+		SourceID: source.ID,
 		Entries: []identityops.ImportEntry{
 			{Identifier: "old@example.test", State: "deleted"},
 			{Identifier: "waiting@example.test", State: "pending"},
@@ -197,10 +197,10 @@ func TestIdentityImportMergesAdditionalSignalIdempotently(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(st.AddAccountIdentity(source.ID, "Alias@Example.test", "manual"))
 	req := identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: source.ID},
-		Entries:        []identityops.ImportEntry{{Identifier: "alias@example.test", State: "deleted"}},
-		Signal:         "bulk-import",
-		Apply:          true,
+		SourceID: source.ID,
+		Entries:  []identityops.ImportEntry{{Identifier: "alias@example.test", State: "deleted"}},
+		Signal:   "bulk-import",
+		Apply:    true,
 	}
 
 	first, err := identityops.Import(t.Context(), st, req)
@@ -225,9 +225,9 @@ func TestIdentityImportCancellationPreventsWrites(t *testing.T) {
 	st := newDiscoveryFakeStore()
 
 	_, err := identityops.Import(ctx, st, identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
-		Entries:        []identityops.ImportEntry{{Identifier: "alias@example.test"}},
-		Apply:          true,
+		SourceID: 14,
+		Entries:  []identityops.ImportEntry{{Identifier: "alias@example.test"}},
+		Apply:    true,
 	})
 
 	require.ErrorIs(t, err, context.Canceled)
@@ -246,7 +246,7 @@ func TestIdentityImportReturnsCommittedPrefixOnBatchError(t *testing.T) {
 	}
 
 	result, err := identityops.Import(t.Context(), st, identityops.ImportRequest{
-		SourceSelector: identityops.SourceSelector{SourceID: 14},
+		SourceID: 14,
 		Entries: []identityops.ImportEntry{
 			{Identifier: "first@example.test"},
 			{Identifier: "second@example.test"},

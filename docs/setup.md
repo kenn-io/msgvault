@@ -45,7 +45,7 @@ conda install -c conda-forge msgvault
 
 ## Build From Source
 
-Requires Go 1.26+, Bun 1.3.14+, and a C/C++ compiler (GCC or Clang). Bun builds
+Requires Go 1.27+, Bun 1.3.14+, and a C/C++ compiler (GCC or Clang). Bun builds
 the browser application embedded in the binary. CGO is required because
 msgvault uses `mattn/go-sqlite3` (SQLite with FTS5) and `duckdb-go/v2` (Parquet
 analytics), both of which compile native extensions.

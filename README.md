@@ -5,7 +5,7 @@
 <h1 align="center">msgvault</h1>
 
 <p align="center">
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go" alt="Go 1.26+"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go" alt="Go 1.27+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://msgvault.io"><img src="https://img.shields.io/badge/Docs-msgvault.io-blue" alt="Docs"></a>
   <a href="https://discord.gg/fDnmxB8Wkq"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&amp;logoColor=white" alt="Discord"></a>
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
 
-To build from source instead (requires **Go 1.26+**, **Bun 1.3.14+**, and a
+To build from source instead (requires **Go 1.27+**, **Bun 1.3.14+**, and a
 C/C++ compiler for CGO and to statically link DuckDB):
 
 ```bash

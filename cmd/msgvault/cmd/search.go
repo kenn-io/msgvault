@@ -221,8 +221,6 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 
 // nil error return mirrors outputSearchResultsJSON so callers can return
 // either uniformly; tabwriter output never fails.
-//
-//nolint:unparam // symmetry with error-returning outputSearchResultsJSON sibling
 func outputSearchResultsTable(results []query.MessageSummary) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")

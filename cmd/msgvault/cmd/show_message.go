@@ -88,8 +88,6 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) error {
 
 // nil error return mirrors outputMessageJSON so callers can return either
 // uniformly; text printing never fails.
-//
-//nolint:unparam // symmetry with error-returning outputMessageJSON sibling
 func outputMessageText(msg *query.MessageDetail) error {
 	// Header section
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")

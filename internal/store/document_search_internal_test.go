@@ -9,12 +9,12 @@ import (
 
 func TestFuseDocumentSearchRowsCapsCombinedSignals(t *testing.T) {
 	contentRows := []documentSearchRow{
-		{DocumentSearchResult: DocumentSearchResult{OccurrenceKey: "content-1", AttachmentID: 1}, ContentRank: 1},
-		{DocumentSearchResult: DocumentSearchResult{OccurrenceKey: "content-2", AttachmentID: 2}, ContentRank: 2},
+		{OccurrenceKey: "content-1", AttachmentID: 1, ContentRank: 1},
+		{OccurrenceKey: "content-2", AttachmentID: 2, ContentRank: 2},
 	}
 	filenameRows := []documentSearchRow{
-		{DocumentSearchResult: DocumentSearchResult{OccurrenceKey: "filename-1", AttachmentID: 3}, FilenameRank: 1},
-		{DocumentSearchResult: DocumentSearchResult{OccurrenceKey: "filename-2", AttachmentID: 4}, FilenameRank: 2},
+		{OccurrenceKey: "filename-1", AttachmentID: 3, FilenameRank: 1},
+		{OccurrenceKey: "filename-2", AttachmentID: 4, FilenameRank: 2},
 	}
 
 	rows, truncated := fuseDocumentSearchRows(contentRows, filenameRows, nil, 3)
