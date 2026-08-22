@@ -48,6 +48,46 @@
 
         buildGoModule = pkgs.buildGoModule.override { go = goPinned; };
 
+        goplsPinned = (pkgs.gopls.override { buildGoLatestModule = buildGoModule; }).overrideAttrs (_: rec {
+          version = "0.23.0";
+          src = pkgs.fetchFromGitHub {
+            owner = "golang";
+            repo = "tools";
+            tag = "gopls/v${version}";
+            hash = "sha256-GTRZ0tS2a7Cx4qRf6PfxhkGVPYRoLYOmE+W/2x9Pttk=";
+          };
+          vendorHash = "sha256-rvm33C3z3T6moeEQ4C7aG+dT8ROqmpBFehIpwGFZMrU=";
+        });
+
+        golangciLintPinned =
+          (pkgs.golangci-lint.override { buildGo126Module = buildGoModule; }).overrideAttrs
+            (_: rec {
+              version = "2.13.1";
+              src = pkgs.fetchFromGitHub {
+                owner = "golangci";
+                repo = "golangci-lint";
+                tag = "v${version}";
+                hash = "sha256-8nWHSMAwIILfKMPfxWKMimxWt9N+kUsZEAaoAOPbRBE=";
+              };
+              vendorHash = "sha256-yZRqfht5rY2yyoZNtYttE57sB7EYjk71yrKw8dLYzNk=";
+            });
+
+        delvePinned = (pkgs.delve.override { inherit buildGoModule; }).overrideAttrs (_: rec {
+          version = "1.27.1";
+          src = pkgs.fetchFromGitHub {
+            owner = "go-delve";
+            repo = "delve";
+            tag = "v${version}";
+            hash = "sha256-H91QnLyqywgoc3zdTaclzzUxVPagNnxLzKub2gnL25w=";
+          };
+          checkFlags = [ "-skip=TestGeneratedDoc|TestTypecheckRPC" ];
+        });
+
+        gotoolsPinned = pkgs.gotools.override {
+          inherit buildGoModule;
+          go = goPinned;
+        };
+
         bunPinned = pkgs.bun.overrideAttrs (old: rec {
           version = "1.3.14";
           src = passthru.sources.${system};
@@ -101,10 +141,10 @@
         devShells.default = pkgs.mkShell {
           packages = [
             goPinned
-            pkgs.gopls
-            pkgs.gotools
-            pkgs.golangci-lint
-            pkgs.delve
+            goplsPinned
+            gotoolsPinned
+            golangciLintPinned
+            delvePinned
             pkgs.gcc
             pkgs.prek
             pkgs.sqlite-interactive
