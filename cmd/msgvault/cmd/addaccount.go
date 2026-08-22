@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
@@ -927,6 +928,16 @@ func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email, reso
 			return err
 		}
 	}
+	hasToken := mgr.HasToken(email)
+	if readonlyGrant && !hasToken {
+		tokenPath := mgr.TokenPath(email)
+		if _, err := os.Lstat(tokenPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf(
+				"%s has a stored token file that cannot be read, so its Gmail access cannot be verified\n%s",
+				email, narrowingRemedy(email, tokenPath, resolvedApp),
+			)
+		}
+	}
 	// The token's own client_id is the whole question: a grant belonging to a
 	// different client is not one --readonly could narrow. Deliberately not
 	// gated on bindingChanged, which requires an existing source row and so
@@ -936,7 +947,7 @@ func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email, reso
 	freshClient := mgr.TokenIssuedByDifferentClient(email)
 	decision := decideAddAccountGrant(
 		email,
-		mgr.HasToken(email),
+		hasToken,
 		mgr.HasScopeMetadata(email),
 		mgr.GrantedScopes(email),
 		readonlyGrant,

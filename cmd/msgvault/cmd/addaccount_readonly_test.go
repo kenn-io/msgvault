@@ -454,6 +454,23 @@ func TestAddAccount_ReadonlyRefusesWriteCapableAccount(t *testing.T) {
 	assert.Equal(before, after, "refusal must not touch the existing token")
 }
 
+func TestAddAccount_ReadonlyRefusesMalformedStoredToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	tokenPath, restore := seedTokenEnv(t, gmailReadonlyTokenJSON)
+	defer restore()
+	require.NoError(os.WriteFile(tokenPath, []byte("{not valid json"), 0600))
+
+	out, err := runAddAccountForTest(t,
+		scopeEscalationAccount, "--readonly", "--no-default-identity")
+
+	require.Error(err)
+	assert.Contains(err.Error(), "cannot be verified")
+	assert.NotContains(out, "Starting browser authorization")
+}
+
 func TestAddAccount_ReadonlyRemediationPreservesNamedOAuthApp(t *testing.T) {
 	saveAddAccountFlags(t)
 	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
