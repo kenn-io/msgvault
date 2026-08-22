@@ -2242,6 +2242,188 @@ func (s *Store) recomputeContactStateTx(
 		first, last, inbound, outbound, int64(len(evidence)))
 }
 
+func (s *Store) reconcilePersonActivityStateTx(
+	ctx context.Context,
+	tx *loggedTx,
+	survivorID, absorbedID int64,
+	revisions ContactRevisions,
+) error {
+	contactIDs, err := s.reclassifyPersonActivityTx(
+		ctx, tx, []int64{survivorID, absorbedID}, revisions,
+	)
+	if err != nil {
+		return err
+	}
+	var absorbedContactExists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_contact_state WHERE person_id = ?
+	)`, absorbedID).Scan(&absorbedContactExists); err != nil {
+		return fmt.Errorf("inspect absorbed contact state: %w", err)
+	}
+	if absorbedContactExists {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM person_contact_state WHERE person_id = ?`, absorbedID,
+		); err != nil {
+			return fmt.Errorf("delete absorbed contact state: %w", err)
+		}
+	}
+	for _, personID := range contactIDs {
+		if personID == absorbedID {
+			continue
+		}
+		if err := s.recomputeContactStateTx(
+			ctx, tx, personID, revisions, true,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reclassifyPersonActivityTx starts from the affected people and indexed
+// participant/message edges. It never constructs an archive-wide counterpart
+// relation. Events whose classification did not change keep their old epoch;
+// the bounded projector backstop advances that stamp after the identity write.
+func (s *Store) reclassifyPersonActivityTx(
+	ctx context.Context, tx *loggedTx, personIDs []int64, revisions ContactRevisions,
+) ([]int64, error) {
+	if len(personIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := personMergeSnapshotPlaceholders(len(personIDs))
+	personArgs := personMergeSnapshotIDArgs(personIDs)
+	args := make([]any, 0, len(personIDs)*4)
+	for range 4 {
+		args = append(args, personArgs...)
+	}
+	messageIDs, err := personMergeRowIDsTx(ctx, tx, `WITH affected_messages AS (
+		SELECT message.id AS message_id
+		FROM person_participants binding
+		JOIN messages message ON message.sender_id = binding.participant_id
+		WHERE binding.person_id IN (`+placeholders+`)
+		UNION
+		SELECT recipient.message_id
+		FROM person_participants binding
+		JOIN message_recipients recipient ON recipient.participant_id = binding.participant_id
+		WHERE binding.person_id IN (`+placeholders+`)
+		UNION
+		SELECT message.id
+		FROM person_participants binding
+		JOIN conversation_participants member ON member.participant_id = binding.participant_id
+		JOIN messages message ON message.conversation_id = member.conversation_id
+		WHERE binding.person_id IN (`+placeholders+`)
+		UNION
+		SELECT link.message_id
+		FROM activity_event_persons link
+		WHERE link.person_id IN (`+placeholders+`)
+	)
+	SELECT event.message_id
+	FROM affected_messages affected
+	JOIN activity_events event ON event.message_id = affected.message_id
+	GROUP BY event.message_id
+	ORDER BY event.message_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load person-affected activity messages: %w", err)
+	}
+	if err := s.lockActivityMessagesTx(ctx, tx, "person activity messages", messageIDs); err != nil {
+		return nil, err
+	}
+	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load person activity candidates: %w", err)
+	}
+	type activityRewrite struct {
+		old  *ActivityEvent
+		next *ActivityEvent
+	}
+	rewrites := make([]activityRewrite, 0, len(candidates))
+	contactPeople := make(map[int64]struct{}, len(personIDs))
+	for _, personID := range personIDs {
+		contactPeople[personID] = struct{}{}
+	}
+	for _, candidate := range candidates {
+		old, err := s.loadActivityEventTx(ctx, tx, candidate.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if old == nil {
+			continue
+		}
+		for _, personID := range directActivityPersons(old) {
+			contactPeople[personID] = struct{}{}
+		}
+		if !candidate.Eligible {
+			rewrites = append(rewrites, activityRewrite{old: old})
+			continue
+		}
+		classification := ClassifyActivityCandidate(
+			candidate, candidate.DirectLimitTransition.Target)
+		next := *old
+		next.RefKind = classification.RefKind
+		next.Channel = classification.Channel
+		next.Direction = classification.Direction
+		next.OwnerSourceID = classification.OwnerSourceID
+		next.OwnerAddress = classification.OwnerAddress
+		next.ProjectedIdentityRevision = revisions.IdentityRevision
+		next.ProjectedAccountIdentityRevision = revisions.AccountIdentityRevision
+		next.Persons = classification.Persons
+		for _, personID := range directActivityPersons(&next) {
+			contactPeople[personID] = struct{}{}
+		}
+		if activityEventClassificationEqual(old, &next) {
+			continue
+		}
+		rewrites = append(rewrites, activityRewrite{old: old, next: &next})
+	}
+	contactIDs := sortedInt64Set(contactPeople)
+	if err := s.lockActivityContactPersonsTx(ctx, tx, contactIDs); err != nil {
+		return nil, err
+	}
+	if len(rewrites) > 0 {
+		if err := s.lockActivityProjectionQueueFreshnessTx(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
+	for _, rewrite := range rewrites {
+		if rewrite.next == nil {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM activity_events WHERE message_id = ?`, rewrite.old.MessageID,
+			); err != nil {
+				return nil, fmt.Errorf("retract person activity event: %w", err)
+			}
+			continue
+		}
+		if err := s.replaceActivityEventTx(ctx, tx, *rewrite.next); err != nil {
+			return nil, err
+		}
+	}
+	return contactIDs, nil
+}
+
+func activityEventClassificationEqual(left, right *ActivityEvent) bool {
+	if left.RefKind != right.RefKind || left.Channel != right.Channel ||
+		left.Direction != right.Direction ||
+		!sameOptionalInt64(left.OwnerSourceID, right.OwnerSourceID) ||
+		left.OwnerAddress != right.OwnerAddress {
+		return false
+	}
+	return slices.Equal(sortedActivityPersons(left.Persons), sortedActivityPersons(right.Persons))
+}
+
+func (s *Store) lockActivityMessagesTx(
+	ctx context.Context, tx *loggedTx, label string, messageIDs []int64,
+) error {
+	for start := 0; start < len(messageIDs); start += activityCandidateIDChunk {
+		chunk := messageIDs[start:min(start+activityCandidateIDChunk, len(messageIDs))]
+		if err := s.lockRowsTx(ctx, tx, `SELECT id FROM messages
+			WHERE id IN (`+int64Placeholders(len(chunk))+`) ORDER BY id`,
+			label, 1, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) writeRecomputedContactStateTx(
 	ctx context.Context,
 	tx *loggedTx,

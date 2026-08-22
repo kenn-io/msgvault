@@ -98,14 +98,14 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 
 func addSavedViewIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "id", In: "path", Required: true, Description: "Saved View ID",
+		Name: "id", In: pathKey, Required: true, Description: "Saved View ID",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
 func addSavedViewIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: ifMatchHeaderName, In: "header", Required: true,
+		Name: ifMatchHeaderName, In: headerParamLocation, Required: true,
 		Description: "Strong ETag returned by the latest Saved View read",
 		Schema:      &huma.Schema{Type: huma.TypeString},
 	})

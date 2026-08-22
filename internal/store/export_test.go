@@ -112,3 +112,19 @@ func (s *Store) SetAttachmentRoleRepairPreparedHookForTest(fn func()) func() {
 	s.attachmentRoleRepairPreparedHook = fn
 	return func() { s.attachmentRoleRepairPreparedHook = nil }
 }
+
+// SetPersonOperationBeforeIdentityLockHookForTest installs a per-Store barrier
+// immediately before merge and split transactions acquire the identity lock.
+// Concurrency tests use it to prove every competing transaction is open and at
+// the lock boundary before either is released.
+func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func() {
+	s.personOperationBeforeIdentityLockHook = fn
+	return func() { s.personOperationBeforeIdentityLockHook = nil }
+}
+
+// SetPersonMergeAfterSnapshotHookForTest installs a barrier after a merge has
+// captured its reversal snapshot but before it mutates referenced rows.
+func (s *Store) SetPersonMergeAfterSnapshotHookForTest(fn func()) func() {
+	s.personMergeAfterSnapshotHook = fn
+	return func() { s.personMergeAfterSnapshotHook = nil }
+}

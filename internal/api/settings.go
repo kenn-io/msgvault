@@ -160,7 +160,7 @@ func (s *Server) registerSettingsRoutes(api huma.API) {
 	patch := rawAPIV1Operation("patchSettings", http.MethodPatch, "/settings", "Update browser-managed settings")
 	patch.Parameters = append(patch.Parameters, &huma.Param{
 		Name:        ifMatchHeaderName,
-		In:          "header",
+		In:          headerParamLocation,
 		Description: "Strong ETag returned by the latest settings read",
 		Required:    true,
 		Schema:      &huma.Schema{Type: huma.TypeString},

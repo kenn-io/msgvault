@@ -495,7 +495,7 @@ func addEmploymentIDParameter(operation *huma.Operation) {
 }
 
 func addEmploymentIfMatchParameter(operation *huma.Operation) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: "header", Required: true, Description: "Strong ETag returned by the latest employment read", Schema: &huma.Schema{Type: huma.TypeString}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: headerParamLocation, Required: true, Description: "Strong ETag returned by the latest employment read", Schema: &huma.Schema{Type: huma.TypeString}})
 }
 
 func addEmploymentETagHeader(response *huma.Response) {

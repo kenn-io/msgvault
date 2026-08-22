@@ -280,7 +280,7 @@ func (s *Store) verifyAttributeRecordTargetTx(
 		return nil
 	}
 	switch *value.RecordType {
-	case "person":
+	case string(AttributeObjectPerson):
 		var exists int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM persons WHERE id = ?`, *value.RecordID,
@@ -425,6 +425,11 @@ func (s *Store) supersedePersonAttributeValueOnce(
 		}
 		if err := retractableAttributeDefinition(*definition); err != nil {
 			return err
+		}
+		if definition.ValueType == AttributeValueRecordReference {
+			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+				return err
+			}
 		}
 		ordinal := int64(0)
 		if input.Ordinal != nil {

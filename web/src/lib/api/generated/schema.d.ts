@@ -2067,6 +2067,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge one durable person profile into another */
+        post: operations["mergePersons"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/merges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List merge history for a durable person */
+        get: operations["listPersonMerges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}/profile": {
         parameters: {
             query?: never;
@@ -2148,6 +2182,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Split absorbed participant lineage into a new person */
+        post: operations["splitPersonMerge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}/tracking": {
         parameters: {
             query?: never;
@@ -2159,6 +2210,57 @@ export interface paths {
         get: operations["getPersonTracking"];
         /** Replace a person's tracking state */
         put: operations["setPersonTracking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-merge-candidates/{candidate_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept or reject a person merge attribute candidate */
+        post: operations["decidePersonMergeCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-merges/{merge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect one durable person merge */
+        get: operations["getPersonMerge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-merges/{merge_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read and verify one person merge snapshot */
+        get: operations["getPersonMergeSnapshot"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3597,6 +3699,12 @@ export interface components {
         DecideIdentityMatchRequest: {
             notes?: string;
         };
+        DecidePersonMergeCandidateRequest: {
+            /** @enum {string} */
+            decision: "accept" | "reject";
+            /** Format: int64 */
+            person_id: number;
+        };
         DeepSearchResponse: {
             body_contexts?: components["schemas"]["BodySearchContext"][] | null;
             /** Format: int64 */
@@ -4646,6 +4754,10 @@ export interface components {
             /** Format: int64 */
             losing_revision: number;
         };
+        MergePersonRequest: {
+            /** Format: int64 */
+            absorbed_person_id: number;
+        };
         MessageDetail: {
             attachments: components["schemas"]["AttachmentInfo"][] | null;
             bcc?: string[] | null;
@@ -5489,6 +5601,163 @@ export interface components {
             add?: components["schemas"]["PersonMediaInputRequest"][] | null;
             supersede?: number[] | null;
         };
+        PersonMerge: {
+            /** Format: int64 */
+            absorbed_person_id: number;
+            /** Format: int64 */
+            absorbed_revision_before: number;
+            absorbed_vcard_uid: string;
+            actor: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            current_person_id?: number;
+            /** Format: int64 */
+            id: number;
+            snapshot_sha256: string;
+            /** Format: int64 */
+            snapshot_version: number;
+            /** Format: int64 */
+            survivor_person_id: number;
+            /** Format: int64 */
+            survivor_revision_after: number;
+            /** Format: int64 */
+            survivor_revision_before: number;
+            survivor_vcard_uid: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeDetail: {
+            merge: components["schemas"]["PersonMerge"];
+            participants: components["schemas"]["PersonMergeParticipant"][] | null;
+            review_candidates: components["schemas"]["PersonMergeReviewCandidate"][] | null;
+            rows: components["schemas"]["PersonMergeRow"][] | null;
+            splits: components["schemas"]["PersonSplit"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeParticipant: {
+            /** Format: int64 */
+            merge_id: number;
+            origin_side: string;
+            /** Format: int64 */
+            participant_id: number;
+            /** Format: int64 */
+            split_id?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeProfile: {
+            etag: string;
+            person: components["schemas"]["Person"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeRequiredError: {
+            error: string;
+            message: string;
+            profiles: components["schemas"]["PersonMergeProfile"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeResult: {
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            /** Format: int64 */
+            identity_revision: number;
+            merge: components["schemas"]["PersonMerge"];
+            person: components["schemas"]["Person"];
+            review_candidates: components["schemas"]["PersonMergeReviewCandidate"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeReviewCandidate: {
+            /** Format: int64 */
+            absorbed_value_id: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            definition_id: number;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            merge_id: number;
+            /** Format: int64 */
+            person_id: number;
+            /** Format: int64 */
+            resolution_value_id?: number;
+            /** Format: date-time */
+            reviewed_at?: string;
+            reviewed_by?: string;
+            state: string;
+            /** Format: int64 */
+            survivor_value_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeRow: {
+            action: string;
+            /** Format: int64 */
+            current_row_id?: number;
+            current_row_key?: string;
+            /** Format: int64 */
+            merge_id: number;
+            origin_side: string;
+            /** Format: int64 */
+            original_row_id?: number;
+            original_row_key: string;
+            /** Format: int64 */
+            participant_id?: number;
+            provenance_kind: string;
+            snapshot_path: string;
+            /** Format: int64 */
+            split_id?: number;
+            table_name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeRowRef: {
+            action: string;
+            /** Format: int64 */
+            original_row_id?: number;
+            original_row_key: string;
+            table_name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeSnapshotResponse: {
+            sha256: string;
+            snapshot: unknown;
+            /** Format: int64 */
+            version: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergeSummary: {
+            merge: components["schemas"]["PersonMerge"];
+            /** Format: int64 */
+            participant_count: number;
+            /** Format: int64 */
+            pending_candidate_count: number;
+            row_action_counts: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            row_count: number;
+            /** Format: int64 */
+            split_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonMergesResponse: {
+            /** Format: int64 */
+            limit: number;
+            merges: components["schemas"]["PersonMergeSummary"][] | null;
+            /** Format: int64 */
+            offset: number;
+        } & {
+            [key: string]: unknown;
+        };
         PersonName: {
             additional_names?: string;
             envelope: components["schemas"]["ValueEnvelope"];
@@ -5631,6 +5900,42 @@ export interface components {
             person: components["schemas"]["Person"];
             /** Format: double */
             score: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonSplit: {
+            actor: string;
+            /** Format: date-time */
+            created_at: string;
+            exact_reversal: boolean;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            merge_id: number;
+            /** Format: int64 */
+            new_person_id: number;
+            new_person_uid: string;
+            /** Format: int64 */
+            source_person_id: number;
+            /** Format: int64 */
+            source_revision_after: number;
+            /** Format: int64 */
+            source_revision_before: number;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonSplitResult: {
+            ambiguous_rows: components["schemas"]["PersonMergeRowRef"][] | null;
+            /** @enum {string} */
+            cache_state: "ready" | "stale";
+            exact_reversal: boolean;
+            /** Format: int64 */
+            identity_revision: number;
+            new_person: components["schemas"]["Person"];
+            source_person: components["schemas"]["Person"];
+            split: components["schemas"]["PersonSplit"];
+            uid_alias_disposition: string;
+            unrestored_rows: components["schemas"]["PersonMergeRowRef"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -6172,6 +6477,11 @@ export interface components {
         };
         SourcesRequest: {
             accounts: string[] | null;
+        };
+        SplitPersonRequest: {
+            /** Format: int64 */
+            merge_id: number;
+            participant_ids: number[] | null;
         };
         StageDeletionFilter: {
             after?: string;
@@ -11345,6 +11655,15 @@ export interface operations {
                     "application/json": components["schemas"]["IdentityLinkResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["PersonMergeRequiredError"];
+                };
+            };
             /** @description Error */
             default: {
                 headers: {
@@ -11435,13 +11754,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Error */
+            /** @description Conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["PersonMergeRequiredError"];
                 };
             };
             /** @description Error */
@@ -14589,6 +14908,167 @@ export interface operations {
             };
         };
     };
+    mergePersons: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Exactly two comma-separated strong person revision tags, one for each profile */
+                "If-Match": string;
+                /** @description Opaque 1..128-byte retry key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergePersonRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person profile revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonMergeResult"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonMerges: {
+        parameters: {
+            query?: {
+                /** @description Maximum results */
+                limit?: number;
+                /** @description Results to skip */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonMergesResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getPersonStructuredProfile: {
         parameters: {
             query?: never;
@@ -14935,6 +15415,105 @@ export interface operations {
             };
         };
     };
+    splitPersonMerge: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported. */
+                "If-Match": string;
+                /** @description Opaque 1..128-byte retry key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SplitPersonRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person profile revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Strong revision tag for the new person created by a split */
+                    "X-New-Person-ETag"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonSplitResult"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getPersonTracking: {
         parameters: {
             query?: never;
@@ -15021,6 +15600,239 @@ export interface operations {
             };
             /** @description Error */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    decidePersonMergeCandidate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported. */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Person merge review candidate ID */
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecidePersonMergeCandidateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person profile revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonMergeReviewCandidate"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonMerge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person merge ID */
+                merge_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonMergeDetail"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonMergeSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person merge ID */
+                merge_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Always no-store because the response contains merge provenance */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonMergeSnapshotResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

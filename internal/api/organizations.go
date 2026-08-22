@@ -879,10 +879,10 @@ func writeOrganizationProfile(w http.ResponseWriter, profile *store.Organization
 }
 
 func addOrganizationIDParameter(operation *huma.Operation) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: "Organization ID", Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: pathKey, Required: true, Description: "Organization ID", Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
 }
 func addOrganizationIfMatchParameter(operation *huma.Operation) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: "header", Required: true, Description: "Strong ETag returned by the latest organization read", Schema: &huma.Schema{Type: huma.TypeString}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: headerParamLocation, Required: true, Description: "Strong ETag returned by the latest organization read", Schema: &huma.Schema{Type: huma.TypeString}})
 }
 func addOrganizationETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong organization revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}

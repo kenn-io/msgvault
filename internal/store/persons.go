@@ -16,6 +16,7 @@ var (
 	ErrPersonRevisionConflict = errors.New("person revision conflict")
 	ErrPersonBindingConflict  = errors.New("participant clusters belong to different persons")
 	ErrPersonReferenced       = errors.New("person is referenced by another profile")
+	ErrPersonMergeActive      = errors.New("person has active merge lineage")
 )
 
 // PersonBindingConflictError reports the curated people that would be
@@ -219,6 +220,45 @@ func (s *Store) deletePersonOnce(ctx context.Context, id, expectedRevision int64
 		}
 		if references > 0 {
 			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)
+			FROM person_merge_review_candidates candidate
+			WHERE candidate.state = 'pending' AND EXISTS (
+				SELECT 1 FROM person_attribute_values value
+				WHERE value.id IN (
+					candidate.survivor_value_id,
+					candidate.absorbed_value_id,
+					candidate.resolution_value_id
+				)
+				  AND value.value_record_type = 'person'
+				  AND value.value_record_id = ?
+			)`, id).Scan(&references); err != nil {
+			return fmt.Errorf("check merge-review references to person %d: %w", id, err)
+		}
+		if references > 0 {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_merges
+			WHERE current_person_id = ?`, id).Scan(&references); err != nil {
+			return fmt.Errorf("check active merge lineage for person %d: %w", id, err)
+		}
+		if references > 0 {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonMergeActive)
+		}
+		// A completed split releases the active lineage. Its review candidates
+		// are no longer actionable and must leave with the profile before the
+		// profile-value cascade reaches their RESTRICT references.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_merge_review_candidates
+			WHERE survivor_person_id = ?
+			   OR (merge_id IN (SELECT merge_record.id FROM person_merges merge_record
+					WHERE merge_record.current_person_id IS NULL)
+				AND EXISTS (SELECT 1 FROM person_attribute_values value
+					WHERE value.person_id = ? AND value.id IN (
+						person_merge_review_candidates.survivor_value_id,
+						person_merge_review_candidates.absorbed_value_id,
+						person_merge_review_candidates.resolution_value_id
+					)))`, id, id); err != nil {
+			return fmt.Errorf("delete completed merge candidates for person %d: %w", id, err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
 			WHERE (left_kind = ? AND left_id = ?)

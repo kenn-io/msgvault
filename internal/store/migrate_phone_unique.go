@@ -456,6 +456,9 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 
 	// (8) Finally drop the loser. participant_identifiers cascades; the
 	// other FKs are already cleared by the repoints above.
+	if err := rewritePersonMergeParticipantLineageTx(ctx, tx, loser, winner); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, loser); err != nil {
 		return fmt.Errorf("delete loser participant id=%d: %w", loser, err)
 	}

@@ -25,7 +25,7 @@ import "strings"
 // TestMessagesActivityColumnsAreRealColumns keeps this list honest against the
 // live table.
 var MessagesActivityColumns = []string{
-	"source_id",              // owner source; immutable in production, listed as read
+	sourceIDColumnName,       // owner source; immutable in production, listed as read
 	"conversation_id",        // routing key; co-presence and conversation_type
 	"sender_id",              // direct-counterpart and direction derivation
 	"message_type",           // channel classification (email/chat/meeting)

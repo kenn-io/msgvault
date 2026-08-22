@@ -122,9 +122,15 @@ type SetPersonAttributeBody = SetPersonAttributeRequest
 
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
 
+type MergePersonsBody = MergePersonRequest
+
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 
+type SplitPersonMergeBody = SplitPersonRequest
+
 type SetPersonTrackingBody = PutPersonTrackingRequest
+
+type DecidePersonMergeCandidateBody = DecidePersonMergeCandidateRequest
 
 type CreatePersonRelationshipBody = CreatePersonRelationshipRequest
 

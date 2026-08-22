@@ -118,7 +118,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	}
 	if subsetIncludeVCardResources {
 		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-vcard-resources copies every included person's complete native vCard bodies and their retired-UID aliases. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset.")
+			"WARNING: --include-vcard-resources copies every included person's complete native vCard bodies, retired-UID aliases, and complete merge packets. Merge packets retain immutable merge-time values even after later redaction. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset.")
 	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,
@@ -143,6 +143,10 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	if subsetIncludeProfiles {
 		fmt.Printf("Organizations: %d\n", result.Organizations)
 		fmt.Printf("Employments:   %d\n", result.Employments)
+	}
+	if result.PersonMergePackets > 0 || result.OmittedPersonMergePackets > 0 {
+		fmt.Printf("Merge packets: %d copied, %d omitted\n",
+			result.PersonMergePackets, result.OmittedPersonMergePackets)
 	}
 	fmt.Printf("Database size: %s\n", formatSize(result.DBSize))
 
