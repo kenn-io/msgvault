@@ -27,3 +27,16 @@ type TextEngine interface {
 	GetTextStats(ctx context.Context,
 		opts TextStatsOptions) (*TotalStats, error)
 }
+
+// TextSnapshotScope identifies one logical offset-paged text request. The
+// conversation ID is nil for the conversation list and set for one timeline.
+type TextSnapshotScope struct {
+	ConversationID *int64
+	Filter         TextFilter
+}
+
+// TextSnapshotter returns an identity for the complete logical result set
+// behind a text page. Implementations exclude pagination from the identity.
+type TextSnapshotter interface {
+	TextSnapshotRevision(context.Context, TextSnapshotScope) (string, error)
+}

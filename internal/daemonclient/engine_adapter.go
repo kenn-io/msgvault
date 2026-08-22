@@ -264,6 +264,7 @@ func filterMessagesQuery(filter query.MessageFilter) *generated.FilterMessagesQu
 func textConversationsQuery(filter query.TextFilter) *generated.ListTextConversationsQuery {
 	return &generated.ListTextConversationsQuery{
 		SourceID:        copyInt64(filter.SourceID),
+		ParticipantID:   append([]int64(nil), filter.ParticipantIDs...),
 		ContactPhone:    optionalString(filter.ContactPhone),
 		ContactName:     optionalString(filter.ContactName),
 		SourceType:      optionalString(filter.SourceType),
@@ -283,6 +284,7 @@ func textConversationMessagesQuery(filter query.TextFilter) *generated.ListTextC
 	base := textConversationsQuery(filter)
 	return &generated.ListTextConversationMessagesQuery{
 		SourceID:        base.SourceID,
+		ParticipantID:   append([]int64(nil), base.ParticipantID...),
 		ContactPhone:    base.ContactPhone,
 		ContactName:     base.ContactName,
 		SourceType:      base.SourceType,

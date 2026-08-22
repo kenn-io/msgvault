@@ -20,6 +20,8 @@ func (m Model) renderTextView() string {
 		body = m.textAggregateView()
 	case textLevelTimeline:
 		body = m.textTimelineView()
+	case textLevelDetail:
+		body = m.messageDetailView()
 	default:
 		body = m.textConversationsView()
 	}
@@ -89,6 +91,8 @@ func (m Model) textBreadcrumb() string {
 			order = "\u2193 newest first"
 		}
 		return "Timeline " + order
+	case textLevelDetail:
+		return "Message"
 	}
 	return ""
 }
@@ -468,8 +472,9 @@ func (m Model) textAggregateView() string {
 }
 
 // textTimelineView renders a chat-style message timeline.
-// Each message shows a sender/time header line followed by the full
-// body text with word wrapping — like reading a chat app.
+// Each message shows a sender/time header line followed by its list-page
+// snippet with word wrapping. A caller may also supply BodyText when it has
+// explicitly loaded a detail outside this list path.
 func (m Model) textTimelineView() string {
 	if len(m.textState.messages) == 0 && !m.loading {
 		var sb strings.Builder
@@ -719,6 +724,19 @@ func (m Model) textFooterView() string {
 			"/ search", "Esc back",
 			"m email", "? help",
 		}
+		n := len(m.textState.messages)
+		if n > 0 {
+			posStr = fmt.Sprintf(
+				" %d/%d ", m.textState.cursor+1, n,
+			)
+		}
+
+	case textLevelDetail:
+		keys = []string{"↑/↓ scroll", "/ find"}
+		if m.detailSearchQuery != "" {
+			keys = append(keys, "n/N next/prev")
+		}
+		keys = append(keys, "Esc back", "q quit")
 		n := len(m.textState.messages)
 		if n > 0 {
 			posStr = fmt.Sprintf(

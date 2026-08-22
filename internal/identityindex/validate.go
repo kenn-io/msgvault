@@ -114,6 +114,9 @@ func Validate(
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.file_count
+			    OR (SELECT sum(item.meeting_count)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.meeting_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.first_at
@@ -220,15 +223,20 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"partial_label", duckDBTypeBoolean},
 		{"member_ids", "BIGINT[]"},
 		{"search_values", "VARCHAR[]"},
+		{
+			"search_primitives",
+			"STRUCT(kind VARCHAR, match_value VARCHAR, display_value VARCHAR, \"source\" VARCHAR, participant_id BIGINT)[]",
+		},
 		{"is_owner", duckDBTypeBoolean},
 		{"activity_count", duckDBTypeBigInt},
+		{"meeting_count", duckDBTypeBigInt},
 		{"file_count", duckDBTypeBigInt},
 		{"first_at", "TIMESTAMP"},
 		{"last_at", "TIMESTAMP"},
 		{"source_counts", "STRUCT(source_type VARCHAR, count BIGINT)[]"},
 		{
 			"source_rollups",
-			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
+			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, meeting_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
 		},
 	},
 	DatasetDomains: {

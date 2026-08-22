@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
@@ -31,6 +32,15 @@ type textMessagesLoadedMsg struct {
 	messages               []query.MessageSummary
 	err                    error
 	requestID              uint64
+	presentationGeneration uint64
+}
+
+type textMessageLoadedMsg struct {
+	detail                 *query.MessageDetail
+	err                    error
+	requestID              uint64
+	conversationID         int64
+	messageID              int64
 	presentationGeneration uint64
 }
 
@@ -155,6 +165,57 @@ func (m *Model) loadTextMessages() tea.Cmd {
 	)
 }
 
+func (m *Model) loadTextMessage(messageID int64) tea.Cmd {
+	engine := m.engine
+	requestID := m.nextTextRequestID()
+	conversationID := m.textState.selectedConvID
+	presentationGeneration := m.presentationGeneration
+	return safeCmdWithPanic(
+		func() tea.Msg {
+			detail, err := engine.GetMessage(context.Background(), messageID)
+			if err == nil && detail == nil {
+				err = errors.New("message detail is empty")
+			}
+			return textMessageLoadedMsg{
+				detail: detail, err: err, requestID: requestID,
+				conversationID: conversationID, messageID: messageID,
+				presentationGeneration: presentationGeneration,
+			}
+		},
+		func(r any) tea.Msg {
+			return textMessageLoadedMsg{
+				err: fmt.Errorf("text message detail panic: %v", r), requestID: requestID,
+				conversationID: conversationID, messageID: messageID,
+				presentationGeneration: presentationGeneration,
+			}
+		},
+	)
+}
+
+func (m Model) handleTextMessageLoaded(msg textMessageLoadedMsg) (tea.Model, tea.Cmd) {
+	if m.mode != modeTexts || m.presentationGeneration != msg.presentationGeneration ||
+		m.textRequestID != msg.requestID || m.textState.level != textLevelDetail ||
+		m.textState.selectedConvID != msg.conversationID ||
+		m.textState.selectedMessageID != msg.messageID {
+		return m, nil
+	}
+	m.finishModePresentation(modeTexts, msg.presentationGeneration)
+	if msg.err != nil {
+		m.err = query.HintRepairEncoding(msg.err)
+		m.modal = modalError
+		m.modalResult = m.err.Error()
+		return m, nil
+	}
+	m.err = nil
+	if m.modal == modalError {
+		m.modal = modalNone
+	}
+	m.messageDetail = msg.detail
+	m.detailScroll = 0
+	m.updateDetailLineCount()
+	return m, nil
+}
+
 // loadTextSearch executes a text message search.
 func (m *Model) loadTextSearch(searchQuery string) tea.Cmd {
 	te := m.textEngine
@@ -190,6 +251,8 @@ func (m *Model) loadTextData() tea.Cmd {
 		return m.loadTextConversations()
 	case textLevelTimeline:
 		return m.loadTextMessages()
+	case textLevelDetail:
+		return nil
 	default:
 		return m.loadTextAggregate()
 	}

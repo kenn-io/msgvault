@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -496,6 +497,77 @@ func TestCreateAttributeDefinitionRejectsDuplicateSlugAndUniversalID(t *testing.
 	sameUniversalID.UniversalID = "test-nickname_note"
 	_, err = st.CreateAttributeDefinitionContext(ctx, sameUniversalID)
 	require.ErrorIs(t, err, store.ErrAttributeDefinitionUniversalIDConflict)
+}
+
+func TestCreateAttributeDefinitionDerivesUniqueSlug(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+
+	first := personTextDefinition("unused")
+	first.Slug = ""
+	first.Label = "Favorite café"
+	first.UniversalID = "test-derived-first"
+	created, err := st.CreateAttributeDefinitionContext(ctx, first)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_caf", created.Slug)
+
+	second := first
+	second.UniversalID = "test-derived-second"
+	created, err = st.CreateAttributeDefinitionContext(ctx, second)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_caf_2", created.Slug)
+
+	digits := first
+	digits.UniversalID = "test-derived-digits"
+	digits.Label = "2026 notes"
+	created, err = st.CreateAttributeDefinitionContext(ctx, digits)
+	require.NoError(t, err)
+	assert.Equal(t, "field_2026_notes", created.Slug)
+
+	punctuation := first
+	punctuation.UniversalID = "test-derived-punctuation"
+	punctuation.Label = "?! —"
+	created, err = st.CreateAttributeDefinitionContext(ctx, punctuation)
+	require.NoError(t, err)
+	assert.Equal(t, "field", created.Slug)
+
+	long := first
+	long.UniversalID = "test-derived-long-first"
+	long.Label = strings.Repeat("a", 63)
+	created, err = st.CreateAttributeDefinitionContext(ctx, long)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("a", 63), created.Slug)
+
+	long.UniversalID = "test-derived-long-second"
+	created, err = st.CreateAttributeDefinitionContext(ctx, long)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("a", 61)+"_2", created.Slug)
+}
+
+func TestCreateAttributeDefinitionKeepsExplicitSlug(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+
+	first := personTextDefinition("favorite_color")
+	first.Label = "Favorite color"
+	created, err := st.CreateAttributeDefinitionContext(ctx, first)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_color", created.Slug)
+
+	conflicting := first
+	conflicting.UniversalID = "test-conflicting-explicit-slug"
+	_, err = st.CreateAttributeDefinitionContext(ctx, conflicting)
+	require.ErrorIs(t, err, store.ErrAttributeDefinitionSlugConflict)
+}
+
+func TestValidateAttributeDefinitionInputDerivesOmittedSlug(t *testing.T) {
+	input := personTextDefinition("unused")
+	input.Slug = ""
+	input.Label = "Favorite café"
+
+	validated, err := store.ValidateAttributeDefinitionInput(input)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_caf", validated.Slug)
 }
 
 func TestUpdateAttributeDefinitionRenamesLabelAndKeepsIdentity(t *testing.T) {

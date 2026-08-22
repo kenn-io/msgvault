@@ -802,6 +802,10 @@ func (e *gateAnalyticsEngine) ResolveCanonicalParticipant(_ context.Context, id 
 	return id, nil
 }
 
+func (e *gateAnalyticsEngine) ListPersonInboxes(context.Context, query.PersonInboxRequest) (*query.PersonInboxResponse, error) {
+	return &query.PersonInboxResponse{Rows: []query.PersonInboxRow{}, CacheRevision: "rev"}, nil
+}
+
 func (e *gateAnalyticsEngine) SearchFiles(context.Context, query.FileSearchRequest) (*query.FileSearchResponse, error) {
 	return &query.FileSearchResponse{}, nil
 }
@@ -870,6 +874,26 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 	require.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope")
 	assert.Equal("operation_in_progress", errResp.Error, "error code")
 	assert.Contains(errResp.Message, "msgvault embeddings build", "message names the holder")
+}
+
+func TestServerParticipantInboxesBypassesHeldOperationGate(t *testing.T) {
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault embeddings build")
+	require.True(t, ok, "occupy gate")
+	defer release()
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         &gateFilesStore{mockStore: &mockStore{}},
+		Engine:        &gateAnalyticsEngine{MockEngine: &querytest.MockEngine{}},
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/api/v1/participants/7/inboxes", nil))
+
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {

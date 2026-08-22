@@ -9,12 +9,14 @@ const (
 	modeEmail tuiMode = iota
 	modeTexts
 	modeMeetings
+	modePeople
+	modeCount
 )
 
 // nextMode advances through the available content modes. Meetings uses the
 // primary query engine, so it remains available when the optional text engine
 // is not configured.
-func nextMode(current tuiMode, textsAvailable bool) tuiMode {
+func nextMode(current tuiMode, textsAvailable, peopleAvailable bool) tuiMode {
 	switch current {
 	case modeEmail:
 		if textsAvailable {
@@ -23,6 +25,13 @@ func nextMode(current tuiMode, textsAvailable bool) tuiMode {
 		return modeMeetings
 	case modeTexts:
 		return modeMeetings
+	case modeMeetings:
+		if peopleAvailable {
+			return modePeople
+		}
+		return modeEmail
+	case modePeople:
+		return modeEmail
 	default:
 		return modeEmail
 	}
@@ -36,21 +45,23 @@ const (
 	textLevelAggregate                               // Aggregate view (contacts, sources, etc.)
 	textLevelDrillConversations                      // Conversations filtered by aggregate drill-down
 	textLevelTimeline                                // Message timeline within a conversation
+	textLevelDetail                                  // Full detail for one immutable message ID
 )
 
 // textState holds all state for the Texts mode TUI.
 type textState struct {
-	viewType       query.TextViewType
-	level          textViewLevel
-	conversations  []query.ConversationRow
-	aggregateRows  []query.AggregateRow
-	messages       []query.MessageSummary
-	cursor         int
-	scrollOffset   int
-	selectedConvID int64
-	filter         query.TextFilter
-	stats          *query.TotalStats
-	breadcrumbs    []textNavSnapshot
+	viewType          query.TextViewType
+	level             textViewLevel
+	conversations     []query.ConversationRow
+	aggregateRows     []query.AggregateRow
+	messages          []query.MessageSummary
+	cursor            int
+	scrollOffset      int
+	selectedConvID    int64
+	selectedMessageID int64
+	filter            query.TextFilter
+	stats             *query.TotalStats
+	breadcrumbs       []textNavSnapshot
 
 	// unfilteredMessages holds the original timeline messages before
 	// search filtering. Repeated searches always filter from this
@@ -60,12 +71,13 @@ type textState struct {
 
 // textNavSnapshot stores state for text mode navigation history.
 type textNavSnapshot struct {
-	level          textViewLevel
-	viewType       query.TextViewType
-	cursor         int
-	scrollOffset   int
-	filter         query.TextFilter
-	selectedConvID int64
+	level             textViewLevel
+	viewType          query.TextViewType
+	cursor            int
+	scrollOffset      int
+	filter            query.TextFilter
+	selectedConvID    int64
+	selectedMessageID int64
 }
 
 // clampCursorToConversations ensures cursor and scrollOffset

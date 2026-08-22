@@ -11,6 +11,30 @@ import (
 
 // Compile-time interface assertion.
 var _ TextEngine = (*DuckDBEngine)(nil)
+var _ TextSnapshotter = (*DuckDBEngine)(nil)
+
+// TextSnapshotRevision returns the identity for the data source that serves
+// the requested page. Conversation timelines use live SQLite metadata when
+// available, while conversation lists use the committed analytics cache.
+func (e *DuckDBEngine) TextSnapshotRevision(
+	ctx context.Context, scope TextSnapshotScope,
+) (string, error) {
+	if scope.ConversationID != nil && e.sqliteEngine != nil {
+		return e.sqliteEngine.TextSnapshotRevision(ctx, scope)
+	}
+
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
+	state, err := ReadCacheSyncState(e.analyticsDir)
+	if err != nil {
+		return "", fmt.Errorf("read text snapshot revision: %w", err)
+	}
+	return state.Revision(), nil
+}
 
 // textTypeFilter returns a SQL condition restricting to text message types.
 func textTypeFilter() string {
@@ -42,6 +66,17 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 	if filter.SourceID != nil {
 		conditions = append(conditions, "msg.source_id = ?")
 		args = append(args, *filter.SourceID)
+	}
+	if len(filter.ParticipantIDs) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(filter.ParticipantIDs)), ",")
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM cp
+			WHERE cp.conversation_id = msg.conversation_id
+			  AND cp.participant_id IN (`+placeholders+`)
+		)`)
+		for _, id := range filter.ParticipantIDs {
+			args = append(args, id)
+		}
 	}
 	if filter.ContactPhone != "" {
 		conditions = append(conditions, `EXISTS (
@@ -157,7 +192,6 @@ func (e *DuckDBEngine) ListConversations(
 			SELECT
 				msg.conversation_id,
 				COUNT(*) AS message_count,
-				-- TODO: use conversation_participants table once exported to Parquet
 				COUNT(DISTINCT COALESCE(msg.sender_id, 0)) AS participant_count,
 				MAX(msg.sent_at) AS last_message_at,
 				COALESCE(SUM(CAST(msg.size_estimate AS BIGINT)), 0) AS total_size,
@@ -323,17 +357,16 @@ func (e *DuckDBEngine) TextAggregate(
 func (e *DuckDBEngine) ListConversationMessages(
 	ctx context.Context, convID int64, filter TextFilter,
 ) ([]MessageSummary, error) {
-	// Use SQLite directly for timeline messages — Parquet doesn't
-	// include message_bodies, and timelines need the full body text.
+	// Use SQLite directly when available so timeline metadata reflects the
+	// live archive. List pages intentionally exclude message_bodies; callers
+	// fetch a selected message detail through GetMessage.
 	if e.sqliteEngine != nil {
 		return e.sqliteEngine.ListConversationMessages(
 			ctx, convID, filter,
 		)
 	}
 
-	// Fallback to Parquet (snippet only, no body text).
-	// NOTE: search results will only show snippets, not full body
-	// text, since Parquet files do not contain message bodies.
+	// Fallback to Parquet uses the same metadata/snippet-only contract.
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err
@@ -360,7 +393,7 @@ func (e *DuckDBEngine) ListConversationMessages(
 			SELECT msg.id
 			FROM msg
 			WHERE %s
-			ORDER BY msg.sent_at %s
+			ORDER BY msg.sent_at %s, msg.id %s
 			LIMIT ? OFFSET ?
 		),
 		msg_sender AS (
@@ -407,8 +440,8 @@ func (e *DuckDBEngine) ListConversationMessages(
 		LEFT JOIN msg_sender ms ON ms.message_id = msg.id
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		LEFT JOIN conv c ON c.id = msg.conversation_id
-		ORDER BY msg.sent_at %s
-	`, e.parquetCTEs(), where, direction, direction)
+		ORDER BY msg.sent_at %s, msg.id %s
+	`, e.parquetCTEs(), where, direction, direction, direction, direction)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -558,49 +591,6 @@ func (e *DuckDBEngine) GetTextStats(
 	}
 
 	return stats, nil
-}
-
-// scanMessageSummariesWithBody scans rows that include a body_text column
-// as the 17th field. Used by ListConversationMessages for chat timelines.
-func scanMessageSummariesWithBody(rows *sql.Rows) ([]MessageSummary, error) {
-	var results []MessageSummary
-	for rows.Next() {
-		var msg MessageSummary
-		var sentAt sql.NullTime
-		var deletedAt sql.NullTime
-		if err := rows.Scan(
-			&msg.ID,
-			&msg.SourceMessageID,
-			&msg.ConversationID,
-			&msg.SourceConversationID,
-			&msg.Subject,
-			&msg.Snippet,
-			&msg.FromEmail,
-			&msg.FromName,
-			&msg.FromPhone,
-			&sentAt,
-			&msg.SizeEstimate,
-			&msg.HasAttachments,
-			&msg.AttachmentCount,
-			&deletedAt,
-			&msg.MessageType,
-			&msg.ConversationTitle,
-			&msg.BodyText,
-		); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
-		}
-		if sentAt.Valid {
-			msg.SentAt = sentAt.Time
-		}
-		if deletedAt.Valid {
-			msg.DeletedAt = &deletedAt.Time
-		}
-		results = append(results, msg)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate messages: %w", err)
-	}
-	return results, nil
 }
 
 // scanMessageSummaries scans rows into MessageSummary slices.

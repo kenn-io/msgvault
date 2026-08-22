@@ -228,6 +228,31 @@ components:
       required:
         - error
       type: object
+    AppendPersonNoteRequest:
+      additionalProperties: false
+      properties:
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          type: string
+        text:
+          type: string
+      required:
+        - text
+      type: object
     AttachmentInfo:
       additionalProperties: true
       properties:
@@ -1702,7 +1727,6 @@ components:
           type: string
       required:
         - object_type
-        - slug
         - label
         - value_type
         - field_type
@@ -5705,6 +5729,64 @@ components:
           format: int64
           type: integer
       type: object
+    ParticipantCompletionHTTPRequest:
+      additionalProperties: false
+      properties:
+        limit:
+          format: int64
+          maximum: 20
+          minimum: 0
+          type: integer
+        query:
+          type: string
+      required:
+        - query
+      type: object
+    ParticipantCompletionHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/ParticipantCompletionHTTPRow"
+          type:
+            - array
+            - "null"
+      required:
+        - rows
+        - cache_revision
+      type: object
+    ParticipantCompletionHTTPRow:
+      additionalProperties: true
+      properties:
+        display_label:
+          type: string
+        kind:
+          enum:
+            - name
+            - phone
+            - email
+            - username
+            - impp
+            - organization
+            - title
+            - role
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        source:
+          type: string
+        value:
+          type: string
+      required:
+        - participant_id
+        - display_label
+        - kind
+        - value
+        - source
+      type: object
     ParticipantContactObservation:
       additionalProperties: true
       properties:
@@ -6612,6 +6694,62 @@ components:
         - provenance
         - participant_id
       type: object
+    PersonInboxResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonInboxRow"
+          type:
+            - array
+            - "null"
+      required:
+        - rows
+        - cache_revision
+        - identity_revision
+      type: object
+    PersonInboxRow:
+      additionalProperties: true
+      properties:
+        conversation_count:
+          format: int64
+          type: integer
+        latest_at:
+          format: date-time
+          type: string
+        latest_received_at:
+          format: date-time
+          type: string
+        latest_sent_at:
+          format: date-time
+          type: string
+        received_count:
+          format: int64
+          type: integer
+        sent_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - conversation_count
+        - received_count
+        - sent_count
+        - latest_at
+      type: object
     PersonMedia:
       additionalProperties: true
       properties:
@@ -7049,6 +7187,9 @@ components:
         last_at:
           format: date-time
           type: string
+        meeting_count:
+          format: int64
+          type: integer
         partial_label:
           type: boolean
         profile:
@@ -7065,6 +7206,7 @@ components:
         - partial_label
         - identifiers
         - activity_count
+        - meeting_count
         - file_count
         - source_counts
         - first_at
@@ -8905,6 +9047,8 @@ components:
     TextConversationsResponse:
       additionalProperties: true
       properties:
+        cache_revision:
+          type: string
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
@@ -8923,6 +9067,7 @@ components:
           format: int64
           type: integer
       required:
+        - cache_revision
         - count
         - has_more
         - offset
@@ -8930,6 +9075,36 @@ components:
         - conversations
       type: object
     TextMessagesResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+      required:
+        - cache_revision
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    TextSearchResponse:
       additionalProperties: true
       properties:
         count:
@@ -15227,6 +15402,52 @@ paths:
       summary: Download stored inline content for one organization profile media value
       tags:
         - API
+  /api/v1/participants/completions:
+    post:
+      description: Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
+      operationId: completeParticipants
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ParticipantCompletionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParticipantCompletionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Complete observed people by typed contact primitives
+      tags:
+        - API
   /api/v1/participants/search:
     post:
       operationId: searchParticipants
@@ -15378,6 +15599,43 @@ paths:
       summary: Search one participant cluster's analytical files
       tags:
         - Exploration
+  /api/v1/participants/{id}/inboxes:
+    get:
+      operationId: listParticipantInboxes
+      parameters:
+        - description: Observed participant cluster member ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInboxResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one participant cluster's messaging inboxes
+      tags:
+        - API
   /api/v1/participants/{id}/summary:
     post:
       operationId: getParticipantContextSummary
@@ -16388,6 +16646,70 @@ paths:
       summary: Search one durable person's analytical files
       tags:
         - Exploration
+  /api/v1/people/{id}/notes/append:
+    post:
+      operationId: appendPersonNote
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendPersonNoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Append to a person's notes
+      tags:
+        - API
   /api/v1/people/{id}/profile:
     get:
       description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
@@ -18692,6 +19014,14 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -18789,6 +19119,14 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -18896,7 +19234,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TextMessagesResponse"
+                $ref: "#/components/schemas/TextSearchResponse"
           description: OK
         default:
           content:

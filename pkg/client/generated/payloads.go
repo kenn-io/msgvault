@@ -104,6 +104,8 @@ type PatchOrganizationBody = OrganizationBody
 
 type PutOrganizationProfileBody = OrganizationProfileBody
 
+type CompleteParticipantsBody = ParticipantCompletionHTTPRequest
+
 type SearchParticipantsBody = IdentitySearchHTTPRequest
 
 type SearchParticipantFilesBody = PersonFileSearchHTTPRequest
@@ -121,6 +123,8 @@ type PatchPersonBody = PatchPersonRequest
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
+
+type AppendPersonNoteBody = AppendPersonNoteRequest
 
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 

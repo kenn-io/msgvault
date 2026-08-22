@@ -523,6 +523,10 @@ type ClientInterface interface {
 	GetOrganizationProfileMediaContent(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResponse, error)
 	GetOrganizationProfileMediaContentWithResponse(ctx context.Context, options *GetOrganizationProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetOrganizationProfileMediaContentResp, error)
 
+	// CompleteParticipants Complete observed people by typed contact primitives
+	CompleteParticipants(ctx context.Context, options *CompleteParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteParticipantsResponse, error)
+	CompleteParticipantsWithResponse(ctx context.Context, options *CompleteParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteParticipantsResp, error)
+
 	// SearchParticipants Search observed participant clusters
 	SearchParticipants(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResponse, error)
 	SearchParticipantsWithResponse(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResp, error)
@@ -534,6 +538,10 @@ type ClientInterface interface {
 	// SearchParticipantFiles Search one participant cluster's analytical files
 	SearchParticipantFiles(ctx context.Context, options *SearchParticipantFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantFilesResponse, error)
 	SearchParticipantFilesWithResponse(ctx context.Context, options *SearchParticipantFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantFilesResp, error)
+
+	// ListParticipantInboxes List one participant cluster's messaging inboxes
+	ListParticipantInboxes(ctx context.Context, options *ListParticipantInboxesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListParticipantInboxesResponse, error)
+	ListParticipantInboxesWithResponse(ctx context.Context, options *ListParticipantInboxesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListParticipantInboxesResp, error)
 
 	// GetParticipantContextSummary Get one participant cluster's contextual analytical summary
 	GetParticipantContextSummary(ctx context.Context, options *GetParticipantContextSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetParticipantContextSummaryResponse, error)
@@ -598,6 +606,10 @@ type ClientInterface interface {
 	// SearchPersonFiles Search one durable person's analytical files
 	SearchPersonFiles(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResponse, error)
 	SearchPersonFilesWithResponse(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResp, error)
+
+	// AppendPersonNote Append to a person's notes
+	AppendPersonNote(ctx context.Context, options *AppendPersonNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendPersonNoteResponse, error)
+	AppendPersonNoteWithResponse(ctx context.Context, options *AppendPersonNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendPersonNoteResp, error)
 
 	// GetPersonStructuredProfile Get a person's current structured profile
 	GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error)
@@ -8292,6 +8304,70 @@ func (c *Client) GetOrganizationProfileMediaContent(ctx context.Context, options
 	return responseParser(ctx, resp)
 }
 
+// CompleteParticipants Complete observed people by typed contact primitives
+func (c *Client) CompleteParticipants(ctx context.Context, options *CompleteParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteParticipantsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/participants/completions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CompleteParticipantsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(CompleteParticipantsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CompleteParticipantsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CompleteParticipantsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CompleteParticipantsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/completions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // SearchParticipants Search observed participant clusters
 func (c *Client) SearchParticipants(ctx context.Context, options *SearchParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchParticipantsResponse, error) {
 	var err error
@@ -8477,6 +8553,69 @@ func (c *Client) SearchParticipantFiles(ctx context.Context, options *SearchPart
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}/files/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListParticipantInboxes List one participant cluster's messaging inboxes
+func (c *Client) ListParticipantInboxes(ctx context.Context, options *ListParticipantInboxesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListParticipantInboxesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/participants/{id}/inboxes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListParticipantInboxesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListParticipantInboxesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListParticipantInboxesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListParticipantInboxesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListParticipantInboxesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/participants/{id}/inboxes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9476,6 +9615,70 @@ func (c *Client) SearchPersonFiles(ctx context.Context, options *SearchPersonFil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/files/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AppendPersonNote Append to a person's notes
+func (c *Client) AppendPersonNote(ctx context.Context, options *AppendPersonNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendPersonNoteResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/notes/append",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*AppendPersonNoteResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(AppendPersonNoteErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "AppendPersonNoteErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(AppendPersonNoteResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "AppendPersonNoteResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/notes/append")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

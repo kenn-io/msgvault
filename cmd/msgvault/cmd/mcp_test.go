@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -16,6 +17,20 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
+
+func TestMCPHTTPAllowWritesHelpDisclosesAllMutationClasses(t *testing.T) {
+	var output bytes.Buffer
+	previousOutput := mcpCmd.OutOrStdout()
+	mcpCmd.SetOut(&output)
+	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
+
+	require.NoError(t, mcpCmd.Help())
+	help := output.String()
+	assert.Contains(t, help, "attachment exports")
+	assert.Contains(t, help, "deletion manifests")
+	assert.Contains(t, help, "person promotion")
+	assert.Contains(t, help, "private Notes writes")
+}
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)

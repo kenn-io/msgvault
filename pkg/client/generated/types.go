@@ -193,6 +193,32 @@ func (s APIHTTPError) Error() string {
 	return "unmapped client error"
 }
 
+type AppendPersonNoteRequest struct {
+	Actor      *string                        `json:"actor,omitempty"`
+	Confidence *float64                       `json:"confidence,omitempty"`
+	Source     *AppendPersonNoteRequestSource `json:"source,omitempty"`
+	SourceRef  *string                        `json:"source_ref,omitempty"`
+	Text       string                         `json:"text" validate:"required"`
+}
+
+func (a AppendPersonNoteRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if a.Source != nil {
+		if v, ok := any(a.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Text, "required"); err != nil {
+		errors = errors.Append("Text", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AttachmentInfo struct {
 	ContentHash *string `json:"content_hash,omitempty"`
 	Filename    string  `json:"filename" validate:"required"`
@@ -1337,7 +1363,7 @@ type CreateAttributeDefinitionRequest struct {
 	ObjectType    CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
 	Options       *AttributeOptions                            `json:"options,omitempty"`
 	RecordTarget  *string                                      `json:"record_target,omitempty"`
-	Slug          string                                       `json:"slug" validate:"required"`
+	Slug          *string                                      `json:"slug,omitempty"`
 	ValueType     string                                       `json:"value_type" validate:"required"`
 	VcardProperty *string                                      `json:"vcard_property,omitempty"`
 }
@@ -1368,9 +1394,6 @@ func (c CreateAttributeDefinitionRequest) Validate() error {
 				errors = errors.Append("Options", err)
 			}
 		}
-	}
-	if err := typesValidator.Var(c.Slug, "required"); err != nil {
-		errors = errors.Append("Slug", err)
 	}
 	if err := typesValidator.Var(c.ValueType, "required"); err != nil {
 		errors = errors.Append("ValueType", err)
@@ -4812,6 +4835,68 @@ type PartialDate struct {
 	Year  *int64 `json:"year,omitempty"`
 }
 
+type ParticipantCompletionHTTPRequest struct {
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=0,lte=20"`
+	Query string `json:"query" validate:"required"`
+}
+
+func (p ParticipantCompletionHTTPRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type ParticipantCompletionHTTPResponse struct {
+	CacheRevision string                         `json:"cache_revision" validate:"required"`
+	Rows          []ParticipantCompletionHTTPRow `json:"rows,omitempty" validate:"required"`
+}
+
+func (p ParticipantCompletionHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range p.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ParticipantCompletionHTTPRow struct {
+	DisplayLabel  string                           `json:"display_label" validate:"required"`
+	Kind          ParticipantCompletionHTTPRowKind `json:"kind" validate:"required"`
+	ParticipantID int64                            `json:"participant_id"`
+	Source        string                           `json:"source" validate:"required"`
+	Value         string                           `json:"value" validate:"required"`
+}
+
+func (p ParticipantCompletionHTTPRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.DisplayLabel, "required"); err != nil {
+		errors = errors.Append("DisplayLabel", err)
+	}
+	if v, ok := any(p.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(p.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if err := typesValidator.Var(p.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ParticipantContactObservation struct {
 	AddressKind          string        `json:"address_kind" validate:"required"`
 	Envelope             ValueEnvelope `json:"envelope"`
@@ -5749,6 +5834,46 @@ func (p PersonIdentifier) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonInboxResponse struct {
+	CacheRevision    string           `json:"cache_revision" validate:"required"`
+	IdentityRevision int64            `json:"identity_revision"`
+	Rows             []PersonInboxRow `json:"rows,omitempty" validate:"required"`
+}
+
+func (p PersonInboxResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range p.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonInboxRow struct {
+	ConversationCount int64      `json:"conversation_count"`
+	LatestAt          time.Time  `json:"latest_at" validate:"required"`
+	LatestReceivedAt  *time.Time `json:"latest_received_at,omitempty"`
+	LatestSentAt      *time.Time `json:"latest_sent_at,omitempty"`
+	ReceivedCount     int64      `json:"received_count"`
+	SentCount         int64      `json:"sent_count"`
+	SourceID          int64      `json:"source_id"`
+	SourceIdentifier  string     `json:"source_identifier" validate:"required"`
+	SourceType        string     `json:"source_type" validate:"required"`
+}
+
+func (p PersonInboxRow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PersonMedia struct {
 	ByteSize      *int64        `json:"byte_size,omitempty"`
 	ContentHash   *string       `json:"content_hash,omitempty"`
@@ -6245,6 +6370,7 @@ type PersonSummary struct {
 	ID            int64              `json:"id"`
 	Identifiers   []PersonIdentifier `json:"identifiers,omitempty" validate:"required"`
 	LastAt        time.Time          `json:"last_at" validate:"required"`
+	MeetingCount  int64              `json:"meeting_count"`
 	PartialLabel  bool               `json:"partial_label"`
 	Profile       *PersonProfile     `json:"profile,omitempty"`
 	SourceCounts  []SourceCount      `json:"source_counts,omitempty" validate:"required"`
@@ -8020,6 +8146,7 @@ func (t TextConversationRow) Validate() error {
 }
 
 type TextConversationsResponse struct {
+	CacheRevision string                `json:"cache_revision" validate:"required"`
 	Conversations []TextConversationRow `json:"conversations,omitempty" validate:"required"`
 	Count         int64                 `json:"count"`
 	HasMore       bool                  `json:"has_more"`
@@ -8029,6 +8156,9 @@ type TextConversationsResponse struct {
 
 func (t TextConversationsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
 	for i, item := range t.Conversations {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8043,6 +8173,33 @@ func (t TextConversationsResponse) Validate() error {
 }
 
 type TextMessagesResponse struct {
+	CacheRevision string                   `json:"cache_revision" validate:"required"`
+	Count         int64                    `json:"count"`
+	HasMore       bool                     `json:"has_more"`
+	Limit         int64                    `json:"limit"`
+	Messages      []CLIQueryMessageSummary `json:"messages,omitempty" validate:"required"`
+	Offset        int64                    `json:"offset"`
+}
+
+func (t TextMessagesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range t.Messages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TextSearchResponse struct {
 	Count    int64                    `json:"count"`
 	HasMore  bool                     `json:"has_more"`
 	Limit    int64                    `json:"limit"`
@@ -8050,7 +8207,7 @@ type TextMessagesResponse struct {
 	Offset   int64                    `json:"offset"`
 }
 
-func (t TextMessagesResponse) Validate() error {
+func (t TextSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	for i, item := range t.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {

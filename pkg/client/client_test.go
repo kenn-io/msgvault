@@ -38,6 +38,11 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedEmploymentSourceConstantsRemainAssignable(t *testing.T) {
+	var source generated.EmploymentBodySource = generated.User
+	assert.Equal(t, generated.EmploymentBodySource("user"), source)
+}
+
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

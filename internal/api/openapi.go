@@ -660,6 +660,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		})
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"AppendPersonNoteRequest": {
+			"source": {
+				"AppendPersonNoteRequestSourceUser",
+				"AppendPersonNoteRequestSourceCarddavImport",
+				"AppendPersonNoteRequestSourceVcardImport",
+				"AppendPersonNoteRequestSourceArchiveObservation",
+				"AppendPersonNoteRequestSourceExtraction",
+				"AppendPersonNoteRequestSourceEnrichment",
+				"AppendPersonNoteRequestSourceSystem",
+			},
+		},
 		"CreateCommunicationServiceRequest": {
 			"normalization": {
 				"CreateCommunicationServiceRequestNormalizationNone",

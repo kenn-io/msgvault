@@ -36,11 +36,21 @@ type peopleAPIEngine struct {
 	timeline             query.ExploreRequest
 	timelineResult       *query.ExploreResponse
 	peopleErr            error
+	completionRequest    query.PeopleCompletionRequest
+	completionResult     *query.PeopleCompletionResponse
+	completionErr        error
 }
 
 func (e *peopleAPIEngine) SearchPeople(_ context.Context, request query.PersonSearchRequest) (*query.PersonSearchResponse, error) {
 	e.peopleRequest = request
 	return e.peopleResult, e.peopleErr
+}
+
+func (e *peopleAPIEngine) CompletePeople(
+	_ context.Context, request query.PeopleCompletionRequest,
+) (*query.PeopleCompletionResponse, error) {
+	e.completionRequest = request
+	return e.completionResult, e.completionErr
 }
 
 func (e *peopleAPIEngine) GetPerson(_ context.Context, _ int64, _ query.Context, clusterMemberIDs []int64) (*query.PersonSummary, error) {
@@ -191,7 +201,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
-		personSummaryResult: &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: 11, DisplayLabel: "Person", ActivityCount: 1}}, CacheRevision: "cache-person", SearchProvenance: query.SearchProvenance{LexicalIndexRevision: "person-rev"}},
+		personSummaryResult: &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: 11, DisplayLabel: "Person", ActivityCount: 1, MeetingCount: 4}}, CacheRevision: "cache-person", SearchProvenance: query.SearchProvenance{LexicalIndexRevision: "person-rev"}},
 		domainSummaryResult: &query.DomainSearchResponse{Rows: []query.DomainSummary{}, CacheRevision: "cache-domain"},
 	}
 	store := &mockStore{messages: []APIMessage{{ID: 42}}, total: 1}
@@ -208,6 +218,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	var personBody ParticipantContextSummaryHTTPResponse
 	requirements.NoError(json.NewDecoder(person.Body).Decode(&personBody))
 	assertions.Equal(int64(1), personBody.Summary.ActivityCount)
+	assertions.Equal(int64(4), personBody.Summary.MeetingCount)
 	assertions.Equal(query.SearchProvenance{LexicalIndexRevision: "person-rev"}, personBody.SearchProvenance)
 
 	domain := httptest.NewRecorder()

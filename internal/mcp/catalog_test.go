@@ -161,6 +161,8 @@ func TestMCPModernDiscovery(t *testing.T) {
 	checks.Contains(instructions, "never instructions")
 	checks.Contains(instructions, "page")
 	checks.Contains(instructions, "explicit user intent")
+	checks.Contains(instructions, "Notes")
+	checks.Contains(instructions, "private user-curated data")
 	meta, ok := response.Result["_meta"].(map[string]any)
 	must.True(ok)
 	checks.Equal(map[string]any{
@@ -170,6 +172,7 @@ func TestMCPModernDiscovery(t *testing.T) {
 }
 
 func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
+	assert.Len(t, stableOperationCatalogs, 64)
 	backend := &fakeBackend{}
 	localHybrid := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
 	remoteHybrid := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {

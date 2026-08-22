@@ -264,6 +264,31 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions.Nil(missingDomain)
 }
 
+func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "granola")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
+	when := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	meeting := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 701, Subject: "Weekly sync", SentAt: when,
+		MessageType: "meeting_transcript", ConversationType: "meeting",
+	})
+	b.AddFrom(meeting, person, "Alice Example")
+	chat := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 702, SentAt: when.Add(time.Hour),
+		MessageType: "whatsapp", ConversationType: "direct_chat",
+	})
+	b.AddFrom(chat, person, "Alice Example")
+	b.AddConversationParticipant(702, person)
+	engine := b.BuildEngine()
+
+	result, err := engine.GetPerson(t.Context(), person, Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, int64(2), result.ActivityCount)
+	assert.Equal(t, int64(1), result.MeetingCount)
+}
+
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

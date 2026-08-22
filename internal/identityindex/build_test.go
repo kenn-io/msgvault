@@ -285,6 +285,28 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 	assertions.Equal(int64(3), relationshipParquetCount(t, db, stagedRoot, DatasetActivity))
 }
 
+func TestBuildPeopleDirectoryPublishesTypedCompletionPrimitives(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+	})
+	require.NoError(t, err)
+
+	var primitivesJSON string
+	err = db.QueryRow(`
+		SELECT CAST(to_json(search_primitives) AS VARCHAR)
+		FROM read_parquet(?) WHERE canonical_id = 2
+	`, relationshipParquetGlob(root, DatasetPeople)).Scan(&primitivesJSON)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"kind":"email","match_value":"bob@example.net","display_value":"bob@example.net","source":"observed","participant_id":2},
+		{"kind":"email","match_value":"bob@example.net","display_value":"Bob Home","source":"email","participant_id":2},
+		{"kind":"name","match_value":"bob alias","display_value":"Bob Alias","source":"observed","participant_id":3},
+		{"kind":"email","match_value":"alias@example.net","display_value":"alias@example.net","source":"observed","participant_id":3},
+		{"kind":"username","match_value":"bob-chat","display_value":"Bob Chat","source":"chat","participant_id":3}
+	]`, primitivesJSON)
+}
+
 func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{

@@ -137,6 +137,13 @@ type PeopleAnalyzer interface {
 	GetDomainSummary(ctx context.Context, domain string, explore ExploreRequest) (*DomainSearchResponse, error)
 }
 
+// PeopleInboxAnalyzer is separate from Engine so participant inbox rollups
+// can only be served from the committed canonical relationship cache.
+type PeopleInboxAnalyzer interface {
+	ListPersonInboxes(ctx context.Context, request PersonInboxRequest) (*PersonInboxResponse, error)
+	ResolveCanonicalParticipant(ctx context.Context, participantID int64) (int64, error)
+}
+
 // MessageBodySearcher is an optional capability for exact full-text search of
 // message bodies. It is deliberately separate from Engine so generic Search
 // retains its composite subject/body/participant semantics.

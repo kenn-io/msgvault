@@ -5385,6 +5385,10 @@ type contextErrorTextEngine struct {
 	err error
 }
 
+func (e *contextErrorTextEngine) TextSnapshotRevision(context.Context, query.TextSnapshotScope) (string, error) {
+	return "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
 func (e *contextErrorTextEngine) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
 }
@@ -5403,6 +5407,189 @@ func (e *contextErrorTextEngine) TextSearch(context.Context, string, int, int) (
 
 func (e *contextErrorTextEngine) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+type revisionDriftTextEngine struct {
+	*query.SQLiteEngine
+
+	conversationCalls int
+	messageCalls      int
+	mutateAfterQuery  func(int) error
+}
+
+func (e *revisionDriftTextEngine) ListConversations(
+	ctx context.Context, filter query.TextFilter,
+) ([]query.ConversationRow, error) {
+	rows, err := e.SQLiteEngine.ListConversations(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	e.conversationCalls++
+	if e.mutateAfterQuery != nil {
+		if err := e.mutateAfterQuery(e.conversationCalls); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+func (e *revisionDriftTextEngine) ListConversationMessages(
+	ctx context.Context, conversationID int64, filter query.TextFilter,
+) ([]query.MessageSummary, error) {
+	rows, err := e.SQLiteEngine.ListConversationMessages(ctx, conversationID, filter)
+	if err != nil {
+		return nil, err
+	}
+	e.messageCalls++
+	if e.mutateAfterQuery != nil {
+		if err := e.mutateAfterQuery(e.messageCalls); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+func newRevisionDriftTextEngine(t *testing.T, endpoint string, driftCount int) *revisionDriftTextEngine {
+	t.Helper()
+	st := testutil.NewSQLiteTestStore(t)
+	_, err := st.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
+		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (701, 7, 'chat-701', 'direct_chat', 'Alpha');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+			VALUES (801, 701, 7, 'message-801', 'whatsapp', '2026-08-20 10:00:00', 'first', 11);
+	`)
+	require.NoError(t, err)
+
+	engine := &revisionDriftTextEngine{SQLiteEngine: query.NewSQLiteEngine(st.DB())}
+	engine.mutateAfterQuery = func(call int) error {
+		if call > driftCount {
+			return nil
+		}
+		if endpoint == "conversations" {
+			_, err := st.DB().Exec(`
+				UPDATE messages SET snippet = ?, sent_at = ? WHERE id = 801
+			`, fmt.Sprintf("conversation drift %d", call), fmt.Sprintf("2026-08-20 %02d:00:00", 10+call))
+			return err
+		}
+		_, err := st.DB().Exec(`
+			UPDATE messages SET snippet = ?, sent_at = ? WHERE id = 801
+		`, fmt.Sprintf("message drift %d", call), fmt.Sprintf("2026-08-20 %02d:00:00", 10+call))
+		return err
+	}
+	return engine
+}
+
+func TestTextRevisionRetriesCompleteReadOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		path     string
+	}{
+		{name: "conversations", endpoint: "conversations", path: "/api/v1/text/conversations?limit=25"},
+		{name: "conversation_messages", endpoint: "messages", path: "/api/v1/text/conversations/701/messages?limit=25"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newRevisionDriftTextEngine(t, tc.endpoint, 1)
+			srv := newTestServerWithEngine(t, engine)
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var body map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			var revision string
+			require.NoError(t, json.Unmarshal(body["cache_revision"], &revision))
+			assert.NotEmpty(t, revision)
+			if tc.endpoint == "conversations" {
+				assert.Equal(t, 2, engine.conversationCalls)
+			} else {
+				assert.Equal(t, 2, engine.messageCalls)
+			}
+		})
+	}
+}
+
+func TestTextRevisionSecondDriftReturnsConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		path     string
+	}{
+		{name: "conversations", endpoint: "conversations", path: "/api/v1/text/conversations"},
+		{name: "conversation_messages", endpoint: "messages", path: "/api/v1/text/conversations/701/messages"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newRevisionDriftTextEngine(t, tc.endpoint, 2)
+			srv := newTestServerWithEngine(t, engine)
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+
+			require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+			var body ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			assert.Equal(t, "archive_revision_changed", body.Error)
+			if tc.endpoint == "conversations" {
+				assert.Equal(t, 2, engine.conversationCalls)
+			} else {
+				assert.Equal(t, 2, engine.messageCalls)
+			}
+		})
+	}
+}
+
+type textEngineWithoutSnapshot struct {
+	*querytest.MockEngine
+}
+
+func (*textEngineWithoutSnapshot) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
+	return []query.ConversationRow{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextAggregate(context.Context, query.TextViewType, query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) ListConversationMessages(context.Context, int64, query.TextFilter) ([]query.MessageSummary, error) {
+	return []query.MessageSummary{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
+	return &query.TotalStats{}, nil
+}
+
+func TestTextRevisionMissingCapabilityReturnsServiceUnavailable(t *testing.T) {
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	for _, path := range []string{
+		"/api/v1/text/conversations",
+		"/api/v1/text/conversations/1/messages",
+	} {
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		var body ErrorResponse
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		assert.Equal(t, "text_snapshot_unavailable", body.Error)
+	}
+}
+
+func TestTextSearchDoesNotPublishConversationSnapshotRevision(t *testing.T) {
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/text/search?q=hello", nil))
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	assert.NotContains(t, body, "cache_revision")
+	assert.JSONEq(t, `[]`, string(body["messages"]))
 }
 
 // TestTextEndpointsContextErrorReturns503 verifies that a context

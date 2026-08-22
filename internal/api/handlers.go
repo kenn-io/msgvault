@@ -1999,6 +1999,7 @@ type TextConversationRow struct {
 }
 
 type TextConversationsResponse struct {
+	CacheRevision string                `json:"cache_revision"`
 	Count         int                   `json:"count"`
 	HasMore       bool                  `json:"has_more"`
 	Offset        int                   `json:"offset"`
@@ -2007,6 +2008,15 @@ type TextConversationsResponse struct {
 }
 
 type TextMessagesResponse struct {
+	CacheRevision string                 `json:"cache_revision"`
+	Count         int                    `json:"count"`
+	HasMore       bool                   `json:"has_more"`
+	Offset        int                    `json:"offset"`
+	Limit         int                    `json:"limit"`
+	Messages      []query.MessageSummary `json:"messages"`
+}
+
+type TextSearchResponse struct {
 	Count    int                    `json:"count"`
 	HasMore  bool                   `json:"has_more"`
 	Offset   int                    `json:"offset"`
@@ -2364,6 +2374,16 @@ func parseTextFilter(r *http.Request) (query.TextFilter, error) {
 	} else if ok {
 		filter.SourceID = &id
 	}
+	if ids, ok, err := queryInt64s(r, "participant_id"); err != nil {
+		return filter, err
+	} else if ok {
+		for _, id := range ids {
+			if id <= 0 {
+				return filter, newParamError("participant_id", "query parameter \"participant_id\" must contain only positive integers")
+			}
+		}
+		filter.ParticipantIDs = ids
+	}
 	if v := r.URL.Query().Get("time_period"); v != "" {
 		filter.TimeRange.Period = v
 	}
@@ -2509,6 +2529,49 @@ func (s *Server) textEngine(ctx context.Context, w http.ResponseWriter) (query.T
 		return nil, false
 	}
 	return textEngine, true
+}
+
+func (s *Server) textSnapshotter(
+	textEngine query.TextEngine, w http.ResponseWriter,
+) (query.TextSnapshotter, bool) {
+	snapshotter, ok := textEngine.(query.TextSnapshotter)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "text_snapshot_unavailable", "Text snapshot revision is not available")
+		return nil, false
+	}
+	return snapshotter, true
+}
+
+var errTextSnapshotChanged = errors.New("text snapshot changed during read")
+
+func stableTextRead[T any](
+	ctx context.Context,
+	snapshotter query.TextSnapshotter,
+	scope query.TextSnapshotScope,
+	read func() (T, error),
+) (T, string, error) {
+	var zero T
+	for range 2 {
+		before, err := snapshotter.TextSnapshotRevision(ctx, scope)
+		if err != nil {
+			return zero, "", fmt.Errorf("read text snapshot before query: %w", err)
+		}
+		value, err := read()
+		if err != nil {
+			return zero, "", err
+		}
+		after, err := snapshotter.TextSnapshotRevision(ctx, scope)
+		if err != nil {
+			return zero, "", fmt.Errorf("read text snapshot after query: %w", err)
+		}
+		if before == after {
+			if after == "" {
+				return zero, "", errors.New("text snapshot revision is empty")
+			}
+			return value, after, nil
+		}
+	}
+	return zero, "", errTextSnapshotChanged
 }
 
 // toTotalStatsResponse converts query.TotalStats to JSON format.
@@ -3670,6 +3733,10 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	snapshotter, ok := s.textSnapshotter(textEngine, w)
+	if !ok {
+		return
+	}
 
 	filter, err := parseTextFilter(r)
 	if err != nil {
@@ -3685,9 +3752,17 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 
 	requestLimit := filter.Pagination.Limit
 	filter.Pagination.Limit = requestLimit + 1
-	rows, err := textEngine.ListConversations(r.Context(), filter)
+	rows, cacheRevision, err := stableTextRead(r.Context(), snapshotter,
+		query.TextSnapshotScope{Filter: filter},
+		func() ([]query.ConversationRow, error) {
+			return textEngine.ListConversations(r.Context(), filter)
+		})
 	if err != nil {
 		if s.writeIfContextError(w, err) {
+			return
+		}
+		if errors.Is(err, errTextSnapshotChanged) {
+			writeError(w, http.StatusConflict, "archive_revision_changed", "Archive changed while reading text conversations")
 			return
 		}
 		s.logger.Error("text conversations query failed", "error", err)
@@ -3706,6 +3781,7 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, TextConversationsResponse{
+		CacheRevision: cacheRevision,
 		Count:         len(conversations),
 		HasMore:       hasMore,
 		Offset:        filter.Pagination.Offset,
@@ -3762,6 +3838,10 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	snapshotter, ok := s.textSnapshotter(textEngine, w)
+	if !ok {
+		return
+	}
 
 	idStr := r.PathValue("id")
 	conversationID, err := strconv.ParseInt(idStr, 10, 64)
@@ -3784,9 +3864,17 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 
 	requestLimit := filter.Pagination.Limit
 	filter.Pagination.Limit = requestLimit + 1
-	messages, err := textEngine.ListConversationMessages(r.Context(), conversationID, filter)
+	messages, cacheRevision, err := stableTextRead(r.Context(), snapshotter,
+		query.TextSnapshotScope{ConversationID: &conversationID, Filter: filter},
+		func() ([]query.MessageSummary, error) {
+			return textEngine.ListConversationMessages(r.Context(), conversationID, filter)
+		})
 	if err != nil {
 		if s.writeIfContextError(w, err) {
+			return
+		}
+		if errors.Is(err, errTextSnapshotChanged) {
+			writeError(w, http.StatusConflict, "archive_revision_changed", "Archive changed while reading text conversation messages")
 			return
 		}
 		s.logger.Error("text conversation messages query failed", "conversation_id", conversationID, "error", err)
@@ -3803,11 +3891,12 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSON(w, http.StatusOK, TextMessagesResponse{
-		Count:    len(messages),
-		HasMore:  hasMore,
-		Offset:   filter.Pagination.Offset,
-		Limit:    requestLimit,
-		Messages: messages,
+		CacheRevision: cacheRevision,
+		Count:         len(messages),
+		HasMore:       hasMore,
+		Offset:        filter.Pagination.Offset,
+		Limit:         requestLimit,
+		Messages:      messages,
 	})
 }
 
@@ -3861,7 +3950,7 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 		messages = []query.MessageSummary{}
 	}
 
-	writeJSON(w, http.StatusOK, TextMessagesResponse{
+	writeJSON(w, http.StatusOK, TextSearchResponse{
 		Count:    len(messages),
 		HasMore:  hasMore,
 		Offset:   offset,
