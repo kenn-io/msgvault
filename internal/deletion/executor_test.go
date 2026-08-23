@@ -590,6 +590,17 @@ func TestExecutor_ExecuteBatch_RejectsTrashResume(t *testing.T) {
 	tc.AssertManifestExecution(manifest.ID, 5, 0)
 }
 
+func TestExecutor_DeleteOne_LocalTombstoneFailureIsRetryable(t *testing.T) {
+	tc := NewTestContext(t)
+	require.NoError(t, tc.Store.Close(), "close store")
+
+	result, err := tc.Exec.deleteOne(context.Background(), 1, "msg-1", MethodDelete)
+
+	assert.Equal(t, resultFailed, result)
+	assert.Error(t, err)
+	assert.Len(t, tc.MockAPI.DeleteCalls, 1)
+}
+
 // TestExecutor_Execute_ResumeRetriesFailedIDs verifies that resuming a trash
 // manifest retries checkpointed transient failures before continuing from
 // LastProcessedIndex, mirroring ExecuteBatch — instead of skipping them and
