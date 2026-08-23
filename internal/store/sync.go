@@ -288,7 +288,7 @@ func (s *Store) UpdateSyncCheckpoint(syncID int64, cp *Checkpoint) error {
 // UpdateSyncCheckpointContext is the request-aware form of
 // UpdateSyncCheckpoint.
 func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, cp *Checkpoint) error {
-	_, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, `
 		UPDATE sync_runs
 		SET cursor_before = ?,
 		    messages_processed = ?,
@@ -296,8 +296,11 @@ func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, c
 		    messages_updated = ?,
 		    errors_count = ?
 		WHERE id = ?
-	`, cp.PageToken, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
-	return err
+	`, cp.PageToken, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID); err != nil {
+		return err
+	}
+	s.optimizeSQLiteBestEffort(ctx, "sync checkpoint")
+	return nil
 }
 
 // RecordSyncRunItem records a per-item sync outcome for diagnostics.
@@ -407,6 +410,7 @@ func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHist
 	if rows != 1 {
 		return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
 	}
+	s.optimizeSQLiteBestEffort(ctx, "successful sync")
 	return nil
 }
 
@@ -427,7 +431,7 @@ func (s *Store) CompleteSyncAndUpdateSourceCursor(
 func (s *Store) CompleteSyncAndUpdateSourceCursorContext(
 	ctx context.Context, syncID int64, sourceID int64, finalHistoryID string,
 ) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	if err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := validateCurrentSyncGeneration(
 			ctx, tx, sourceID, syncID, SyncStatusRunning,
 		); err != nil {
@@ -469,7 +473,11 @@ func (s *Store) CompleteSyncAndUpdateSourceCursorContext(
 			return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.optimizeSQLiteBestEffort(ctx, "successful sync")
+	return nil
 }
 
 func validateCurrentSyncGeneration(

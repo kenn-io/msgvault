@@ -413,6 +413,11 @@ func OpenPostgresDB(dbURL string) (*sql.DB, func(), error) {
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
+		// Keep planner statistics current for short-lived commands. The
+		// all-tables bit avoids depending on which pooled connection happens to
+		// execute this statement and which queries that connection has seen.
+		s.optimizeSQLiteBestEffort(context.Background(), "store close")
+
 		// Checkpoint WAL before closing to fold it back into the main
 		// database. This prevents WAL accumulation across sessions and
 		// reduces the risk of corruption from stale WAL entries.
@@ -432,6 +437,29 @@ func (s *Store) Close() error {
 // No-op for non-SQLite backends.
 func (s *Store) CheckpointWAL() error {
 	return s.dialect.CheckpointWAL(s.db.DB)
+}
+
+// optimizeSQLite refreshes persistent query-planner statistics when SQLite
+// decides they are missing or stale. The 0x10000 bit makes SQLite consider all
+// tables instead of relying on query history from whichever pooled connection
+// database/sql selects. PostgreSQL maintains planner statistics server-side.
+func (s *Store) optimizeSQLite(ctx context.Context) error {
+	if s.IsPostgreSQL() || s.readOnly {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
+	if err := s.optimizeSQLite(ctx); err != nil {
+		slog.Warn("SQLite planner statistics maintenance failed",
+			"trigger", trigger,
+			"error", err.Error(),
+		)
+	}
 }
 
 // DB returns the underlying *sql.DB for consumers that need to
@@ -1634,6 +1662,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
+
+	// Schema initialization can add indexes to an existing archive. Refresh
+	// statistics after all schema work so SQLite can cost those indexes against
+	// the archive's actual data distribution.
+	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
 	return nil
 }
