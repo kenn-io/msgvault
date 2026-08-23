@@ -601,6 +601,21 @@ func TestExecutor_DeleteOne_LocalTombstoneFailureIsRetryable(t *testing.T) {
 	assert.Len(t, tc.MockAPI.DeleteCalls, 1)
 }
 
+func TestExecutor_Execute_LocalTombstoneFailureLeavesManifestInProgress(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("local tombstone retry", []string{"msg-1"})
+	require.NoError(t, tc.Store.Close(), "close store")
+
+	err := tc.ExecuteWithOpts(manifest.ID, &ExecuteOptions{Method: MethodDelete, BatchSize: 1, Resume: true})
+
+	assert.Error(t, err)
+	inProgress, listErr := tc.Mgr.ListInProgress()
+	require.NoError(t, listErr)
+	if assert.Len(t, inProgress, 1) {
+		assert.Equal(t, []string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+	}
+}
+
 // TestExecutor_Execute_ResumeRetriesFailedIDs verifies that resuming a trash
 // manifest retries checkpointed transient failures before continuing from
 // LastProcessedIndex, mirroring ExecuteBatch — instead of skipping them and
