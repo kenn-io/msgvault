@@ -110,34 +110,56 @@ func TestCapturePersonMergeSnapshotIncludesRootsBindingsAndReferencedRows(t *tes
 
 func TestPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "inventory.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
+	assertPersonMergeTableInventory(t, st)
+}
+
+func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
+	dbURL := skipUnlessPostgresInternal(t)
+	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
+}
+
+func assertPersonMergeTableInventory(t *testing.T, st *Store) {
+	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
 
 	actual := make([]string, 0)
-	tables, err := st.db.Query(`SELECT name FROM sqlite_master
-		WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
-	require.NoError(err)
-	for tables.Next() {
-		var table string
-		require.NoError(tables.Scan(&table))
-		foreignKeys, queryErr := st.db.Query(`SELECT "from", "table"
-			FROM pragma_foreign_key_list(?) ORDER BY "from"`, table)
-		require.NoError(queryErr, "foreign keys for %s", table)
-		for foreignKeys.Next() {
-			var column, target string
-			require.NoError(foreignKeys.Scan(&column, &target))
-			if target == "persons" {
-				actual = append(actual, table+"."+column)
-			}
-		}
-		require.NoError(foreignKeys.Err())
-		require.NoError(foreignKeys.Close())
+	query := `SELECT child.name, foreign_key."from"
+		FROM sqlite_master child
+		JOIN pragma_foreign_key_list(child.name) foreign_key
+		WHERE child.type = 'table' AND child.name NOT LIKE 'sqlite_%'
+		  AND foreign_key."table" = 'persons'
+		ORDER BY child.name, foreign_key."from"`
+	if st.IsPostgreSQL() {
+		query = `SELECT constraints.table_name, columns.column_name
+			FROM information_schema.table_constraints constraints
+			JOIN information_schema.key_column_usage columns
+			  ON columns.constraint_catalog = constraints.constraint_catalog
+			 AND columns.constraint_schema = constraints.constraint_schema
+			 AND columns.constraint_name = constraints.constraint_name
+			JOIN information_schema.constraint_column_usage target
+			  ON target.constraint_catalog = constraints.constraint_catalog
+			 AND target.constraint_schema = constraints.constraint_schema
+			 AND target.constraint_name = constraints.constraint_name
+			WHERE constraints.constraint_type = 'FOREIGN KEY'
+			  AND constraints.table_schema = current_schema()
+			  AND target.table_schema = current_schema()
+			  AND target.table_name = 'persons'
+			ORDER BY constraints.table_name, columns.column_name`
 	}
-	require.NoError(tables.Err())
-	require.NoError(tables.Close())
+	rows, err := st.db.Query(query)
+	require.NoError(err)
+	for rows.Next() {
+		var table, column string
+		require.NoError(rows.Scan(&table, &column))
+		actual = append(actual, table+"."+column)
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
 	sort.Strings(actual)
 
 	classified := make([]string, 0)

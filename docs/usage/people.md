@@ -126,6 +126,59 @@ msgvault person set-display-name 7 --clear
 vCard UID forever; promoting the same observed cluster later creates a new
 person and UID.
 
+## Merge duplicate profiles and reverse a merge
+
+Merge two durable profiles only after reviewing both people. The first person
+survives with the same ID and vCard UID; the second person's participants and
+profile data move to it, and the retired UID becomes an alias. Both current
+revisions and an idempotency key are required:
+
+```bash
+msgvault person merge 7 12 \
+  --survivor-revision 4 \
+  --absorbed-revision 2 \
+  --idempotency-key merge-7-12
+```
+
+Conflicting single-value attributes remain reviewable instead of being
+dropped. Inspect the merge and decide each candidate explicitly:
+
+```bash
+msgvault person merge-history 7
+msgvault person merge-show 42
+msgvault person merge-show 42 --snapshot
+msgvault person merge-candidate 18 \
+  --person-id 7 --revision 5 --decision accepted
+```
+
+A split creates a new person and a new vCard UID. Select absorbed participant
+lineage with repeated `--participant` flags. Omit `--participant` only when the
+absorbed profile had no participants:
+
+```bash
+msgvault person split 7 \
+  --merge-id 42 \
+  --participant 91 \
+  --revision 5 \
+  --idempotency-key split-42-91
+```
+
+An exact reversal restores the two pre-merge profiles when their lineage and
+dependencies are still intact. A partial split moves participant-attributable
+data instead of guessing; use `--json` to inspect ambiguous or unrestored rows.
+An active merge prevents deletion of its current person; complete the split
+first.
+
+Profiles with an active CardDAV publication cannot be merged. This prevents a
+local merge from silently reassigning a UID that an external address book is
+already syncing.
+
+Merge snapshots are durable audit data. They retain both profiles' merge-time
+values after later live-profile edits or redaction. A subset copies a complete
+merge packet only with `--include-attributes`, `--include-profiles`, and
+`--include-vcard-resources`; treat that output as containing historical
+personal data.
+
 ## Store typed attributes
 
 Every archive starts with four person-field definitions:

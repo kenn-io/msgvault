@@ -66,19 +66,23 @@ func TestPersonSplitRequestValidation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			request := valid
 			request.ParticipantIDs = append([]int64(nil), valid.ParticipantIDs...)
 			tc.mutate(&request)
 			err := request.validate()
-			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrPersonMergeInvalid)
+			require.Error(err)
+			assert.ErrorIs(err, ErrPersonMergeInvalid)
 		})
 	}
 
-	require.NoError(t, valid.validate())
+	require := require.New(t)
+	assert := assert.New(t)
+	require.NoError(valid.validate())
 	rootOnly := valid
 	rootOnly.ParticipantIDs = nil
-	require.NoError(t, rootOnly.validate())
-	assert.Equal(t, []int64{3, 4}, valid.canonicalParticipantIDs())
-	assert.Equal(t, []int64{4, 3}, valid.ParticipantIDs, "canonicalization must not mutate caller input")
+	require.NoError(rootOnly.validate())
+	assert.Equal([]int64{3, 4}, valid.canonicalParticipantIDs())
+	assert.Equal([]int64{4, 3}, valid.ParticipantIDs, "canonicalization must not mutate caller input")
 }
