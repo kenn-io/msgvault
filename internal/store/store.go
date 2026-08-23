@@ -447,8 +447,34 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+
+	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
+	// results only into the SQLite connection that runs it; holding every slot
+	// lets us reload each existing connection and prevents database/sql from
+	// opening an unrefreshed one concurrently. Connections opened after this
+	// point load the persistent sqlite_stat tables when they read the schema.
+	poolSize := max(1, s.db.Stats().MaxOpenConnections)
+	connections := make([]*sql.Conn, 0, poolSize)
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for range poolSize {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("reserve SQLite connection pool for planner statistics: %w", err)
+		}
+		connections = append(connections, conn)
+	}
+
+	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
 		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
+	}
+	for _, conn := range connections {
+		if _, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema"); err != nil {
+			return fmt.Errorf("reload SQLite planner statistics: %w", err)
+		}
 	}
 	return nil
 }
