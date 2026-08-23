@@ -113,6 +113,81 @@ func TestSplitPersonMerge_ExactReversal(t *testing.T) {
 	assert.Equal(result.NewPerson.ID, *alias.SurvivingPersonID)
 }
 
+func TestSplitPersonMerge_ZeroParticipantProfile(t *testing.T) {
+	tests := []struct {
+		name                 string
+		cardDAVIsSurvivor    bool
+		wantResourceOnSource bool
+	}{
+		{name: "absorbed", cardDAVIsSurvivor: false, wantResourceOnSource: false},
+		{name: "survivor", cardDAVIsSurvivor: true, wantResourceOnSource: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			st, account, book := newCardDAVResourceStore(t)
+			remote := remoteResource(
+				book.CanonicalURL+test.name+".vcf",
+				"zero-participant-"+test.name,
+				"CardDAV "+test.name,
+				test.name+"@example.test",
+				`"one"`,
+			)
+			_, err := st.ApplyCardDAVSyncPlanContext(ctx, store.CardDAVSyncPlan{
+				AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+				SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{remote},
+			})
+			require.NoError(err)
+			resource, err := st.GetCardDAVResourceContext(ctx, book.ID, remote.Href)
+			require.NoError(err)
+			require.NotNil(resource.PersonID)
+			cardDAVPerson, err := st.GetPersonContext(ctx, *resource.PersonID)
+			require.NoError(err)
+			require.Empty(cardDAVPerson.ParticipantIDs)
+
+			localPerson := mustPromotedPerson(t, st,
+				"zero-participant-local-"+test.name+"@example.test", "Local "+test.name)
+			survivor, absorbed := localPerson, cardDAVPerson
+			if test.cardDAVIsSurvivor {
+				survivor, absorbed = cardDAVPerson, localPerson
+			}
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+				ExpectedSurvivorRevision: survivor.Revision,
+				ExpectedAbsorbedRevision: absorbed.Revision,
+				IdempotencyKey:           "zero-participant-merge-" + test.name,
+				Actor:                    "test",
+			})
+			require.NoError(err)
+
+			split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+				SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+				ParticipantIDs:         absorbed.ParticipantIDs,
+				ExpectedSourceRevision: merged.Person.Revision,
+				IdempotencyKey:         "zero-participant-split-" + test.name,
+				Actor:                  "test",
+			})
+			require.NoError(err)
+			assert.True(split.ExactReversal)
+			assert.Equal(survivor.ParticipantIDs, split.SourcePerson.ParticipantIDs)
+			assert.Equal(absorbed.ParticipantIDs, split.NewPerson.ParticipantIDs)
+			assert.Equal(survivor.DisplayName, split.SourcePerson.DisplayName)
+			assert.Equal(absorbed.DisplayName, split.NewPerson.DisplayName)
+
+			resource, err = st.GetCardDAVResourceContext(ctx, book.ID, remote.Href)
+			require.NoError(err)
+			require.NotNil(resource.PersonID)
+			if test.wantResourceOnSource {
+				assert.Equal(split.SourcePerson.ID, *resource.PersonID)
+			} else {
+				assert.Equal(split.NewPerson.ID, *resource.PersonID)
+			}
+		})
+	}
+}
+
 func TestSplitPersonMerge_ExactReversalIncludesLaterAbsorbedAlias(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

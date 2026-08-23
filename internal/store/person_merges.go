@@ -67,8 +67,9 @@ func (r PersonMergeRequest) validate() error {
 	}
 }
 
-// PersonSplitRequest moves selected absorbed-origin participant lineages from
-// a merged person into a newly created person.
+// PersonSplitRequest restores a merged profile into a newly created person.
+// ParticipantIDs selects absorbed-origin lineages; it may be empty when the
+// absorbed profile had no participants.
 type PersonSplitRequest struct {
 	SourcePersonID         int64
 	MergeID                int64
@@ -84,8 +85,6 @@ func (r PersonSplitRequest) validate() error {
 		return fmt.Errorf("%w: source person ID must be positive", ErrPersonMergeInvalid)
 	case r.MergeID <= 0:
 		return fmt.Errorf("%w: merge ID must be positive", ErrPersonMergeInvalid)
-	case len(r.ParticipantIDs) == 0:
-		return fmt.Errorf("%w: at least one participant is required", ErrPersonMergeInvalid)
 	case r.ExpectedSourceRevision <= 0:
 		return fmt.Errorf("%w: source revision must be positive", ErrPersonMergeInvalid)
 	case strings.TrimSpace(r.IdempotencyKey) == "":

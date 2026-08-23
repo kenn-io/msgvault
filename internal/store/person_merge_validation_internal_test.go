@@ -57,7 +57,6 @@ func TestPersonSplitRequestValidation(t *testing.T) {
 	}{
 		{name: "source id", mutate: func(r *PersonSplitRequest) { r.SourcePersonID = 0 }},
 		{name: "merge id", mutate: func(r *PersonSplitRequest) { r.MergeID = 0 }},
-		{name: "empty participants", mutate: func(r *PersonSplitRequest) { r.ParticipantIDs = nil }},
 		{name: "invalid participant", mutate: func(r *PersonSplitRequest) { r.ParticipantIDs = []int64{0} }},
 		{name: "duplicate participant", mutate: func(r *PersonSplitRequest) { r.ParticipantIDs = []int64{3, 3} }},
 		{name: "source revision", mutate: func(r *PersonSplitRequest) { r.ExpectedSourceRevision = 0 }},
@@ -77,6 +76,9 @@ func TestPersonSplitRequestValidation(t *testing.T) {
 	}
 
 	require.NoError(t, valid.validate())
+	rootOnly := valid
+	rootOnly.ParticipantIDs = nil
+	require.NoError(t, rootOnly.validate())
 	assert.Equal(t, []int64{3, 4}, valid.canonicalParticipantIDs())
 	assert.Equal(t, []int64{4, 3}, valid.ParticipantIDs, "canonicalization must not mutate caller input")
 }

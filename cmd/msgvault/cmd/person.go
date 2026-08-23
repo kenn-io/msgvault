@@ -292,7 +292,7 @@ func newPersonSplitCommand() *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "split <source-person-id>",
-		Short: "Split selected merged participant lineage into a new person",
+		Short: "Reverse merged profile lineage into a new person",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sourceID, err := positivePersonCLIArg(cmd, args[0], "source person")
@@ -343,7 +343,7 @@ func newPersonSplitCommand() *cobra.Command {
 	}
 	command.Flags().Int64Var(&mergeID, "merge-id", 0, "Merge record to split")
 	command.Flags().Int64SliceVar(&participantIDs, "participant", nil,
-		"Participant lineage to move; repeat for multiple participants")
+		"Participant lineage to move; omit for a root-only split")
 	command.Flags().Int64Var(&revision, "revision", 0, "Expected source person revision")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "",
 		"Opaque retry key for this split")
@@ -591,9 +591,6 @@ func personCLIIdempotencyKey(cmd *cobra.Command, value string) (string, error) {
 }
 
 func validatePersonCLIParticipants(cmd *cobra.Command, participantIDs []int64) error {
-	if len(participantIDs) == 0 {
-		return usageErr(cmd, errors.New("at least one participant ID is required"))
-	}
 	seen := make(map[int64]struct{}, len(participantIDs))
 	for _, participantID := range participantIDs {
 		if participantID <= 0 {

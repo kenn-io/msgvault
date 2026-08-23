@@ -205,6 +205,7 @@ func executePersonMergeCLI(t *testing.T, command *cobra.Command, args ...string)
 func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 	assertions := assert.New(t)
 	requests := map[string]int{}
+	splitParticipants := [][]int64{}
 	personJSON := `{
 		"id":7,"vcard_uid":"survivor-uid","revision":4,"participant_ids":[70,90],
 		"created_at":"2026-08-19T00:00:00Z","updated_at":"2026-08-19T00:01:00Z"}`
@@ -236,7 +237,21 @@ func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 				personJSON, mergeJSON)
 		case "POST /api/v1/people/7/split":
 			assertions.Equal(`"person-7-r4"`, r.Header.Get("If-Match"))
-			assertions.Equal("remote-split", r.Header.Get("Idempotency-Key"))
+			var body struct {
+				MergeID        int64   `json:"merge_id"`
+				ParticipantIDs []int64 `json:"participant_ids"`
+			}
+			if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				http.Error(w, "invalid split request", http.StatusBadRequest)
+				return
+			}
+			assertions.Equal(int64(12), body.MergeID)
+			splitParticipants = append(splitParticipants, body.ParticipantIDs)
+			if len(body.ParticipantIDs) == 0 {
+				assertions.Equal("remote-root-split", r.Header.Get("Idempotency-Key"))
+			} else {
+				assertions.Equal("remote-split", r.Header.Get("Idempotency-Key"))
+			}
 			_, _ = fmt.Fprintf(w, `{
 				"source_person":%s,
 				"new_person":{"id":10,"vcard_uid":"new-uid","revision":1,
@@ -309,6 +324,10 @@ func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 	assertions.Contains(splitOutput, "Exact reversal: true")
 	assertions.Contains(splitOutput, "Identity revision: 43")
 	assertions.Contains(splitOutput, "Cache state: stale")
+	rootSplitOutput := executePersonMergeCLI(t, newPersonSplitCommand(), "7", "--merge-id", "12",
+		"--revision", "4", "--idempotency-key", "remote-root-split", "--json")
+	assertions.Contains(rootSplitOutput, `"exact_reversal":true`)
+	assertions.Equal([][]int64{{90}, {90}, nil}, splitParticipants)
 	executePersonMergeCLI(t, newPersonMergeHistoryCommand(), "7", "--json")
 	assertions.Contains(executePersonMergeCLI(t, newPersonMergeHistoryCommand(), "7"), "MERGE")
 	detailJSONOutput := executePersonMergeCLI(t, newPersonMergeShowCommand(), "12", "--json")
@@ -335,7 +354,11 @@ func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 		"GET /api/v1/person-merges/12/snapshot",
 		"POST /api/v1/person-merge-candidates/21/decision",
 	} {
-		assertions.Equal(2, requests[key], key)
+		want := 2
+		if key == "POST /api/v1/people/7/split" {
+			want = 3
+		}
+		assertions.Equal(want, requests[key], key)
 	}
 	for _, command := range []*cobra.Command{
 		newPersonMergeCommand(), newPersonSplitCommand(), newPersonMergeCandidateCommand(),
@@ -398,12 +421,6 @@ func TestPersonMergeCLIValidationHappensBeforeOpeningStore(t *testing.T) {
 			args: []string{"1", "2", "--survivor-revision", "0",
 				"--absorbed-revision", "1", "--idempotency-key", "merge-key"},
 			want: "survivor revision must be a positive integer",
-		},
-		{
-			name: "split participants", command: newPersonSplitCommand(),
-			args: []string{"1", "--merge-id", "1", "--revision", "1",
-				"--idempotency-key", "split-key"},
-			want: "at least one participant ID is required",
 		},
 		{
 			name: "candidate decision", command: newPersonMergeCandidateCommand(),

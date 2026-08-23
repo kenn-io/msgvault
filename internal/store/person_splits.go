@@ -53,11 +53,12 @@ type personSplitJournalRow struct {
 	postMergeJSON sql.NullString
 }
 
-// SplitPersonMergeContext moves selected absorbed-origin participant
-// lineages from a merged person into a fresh person. Aggregate profile rows
-// are restored when the selection completes their owning merge; a partial
-// split otherwise moves only participant-exact evidence and reports the rows
-// left behind.
+// SplitPersonMergeContext restores a merged profile into a fresh person.
+// Selected absorbed-origin participant lineages move with it; an empty
+// selection reverses a merge whose absorbed profile had no participants.
+// Aggregate profile rows are restored when the selection completes their
+// owning merge; a partial split otherwise moves only participant-exact
+// evidence and reports the rows left behind.
 func (s *Store) SplitPersonMergeContext(
 	ctx context.Context, request PersonSplitRequest,
 ) (*PersonSplitResult, error) {
@@ -193,21 +194,23 @@ func (s *Store) splitPersonMergeOnce(
 			return fmt.Errorf("insert person split: %w", err)
 		}
 
-		if err := s.deletePersonSplitCrossingLinksTx(ctx, tx, request.ParticipantIDs); err != nil {
-			return err
-		}
-		args := []any{newPersonID, request.SourcePersonID}
-		args = append(args, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
-		bindingResult, err := tx.ExecContext(ctx, `UPDATE person_participants
-			SET person_id = ? WHERE person_id = ? AND participant_id IN (`+
-			personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, args...)
-		if err != nil {
-			return fmt.Errorf("move split participant bindings: %w", err)
-		}
-		if moved, err := bindingResult.RowsAffected(); err != nil {
-			return fmt.Errorf("count split participant bindings: %w", err)
-		} else if moved != int64(len(request.ParticipantIDs)) {
-			return fmt.Errorf("%w: participant binding changed during split", ErrPersonSplitParticipants)
+		if len(request.ParticipantIDs) > 0 {
+			if err := s.deletePersonSplitCrossingLinksTx(ctx, tx, request.ParticipantIDs); err != nil {
+				return err
+			}
+			args := []any{newPersonID, request.SourcePersonID}
+			args = append(args, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
+			bindingResult, err := tx.ExecContext(ctx, `UPDATE person_participants
+				SET person_id = ? WHERE person_id = ? AND participant_id IN (`+
+				personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, args...)
+			if err != nil {
+				return fmt.Errorf("move split participant bindings: %w", err)
+			}
+			if moved, err := bindingResult.RowsAffected(); err != nil {
+				return fmt.Errorf("count split participant bindings: %w", err)
+			} else if moved != int64(len(request.ParticipantIDs)) {
+				return fmt.Errorf("%w: participant binding changed during split", ErrPersonSplitParticipants)
+			}
 		}
 
 		unrestored := []PersonMergeRowRef{}
@@ -290,24 +293,31 @@ func (s *Store) splitPersonMergeOnce(
 			}
 		}
 
-		lineageArgs := []any{splitID, request.SourcePersonID}
-		lineageArgs = append(lineageArgs, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
-		if _, err := tx.ExecContext(ctx, `UPDATE person_merge_participants SET split_id = ?
-			WHERE split_id IS NULL AND merge_id IN (
-				SELECT id FROM person_merges WHERE current_person_id = ?
-			) AND participant_id IN (`+
-			personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, lineageArgs...); err != nil {
-			return fmt.Errorf("mark split participant lineage: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_merges
-			SET current_person_id = NULL
-			WHERE current_person_id = ? AND NOT EXISTS (
-				SELECT 1 FROM person_merge_participants lineage
-				WHERE lineage.merge_id = person_merges.id
-				  AND lineage.origin_side = 'absorbed'
-				  AND lineage.split_id IS NULL
-			)`, request.SourcePersonID); err != nil {
-			return fmt.Errorf("close fully split merge lineage: %w", err)
+		if len(request.ParticipantIDs) == 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merges SET current_person_id = NULL
+				WHERE id = ? AND current_person_id = ?`, request.MergeID, request.SourcePersonID); err != nil {
+				return fmt.Errorf("close root-only merge lineage: %w", err)
+			}
+		} else {
+			lineageArgs := []any{splitID, request.SourcePersonID}
+			lineageArgs = append(lineageArgs, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_participants SET split_id = ?
+				WHERE split_id IS NULL AND merge_id IN (
+					SELECT id FROM person_merges WHERE current_person_id = ?
+				) AND participant_id IN (`+
+				personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, lineageArgs...); err != nil {
+				return fmt.Errorf("mark split participant lineage: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merges
+				SET current_person_id = NULL
+				WHERE current_person_id = ? AND NOT EXISTS (
+					SELECT 1 FROM person_merge_participants lineage
+					WHERE lineage.merge_id = person_merges.id
+					  AND lineage.origin_side = 'absorbed'
+					  AND lineage.split_id IS NULL
+				)`, request.SourcePersonID); err != nil {
+				return fmt.Errorf("close fully split merge lineage: %w", err)
+			}
 		}
 		identityRevision, err := s.bumpIdentityRevisionContext(ctx, tx)
 		if err != nil {
@@ -606,14 +616,10 @@ func validatePersonSplitLineage(
 	}
 	absorbedUnsplit := 0
 	absorbedTotal := 0
-	sourceBindings := 0
 	matched := 0
 	alreadySplit := false
 	survivorLineageIntact := true
 	for _, item := range lineage {
-		if item.personID.Valid && item.personID.Int64 == sourceID {
-			sourceBindings++
-		}
 		if item.originSide == personMergeOriginSurvivor &&
 			(!item.personID.Valid || item.personID.Int64 != sourceID) {
 			survivorLineageIntact = false
@@ -640,7 +646,7 @@ func validatePersonSplitLineage(
 	if alreadySplit {
 		return personSplitLineageSelection{}, ErrPersonMergeAlreadySplit
 	}
-	if sourceBindings <= len(selected) {
+	if len(selected) == 0 && absorbedTotal != 0 {
 		return personSplitLineageSelection{}, ErrPersonSplitParticipants
 	}
 	restoresAbsorbed := len(selected) == absorbedUnsplit && absorbedUnsplit == absorbedTotal
@@ -662,6 +668,9 @@ func absorbedPersonMergeSnapshotRoot(
 func (s *Store) deletePersonSplitCrossingLinksTx(
 	ctx context.Context, tx *loggedTx, selected []int64,
 ) error {
+	if len(selected) == 0 {
+		return nil
+	}
 	if err := s.rejectAcceptedIdentityMatchesAcrossPersonSplitTx(ctx, tx, selected); err != nil {
 		return err
 	}
