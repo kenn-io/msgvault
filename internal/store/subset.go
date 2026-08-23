@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1025,26 +1026,105 @@ func copyPersonMergePackets(
 		return fmt.Errorf("copy person merge review candidates: %w", err)
 	}
 	if selectedPackets > 0 {
-		var historicalPersonID int64
-		if err := tx.QueryRow(`SELECT MAX(person_id) FROM (
-			SELECT survivor_person_id_at_merge AS person_id FROM person_merges
-			UNION ALL SELECT absorbed_person_id FROM person_merges
-			UNION ALL SELECT source_person_id FROM person_splits
-			UNION ALL SELECT new_person_id FROM person_splits
-		)`).Scan(&historicalPersonID); err != nil {
-			return fmt.Errorf("read historical person ID ceiling: %w", err)
+		if err := reservePersonMergePacketIDs(tx); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(`UPDATE sqlite_sequence SET seq = CASE
-			WHEN seq < ? THEN ? ELSE seq END WHERE name = 'persons'`,
-			historicalPersonID, historicalPersonID); err != nil {
-			return fmt.Errorf("advance subset person sequence: %w", err)
+	}
+	return nil
+}
+
+func reservePersonMergePacketIDs(tx *sql.Tx) error {
+	autoincrementTables := map[string]struct{}{}
+	tableRows, err := tx.Query(`SELECT name FROM sqlite_master
+		WHERE type = 'table' AND instr(upper(sql), 'AUTOINCREMENT') > 0
+		ORDER BY name`)
+	if err != nil {
+		return fmt.Errorf("load subset AUTOINCREMENT tables: %w", err)
+	}
+	defer func() { _ = tableRows.Close() }()
+	for tableRows.Next() {
+		var table string
+		if err := tableRows.Scan(&table); err != nil {
+			return fmt.Errorf("scan subset AUTOINCREMENT table: %w", err)
 		}
-		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq)
-			SELECT 'persons', ? WHERE NOT EXISTS (
-				SELECT 1 FROM sqlite_sequence WHERE name = 'persons'
-			)`, historicalPersonID); err != nil {
-			return fmt.Errorf("initialize subset person sequence: %w", err)
+		autoincrementTables[table] = struct{}{}
+	}
+	if err := tableRows.Err(); err != nil {
+		return fmt.Errorf("iterate subset AUTOINCREMENT tables: %w", err)
+	}
+	if err := tableRows.Close(); err != nil {
+		return fmt.Errorf("close subset AUTOINCREMENT tables: %w", err)
+	}
+
+	ceilings := map[string]int64{}
+	var historicalPersonID int64
+	if err := tx.QueryRow(`SELECT MAX(person_id) FROM (
+		SELECT survivor_person_id_at_merge AS person_id FROM person_merges
+		UNION ALL SELECT absorbed_person_id FROM person_merges
+		UNION ALL SELECT source_person_id FROM person_splits
+		UNION ALL SELECT new_person_id FROM person_splits
+	)`).Scan(&historicalPersonID); err != nil {
+		return fmt.Errorf("read historical person ID ceiling: %w", err)
+	}
+	ceilings["persons"] = historicalPersonID
+
+	snapshotRows, err := tx.Query(`SELECT snapshot_blob, snapshot_sha256
+		FROM person_merges ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("load copied person merge snapshots: %w", err)
+	}
+	defer func() { _ = snapshotRows.Close() }()
+	for snapshotRows.Next() {
+		var blob []byte
+		var sha256 string
+		if err := snapshotRows.Scan(&blob, &sha256); err != nil {
+			return fmt.Errorf("scan copied person merge snapshot: %w", err)
 		}
+		snapshot, err := decodePersonMergeSnapshot(blob, sha256)
+		if err != nil {
+			return fmt.Errorf("reserve copied person merge snapshot IDs: %w", err)
+		}
+		for _, person := range snapshot.Persons {
+			ceilings["persons"] = max(ceilings["persons"], person.ID)
+		}
+		for _, row := range snapshot.Rows {
+			if _, ok := autoincrementTables[row.TableName]; ok && row.RowID > 0 {
+				ceilings[row.TableName] = max(ceilings[row.TableName], row.RowID)
+			}
+		}
+	}
+	if err := snapshotRows.Err(); err != nil {
+		return fmt.Errorf("iterate copied person merge snapshots: %w", err)
+	}
+	if err := snapshotRows.Close(); err != nil {
+		return fmt.Errorf("close copied person merge snapshots: %w", err)
+	}
+
+	tables := make([]string, 0, len(ceilings))
+	for table := range ceilings {
+		if _, ok := autoincrementTables[table]; ok {
+			tables = append(tables, table)
+		}
+	}
+	sort.Strings(tables)
+	for _, table := range tables {
+		if err := advanceSubsetSQLiteSequence(tx, table, ceilings[table]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func advanceSubsetSQLiteSequence(tx *sql.Tx, table string, ceiling int64) error {
+	if _, err := tx.Exec(`UPDATE sqlite_sequence SET seq = CASE
+		WHEN seq < ? THEN ? ELSE seq END WHERE name = ?`, ceiling, ceiling, table); err != nil {
+		return fmt.Errorf("advance subset %s sequence: %w", table, err)
+	}
+	if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq)
+		SELECT ?, ? WHERE NOT EXISTS (
+			SELECT 1 FROM sqlite_sequence WHERE name = ?
+		)`, table, ceiling, table); err != nil {
+		return fmt.Errorf("initialize subset %s sequence: %w", table, err)
 	}
 	return nil
 }

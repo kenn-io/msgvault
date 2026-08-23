@@ -248,6 +248,72 @@ func TestSubsetPersonMergePacketCanSplitAfterNewPersonCreation(t *testing.T) {
 	assert.Contains(split.NewPerson.ParticipantIDs, int64(2))
 }
 
+func TestSubsetPersonMergePacketReservesRestorableRowIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	other, _, err := source.CreatePersonFromParticipant(3)
+	require.NoError(err)
+	historical, err := source.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: survivor.ID, TargetPersonID: absorbed.ID, TypeSlug: "friend",
+		Source: ProvenanceUser, Actor: "test",
+	})
+	require.NoError(err)
+	survivor, err = source.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = source.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-row-id-merge", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+		IncludeAttributes: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), copyResult.PersonMergePackets)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	current, err := destination.GetPersonContext(ctx, merged.Person.ID)
+	require.NoError(err)
+	created, err := destination.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
+		SourcePersonID: current.ID, TargetPersonID: other.ID, TypeSlug: "friend",
+		Source: ProvenanceUser, Actor: "test",
+	})
+	require.NoError(err)
+	assert.Greater(created.ID, historical.ID,
+		"new rows must not reuse IDs embedded in imported merge snapshots")
+	current, err = destination.GetPersonContext(ctx, current.ID)
+	require.NoError(err)
+	split, err := destination.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: current.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         absorbed.ParticipantIDs,
+		ExpectedSourceRevision: current.Revision,
+		IdempotencyKey:         "subset-row-id-split", Actor: "test",
+	})
+	require.NoError(err)
+	restored, err := destination.GetPersonRelationshipContext(ctx, historical.ID)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{split.SourcePerson.ID, split.NewPerson.ID},
+		[]int64{restored.SourcePersonID, restored.TargetPersonID})
+}
+
 func TestSubsetCorruptPersonMergeSnapshotIsReported(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
