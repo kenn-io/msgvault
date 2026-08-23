@@ -18,11 +18,14 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
 GOLANGCI_LINT_VERSION ?= v2.13.1
+GOVULNCHECK_VERSION ?= v1.7.0
 GO_INSTALL_BIN := $(shell go env GOBIN)
 ifeq ($(strip $(GO_INSTALL_BIN)),)
 GO_INSTALL_BIN := $(shell go env GOPATH)/bin
 endif
 GOLANGCI_LINT_BIN := $(GO_INSTALL_BIN)/golangci-lint
+CI_TOOLS_BIN := $(shell git rev-parse --path-format=absolute --git-path ci-tools/bin)
+GOVULNCHECK_BIN := $(CI_TOOLS_BIN)/govulncheck
 
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
 # pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
@@ -59,7 +62,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint-tools lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint-tools lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -295,6 +298,19 @@ lint:
 lint-ci: lint-tools testify-helper-check
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(GOLANGCI_LINT_BIN)" run ./...
+	@if [ -n "$$GITHUB_PATH" ]; then \
+		$(MAKE) --no-print-directory vuln-tools; \
+		printf '%s\n' "$(CI_TOOLS_BIN)" >> "$$GITHUB_PATH"; \
+	fi
+
+# Install and run the scanner from a repository-owned path so a stale tool
+# installed by the base branch's pull-request workflow cannot replace it.
+vuln-tools:
+	@mkdir -p "$(CI_TOOLS_BIN)"
+	GOBIN="$(CI_TOOLS_BIN)" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+
+vulncheck: vuln-tools
+	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
 
 # Enforce testify helper usage in assertion-heavy tests
 testify-helper-check:
@@ -404,6 +420,7 @@ help:
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
+	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
 	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"

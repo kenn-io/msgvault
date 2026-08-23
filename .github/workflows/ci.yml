@@ -95,11 +95,8 @@ jobs:
       - name: Lint
         run: make lint-ci
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-
       - name: Vulnerability check
-        run: govulncheck -tags "fts5 sqlite_vec" ./...
+        run: make vulncheck
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && github.event_name == 'push' && github.ref == 'refs/heads/main'
