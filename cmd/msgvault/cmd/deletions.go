@@ -1127,7 +1127,7 @@ Examples:
 					}
 
 					logger.Warn("deletion failed", "batch", m.ID, "error", execErr)
-					continue
+					return fmt.Errorf("delete batch %s: %w", m.ID, execErr)
 				}
 			}
 
