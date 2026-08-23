@@ -148,7 +148,7 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 	}
 }
 
-func TestOptimizeSQLiteSerializesConcurrentMaintenance(t *testing.T) {
+func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
 	require := require.New(t)
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
@@ -156,40 +156,70 @@ func TestOptimizeSQLiteSerializesConcurrentMaintenance(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
 
-	const poolSize = 4
-	s.db.SetMaxOpenConns(poolSize)
-	s.db.SetMaxIdleConns(poolSize)
-	blockers := make([]*sql.Conn, 0, poolSize-1)
-	for range poolSize - 1 {
-		conn, connErr := s.db.Conn(t.Context())
-		require.NoError(connErr)
-		blockers = append(blockers, conn)
-	}
+	s.db.SetMaxOpenConns(2)
+	s.db.SetMaxIdleConns(2)
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	started := make(chan struct{}, poolSize)
-	results := make(chan error, poolSize)
-	for range poolSize {
-		go func() {
-			started <- struct{}{}
-			results <- s.optimizeSQLite(ctx)
-		}()
-	}
-	for range poolSize {
-		<-started
-	}
+	baselineWaitCount := s.db.Stats().WaitCount
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- s.optimizeSQLite(ctx) }()
 	require.Eventually(func() bool {
 		stats := s.db.Stats()
-		return stats.InUse == poolSize && stats.WaitCount > 0
+		return stats.InUse == 2 && stats.WaitCount > baselineWaitCount
 	}, time.Second, time.Millisecond)
-	// Give every unguarded call time to queue behind the exhausted pool.
-	time.Sleep(25 * time.Millisecond)
-	for _, conn := range blockers {
-		require.NoError(conn.Close())
+
+	canceledCtx, cancelDuplicate := context.WithCancel(t.Context())
+	cancelDuplicate()
+	duplicateDone := make(chan error, 1)
+	go func() { duplicateDone <- s.optimizeSQLite(canceledCtx) }()
+	select {
+	case duplicateErr := <-duplicateDone:
+		require.NoError(duplicateErr)
+	case <-time.After(250 * time.Millisecond):
+		cancel()
+		require.NoError(blocker.Close())
+		<-firstDone
+		<-duplicateDone
+		require.FailNow("duplicate maintenance waited for the active call")
 	}
 
-	for range poolSize {
-		require.NoError(<-results)
+	require.NoError(blocker.Close())
+	require.NoError(<-firstDone)
+}
+
+func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+
+	s, err := OpenForTest(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 100)
+	assert.Zero(messagePlannerStatisticCount(t, s))
+	s.db.SetMaxOpenConns(2)
+	s.db.SetMaxIdleConns(2)
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- s.Close() }()
+	select {
+	case closeErr := <-closeDone:
+		require.NoError(closeErr)
+	case <-time.After(2 * time.Second):
+		require.NoError(blocker.Close())
+		<-closeDone
+		require.FailNow("store close waited to reserve the entire SQLite pool")
 	}
+	require.NoError(blocker.Close())
+
+	reopened, err := OpenForTest(dbPath)
+	require.NoError(err)
+	defer func() { _ = reopened.Close() }()
+	assert.Positive(messagePlannerStatisticCount(t, reopened),
+		"store close must persist planner statistics")
 }

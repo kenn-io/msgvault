@@ -416,10 +416,18 @@ func OpenPostgresDB(dbURL string) (*sql.DB, func(), error) {
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
-		// Keep planner statistics current for short-lived commands. The
-		// all-tables bit avoids depending on which pooled connection happens to
-		// execute this statement and which queries that connection has seen.
-		s.optimizeSQLiteBestEffort(context.Background(), "store close")
+		if !s.IsPostgreSQL() {
+			// Persist statistics for short-lived commands without draining a pool
+			// that may still have a checked-out connection during shutdown.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+				slog.Warn("SQLite planner statistics maintenance failed",
+					"trigger", "store close",
+					"error", err.Error(),
+				)
+			}
+			cancel()
+		}
 
 		// Checkpoint WAL before closing to fold it back into the main
 		// database. This prevents WAL accumulation across sessions and
@@ -450,7 +458,11 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
-	s.sqliteOptimizeMu.Lock()
+	// Maintenance is best-effort, and an active call is already performing the
+	// same update. Skip duplicates instead of making cancellation wait on it.
+	if !s.sqliteOptimizeMu.TryLock() {
+		return nil
+	}
 	defer s.sqliteOptimizeMu.Unlock()
 
 	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
