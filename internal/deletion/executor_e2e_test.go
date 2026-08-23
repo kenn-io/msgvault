@@ -165,7 +165,7 @@ func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
 	assert.Equal(2, f.countLive(f.sourceB.ID), "source B live count (unaffected)")
 	assert.Equal(3, f.countTotal(f.sourceA.ID), "source A row count after trash (soft delete)")
 
-	// Attachment rows are untouched on trash (only permanent delete cascades).
+	// Attachment rows are untouched on remote deletion.
 	assert.Equal(1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after trash")
 
 	// Mock Gmail was called for each ID exactly once via TrashMessage.
@@ -218,11 +218,7 @@ func TestExecutor_E2E_VersionTwoScopesDuplicateRemoteID(t *testing.T) {
 			require.NoError(f.store.DB().QueryRow(
 				f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), targetRowID,
 			).Scan(&targetCount))
-			if tt.name == "permanent" {
-				assert.Zero(targetCount)
-			} else {
-				assert.Equal(1, targetCount)
-			}
+			assert.Equal(1, targetCount)
 		})
 	}
 }
@@ -245,11 +241,9 @@ func TestExecutor_E2E_MissingVersionTwoSourceMakesNoRemoteCall(t *testing.T) {
 	assert.Empty(tc.MockAPI.BatchDeleteCalls)
 }
 
-// TestExecutor_E2E_PermanentDeleteCascadesAttachments verifies that
-// permanent (non-batch) deletion removes the message row entirely and
-// cascades attachment rows. Cross-source shared attachments remain
-// referenced via the other source.
-func TestExecutor_E2E_PermanentDeleteCascadesAttachments(t *testing.T) {
+// TestExecutor_E2E_PermanentDeletePreservesArchive verifies that permanent
+// remote deletion leaves the local message and its attachments intact.
+func TestExecutor_E2E_PermanentDeletePreservesArchive(t *testing.T) {
 	assert := assert.New(t)
 	f := newE2EFixture(t)
 	tc := newE2EContext(t, f)
@@ -264,11 +258,10 @@ func TestExecutor_E2E_PermanentDeleteCascadesAttachments(t *testing.T) {
 	})
 	require.NoError(t, err, "Execute")
 
-	// msg-a1 and msg-a2 rows are gone (permanent).
-	assert.Equal(1, f.countTotal(f.sourceA.ID), "source A row count after permanent delete")
-	// Attachments for those messages cascade away.
-	assert.Equal(0, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after delete")
-	assert.Equal(0, f.attachmentRowsForMessage("msg-a2"), "msg-a2 attachment rows after delete")
+	// Local rows and attachments remain archived after remote permanent delete.
+	assert.Equal(3, f.countTotal(f.sourceA.ID), "source A row count after permanent delete")
+	assert.Equal(1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after delete")
+	assert.Equal(1, f.attachmentRowsForMessage("msg-a2"), "msg-a2 attachment rows after delete")
 	// Source B's row referencing the same shared content_hash survives.
 	assert.Equal(1, f.attachmentRowsForMessage("msg-b1"), "msg-b1 attachment rows (cross-source shared)")
 
@@ -301,11 +294,8 @@ func TestExecutor_E2E_BatchDeleteMarksDBAcrossSources(t *testing.T) {
 	assert.Len(tc.MockAPI.BatchDeleteCalls, 1, "BatchDeleteCalls")
 }
 
-// TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile
-// confirms that AttachmentPathsUniqueToSource, called after a permanent
-// per-message delete, only reports paths whose content_hash is no longer
-// referenced anywhere in the DB — exercising the orphan-detection query
-// against a state mutated by the executor itself.
+// TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile confirms
+// that permanent remote deletion preserves attachment ownership locally.
 func TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -322,18 +312,16 @@ func TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile(t *testi
 	})
 	require.NoError(err, "Execute")
 
-	// After deletion, source A still has msg-a3 (no attachments).
-	// AttachmentPathsUniqueToSource(A) should be empty: the only remaining
-	// candidate path would have been msg-a2's, but its row is gone.
+	// The local archive still owns msg-a2's unique attachment.
 	pathsA, err := f.store.AttachmentPathsUniqueToSource(f.sourceA.ID)
 	require.NoError(err, "AttachmentPathsUniqueToSource(A)")
-	assert.Empty(pathsA, "source A unique paths after delete")
+	assert.Len(pathsA, 1, "source A unique paths after delete")
 
-	// Source B's unique-b path is still uniquely owned by B; shared is
-	// also unique to B now that A's reference is gone.
+	// Source B's unique-b path remains unique to B; the shared path remains
+	// shared because source A's archived row is preserved.
 	pathsB, err := f.store.AttachmentPathsUniqueToSource(f.sourceB.ID)
 	require.NoError(err, "AttachmentPathsUniqueToSource(B)")
-	assert.Len(pathsB, 2, "source B unique paths after A's permanent delete (shared became unique to B)")
+	assert.Len(pathsB, 1, "source B unique paths after A's permanent delete")
 }
 
 // e2eContext bridges the e2eFixture to the executor test plumbing.

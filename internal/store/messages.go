@@ -2318,8 +2318,8 @@ func (s *Store) MarkMessagesDeletedFromReader(sourceID int64, reader io.Reader, 
 
 // MarkMessageDeletedByGmailID marks a message as deleted by its Gmail ID.
 // This is used by the deletion executor which only has the Gmail message ID.
-// When permanent is true, the message row is deleted entirely; otherwise it is
-// soft-deleted by setting deleted_from_source_at.
+// Both remote trash and permanent deletion are recorded locally by setting
+// deleted_from_source_at; the archived message row is never removed.
 //
 // This compatibility entry point is intentionally unscoped. New deletion
 // execution resolves a manifest source and uses
@@ -2331,16 +2331,12 @@ func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) erro
 // MarkMessageDeletedBySourceMessageID marks only the message belonging to
 // sourceID. A zero sourceID retains the legacy unscoped behavior for version-1
 // deletion manifests.
-func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, permanent bool, gmailID string) error {
+func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, _ bool, gmailID string) error {
 	sourceClause := ""
 	args := []any{gmailID}
 	if sourceID > 0 {
 		sourceClause = " AND source_id = ?"
 		args = append(args, sourceID)
-	}
-	if permanent {
-		_, err := s.db.Exec(`DELETE FROM messages WHERE source_message_id = ?`+sourceClause, args...)
-		return err
 	}
 	_, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE messages
