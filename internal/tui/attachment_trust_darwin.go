@@ -14,5 +14,8 @@ import (
 // a downloaded attachment.
 func markAttachmentUntrusted(path string) error {
 	value := fmt.Sprintf("0081;%x;msgvault;", time.Now().Unix())
-	return unix.Setxattr(path, "com.apple.quarantine", []byte(value), 0)
+	if err := unix.Setxattr(path, "com.apple.quarantine", []byte(value), 0); err != nil {
+		return fmt.Errorf("set quarantine attribute: %w", err)
+	}
+	return nil
 }
