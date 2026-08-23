@@ -978,6 +978,209 @@ components:
         - first_seen_at
         - last_seen_at
       type: object
+    CardDAVAccountRequest:
+      additionalProperties: false
+      properties:
+        base_url:
+          type: string
+        enabled:
+          type: boolean
+        password:
+          type: string
+          writeOnly: true
+        schedule:
+          type: string
+        username:
+          type: string
+      required:
+        - base_url
+        - username
+        - enabled
+      type: object
+    CardDAVAccountResponse:
+      additionalProperties: true
+      properties:
+        base_url:
+          type: string
+        books:
+          format: int64
+          type: integer
+        enabled:
+          type: boolean
+        schedule:
+          type: string
+        username:
+          type: string
+      required:
+        - base_url
+        - username
+        - enabled
+        - books
+      type: object
+    CardDAVBookResponse:
+      additionalProperties: true
+      properties:
+        id:
+          format: int64
+          type: integer
+        lookup_source:
+          type: boolean
+        name:
+          type: string
+        needs_full_reconcile:
+          type: boolean
+        subscribed:
+          type: boolean
+        url:
+          type: string
+        write_target:
+          type: boolean
+      required:
+        - id
+        - name
+        - url
+        - write_target
+        - subscribed
+        - lookup_source
+        - needs_full_reconcile
+      type: object
+    CardDAVBookRolesRequest:
+      additionalProperties: false
+      properties:
+        lookup_source:
+          type: boolean
+        subscribed:
+          type: boolean
+        write_target:
+          type: boolean
+      required:
+        - write_target
+        - subscribed
+        - lookup_source
+      type: object
+    CardDAVBooksResponse:
+      additionalProperties: true
+      properties:
+        books:
+          items:
+            $ref: "#/components/schemas/CardDAVBookResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - books
+      type: object
+    CardDAVConflictDetailResponse:
+      additionalProperties: true
+      properties:
+        address_book_id:
+          format: int64
+          type: integer
+        href:
+          type: string
+        id:
+          format: int64
+          type: integer
+        local_tombstone:
+          type: boolean
+        local_vcard:
+          type: string
+        remote_tombstone:
+          type: boolean
+        remote_vcard:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - address_book_id
+        - href
+        - local_tombstone
+        - remote_tombstone
+        - status
+      type: object
+    CardDAVConflictResolutionResponse:
+      additionalProperties: true
+      properties:
+        id:
+          format: int64
+          type: integer
+        status:
+          type: string
+      required:
+        - id
+        - status
+      type: object
+    CardDAVConflictResponse:
+      additionalProperties: true
+      properties:
+        address_book_id:
+          format: int64
+          type: integer
+        href:
+          type: string
+        id:
+          format: int64
+          type: integer
+        local_tombstone:
+          type: boolean
+        remote_tombstone:
+          type: boolean
+        status:
+          type: string
+      required:
+        - id
+        - address_book_id
+        - href
+        - local_tombstone
+        - remote_tombstone
+        - status
+      type: object
+    CardDAVConflictsResponse:
+      additionalProperties: true
+      properties:
+        conflicts:
+          items:
+            $ref: "#/components/schemas/CardDAVConflictResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - conflicts
+      type: object
+    CardDAVPublicationResponse:
+      additionalProperties: true
+      properties:
+        desired:
+          type: boolean
+        href:
+          type: string
+        pending_operation:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - desired
+      type: object
+    CardDAVResolveRequest:
+      additionalProperties: false
+      properties:
+        choice:
+          enum:
+            - keep_local
+            - keep_remote
+          type: string
+      required:
+        - choice
+      type: object
+    CardDAVSyncRequest:
+      additionalProperties: false
+      properties:
+        full:
+          type: boolean
+      type: object
     ChangedMessageJSON:
       additionalProperties: true
       properties:
@@ -8635,6 +8838,27 @@ components:
         - accounts
         - top_senders
       type: object
+    SyncResult:
+      additionalProperties: true
+      properties:
+        books:
+          format: int64
+          type: integer
+        created:
+          format: int64
+          type: integer
+        removed:
+          format: int64
+          type: integer
+        updated:
+          format: int64
+          type: integer
+      required:
+        - books
+        - created
+        - updated
+        - removed
+      type: object
     SyncRunItemStatus:
       additionalProperties: true
       properties:
@@ -9356,7 +9580,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.7.0
+  version: 2.8.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -10148,6 +10372,684 @@ paths:
       security:
         - apiKey: []
       summary: End a backup freeze window
+      tags:
+        - API
+  /api/v1/carddav/account:
+    put:
+      operationId: saveCardDAVAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVAccountRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVAccountResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Discover and save a CardDAV account
+      tags:
+        - API
+  /api/v1/carddav/account/test:
+    post:
+      operationId: testCardDAVAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVAccountRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVAccountResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Test a CardDAV account
+      tags:
+        - API
+  /api/v1/carddav/books:
+    get:
+      operationId: listCardDAVBooks
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVBooksResponse"
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List CardDAV address books
+      tags:
+        - API
+  /api/v1/carddav/books/{id}:
+    patch:
+      operationId: updateCardDAVBookRoles
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVBookRolesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVBookResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update CardDAV address book roles
+      tags:
+        - API
+  /api/v1/carddav/conflicts:
+    get:
+      operationId: listCardDAVConflicts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVConflictsResponse"
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List unresolved CardDAV conflicts
+      tags:
+        - API
+  /api/v1/carddav/conflicts/{id}:
+    get:
+      operationId: getCardDAVConflict
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVConflictDetailResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect a CardDAV conflict
+      tags:
+        - API
+  /api/v1/carddav/conflicts/{id}/resolve:
+    post:
+      operationId: resolveCardDAVConflict
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVConflictResolutionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Resolve a CardDAV conflict
+      tags:
+        - API
+  /api/v1/carddav/publications/{person_id}:
+    delete:
+      operationId: unpublishCardDAVPerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVPublicationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unpublish a person from CardDAV
+      tags:
+        - API
+    get:
+      operationId: getCardDAVPublication
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVPublicationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get CardDAV publication state
+      tags:
+        - API
+    post:
+      operationId: publishCardDAVPerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVPublicationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Publish a person to CardDAV
+      tags:
+        - API
+  /api/v1/carddav/sync:
+    post:
+      operationId: syncCardDAV
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVSyncRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Trigger CardDAV synchronization
       tags:
         - API
   /api/v1/cli/account:

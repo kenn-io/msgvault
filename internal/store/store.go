@@ -50,7 +50,7 @@ type Store struct {
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
 
-	// Test-only seams into the migration and backfill paths, nil in
+	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the
 	// Store rather than the package because more than one Store can be
 	// migrating at once inside a single test binary — test fixtures build
@@ -58,11 +58,13 @@ type Store struct {
 	// never fire on another Store's migration. As package-level variables
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
-	initSchemaWindowHook             func()
-	attributeSeedReadHook            func(slug string)
-	contentChangedBackfillBatchHook  func(fromID, toID int64) error
-	backfillFTSBatchErrHook          func(fromID, toID int64) error
-	attachmentRoleRepairPreparedHook func()
+	initSchemaWindowHook                func()
+	attributeSeedReadHook               func(slug string)
+	contentChangedBackfillBatchHook     func(fromID, toID int64) error
+	backfillFTSBatchErrHook             func(fromID, toID int64) error
+	attachmentRoleRepairPreparedHook    func()
+	cardDAVConflictResolveSnapshotHook  func()
+	cardDAVTombstonePrepareSnapshotHook func()
 
 	// Zero means "use the production batch size"; see
 	// contentChangedBackfillBatch. Per-Store for the same reason.
@@ -387,7 +389,7 @@ func openPostgresDB(dbURL string, readOnly bool) (*sql.DB, func(), error) {
 
 	dsn := stdlib.RegisterConnConfig(connConfig)
 	cleanup := func() { stdlib.UnregisterConnConfig(dsn) }
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open(postgresDriverName, dsn)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("open PostgreSQL: %w", err)
@@ -498,7 +500,7 @@ func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) (returnEr
 // Engine factories use this to choose between the SQLite and PostgreSQL
 // query paths.
 func (s *Store) IsPostgreSQL() bool {
-	return s.dialect.DriverName() == "pgx"
+	return s.dialect.DriverName() == postgresDriverName
 }
 
 // WithExclusiveLock executes fn while holding an exclusive write lock on the
@@ -1139,6 +1141,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.ensureCardDAVConflictPendingInvariant(ctx); err != nil {
+		return fmt.Errorf("migrate CardDAV conflict pending state: %w", err)
 	}
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)

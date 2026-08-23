@@ -1216,6 +1216,46 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	}
 }
 
+func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Logger:         testLogger(),
+		RequestTimeout: 5 * time.Millisecond,
+	})
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/api/v1/carddav/account/test"},
+		{method: http.MethodPut, path: "/api/v1/carddav/account"},
+		{method: http.MethodPost, path: "/api/v1/carddav/publications/7"},
+		{method: http.MethodDelete, path: "/api/v1/carddav/publications/7"},
+		{method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve"},
+		{method: http.MethodPost, path: "/api/v1/carddav/sync"},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var deadline time.Time
+			var hasDeadline bool
+			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				deadline, hasDeadline = r.Context().Deadline()
+			}))
+			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+			handler.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+
+			require.True(hasDeadline, "network route receives a context deadline")
+			remaining := time.Until(deadline)
+			assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
+			assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
+			require.Len(recorder.readDeadlines, 1, "network route extends the server read deadline")
+			assert.Empty(recorder.writeDeadlines, "network route keeps the generous server write deadline")
+		})
+	}
+}
+
 func TestCLIRequestDurationPolicy(t *testing.T) {
 	tests := []struct {
 		name        string

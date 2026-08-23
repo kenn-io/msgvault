@@ -12,7 +12,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestWriteCLIPersonSanitizesTerminalControls(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	malicious := "\x1b[31mAlice\x1b[0m \x1b]8;;https://attacker.test\x07Example\x1b]8;;\x07"
+	savedJSON := personJSON
+	personJSON = false
+	t.Cleanup(func() { personJSON = savedJSON })
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	require.NoError(writeCLIPerson(cmd, &generated.Person{
+		ID: 7, DisplayName: &malicious, VcardUID: malicious,
+	}))
+	assert.NotContains(stdout.String(), "\x1b")
+	assert.NotContains(stdout.String(), "https://attacker.test")
+	assert.Contains(stdout.String(), "Alice Example")
+}
 
 func TestPersonPromoteAcceptsCreatedResponse(t *testing.T) {
 	assert := assert.New(t)

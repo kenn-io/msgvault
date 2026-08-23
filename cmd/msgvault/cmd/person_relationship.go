@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -536,10 +537,14 @@ func formatCLIPartialDate(value *generated.PartialDate) string {
 
 func formatCLIRelationshipCounterpart(id int64, displayName *string, vcardUID string) string {
 	if displayName != nil && strings.TrimSpace(*displayName) != "" {
-		return fmt.Sprintf("%d (%s)", id, *displayName)
+		if safe := textutil.SanitizeTerminal(*displayName); strings.TrimSpace(safe) != "" {
+			return fmt.Sprintf("%d (%s)", id, safe)
+		}
 	}
 	if strings.TrimSpace(vcardUID) != "" {
-		return fmt.Sprintf("%d (%s)", id, vcardUID)
+		if safe := textutil.SanitizeTerminal(vcardUID); strings.TrimSpace(safe) != "" {
+			return fmt.Sprintf("%d (%s)", id, safe)
+		}
 	}
 	return strconv.FormatInt(id, 10)
 }

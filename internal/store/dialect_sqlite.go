@@ -1542,6 +1542,13 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE carddav_address_books ADD COLUMN needs_full_reconcile BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_address_books.needs_full_reconcile"},
+		{`ALTER TABLE carddav_address_books ADD COLUMN sync_token TEXT NOT NULL DEFAULT ''`, "carddav_address_books.sync_token"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN pending_operation TEXT CHECK (pending_operation IN ('delete'))`, "carddav_conflicts.pending_operation"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN connection_generation INTEGER`, "carddav_conflicts.connection_generation"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN book_sync_revision INTEGER`, "carddav_conflicts.book_sync_revision"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN previous_mapping_revision INTEGER`, "carddav_conflicts.previous_mapping_revision"},
+		{`ALTER TABLE carddav_conflicts ADD COLUMN pending_started_at DATETIME`, "carddav_conflicts.pending_started_at"},
 		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},

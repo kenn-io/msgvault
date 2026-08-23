@@ -377,13 +377,15 @@ var operationGateExemptPaths = map[string]bool{
 // registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
 // analytical route forces a conscious classification decision here.
 //
-// The remote-image proxy is the one non-Exploration entry: it is POST only
-// so the session CSRF middleware treats it as an unsafe method (same-origin
-// plus X-Csrf-Token), and its handler touches no archive state at all — it
-// performs one SSRF-validated outbound fetch — so it must stay available
+// The remote-image proxy and CardDAV account test are the non-Exploration
+// entries. Both perform SSRF-validated outbound reads without changing
+// archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate.
+const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
+
 var readOnlyPostRoutePatterns = []string{
 	remoteImagePath,
+	cardDAVAccountTestPath,
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",

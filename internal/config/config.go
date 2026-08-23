@@ -254,6 +254,15 @@ type AccountSchedule struct {
 	Enabled  bool   `toml:"enabled"`  // Whether scheduled sync is active
 }
 
+// CardDAVConfig contains non-secret connection settings for the external
+// address book. The password is stored separately in tokens/carddav.json.
+type CardDAVConfig struct {
+	BaseURL  string `toml:"base_url"`
+	Username string `toml:"username"`
+	Schedule string `toml:"schedule"`
+	Enabled  bool   `toml:"enabled"`
+}
+
 type SynctechSMSConfig struct {
 	Sources []SynctechSMSSource `toml:"sources"`
 }
@@ -400,6 +409,7 @@ type Config struct {
 	Vector       vector.Config                   `toml:"vector"`
 	Identity     IdentityConfig                  `toml:"identity"`
 	Fastmail     []FastmailSource                `toml:"fastmail"`
+	CardDAV      CardDAVConfig                   `toml:"carddav"`
 	Accounts     []AccountSchedule               `toml:"accounts"`
 	SynctechSMS  SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal         []GCalSource                    `toml:"gcal"`
@@ -767,6 +777,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		// Anonymous loopback mode instead defaults to no credential, while an
 		// explicitly configured key remains visible to validation and is rejected.
 		cfg.People.Sweep.Provider.APIKeyEnv = ""
+	}
+	for _, key := range metadata.Undecoded() {
+		if key.String() == "carddav.password" {
+			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
+		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err

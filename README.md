@@ -25,7 +25,7 @@ Archive a lifetime of email, messages, meetings. Analytics and search in millise
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
-Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack,
+Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, CardDAV,
 Granola, Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
 exports, Apple Mail (`.emlx`) directories, PST archives, and common chat/text
 export formats.
@@ -40,6 +40,7 @@ export formats.
 - **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
 - **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
+- **CardDAV contacts**: pull address books, explicitly publish curated people, and resolve conflicts without losing remote card data
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats
 - **First-party web UI**: dense, keyboard-driven search, grouping, people/domain, file, source, and deletion workspaces served directly by the daemon
@@ -123,6 +124,8 @@ available with `msgvault tui`.
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
 | `add-discord` / `sync-discord` | Register a read-only bot and sync Discord guild channels and threads |
 | `add-slack` / `sync-slack` | Register and archive a Slack workspace, including threads and media |
+| `add-carddav` / `sync-carddav` | Discover and sync a CardDAV account; passwords are read from stdin, never argv |
+| `carddav` | Manage address-book roles and resolve retained conflicts |
 | `export-messages` | Stream a bounded, provider-neutral archive window as versioned JSONL |
 | `export-discord` | Temporary compatibility export for bounded Discord history |
 | `backfill-discord-media` | Retry incomplete Discord attachment downloads |
@@ -359,7 +362,17 @@ client_secrets = "/path/to/client_secret.json"
 
 [sync]
 rate_limit_qps = 5
+
+[carddav]
+base_url = "https://contacts.example/dav"
+username = "alice"
+enabled = true
+schedule = "0 */6 * * *"
 ```
+
+Run `msgvault add-carddav <base-url> <username>` instead of placing the
+password in this file. Msgvault validates discovery first, then stores the
+password in an owner-only token file below `~/.msgvault/tokens/`.
 
 See the [Configuration Guide](https://msgvault.io/configuration/) for all options.
 

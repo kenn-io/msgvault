@@ -16,6 +16,7 @@ var (
 	ErrPersonRevisionConflict = errors.New("person revision conflict")
 	ErrPersonBindingConflict  = errors.New("participant clusters belong to different persons")
 	ErrPersonReferenced       = errors.New("person is referenced by another profile")
+	ErrPersonCardDAVPublished = errors.New("person has CardDAV publication state")
 )
 
 // PersonBindingConflictError reports the curated people that would be
@@ -167,7 +168,8 @@ func (s *Store) DeletePerson(id, expectedRevision int64) error {
 // vCard UID forever: UIDs are random and never reused, so re-promoting the
 // same cluster afterwards creates a new person with a new UID. Returns
 // ErrPersonNotFound if no such person exists and ErrPersonRevisionConflict
-// if expectedRevision is stale.
+// if expectedRevision is stale. ErrPersonCardDAVPublished requires callers to
+// recover and explicitly unpublish remote-owned state before deletion.
 func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision int64) error {
 	// The deletion locks this person and then, through the counterpart bump,
 	// everyone they share an edge with; relationship writes bump the same
@@ -196,6 +198,15 @@ func (s *Store) deletePersonOnce(ctx context.Context, id, expectedRevision int64
 		if revision != expectedRevision {
 			return ErrPersonRevisionConflict
 		}
+		var hasCardDAVPublication bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM carddav_publications WHERE person_id = ?)`, id,
+		).Scan(&hasCardDAVPublication); err != nil {
+			return fmt.Errorf("check CardDAV publication for person %d: %w", id, err)
+		}
+		if hasCardDAVPublication {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonCardDAVPublished)
+		}
 		var references int
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*)
@@ -220,20 +231,8 @@ func (s *Store) deletePersonOnce(ctx context.Context, id, expectedRevision int64
 		if references > 0 {
 			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
-			WHERE (left_kind = ? AND left_id = ?)
-			   OR (right_kind = ? AND right_id = ?)
-			   OR (left_kind = ? AND left_id IN (
-				SELECT id FROM person_contact_points WHERE person_id = ?
-			   ))
-			   OR (right_kind = ? AND right_id IN (
-				SELECT id FROM person_contact_points WHERE person_id = ?
-			   ))`,
-			IdentityMatchPerson, id, IdentityMatchPerson, id,
-			IdentityMatchContactPoint, id,
-			IdentityMatchContactPoint, id,
-		); err != nil {
-			return fmt.Errorf("delete identity match candidates for person %d: %w", id, err)
+		if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, id); err != nil {
+			return err
 		}
 		// Before the cascade: the edges this person stands at either end of
 		// and the reviews that matched them are projected onto the surviving
@@ -254,6 +253,27 @@ func (s *Store) deletePersonOnce(ctx context.Context, id, expectedRevision int64
 		_, err = s.bumpIdentityRevisionContext(ctx, tx)
 		return err
 	})
+}
+
+func (s *Store) deleteIdentityMatchCandidatesForPersonTx(
+	ctx context.Context, tx *loggedTx, personID int64,
+) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
+		WHERE (left_kind = ? AND left_id = ?)
+		   OR (right_kind = ? AND right_id = ?)
+		   OR (left_kind = ? AND left_id IN (
+			SELECT id FROM person_contact_points WHERE person_id = ?
+		   ))
+		   OR (right_kind = ? AND right_id IN (
+			SELECT id FROM person_contact_points WHERE person_id = ?
+		   ))`,
+		IdentityMatchPerson, personID, IdentityMatchPerson, personID,
+		IdentityMatchContactPoint, personID,
+		IdentityMatchContactPoint, personID,
+	); err != nil {
+		return fmt.Errorf("delete identity match candidates for person %d: %w", personID, err)
+	}
+	return nil
 }
 
 func (s *Store) GetPerson(id int64) (*Person, error) {

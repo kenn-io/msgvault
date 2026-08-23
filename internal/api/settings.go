@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,10 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-const settingsPath = "/api/v1/settings"
+const (
+	settingsPath         = "/api/v1/settings"
+	settingsGroupSources = "sources"
+)
 
 // SecretSettingState is the only representation of a secret returned to a
 // browser. The configured value never crosses the API boundary.
@@ -79,9 +83,10 @@ type settingDefinition struct {
 	// editing config.toml on the daemon host. Used for values that select
 	// daemon-side resources (such as environment variable names) which a
 	// remote session must never control.
-	localOnly bool
-	secret    func(*config.Config) bool
-	read      func(*config.Config) any
+	localOnly    bool
+	secret       func(*config.Config) bool
+	serverSecret func(context.Context, *Server, *config.Config) bool
+	read         func(*config.Config) any
 }
 
 var settingsCatalog = []settingDefinition{
@@ -143,8 +148,13 @@ var settingsCatalog = []settingDefinition{
 	intSetting("vector.search.rrf_k", "search", func(c *config.Config) int { return c.Vector.Search.RRFK }),
 	intSetting("vector.search.k_per_signal", "search", func(c *config.Config) int { return c.Vector.Search.KPerSignal }),
 	numberSetting("vector.search.subject_boost", "search", func(c *config.Config) float64 { return c.Vector.Search.SubjectBoost }),
-	boolSetting("beeper.enabled", "sources", func(c *config.Config) bool { return c.Beeper.Enabled }),
-	stringSetting("beeper.schedule", "sources", nil, func(c *config.Config) string { return c.Beeper.Schedule }),
+	boolSetting("beeper.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Beeper.Enabled }),
+	stringSetting("beeper.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Beeper.Schedule }),
+	readOnlyStringSetting("carddav.base_url", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.BaseURL }),
+	readOnlyStringSetting("carddav.username", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.Username }),
+	readOnlyStringSetting("carddav.schedule", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.Schedule }),
+	readOnlyBoolSetting("carddav.enabled", settingsGroupSources, func(c *config.Config) bool { return c.CardDAV.Enabled }),
+	readOnlyCardDAVSecretSetting(),
 	boolSetting("integrations.tasks.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Tasks.Enabled }),
 	testableStringSetting("integrations.tasks.endpoint", "integrations", func(c *config.Config) string { return c.Integrations.Tasks.Endpoint }),
 	secretSetting("integrations.tasks.api_key", "integrations", func(c *config.Config) bool { return c.Integrations.Tasks.APIKey != "" }),
@@ -205,6 +215,26 @@ func localOnlyStringSetting(key, group string, read func(*config.Config) string)
 	return definition
 }
 
+func readOnlyStringSetting(key, group string, read func(*config.Config) string) settingDefinition {
+	return localOnlyStringSetting(key, group, read)
+}
+
+func readOnlyBoolSetting(key, group string, read func(*config.Config) bool) settingDefinition {
+	definition := boolSetting(key, group, read)
+	definition.localOnly = true
+	return definition
+}
+
+func readOnlyCardDAVSecretSetting() settingDefinition {
+	return settingDefinition{
+		key: "carddav.password", group: settingsGroupSources, kind: "secret", localOnly: true,
+		serverSecret: func(ctx context.Context, s *Server, c *config.Config) bool {
+			return s != nil && s.cardDAV != nil &&
+				s.cardDAV.passwordConfigured(ctx, c.CardDAV.BaseURL, c.CardDAV.Username)
+		},
+	}
+}
+
 func intSetting(key, group string, read func(*config.Config) int) settingDefinition {
 	return settingDefinition{key: key, group: group, kind: "integer", read: func(c *config.Config) any { return read(c) }}
 }
@@ -233,7 +263,7 @@ func settingsDefinitionByKey() map[string]settingDefinition {
 	return result
 }
 
-func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	snapshot, cfg, err := s.readPersistedSettings()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
@@ -241,7 +271,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, buildSettingsResponse(cfg, s.settingsPendingRestart.Load()))
+	writeJSON(w, http.StatusOK, s.buildSettingsResponse(r.Context(), cfg, s.settingsPendingRestart.Load()))
 }
 
 func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +346,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, buildSettingsResponse(loaded, true))
+	writeJSON(w, http.StatusOK, s.buildSettingsResponse(r.Context(), loaded, true))
 }
 
 func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, error) {
@@ -334,7 +364,7 @@ func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, err
 	return snapshot, loaded, nil
 }
 
-func buildSettingsResponse(cfg *config.Config, pendingRestart bool) SettingsResponse {
+func (s *Server) buildSettingsResponse(ctx context.Context, cfg *config.Config, pendingRestart bool) SettingsResponse {
 	settings := make([]Setting, 0, len(settingsCatalog))
 	for _, definition := range settingsCatalog {
 		setting := Setting{
@@ -346,7 +376,9 @@ func buildSettingsResponse(cfg *config.Config, pendingRestart bool) SettingsResp
 			Testable:        definition.testable,
 			ReadOnly:        definition.localOnly,
 		}
-		if definition.secret != nil {
+		if definition.serverSecret != nil {
+			setting.Secret = &SecretSettingState{Configured: definition.serverSecret(ctx, s, cfg)}
+		} else if definition.secret != nil {
 			setting.Secret = &SecretSettingState{Configured: definition.secret(cfg)}
 		} else {
 			setting.Value = settingValue(definition.kind, definition.read(cfg))

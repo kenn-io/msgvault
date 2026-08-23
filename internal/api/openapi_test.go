@@ -38,7 +38,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.7.0", APISchemaVersion)
+	assert.Equal("2.8.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -60,11 +60,11 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.7.0", APISchemaVersion)
+	assert.Equal(t, "2.8.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.7.0", APISchemaVersion)
+	assert.Equal(t, "2.8.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -88,7 +88,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.7.0", APISchemaVersion,
+	assert.Equal(t, "2.8.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -399,7 +399,7 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	assert.Equal("2.7.0", APISchemaVersion,
+	assert.Equal("2.8.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -472,7 +472,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.7.0", APISchemaVersion,
+	assertions.Equal("2.8.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -492,7 +492,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.7.0", APISchemaVersion,
+	assert.Equal("2.8.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -520,7 +520,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.7.0", APISchemaVersion,
+	assertions.Equal("2.8.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -564,9 +564,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// routes added in 1.42.0, cache-readiness responses added in 1.43.0,
 	// document search added in 1.44.0, participant/people separation added in
 	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
-	// 2.5.0. Person search in 2.6.0 and structured filters in 2.7.0 did not
-	// touch it.
-	assert.Equal("2.7.0", APISchemaVersion, "meeting import is an additive schema release")
+	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, and CardDAV
+	// routes in 2.8.0 did not touch it.
+	assert.Equal("2.8.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -946,6 +946,111 @@ func TestOpenAPIArtifactUpToDate(t *testing.T) {
 	want, err := os.ReadFile(openAPIArtifactPath)
 	require.NoError(t, err, "read api/openapi.yaml; run `make api-generate` to regenerate")
 	assert.Equal(t, normalizeGeneratedArtifact(want), normalizeGeneratedArtifact(got), "api/openapi.yaml is stale; run `make api-generate`")
+}
+
+func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	doc := OpenAPIDocument()
+	for _, tc := range []struct {
+		path, method, parameter string
+		statuses                []string
+	}{
+		{path: "/api/v1/carddav/books/{id}", method: http.MethodPatch, parameter: "id", statuses: []string{"400", "404", "409", "500", "503"}},
+		{path: "/api/v1/carddav/conflicts/{id}", method: http.MethodGet, parameter: "id", statuses: []string{"400", "404", "500", "503"}},
+		{path: "/api/v1/carddav/conflicts/{id}/resolve", method: http.MethodPost, parameter: "id", statuses: []string{"400", "404", "409", "500", "502", "503"}},
+		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodGet, parameter: "person_id", statuses: []string{"400", "404", "500", "503"}},
+	} {
+		operation := pathOperation(doc.Paths[tc.path], tc.method)
+		require.NotNil(operation, tc.path)
+		require.NotEmpty(operation.Parameters, tc.path)
+		parameter := operation.Parameters[0]
+		assert.Equal(tc.parameter, parameter.Name)
+		require.NotNil(parameter.Schema.Minimum, tc.path)
+		assert.InDelta(float64(1), *parameter.Schema.Minimum, 0, tc.path)
+		for _, status := range tc.statuses {
+			assert.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
+		}
+	}
+
+	for _, tc := range []struct {
+		path, method string
+		statuses     []string
+	}{
+		{path: "/api/v1/carddav/account/test", method: http.MethodPost, statuses: []string{"400", "500", "502", "503"}},
+		{path: "/api/v1/carddav/account", method: http.MethodPut, statuses: []string{"400", "500", "502", "503"}},
+		{path: "/api/v1/carddav/sync", method: http.MethodPost, statuses: []string{"400", "409", "500", "502", "503"}},
+	} {
+		operation := pathOperation(doc.Paths[tc.path], tc.method)
+		require.NotNil(operation, tc.path)
+		for _, status := range tc.statuses {
+			assert.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
+		}
+	}
+}
+
+func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	routes := []struct{ path, method string }{
+		{path: "/api/v1/carddav/account/test", method: http.MethodPost},
+		{path: "/api/v1/carddav/account", method: http.MethodPut},
+		{path: "/api/v1/carddav/books", method: http.MethodGet},
+		{path: "/api/v1/carddav/books/{id}", method: http.MethodPatch},
+		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodGet},
+		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodPost},
+		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodDelete},
+		{path: "/api/v1/carddav/conflicts", method: http.MethodGet},
+		{path: "/api/v1/carddav/conflicts/{id}", method: http.MethodGet},
+		{path: "/api/v1/carddav/conflicts/{id}/resolve", method: http.MethodPost},
+		{path: "/api/v1/carddav/sync", method: http.MethodPost},
+	}
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		for _, route := range routes {
+			operation := pathOperation(document.Paths[route.path], route.method)
+			require.NotNil(operation, "%s %s", route.method, route.path)
+			response := operation.Responses[httpStatusKey(http.StatusServiceUnavailable)]
+			require.NotNil(response, "%s %s", route.method, route.path)
+			header := response.Headers["Retry-After"]
+			require.NotNil(header, "%s %s", route.method, route.path)
+			require.NotNil(header.Schema, "%s %s", route.method, route.path)
+			assert.Equal(huma.TypeInteger, header.Schema.Type, "%s %s", route.method, route.path)
+			assert.Equal(formatInt64, header.Schema.Format, "%s %s", route.method, route.path)
+		}
+	}
+
+	syncResponse := generated.SyncCardDAVResp{
+		Headers503: &generated.SyncCardDAVResp503Headers{RetryAfter: "17"},
+	}
+	publishResponse := generated.PublishCardDAVPersonResp{
+		Headers503: &generated.PublishCardDAVPersonResp503Headers{RetryAfter: "23"},
+	}
+	require.NotNil(syncResponse.Headers503)
+	require.NotNil(publishResponse.Headers503)
+	assert.Equal("17", syncResponse.Headers503.RetryAfter)
+	assert.Equal("23", publishResponse.Headers503.RetryAfter)
+}
+
+func pathOperation(item *huma.PathItem, method string) *huma.Operation {
+	if item == nil {
+		return nil
+	}
+	switch method {
+	case http.MethodGet:
+		return item.Get
+	case http.MethodPost:
+		return item.Post
+	case http.MethodPut:
+		return item.Put
+	case http.MethodPatch:
+		return item.Patch
+	case http.MethodDelete:
+		return item.Delete
+	default:
+		return nil
+	}
 }
 
 func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {

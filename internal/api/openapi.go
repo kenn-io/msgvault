@@ -223,7 +223,9 @@ import (
 // time-period, and attachment filters to vector and hybrid search. Stats also
 // report the text-vector message-type scope for compatible search clients.
 // Additive (minor bump): existing unfiltered searches are unchanged.
-const APISchemaVersion = "2.7.0"
+// 2.8.0 adds CardDAV account setup, book roles, publication, conflict, and
+// sync routes. Passwords are request-only and never appear in responses.
+const APISchemaVersion = "2.8.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

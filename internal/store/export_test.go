@@ -41,6 +41,19 @@ func SetFTS5AvailableForTest(s *Store, v bool) {
 	s.fts5Available = v
 }
 
+// SetCardDAVConflictResolutionSnapshotHookForTest pauses keep-remote after its
+// unlocked routing snapshot and before the ordered resolution transaction.
+func (s *Store) SetCardDAVConflictResolutionSnapshotHookForTest(fn func()) {
+	s.cardDAVConflictResolveSnapshotHook = fn
+}
+
+// SetCardDAVConflictTombstonePreparationSnapshotHookForTest pauses keep-local
+// tombstone preparation after its unlocked routing snapshot and before the
+// ordered mutation transaction.
+func (s *Store) SetCardDAVConflictTombstonePreparationSnapshotHookForTest(fn func()) {
+	s.cardDAVTombstonePrepareSnapshotHook = fn
+}
+
 // SetBackfillFTSBatchErrHookForTest installs (or, with nil, clears) the
 // test-only hook that forces backfillFTSBatch to fail for a chosen id range.
 // Tests use it to deterministically trigger backfillFTSRowByRow's

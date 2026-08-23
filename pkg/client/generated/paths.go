@@ -44,6 +44,54 @@ func (u UploadTokenPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type UpdateCardDAVBookRolesPath struct {
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (u UpdateCardDAVBookRolesPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type GetCardDAVConflictPath struct {
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (g GetCardDAVConflictPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type ResolveCardDAVConflictPath struct {
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (r ResolveCardDAVConflictPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type UnpublishCardDAVPersonPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (u UnpublishCardDAVPersonPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type GetCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (g GetCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type PublishCardDAVPersonPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (p PublishCardDAVPersonPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type DeleteCLICollectionPath struct {
 	// Name Collection name
 	Name string `json:"name" validate:"required"`

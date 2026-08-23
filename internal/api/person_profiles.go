@@ -343,6 +343,9 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrPersonReferenced):
 		writeError(w, http.StatusConflict, "person_referenced",
 			"Another profile still references this person")
+	case errors.Is(err, store.ErrPersonCardDAVPublished):
+		writeError(w, http.StatusConflict, "person_carddav_published",
+			"Unpublish this person from CardDAV before deleting it")
 	case errors.Is(err, store.ErrParticipantNotFound), errors.Is(err, store.ErrInvalidParticipantID):
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", err.Error())
 	default:

@@ -12,6 +12,26 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestIdentityMatchCardDAVResourceValidatesLedgerEndpoint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := storetest.New(t).Store
+	participantID, err := st.EnsureParticipantByIdentifier("example", "person", "Person")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+
+	_, _, err = st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchCardDAVResource, LeftID: 999,
+		RightKind: store.IdentityMatchPerson, RightID: person.ID,
+		Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateConflict,
+		Source: store.ProvenanceCardDAVImport,
+	})
+	require.ErrorIs(err, store.ErrIdentityMatchEndpointNotFound)
+	assert.NotErrorIs(err, store.ErrInvalidIdentityMatchEndpoint)
+}
+
 func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
