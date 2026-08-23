@@ -616,6 +616,29 @@ func TestExecutor_Execute_LocalTombstoneFailureLeavesManifestInProgress(t *testi
 	}
 }
 
+func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInProgress(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := NewManifest("batch tombstone retry", []string{"msg-1"})
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodDelete,
+		FailedIDs:          []string{"msg-1"},
+		LastProcessedIndex: 1,
+	}
+	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest")
+	require.NoError(t, tc.Store.Close(), "close store")
+
+	err := tc.ExecuteBatch(manifest.ID)
+
+	assert.Error(t, err)
+	inProgress, listErr := tc.Mgr.ListInProgress()
+	require.NoError(t, listErr)
+	if assert.Len(t, inProgress, 1) {
+		assert.Equal(t, []string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+	}
+}
+
 // TestExecutor_Execute_ResumeRetriesFailedIDs verifies that resuming a trash
 // manifest retries checkpointed transient failures before continuing from
 // LastProcessedIndex, mirroring ExecuteBatch — instead of skipping them and

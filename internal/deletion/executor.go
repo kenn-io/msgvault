@@ -529,6 +529,11 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 				e.saveCheckpoint(manifest, manifestID, startIndex, succeeded, len(remaining), remaining)
 				return fmt.Errorf("delete message: %w", delErr)
 			case resultFailed:
+				if errors.Is(delErr, errLocalTombstone) {
+					remaining := slices.Concat(failedIDs, []string{gmailID}, retryIDs[ri+1:])
+					e.saveCheckpoint(manifest, manifestID, startIndex, succeeded, len(remaining), remaining)
+					return fmt.Errorf("delete message: %w", delErr)
+				}
 				failed++
 				failedIDs = append(failedIDs, gmailID)
 			}
