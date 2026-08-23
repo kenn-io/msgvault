@@ -899,7 +899,11 @@ func TestStore_SourceScopedRemoteIDDeletion(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(
 		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), firstID,
 	).Scan(&count))
-	assert.Zero(count)
+	assert.Equal(1, count)
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), firstID,
+	).Scan(&firstDeleted))
+	assert.True(firstDeleted.Valid)
 	require.NoError(f.Store.DB().QueryRow(
 		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), secondID,
 	).Scan(&count))

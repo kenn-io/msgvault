@@ -169,10 +169,11 @@ func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
 	assert.True(referenced, "expected referenced=true while messages still hold the hash")
 }
 
-// TestAttachment_E2E_CascadeOnMessageDelete verifies that deleting a message
-// row removes its attachment row via ON DELETE CASCADE — but leaves other
-// messages' attachment rows that reference the same content_hash intact.
-func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
+// TestAttachment_E2E_CascadeOnLocalMessageDelete verifies that deleting a
+// local message row removes its attachment row via ON DELETE CASCADE — but
+// leaves other messages' attachment rows that reference the same content_hash
+// intact.
+func TestAttachment_E2E_CascadeOnLocalMessageDelete(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
@@ -188,9 +189,9 @@ func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
 
 	assert.Equal(3, c.attachmentRowCount(), "initial attachment count")
 
-	// Permanently delete msg-1; its attachment row cascades.
-	err := c.store.MarkMessageDeletedByGmailID(true, "msg-1")
-	require.NoError(err, "MarkMessageDeletedByGmailID(permanent, msg-1)")
+	// Delete msg-1 locally; its attachment row cascades.
+	_, err := c.store.DB().Exec(c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-1")
+	require.NoError(err, "local message delete, msg-1")
 
 	assert.Equal(1, c.attachmentRowsForHash(hashShared), "rows for hashShared after delete")
 
@@ -200,8 +201,8 @@ func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
 	assert.True(referenced, "shared path should remain referenced via msg-2 after msg-1 delete")
 
 	// Now delete the last referrer of hashShared.
-	err = c.store.MarkMessageDeletedByGmailID(true, "msg-2")
-	require.NoError(err, "MarkMessageDeletedByGmailID(permanent, msg-2)")
+	_, err = c.store.DB().Exec(c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-2")
+	require.NoError(err, "local message delete, msg-2")
 	assert.Equal(0, c.attachmentRowsForHash(hashShared), "rows for hashShared after both deleted")
 
 	referenced, err = c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
