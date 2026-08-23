@@ -493,6 +493,8 @@ CREATE TABLE IF NOT EXISTS conversation_participants (
 
     PRIMARY KEY (conversation_id, participant_id)
 );
+CREATE INDEX IF NOT EXISTS idx_conversation_participants_participant
+    ON conversation_participants(participant_id, conversation_id);
 
 -- Messages (unified across all platforms)
 CREATE TABLE IF NOT EXISTS messages (
@@ -1473,6 +1475,137 @@ CREATE INDEX IF NOT EXISTS idx_person_attribute_values_current_text
 CREATE INDEX IF NOT EXISTS idx_person_attribute_values_record_ref
     ON person_attribute_values(value_record_type, value_record_id)
     WHERE value_record_id IS NOT NULL;
+
+-- Durable operation history for reversible person merges. Historical person IDs
+-- deliberately are not foreign keys: absorbed roots are deleted, while the
+-- immutable IDs remain part of the audit record.
+CREATE TABLE IF NOT EXISTS person_merges (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    idempotency_key             TEXT NOT NULL UNIQUE,
+    request_hash                TEXT NOT NULL,
+    survivor_person_id_at_merge INTEGER NOT NULL,
+    absorbed_person_id          INTEGER NOT NULL,
+    current_person_id           INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    survivor_uid                TEXT NOT NULL,
+    absorbed_uid                TEXT NOT NULL,
+    survivor_revision_before    INTEGER NOT NULL,
+    absorbed_revision_before    INTEGER NOT NULL,
+    survivor_revision_after     INTEGER NOT NULL,
+    actor                       TEXT NOT NULL,
+    snapshot_version            INTEGER NOT NULL,
+    snapshot_blob               BLOB NOT NULL,
+    snapshot_sha256             TEXT NOT NULL,
+    result_json                 TEXT,
+    identity_revision           INTEGER CHECK(identity_revision IS NULL OR identity_revision > 0),
+    created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (survivor_person_id_at_merge <> absorbed_person_id),
+    CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    CHECK (length(request_hash) = 64),
+    CHECK (snapshot_version > 0),
+    CHECK (length(snapshot_sha256) = 64)
+);
+CREATE INDEX IF NOT EXISTS idx_person_merges_current_person
+    ON person_merges(current_person_id, id DESC);
+
+-- Split headers retain historical source/new person IDs without foreign keys:
+-- either resulting person can be absorbed by a later merge.
+CREATE TABLE IF NOT EXISTS person_splits (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    merge_id               INTEGER NOT NULL REFERENCES person_merges(id) ON DELETE CASCADE,
+    idempotency_key        TEXT NOT NULL UNIQUE,
+    request_hash           TEXT NOT NULL,
+    source_person_id       INTEGER NOT NULL,
+    new_person_id          INTEGER NOT NULL,
+    new_person_uid         TEXT NOT NULL,
+    source_revision_before INTEGER NOT NULL,
+    source_revision_after  INTEGER NOT NULL,
+    actor                  TEXT NOT NULL,
+    is_exact_reversal      BOOLEAN NOT NULL,
+    result_json            TEXT,
+    identity_revision      INTEGER CHECK(identity_revision IS NULL OR identity_revision > 0),
+    created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (source_person_id <> new_person_id),
+    CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    CHECK (length(request_hash) = 64)
+);
+CREATE INDEX IF NOT EXISTS idx_person_splits_merge
+    ON person_splits(merge_id, id);
+
+CREATE TABLE IF NOT EXISTS person_merge_participants (
+    merge_id       INTEGER NOT NULL REFERENCES person_merges(id) ON DELETE CASCADE,
+    participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE RESTRICT,
+    origin_side    TEXT NOT NULL CHECK(origin_side IN ('survivor', 'absorbed')),
+    split_id       INTEGER REFERENCES person_splits(id) ON DELETE RESTRICT,
+    PRIMARY KEY (merge_id, participant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_person_merge_participants_split
+    ON person_merge_participants(split_id)
+    WHERE split_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS person_merge_rows (
+    merge_id        INTEGER NOT NULL REFERENCES person_merges(id) ON DELETE CASCADE,
+    table_name      TEXT NOT NULL,
+    original_row_id INTEGER,
+    original_row_key TEXT NOT NULL CHECK(original_row_key <> ''),
+    current_row_id  INTEGER,
+    current_row_key TEXT,
+    origin_side     TEXT NOT NULL CHECK(origin_side IN ('survivor', 'absorbed')),
+    provenance_kind TEXT NOT NULL CHECK(provenance_kind IN (
+        'participant_exact', 'absorbed_profile', 'derived', 'inbound_reference'
+    )),
+    participant_id  INTEGER REFERENCES participants(id) ON DELETE RESTRICT,
+    action          TEXT NOT NULL CHECK(action IN (
+        'moved', 'repointed', 'deduplicated', 'deleted_snapshot', 'recomputed'
+    )),
+    snapshot_path   TEXT NOT NULL,
+    post_merge_row_json TEXT,
+    split_id        INTEGER REFERENCES person_splits(id) ON DELETE RESTRICT,
+    UNIQUE (merge_id, table_name, original_row_key)
+);
+CREATE INDEX IF NOT EXISTS idx_person_merge_rows_split
+    ON person_merge_rows(split_id)
+    WHERE split_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_merge_rows_participant
+    ON person_merge_rows(participant_id, merge_id)
+    WHERE participant_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_merge_rows_current_id
+    ON person_merge_rows(table_name, current_row_id)
+    WHERE current_row_id IS NOT NULL AND split_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_merge_rows_current_key
+    ON person_merge_rows(table_name, current_row_key)
+    WHERE current_row_key IS NOT NULL AND split_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_merge_row_person_refs (
+    merge_id        INTEGER NOT NULL,
+    table_name      TEXT NOT NULL,
+    original_row_key TEXT NOT NULL,
+    column_name     TEXT NOT NULL,
+    person_id       INTEGER NOT NULL,
+    PRIMARY KEY (merge_id, table_name, original_row_key, column_name),
+    FOREIGN KEY (merge_id, table_name, original_row_key)
+        REFERENCES person_merge_rows(merge_id, table_name, original_row_key)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_person_merge_row_person_refs_person
+    ON person_merge_row_person_refs(person_id, merge_id);
+
+CREATE TABLE IF NOT EXISTS person_merge_review_candidates (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    merge_id            INTEGER NOT NULL REFERENCES person_merges(id) ON DELETE CASCADE,
+    survivor_person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    definition_id       INTEGER NOT NULL REFERENCES attribute_definitions(id) ON DELETE RESTRICT,
+    survivor_value_id   INTEGER NOT NULL REFERENCES person_attribute_values(id) ON DELETE RESTRICT,
+    absorbed_value_id   INTEGER NOT NULL REFERENCES person_attribute_values(id) ON DELETE RESTRICT,
+    state               TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(state IN ('pending', 'accepted', 'rejected')),
+    resolution_value_id INTEGER REFERENCES person_attribute_values(id) ON DELETE RESTRICT,
+    reviewed_by         TEXT,
+    reviewed_at         DATETIME,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (merge_id, definition_id)
+);
+CREATE INDEX IF NOT EXISTS idx_person_merge_review_candidates_person
+    ON person_merge_review_candidates(survivor_person_id, state, id);
 
 -- Organization-owned values mirror person_attribute_values field for field.
 -- object_type enforcement remains in the store because neither database can

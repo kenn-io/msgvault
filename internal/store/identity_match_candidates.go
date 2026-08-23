@@ -75,6 +75,11 @@ func (s IdentityMatchState) valid() bool {
 	}
 }
 
+type identityMatchConflictState struct {
+	observationOrigin sql.NullString
+	preConflictState  sql.NullString
+}
+
 type IdentityMatchCandidate struct {
 	ID                 int64                     `json:"id"`
 	LeftKind           IdentityMatchEndpointKind `json:"left_kind"`
@@ -97,6 +102,7 @@ type IdentityMatchCandidate struct {
 	CreatedAt          time.Time                 `json:"created_at"`
 	UpdatedAt          time.Time                 `json:"updated_at"`
 	applicationPending bool
+	conflictState      identityMatchConflictState
 }
 
 type IdentityMatchEvidence struct {
@@ -237,7 +243,7 @@ func validateIdentityMatchEndpointTx(
 	case IdentityMatchObservation:
 		table = "participant_contact_observations"
 	case IdentityMatchContactPoint:
-		table = "person_contact_points"
+		table = personContactPointsTableName
 	case IdentityMatchCardDAVResource:
 		table = "carddav_resources"
 	default:
@@ -605,10 +611,23 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 	decidedBy string,
 	notes *string,
 ) (*IdentityMatchCandidate, error) {
+	candidate, _, err := s.decideIdentityMatchCandidateContext(
+		ctx, candidateID, state, decidedBy, notes)
+	return candidate, err
+}
+
+func (s *Store) decideIdentityMatchCandidateContext(
+	ctx context.Context,
+	candidateID int64,
+	state IdentityMatchState,
+	decidedBy string,
+	notes *string,
+) (*IdentityMatchCandidate, *IdentityMatchCandidate, error) {
 	if !state.valid() {
-		return nil, ErrInvalidIdentityMatchState
+		return nil, nil, ErrInvalidIdentityMatchState
 	}
 	var candidate *IdentityMatchCandidate
+	var before *IdentityMatchCandidate
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -617,6 +636,7 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		if err != nil {
 			return err
 		}
+		before = current
 		if current.State == IdentityMatchStateAccepted && state == IdentityMatchStateRejected {
 			if current.DecidedBy != nil && *current.DecidedBy == string(ProvenanceUser) {
 				return ErrIdentityMatchAlreadyAccepted
@@ -681,7 +701,7 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		candidate, err = getIdentityMatchCandidateTx(ctx, tx, candidateID)
 		return err
 	})
-	return candidate, err
+	return candidate, before, err
 }
 
 // rejectSystemAcceptedIdentityMatchTxContext withdraws the direct edge that
@@ -951,7 +971,20 @@ func identityMatchCandidateRedirectTx(
 func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 	ctx context.Context, tx *loggedTx, oldID, newID int64, edges []linkEdge,
 ) error {
-	// The participant merge contracts oldID into newID after candidate
+	return s.rewriteIdentityMatchCandidatesForEndpointMergeTx(
+		ctx, tx, IdentityMatchParticipant, oldID, newID, edges, false,
+	)
+}
+
+func (s *Store) rewriteIdentityMatchCandidatesForEndpointMergeTx(
+	ctx context.Context,
+	tx *loggedTx,
+	kind IdentityMatchEndpointKind,
+	oldID, newID int64,
+	edges []linkEdge,
+	preferExisting bool,
+) error {
+	// Participant endpoint merges contract oldID into newID after candidate
 	// reconciliation. Add that virtual edge now so an accepted survivor-side
 	// collision sees the connectivity that the same transaction will retain.
 	contractedEdges := make([]linkEdge, 0, len(edges)+1)
@@ -962,22 +995,22 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 		WHERE (left_kind = ? AND left_id = ?)
 		   OR (right_kind = ? AND right_id = ?)
 		ORDER BY id`+s.dialect.SelectForUpdate(),
-		IdentityMatchParticipant, oldID, IdentityMatchParticipant, oldID,
+		kind, oldID, kind, oldID,
 	)
 	if err != nil {
-		return fmt.Errorf("load identity match candidates for participant merge: %w", err)
+		return fmt.Errorf("load identity match candidates for endpoint merge: %w", err)
 	}
 	candidates, err := scanIdentityMatchCandidateMergeRows(rows)
 	if err != nil {
-		return fmt.Errorf("scan identity match candidates for participant merge: %w", err)
+		return fmt.Errorf("scan identity match candidates for endpoint merge: %w", err)
 	}
 
 	for _, candidate := range candidates {
 		appliedAccepted := acceptedMergeCandidateIsLinked(candidate, linkAdjacency)
-		if candidate.LeftKind == IdentityMatchParticipant && candidate.LeftID == oldID {
+		if candidate.LeftKind == kind && candidate.LeftID == oldID {
 			candidate.LeftID = newID
 		}
-		if candidate.RightKind == IdentityMatchParticipant && candidate.RightID == oldID {
+		if candidate.RightKind == kind && candidate.RightID == oldID {
 			candidate.RightID = newID
 		}
 		leftKind, leftID, rightKind, rightID, canonicalErr := canonicalMatchEndpoints(
@@ -1027,8 +1060,16 @@ func (s *Store) rewriteIdentityMatchCandidatesForMergeTx(
 			continue
 		}
 
+		preferredID := int64(0)
+		if preferExisting {
+			preferredID = collisions[0].ID
+		}
+		conflictNote := "participant merge reconciled opposing identity decisions"
+		if kind == IdentityMatchPerson {
+			conflictNote = "person merge reconciled opposing identity decisions"
+		}
 		if err := s.collapseIdentityMatchCandidateMergeGroupTx(
-			ctx, tx, group, appliedAccepted,
+			ctx, tx, group, appliedAccepted, preferredID, conflictNote,
 		); err != nil {
 			return err
 		}
@@ -1070,11 +1111,21 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 	tx *loggedTx,
 	group []identityMatchCandidateMergeRow,
 	appliedAccepted bool,
+	preferredID int64,
+	conflictNote string,
 ) error {
 	sort.Slice(group, func(i, j int) bool { return group[i].ID < group[j].ID })
+	if preferredID > 0 {
+		for index := range group {
+			if group[index].ID == preferredID {
+				group[0], group[index] = group[index], group[0]
+				break
+			}
+		}
+	}
 	winner := group[0]
 	state, decidedBy, decidedAt, notes := reconcileIdentityMatchCandidateMergeState(
-		group, appliedAccepted)
+		group, appliedAccepted, conflictNote)
 	confidence, source, sourceRef := identityMatchCandidateMergeConfidenceProvenance(group)
 	observationOrigin := reconcileIdentityMatchCandidateMergeObservationOrigin(group, state)
 	preConflict := reconcileIdentityMatchCandidateMergePreConflictState(group, state)
@@ -1194,7 +1245,7 @@ func reconcileIdentityMatchCandidateMergeObservationOrigin(
 }
 
 func reconcileIdentityMatchCandidateMergeState(
-	group []identityMatchCandidateMergeRow, appliedAccepted bool,
+	group []identityMatchCandidateMergeRow, appliedAccepted bool, conflictNote string,
 ) (IdentityMatchState, sql.NullString, sql.NullTime, sql.NullString) {
 	hasAccepted, hasRejected := false, false
 	state := IdentityMatchStateCandidate
@@ -1225,7 +1276,7 @@ func reconcileIdentityMatchCandidateMergeState(
 			sql.NullString{String: "system", Valid: true},
 			sql.NullTime{Time: time.Now().UTC(), Valid: true},
 			sql.NullString{
-				String: "participant merge reconciled opposing identity decisions",
+				String: conflictNote,
 				Valid:  true,
 			}
 	}
@@ -1333,7 +1384,8 @@ const identityMatchCandidateSelect = `SELECT
 	c.id, c.left_kind, c.left_id, c.right_kind, c.right_id, c.basis,
 	cs.slug, c.scope_kind, c.scope_value, c.normalized_value, c.state,
 	c.confidence, c.source, c.source_ref, c.decided_by, c.decided_at,
-	c.notes, c.created_at, c.updated_at, c.application_pending
+	c.notes, c.created_at, c.updated_at, c.application_pending,
+	c.observation_conflict_origin, c.pre_conflict_state
 	FROM identity_match_candidates c
 	LEFT JOIN communication_services cs ON cs.id = c.service_id`
 
@@ -1411,7 +1463,8 @@ func scanIdentityMatchCandidate(row scanner) (*IdentityMatchCandidate, error) {
 		&serviceSlug, &scopeKind, &scopeValue, &normalizedValue,
 		&candidate.State, &confidence, &candidate.Source, &sourceRef,
 		&decidedBy, &decidedAt, &notes, &candidate.CreatedAt, &candidate.UpdatedAt,
-		&candidate.applicationPending,
+		&candidate.applicationPending, &candidate.conflictState.observationOrigin,
+		&candidate.conflictState.preConflictState,
 	); err != nil {
 		return nil, err
 	}

@@ -123,6 +123,18 @@ func (p PatchPersonHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type MergePersonsHeaders struct {
+	// IfMatch Exactly two comma-separated strong person revision tags, one for each profile
+	IfMatch string `json:"If-Match" validate:"required"`
+
+	// IdempotencyKey Opaque 1..128-byte retry key
+	IdempotencyKey string `json:"Idempotency-Key" validate:"required,max=128,min=1"`
+}
+
+func (m MergePersonsHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type PatchPersonStructuredProfileHeaders struct {
 	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
 	IfMatch string `json:"If-Match" validate:"required"`
@@ -130,6 +142,27 @@ type PatchPersonStructuredProfileHeaders struct {
 
 func (p PatchPersonStructuredProfileHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type SplitPersonMergeHeaders struct {
+	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+	IfMatch string `json:"If-Match" validate:"required"`
+
+	// IdempotencyKey Opaque 1..128-byte retry key
+	IdempotencyKey string `json:"Idempotency-Key" validate:"required,max=128,min=1"`
+}
+
+func (s SplitPersonMergeHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type DecidePersonMergeCandidateHeaders struct {
+	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DecidePersonMergeCandidateHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DeletePersonRelationshipHeaders struct {

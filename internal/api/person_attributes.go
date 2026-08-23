@@ -94,7 +94,7 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 
 func addAttributeSlugParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "slug", In: "path", Required: true,
+		Name: "slug", In: pathKey, Required: true,
 		Description: "Immutable attribute definition slug",
 		Schema:      &huma.Schema{Type: huma.TypeString},
 	})

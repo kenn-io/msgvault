@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -440,7 +439,7 @@ func TestConversationTypeMutationReopensEveryAffectedActivityCandidate(t *testin
 		require.NotNil(candidate.ConversationID)
 		assert.Equal(f.ConvID, *candidate.ConversationID)
 		assert.Equal("group_chat", candidate.ConversationType)
-		assert.Equal(store.ChannelChat, activity.Classify(candidate, 25).Channel)
+		assert.Equal(store.ChannelChat, store.ClassifyActivityCandidate(candidate, 25).Channel)
 		assert.Greater(candidate.Queue.Revision, candidate.Queue.ProcessedRevision)
 	}
 }
@@ -991,7 +990,7 @@ func TestActivityAttributionMatchesCanonicalMessageIdentityRules(t *testing.T) {
 	sender := counterpart(candidates[0], "from", owner)
 	assert.False(sender.IsOwner)
 	assert.Equal(store.DirectionObserved,
-		activity.Classify(candidates[0], 25).Direction)
+		store.ClassifyActivityCandidate(candidates[0], 25).Direction)
 
 	// An email-typed identifier is a legacy fallback only when the
 	// participant has no primary email address.
@@ -1030,7 +1029,7 @@ func TestActivityAttributionMatchesCanonicalMessageIdentityRules(t *testing.T) {
 	assert.Len(candidates[0].Counterparts, 2)
 	assert.True(counterpart(candidates[0], "from", owner).IsOwner)
 	assert.Equal(store.DirectionOutbound,
-		activity.Classify(candidates[0], 1).Direction)
+		store.ClassifyActivityCandidate(candidates[0], 1).Direction)
 }
 
 func TestLoadActivityCandidateUsesRecipientsBeforeConversationMembers(t *testing.T) {

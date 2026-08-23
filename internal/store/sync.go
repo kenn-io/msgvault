@@ -782,7 +782,7 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 		source.ID, DefaultCollectionName,
 	); err != nil {
 		slog.Warn("failed to add source to default collection (self-heals on next InitSchema)",
-			"source_id", source.ID,
+			sourceIDColumnName, source.ID,
 			"identifier", identifier,
 			"error", err,
 		)

@@ -1205,7 +1205,47 @@ type GetHealthErrorResponse = ErrorResponse
 
 type LinkIdentityParticipantsResponse = IdentityLinkResponse
 
-type LinkIdentityParticipantsErrorResponse = ErrorResponse
+type LinkIdentityParticipantsErrorResponse struct {
+	LinkIdentityParticipants_ErrorResponse_AnyOf *LinkIdentityParticipants_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r LinkIdentityParticipantsErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (l LinkIdentityParticipantsErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(l.LinkIdentityParticipants_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("LinkIdentityParticipants_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (l *LinkIdentityParticipantsErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if l.LinkIdentityParticipants_ErrorResponse_AnyOf == nil {
+		l.LinkIdentityParticipants_ErrorResponse_AnyOf = &LinkIdentityParticipants_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, l.LinkIdentityParticipants_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("LinkIdentityParticipants_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type ListIdentityMatchCandidatesResponse = IdentityMatchCandidatesResponse
 
@@ -1215,7 +1255,43 @@ type AcceptIdentityMatchCandidateResponse = IdentityMatchAcceptResponse
 
 type AcceptIdentityMatchCandidateErrorResponse = ErrorResponse
 
-type AcceptIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+type AcceptIdentityMatchCandidateErrorResponseJSON struct {
+	AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf `json:"-"`
+}
+
+func (a AcceptIdentityMatchCandidateErrorResponseJSON) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (a *AcceptIdentityMatchCandidateErrorResponseJSON) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf == nil {
+		a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf = &AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, a.AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf); err != nil {
+		return fmt.Errorf("AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type AcceptIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
 
@@ -1841,6 +1917,28 @@ func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type MergePersonsResponse = PersonMergeResult
+
+type MergePersonsErrorResponse = ErrorResponse
+
+type MergePersonsErrorResponseJSON = ErrorResponse
+
+type MergePersonsErrorResponseJSON409 = ErrorResponse
+
+type MergePersonsErrorResponseJSON428 = ErrorResponse
+
+type MergePersonsErrorResponseJSON500 = ErrorResponse
+
+type MergePersonsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonMergesResponse = PersonMergesResponse
+
+type ListPersonMergesErrorResponse = ErrorResponse
+
+type ListPersonMergesErrorResponseJSON = ErrorResponse
+
+type ListPersonMergesErrorResponseJSON503 = ErrorResponse
+
 type GetPersonStructuredProfileResponse = StructuredPersonProfile
 
 type GetPersonStructuredProfileErrorResponse = ErrorResponse
@@ -1889,6 +1987,20 @@ type ListPersonRelationshipsErrorResponse = ErrorResponse
 
 type ListPersonRelationshipsErrorResponseJSON = ErrorResponse
 
+type SplitPersonMergeResponse = PersonSplitResult
+
+type SplitPersonMergeErrorResponse = ErrorResponse
+
+type SplitPersonMergeErrorResponseJSON = ErrorResponse
+
+type SplitPersonMergeErrorResponseJSON409 = ErrorResponse
+
+type SplitPersonMergeErrorResponseJSON428 = ErrorResponse
+
+type SplitPersonMergeErrorResponseJSON500 = ErrorResponse
+
+type SplitPersonMergeErrorResponseJSON503 = ErrorResponse
+
 type GetPersonTrackingResponse = PersonTracking
 
 type GetPersonTrackingErrorResponse = ErrorResponse
@@ -1902,6 +2014,40 @@ type SetPersonTrackingErrorResponse = ErrorResponse
 type SetPersonTrackingErrorResponseJSON = ErrorResponse
 
 type SetPersonTrackingErrorResponseJSON503 = ErrorResponse
+
+type DecidePersonMergeCandidateResponse = PersonMergeReviewCandidate
+
+type DecidePersonMergeCandidateErrorResponse = ErrorResponse
+
+type DecidePersonMergeCandidateErrorResponseJSON = ErrorResponse
+
+type DecidePersonMergeCandidateErrorResponseJSON409 = ErrorResponse
+
+type DecidePersonMergeCandidateErrorResponseJSON428 = ErrorResponse
+
+type DecidePersonMergeCandidateErrorResponseJSON500 = ErrorResponse
+
+type DecidePersonMergeCandidateErrorResponseJSON503 = ErrorResponse
+
+type GetPersonMergeResponse = PersonMergeDetail
+
+type GetPersonMergeErrorResponse = ErrorResponse
+
+type GetPersonMergeErrorResponseJSON = ErrorResponse
+
+type GetPersonMergeErrorResponseJSON500 = ErrorResponse
+
+type GetPersonMergeErrorResponseJSON503 = ErrorResponse
+
+type GetPersonMergeSnapshotResponse = PersonMergeSnapshotResponse
+
+type GetPersonMergeSnapshotErrorResponse = ErrorResponse
+
+type GetPersonMergeSnapshotErrorResponseJSON = ErrorResponse
+
+type GetPersonMergeSnapshotErrorResponseJSON500 = ErrorResponse
+
+type GetPersonMergeSnapshotErrorResponseJSON503 = ErrorResponse
 
 type ListPersonRelationshipReviewsResponse = RelationshipReviewsResponse
 
@@ -3311,6 +3457,7 @@ type LinkIdentityParticipantsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *LinkIdentityParticipantsResponse
+	JSON409      *LinkIdentityParticipantsErrorResponse
 }
 
 type ListIdentityMatchCandidatesResp struct {
@@ -3877,6 +4024,34 @@ type SearchPersonFilesResp struct {
 	JSON503      *SearchPersonFilesErrorResponseJSON503
 }
 
+type MergePersonsResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type MergePersonsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MergePersonsResponse
+	Headers200   *MergePersonsResp200Headers
+	JSON400      *MergePersonsErrorResponse
+	JSON404      *MergePersonsErrorResponseJSON
+	JSON409      *MergePersonsErrorResponseJSON409
+	JSON428      *MergePersonsErrorResponseJSON428
+	JSON500      *MergePersonsErrorResponseJSON500
+	JSON503      *MergePersonsErrorResponseJSON503
+}
+
+type ListPersonMergesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonMergesResponse
+	JSON404      *ListPersonMergesErrorResponse
+	JSON500      *ListPersonMergesErrorResponseJSON
+	JSON503      *ListPersonMergesErrorResponseJSON503
+}
+
 type GetPersonStructuredProfileResp200Headers struct {
 	ETag string `header:"ETag"`
 }
@@ -3940,6 +4115,25 @@ type ListPersonRelationshipsResp struct {
 	JSON503      *ListPersonRelationshipsErrorResponseJSON
 }
 
+type SplitPersonMergeResp200Headers struct {
+	ETag           string `header:"ETag"`
+	XNewPersonETag string `header:"X-New-Person-ETag"`
+}
+
+type SplitPersonMergeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SplitPersonMergeResponse
+	Headers200   *SplitPersonMergeResp200Headers
+	JSON400      *SplitPersonMergeErrorResponse
+	JSON404      *SplitPersonMergeErrorResponseJSON
+	JSON409      *SplitPersonMergeErrorResponseJSON409
+	JSON428      *SplitPersonMergeErrorResponseJSON428
+	JSON500      *SplitPersonMergeErrorResponseJSON500
+	JSON503      *SplitPersonMergeErrorResponseJSON503
+}
+
 type GetPersonTrackingResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3957,6 +4151,51 @@ type SetPersonTrackingResp struct {
 	JSON400      *SetPersonTrackingErrorResponse
 	JSON404      *SetPersonTrackingErrorResponseJSON
 	JSON503      *SetPersonTrackingErrorResponseJSON503
+}
+
+type DecidePersonMergeCandidateResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type DecidePersonMergeCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DecidePersonMergeCandidateResponse
+	Headers200   *DecidePersonMergeCandidateResp200Headers
+	JSON400      *DecidePersonMergeCandidateErrorResponse
+	JSON404      *DecidePersonMergeCandidateErrorResponseJSON
+	JSON409      *DecidePersonMergeCandidateErrorResponseJSON409
+	JSON428      *DecidePersonMergeCandidateErrorResponseJSON428
+	JSON500      *DecidePersonMergeCandidateErrorResponseJSON500
+	JSON503      *DecidePersonMergeCandidateErrorResponseJSON503
+}
+
+type GetPersonMergeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonMergeResponse
+	JSON400      *GetPersonMergeErrorResponse
+	JSON404      *GetPersonMergeErrorResponseJSON
+	JSON500      *GetPersonMergeErrorResponseJSON500
+	JSON503      *GetPersonMergeErrorResponseJSON503
+}
+
+type GetPersonMergeSnapshotResp200Headers struct {
+	CacheControl string `header:"Cache-Control"`
+}
+
+type GetPersonMergeSnapshotResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonMergeSnapshotResponse
+	Headers200   *GetPersonMergeSnapshotResp200Headers
+	JSON400      *GetPersonMergeSnapshotErrorResponse
+	JSON404      *GetPersonMergeSnapshotErrorResponseJSON
+	JSON500      *GetPersonMergeSnapshotErrorResponseJSON500
+	JSON503      *GetPersonMergeSnapshotErrorResponseJSON503
 }
 
 type ListPersonRelationshipReviewsResp struct {

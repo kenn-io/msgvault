@@ -34,6 +34,16 @@ type PersonProfileStore interface {
 	) (*store.Person, error)
 	DeletePersonContext(ctx context.Context, id, expectedRevision int64) error
 	PersonForParticipantsContext(ctx context.Context, participantIDs []int64) (*store.Person, error)
+	MergePersonsContext(ctx context.Context, request store.PersonMergeRequest) (*store.PersonMergeResult, error)
+	SplitPersonMergeContext(ctx context.Context, request store.PersonSplitRequest) (*store.PersonSplitResult, error)
+	ListPersonMergesPageContext(
+		ctx context.Context, personID int64, limit, offset int,
+	) ([]store.PersonMergeSummary, error)
+	GetPersonMergeContext(ctx context.Context, mergeID int64) (*store.PersonMergeDetail, error)
+	GetPersonMergeSnapshotContext(ctx context.Context, mergeID int64) (*store.PersonMergeSnapshotResponse, error)
+	DecidePersonMergeCandidateContext(
+		ctx context.Context, request store.PersonMergeCandidateDecisionRequest,
+	) (*store.PersonMergeCandidateDecisionResult, error)
 }
 
 type CreatePersonRequest struct {
@@ -346,6 +356,9 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrPersonCardDAVPublished):
 		writeError(w, http.StatusConflict, "person_carddav_published",
 			"Unpublish this person from CardDAV before deleting it")
+	case errors.Is(err, store.ErrPersonMergeActive):
+		writeError(w, http.StatusConflict, "person_merge_active",
+			"Split the person's active merge lineage before deleting this profile")
 	case errors.Is(err, store.ErrParticipantNotFound), errors.Is(err, store.ErrInvalidParticipantID):
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", err.Error())
 	default:
@@ -365,14 +378,14 @@ func writePerson(w http.ResponseWriter, status int, person *store.Person) {
 
 func addPersonIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "id", In: "path", Required: true, Description: "Durable person ID",
+		Name: "id", In: pathKey, Required: true, Description: "Durable person ID",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
 func addPersonIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: ifMatchHeaderName, In: "header", Required: true,
+		Name: ifMatchHeaderName, In: headerParamLocation, Required: true,
 		Description: "Strong ETag returned by the latest person profile read. " +
 			"Must be the exact single tag from that read; the RFC 7232 forms `*` " +
 			"and comma-separated tag lists are not supported.",
@@ -399,7 +412,11 @@ func personProfileID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 }
 
 func personETag(person store.Person) string {
-	return fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision)
+	return personRevisionETag(person.ID, person.Revision)
+}
+
+func personRevisionETag(personID, revision int64) string {
+	return fmt.Sprintf(`"person-%d-r%d"`, personID, revision)
 }
 
 func personIfMatch(w http.ResponseWriter, r *http.Request, id int64) (int64, bool) {

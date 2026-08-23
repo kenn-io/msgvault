@@ -95,6 +95,7 @@ func (s *Server) registerIdentityMatchRoutes(api huma.API) {
 	accept.Responses = jsonResponsesFor[IdentityMatchAcceptResponse](api)
 	addErrorResponses(api, accept.Responses, http.StatusConflict, http.StatusNotFound,
 		http.StatusServiceUnavailable)
+	accept.Responses[httpStatusKey(http.StatusConflict)] = personMergeConflictResponseFor(api)
 	registerRawHumaRoute(api, accept, s.handleAcceptIdentityMatchCandidate)
 
 	reject := rawAPIV1Operation("rejectIdentityMatchCandidate", http.MethodPost,
@@ -161,10 +162,16 @@ func (s *Server) handleAcceptIdentityMatchCandidate(w http.ResponseWriter, r *ht
 		return
 	}
 	// An HTTP accept is always an explicit user decision. The store also
-	// refuses a system accept for every basis except a stable provider ID.
+	// refuses a system accept for every basis except a stable provider ID. The
+	// store performs the binding check under the identity lock and restores the
+	// prior decision if a merge is required, so this endpoint has no TOCTOU
+	// preflight window.
 	candidate, revision, err := matches.AcceptIdentityMatchCandidateContext(
 		r.Context(), id, "user", request.Notes)
 	if err != nil {
+		if s.writePersonMergeRequired(w, r, err) {
+			return
+		}
 		s.writeIdentityMatchError(w, err)
 		return
 	}

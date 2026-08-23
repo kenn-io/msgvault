@@ -309,7 +309,7 @@ func TestClassifyDirectionRolesAndEvidence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
-			got := Classify(test.candidate, test.maxDirect)
+			got := store.ClassifyActivityCandidate(test.candidate, test.maxDirect)
 			assert.Equal(test.wantRefKind, got.RefKind)
 			assert.Equal(test.wantChannel, got.Channel)
 			assert.Equal(test.wantDirection, got.Direction)
@@ -329,7 +329,7 @@ func TestClassifyDirectionRolesAndEvidence(t *testing.T) {
 	}
 }
 func TestClassifyKeepsOneStrongestDeterministicLinkPerPerson(t *testing.T) {
-	got := Classify(store.ActivityCandidate{
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
 		MessageID:        7,
 		MessageType:      "email",
 		ConversationType: "email_thread",
@@ -361,7 +361,7 @@ func TestClassifyDefaultsInvalidThresholdAndOtherChannel(t *testing.T) {
 		})
 	}
 
-	got := Classify(store.ActivityCandidate{
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
 		MessageID:        8,
 		MessageType:      "unknown",
 		ConversationType: "unknown",
@@ -379,7 +379,7 @@ func TestClassifyDoesNotReverseOnDuplicateSenderAliases(t *testing.T) {
 	sender := int64(500)
 	recipient := int64(501)
 
-	got := Classify(store.ActivityCandidate{
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
 		MessageID:        9,
 		MessageType:      "email",
 		ConversationType: "email_thread",
@@ -405,7 +405,7 @@ func TestClassifyCountsAliasParticipantsOncePerPerson(t *testing.T) {
 	contact := int64(700)
 	other := int64(701)
 
-	got := Classify(store.ActivityCandidate{
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
 		MessageID:        16,
 		SourceID:         9,
 		MessageType:      "email",
@@ -433,7 +433,7 @@ func TestClassifyCountsDuplicateAliasesOnceForBroadcasts(t *testing.T) {
 	first := int64(511)
 	second := int64(512)
 
-	got := Classify(store.ActivityCandidate{
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
 		MessageID:        10,
 		MessageType:      "email",
 		ConversationType: "email_thread",

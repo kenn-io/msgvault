@@ -60,10 +60,12 @@ type IdentityLinkResponse struct {
 }
 
 func (s *Server) registerIdentityLinkRoutes(api huma.API) {
-	registerAPIV1RawHumaJSONRouteWithRequest[IdentityLinkRequest, IdentityLinkResponse](
-		api, "linkIdentityParticipants", http.MethodPost, "/identity/links",
-		"Assert two participants are the same person", s.handleLinkIdentity,
-	)
+	link := rawAPIV1Operation("linkIdentityParticipants", http.MethodPost,
+		"/identity/links", "Assert two participants are the same person")
+	link.RequestBody = jsonRequestBodyFor[IdentityLinkRequest](api)
+	link.Responses = jsonResponsesFor[IdentityLinkResponse](api)
+	link.Responses[httpStatusKey(http.StatusConflict)] = personMergeConflictResponseFor(api)
+	registerRawHumaRoute(api, link, s.handleLinkIdentity)
 	registerAPIV1RawHumaJSONRouteWithRequest[IdentityLinkRequest, IdentityLinkResponse](
 		api, "unlinkIdentityParticipants", http.MethodPost, "/identity/unlinks",
 		"Remove a link edge between two participants", s.handleUnlinkIdentity,
@@ -113,6 +115,9 @@ func (s *Server) handleIdentityLinkMutation(
 	revision, err := mutate(linker, req.ParticipantA, req.ParticipantB)
 	switch {
 	case errors.Is(err, store.ErrPersonBindingConflict):
+		if s.writePersonMergeRequired(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusConflict, "person_binding_conflict",
 			"The identity clusters belong to different person profiles")
 		return

@@ -48,7 +48,6 @@ import (
 // 1.6.0 adds the browser-session login, bootstrap, and logout routes. Existing
 // API-key security remains the documented scheme for protected API routes;
 // cookie authentication is an additive same-origin browser mechanism.
-//
 // 1.7.0 adds optimistic, secret-redacting browser settings reads and writes.
 //
 // 1.8.0 adds daemon-owned shared Saved View CRUD with schema-versioned
@@ -225,7 +224,11 @@ import (
 // Additive (minor bump): existing unfiltered searches are unchanged.
 // 2.8.0 adds CardDAV account setup, book roles, publication, conflict, and
 // sync routes. Passwords are request-only and never appear in responses.
-const APISchemaVersion = "2.8.0"
+// 2.9.0 adds reversible person merge/split mutations, merge history, snapshot
+// inspection, and merge-candidate decisions. Mutations require strong person
+// revision tags;
+// merge and split also require retry-stable Idempotency-Key headers.
+const APISchemaVersion = "2.9.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -622,6 +625,31 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			trackedAt.Extensions["x-omitempty"] = false
 			trackedAt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
+			}
+		}
+	}
+	if response := schemas["PersonMergeSnapshotResponse"]; response != nil {
+		if snapshot := response.Properties["snapshot"]; snapshot != nil {
+			if snapshot.Extensions == nil {
+				snapshot.Extensions = map[string]any{}
+			}
+			snapshot.Extensions["x-go-type"] = "json.RawMessage"
+			snapshot.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
+		}
+	}
+	for schemaName, properties := range map[string][]string{
+		"PersonMergeDetail": {"participants", "review_candidates", "rows", "splits"},
+		"PersonMergeResult": {"review_candidates"},
+		"PersonSplitResult": {"ambiguous_rows"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, propertyName := range properties {
+				if property := schema.Properties[propertyName]; property != nil {
+					if property.Extensions == nil {
+						property.Extensions = map[string]any{}
+					}
+					property.Extensions["x-omitempty"] = false
+				}
 			}
 		}
 	}

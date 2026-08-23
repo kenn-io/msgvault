@@ -470,6 +470,42 @@ func (s *SearchFiles_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
+type LinkIdentityParticipants_ErrorResponse_AnyOf struct {
+	runtime.Either[PersonMergeRequiredError, ErrorResponse]
+}
+
+func (l *LinkIdentityParticipants_ErrorResponse_AnyOf) Validate() error {
+	if l.IsA() {
+		if v, ok := any(l.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if l.IsB() {
+		if v, ok := any(l.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf struct {
+	runtime.Either[PersonMergeRequiredError, ErrorResponse]
+}
+
+func (a *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error {
+	if a.IsA() {
+		if v, ok := any(a.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if a.IsB() {
+		if v, ok := any(a.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type SearchParticipants_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }

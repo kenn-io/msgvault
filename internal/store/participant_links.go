@@ -416,6 +416,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			return fmt.Errorf("insert participant link: %w", insertErr)
 		}
 		if personID != 0 {
+			if err := extendActivePersonMergeLineageTx(
+				ctx, tx, personID, lo, hi, edges,
+			); err != nil {
+				return err
+			}
 			changed, err := s.bindPersonParticipantsTx(
 				ctx, tx, personID, unionMembers)
 			if err != nil {
@@ -434,6 +439,149 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		return err
 	})
 	return revision, linked, err
+}
+
+type activePersonMergeLineageState struct {
+	origin  string
+	splitID sql.NullInt64
+}
+
+// extendActivePersonMergeLineageTx keeps reversible merge lineage aligned
+// with identity links added after the merge. Each pre-link component inherits
+// its one unambiguous state. A lineage-free component inherits the state of
+// the participant it is directly linked to, which remains deterministic even
+// when that participant's existing component contains both merge origins.
+func extendActivePersonMergeLineageTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID int64,
+	lo, hi int64,
+	edges []linkEdge,
+) error {
+	left := sortedComponentMembers(lo, edges)
+	right := sortedComponentMembers(hi, edges)
+	members := make(map[int64]struct{}, len(left)+len(right))
+	for _, participantID := range append(slices.Clone(left), right...) {
+		members[participantID] = struct{}{}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT lineage.merge_id,
+		lineage.participant_id, lineage.origin_side, lineage.split_id
+		FROM person_merge_participants lineage
+		JOIN person_merges merge_record ON merge_record.id = lineage.merge_id
+		WHERE merge_record.current_person_id = ?
+		ORDER BY lineage.merge_id, lineage.participant_id`, personID)
+	if err != nil {
+		return fmt.Errorf("load active person merge lineage for link: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	lineage := make(map[int64]map[int64]activePersonMergeLineageState)
+	for rows.Next() {
+		var mergeID, participantID int64
+		var state activePersonMergeLineageState
+		if err := rows.Scan(&mergeID, &participantID, &state.origin, &state.splitID); err != nil {
+			return fmt.Errorf("scan active person merge lineage for link: %w", err)
+		}
+		if _, included := members[participantID]; !included {
+			continue
+		}
+		if lineage[mergeID] == nil {
+			lineage[mergeID] = make(map[int64]activePersonMergeLineageState)
+		}
+		lineage[mergeID][participantID] = state
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate active person merge lineage for link: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close active person merge lineage for link: %w", err)
+	}
+	mergeIDs := make([]int64, 0, len(lineage))
+	for mergeID := range lineage {
+		mergeIDs = append(mergeIDs, mergeID)
+	}
+	slices.Sort(mergeIDs)
+	for _, mergeID := range mergeIDs {
+		mergeLineage := lineage[mergeID]
+		leftState, leftPresent, leftUnambiguous := activePersonMergeComponentState(
+			left, mergeLineage,
+		)
+		rightState, rightPresent, rightUnambiguous := activePersonMergeComponentState(
+			right, mergeLineage,
+		)
+		assignments := make(map[int64]activePersonMergeLineageState)
+		if leftUnambiguous {
+			assignPersonMergeComponentLineage(assignments, left, leftState)
+		}
+		if rightUnambiguous {
+			assignPersonMergeComponentLineage(assignments, right, rightState)
+		}
+		if !leftPresent {
+			state, found := mergeLineage[hi]
+			if !found && rightUnambiguous {
+				state, found = rightState, true
+			}
+			if found {
+				assignPersonMergeComponentLineage(assignments, left, state)
+			}
+		}
+		if !rightPresent {
+			state, found := mergeLineage[lo]
+			if !found && leftUnambiguous {
+				state, found = leftState, true
+			}
+			if found {
+				assignPersonMergeComponentLineage(assignments, right, state)
+			}
+		}
+		participantIDs := make([]int64, 0, len(assignments))
+		for participantID := range assignments {
+			participantIDs = append(participantIDs, participantID)
+		}
+		slices.Sort(participantIDs)
+		for _, participantID := range participantIDs {
+			state := assignments[participantID]
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_merge_participants
+				(merge_id, participant_id, origin_side, split_id)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT (merge_id, participant_id) DO NOTHING`,
+				mergeID, participantID, state.origin, state.splitID); err != nil {
+				return fmt.Errorf("extend person merge lineage for linked participant: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func activePersonMergeComponentState(
+	component []int64,
+	lineage map[int64]activePersonMergeLineageState,
+) (activePersonMergeLineageState, bool, bool) {
+	var state activePersonMergeLineageState
+	present := false
+	for _, participantID := range component {
+		current, found := lineage[participantID]
+		if !found {
+			continue
+		}
+		if !present {
+			state, present = current, true
+			continue
+		}
+		if state != current {
+			return activePersonMergeLineageState{}, true, false
+		}
+	}
+	return state, present, present
+}
+
+func assignPersonMergeComponentLineage(
+	assignments map[int64]activePersonMergeLineageState,
+	component []int64,
+	state activePersonMergeLineageState,
+) {
+	for _, participantID := range component {
+		assignments[participantID] = state
+	}
 }
 
 // UnlinkParticipants removes the edge between a and b, if present. Returns
@@ -568,9 +716,59 @@ func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
 	if len(candidateIDs) == 0 {
 		return nil
 	}
+	return s.rejectAcceptedIdentityMatchCandidatesTx(
+		context.Background(), tx, candidateIDs, "crossing unlink")
+}
 
+func (s *Store) rejectAcceptedIdentityMatchesAcrossPersonSplitTx(
+	ctx context.Context, tx *loggedTx, selected []int64,
+) error {
+	selectedSet := make(map[int64]struct{}, len(selected))
+	for _, participantID := range selected {
+		selectedSet[participantID] = struct{}{}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, left_id, right_id
+		FROM identity_match_candidates
+		WHERE state = ? AND left_kind = ? AND right_kind = ?`,
+		IdentityMatchStateAccepted,
+		IdentityMatchParticipant,
+		IdentityMatchParticipant,
+	)
+	if err != nil {
+		return fmt.Errorf("find accepted identity matches crossing person split: %w", err)
+	}
+	candidateIDs := make([]int64, 0)
+	for rows.Next() {
+		var candidateID, leftID, rightID int64
+		if err := rows.Scan(&candidateID, &leftID, &rightID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan accepted identity match crossing person split: %w", err)
+		}
+		_, leftSelected := selectedSet[leftID]
+		_, rightSelected := selectedSet[rightID]
+		if leftSelected != rightSelected {
+			candidateIDs = append(candidateIDs, candidateID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate accepted identity matches crossing person split: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close accepted identity matches crossing person split: %w", err)
+	}
+	return s.rejectAcceptedIdentityMatchCandidatesTx(
+		ctx, tx, candidateIDs, "crossing person split")
+}
+
+func (s *Store) rejectAcceptedIdentityMatchCandidatesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	candidateIDs []int64,
+	operation string,
+) error {
 	for _, candidateID := range candidateIDs {
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE identity_match_candidates SET
 				state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
 				pre_conflict_state = NULL, application_pending = FALSE,
@@ -579,7 +777,7 @@ func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
 			IdentityMatchStateRejected, "user", IdentityMatchStateAccepted,
 			candidateID,
 		); err != nil {
-			return fmt.Errorf("reject identity match %d crossing unlink: %w", candidateID, err)
+			return fmt.Errorf("reject identity match %d %s: %w", candidateID, operation, err)
 		}
 	}
 	return nil

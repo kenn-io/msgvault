@@ -53,18 +53,21 @@ type Store struct {
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the
 	// Store rather than the package because more than one Store can be
-	// migrating at once inside a single test binary — test fixtures build
-	// their schemas concurrently — and a hook installed by one test must
-	// never fire on another Store's migration. As package-level variables
+	// active at once inside a single test binary — test fixtures build their
+	// schemas concurrently — and a hook installed by one test must never fire
+	// on another Store's work. As package-level variables
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
-	initSchemaWindowHook                func()
-	attributeSeedReadHook               func(slug string)
-	contentChangedBackfillBatchHook     func(fromID, toID int64) error
-	backfillFTSBatchErrHook             func(fromID, toID int64) error
-	attachmentRoleRepairPreparedHook    func()
-	cardDAVConflictResolveSnapshotHook  func()
-	cardDAVTombstonePrepareSnapshotHook func()
+	initSchemaWindowHook                  func()
+	attributeSeedReadHook                 func(slug string)
+	contentChangedBackfillBatchHook       func(fromID, toID int64) error
+	backfillFTSBatchErrHook               func(fromID, toID int64) error
+	attachmentRoleRepairPreparedHook      func()
+	cardDAVConflictResolveSnapshotHook    func()
+	cardDAVTombstonePrepareSnapshotHook   func()
+	identityMatchAcceptBeforeDecisionHook func()
+	personOperationBeforeIdentityLockHook func()
+	personMergeAfterSnapshotHook          func()
 
 	// Zero means "use the production batch size"; see
 	// contentChangedBackfillBatch. Per-Store for the same reason.

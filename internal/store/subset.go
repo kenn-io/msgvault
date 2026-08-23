@@ -2,10 +2,12 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,15 +18,17 @@ import (
 
 // CopyResult holds the summary of a subset copy operation.
 type CopyResult struct {
-	Messages      int64
-	Conversations int64
-	Participants  int64
-	Labels        int64
-	Sources       int64
-	Organizations int64
-	Employments   int64
-	DBSize        int64
-	Elapsed       time.Duration
+	Messages                  int64
+	Conversations             int64
+	Participants              int64
+	Labels                    int64
+	Sources                   int64
+	Organizations             int64
+	Employments               int64
+	PersonMergePackets        int64
+	OmittedPersonMergePackets int64
+	DBSize                    int64
+	Elapsed                   time.Duration
 }
 
 // ErrSubsetVCardResourcesRequireProfiles reports IncludeVCardResources
@@ -93,9 +97,13 @@ func CopySubset(
 // the contact source recorded — custom properties, RELATED entries naming
 // people outside the subset, and residue no structured table represents —
 // which is why it needs its own authorization instead of riding
-// IncludeProfiles. It requires IncludeProfiles, whose structured fields the
-// body projects into; asking for the bodies without the profiles is an error
-// rather than a silent no-op.
+// IncludeProfiles. Complete merge packets also contain immutable merge-time
+// snapshots, including values later redacted from live profile tables. Packets
+// require IncludeAttributes in addition to IncludeProfiles and
+// IncludeVCardResources; without it, scoped packets are counted as omitted.
+// Native bodies require IncludeProfiles, whose structured fields they project
+// into; asking for the bodies without the profiles is an error rather than a
+// silent no-op.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
@@ -523,6 +531,10 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, err
 		}
 		result.Sources += extraSources
+		if _, err := copyByName(tx, "person_tracking",
+			`person_id IN (SELECT id FROM persons)`); err != nil {
+			return nil, fmt.Errorf("copy person tracking: %w", err)
+		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(tx); err != nil {
 				return nil, err
@@ -546,18 +558,24 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		if hasSensitive {
 			sensitiveExpression = "is_sensitive"
 		}
+		if _, err := tx.Exec(`CREATE TEMP TABLE provisional_attribute_definition_ids AS
+			SELECT universal_id, id FROM attribute_definitions`); err != nil {
+			return nil, fmt.Errorf("remember provisional subset attribute definitions: %w", err)
+		}
 		// The destination is a brand-new archive and has no attribute values.
 		// Remove its provisional seeds so source slugs cross the archive boundary
 		// unchanged; post-copy InitSchema installs any missing seeds afterward.
 		if _, err := tx.Exec(`DELETE FROM attribute_definitions`); err != nil {
 			return nil, fmt.Errorf("clear provisional subset attribute definitions: %w", err)
 		}
-		// Definitions are portable by universal_id, not their database-local
-		// numeric key. Reconcile every person definition into the destination,
-		// then map copied values through universal_id below.
+		// Definitions remain portable by universal_id. When a shipped definition
+		// already had the same provisional ID in both archives, retain that ID so
+		// merge snapshots and immutable results stay self-consistent. Custom or
+		// otherwise remapped definitions still receive destination-local IDs; a
+		// merge packet that embeds one is conservatively omitted below.
 		if _, err := tx.Exec(fmt.Sprintf(`
 		INSERT INTO attribute_definitions (
-		    universal_id, object_type, slug, label, description,
+		    id, universal_id, object_type, slug, label, description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
 		    is_searchable, is_sensitive, is_audited, is_deletable, history_exempt,
@@ -565,14 +583,18 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		    created_at, updated_at
 		)
 		SELECT
-		    universal_id, object_type, slug, label, description,
+		    CASE WHEN provisional.id = source.id THEN source.id ELSE NULL END,
+		    source.universal_id, source.object_type, source.slug, source.label,
+		    source.description,
 		    value_type, field_type, record_target, cardinality, display_order,
 		    is_required, ownership, ui_creatable, ui_editable, api_mutable,
 		    is_searchable, %s AS is_sensitive, is_audited, is_deletable, history_exempt,
 		    derived_source, options, vcard_property, is_active, revision,
 		    created_at, updated_at
-		FROM src.attribute_definitions
-		WHERE object_type IN ('person', 'organization')
+		FROM src.attribute_definitions source
+		LEFT JOIN provisional_attribute_definition_ids provisional
+		  ON provisional.universal_id = source.universal_id
+		WHERE source.object_type IN ('person', 'organization')
 		ON CONFLICT(universal_id) DO UPDATE SET
 		    object_type = excluded.object_type,
 		    slug = excluded.slug,
@@ -681,6 +703,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 				return nil, fmt.Errorf("copy organization attribute values: %w", err)
 			}
 		}
+	}
+	if err := copyPersonMergePackets(tx, options, result); err != nil {
+		return nil, err
 	}
 	// Every table a native vCard mapping can own a row in — profile
 	// components, relationships, employments, attribute values — has been
@@ -827,6 +852,744 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	return result, nil
 }
 
+// copyPersonMergePackets copies an audit packet only when the scoped archive
+// contains every live person and participant needed to interpret it. The
+// snapshot can contain all profile and native-card fields from both original
+// people, so packets are limited to the strongest profile-data opt-in; an
+// incomplete packet is less useful than no packet because it falsely promises
+// that the historical merge can still be reversed.
+func copyPersonMergePackets(
+	tx *sql.Tx, options CopySubsetOptions, result *CopyResult,
+) error {
+	hasMerges, err := sourceTableExists(tx, "person_merges")
+	if err != nil {
+		return fmt.Errorf("check person merge schema: %w", err)
+	}
+	if !hasMerges {
+		return nil
+	}
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_person_merges (
+		id INTEGER PRIMARY KEY
+	)`); err != nil {
+		return fmt.Errorf("create selected person merges: %w", err)
+	}
+	if options.IncludeProfiles && options.IncludeVCardResources {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM src.person_merges merge_record
+			WHERE merge_record.current_person_id IN (SELECT id FROM persons)
+			   OR EXISTS (SELECT 1 FROM src.person_splits split_record
+				WHERE split_record.merge_id = merge_record.id
+				  AND (split_record.source_person_id IN (SELECT id FROM persons)
+					OR split_record.new_person_id IN (SELECT id FROM persons)))
+			   OR EXISTS (SELECT 1 FROM src.person_merge_participants lineage
+				JOIN person_participants binding
+				  ON binding.participant_id = lineage.participant_id
+				WHERE lineage.merge_id = merge_record.id)`,
+		).Scan(&result.PersonMergePackets); err != nil {
+			return fmt.Errorf("count scoped person merge packets: %w", err)
+		}
+	}
+	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
+		if _, err := tx.Exec(`INSERT INTO selected_person_merges (id)
+			SELECT merge_record.id FROM src.person_merges merge_record
+			WHERE (
+				merge_record.current_person_id IN (SELECT id FROM persons)
+				OR EXISTS (SELECT 1 FROM src.person_splits split_record
+					WHERE split_record.merge_id = merge_record.id
+					  AND (split_record.source_person_id IN (SELECT id FROM persons)
+						OR split_record.new_person_id IN (SELECT id FROM persons)))
+				OR EXISTS (SELECT 1 FROM src.person_merge_participants lineage
+					JOIN person_participants binding
+					  ON binding.participant_id = lineage.participant_id
+					WHERE lineage.merge_id = merge_record.id)
+			)
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_merge_participants lineage
+				WHERE lineage.merge_id = merge_record.id
+				  AND lineage.participant_id NOT IN (SELECT id FROM participants)
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_splits split_record
+				WHERE split_record.merge_id = merge_record.id
+				  AND split_record.source_person_id NOT IN (SELECT id FROM persons)
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_splits split_record
+				WHERE split_record.merge_id = merge_record.id
+				  AND split_record.new_person_id NOT IN (SELECT id FROM persons)
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_merge_review_candidates candidate
+				WHERE candidate.merge_id = merge_record.id
+				  AND (
+					candidate.survivor_person_id NOT IN (SELECT id FROM persons)
+					OR candidate.definition_id NOT IN (
+						SELECT destination_definition.id
+						FROM src.attribute_definitions source_definition
+						JOIN attribute_definitions destination_definition
+						  ON destination_definition.universal_id = source_definition.universal_id
+						WHERE source_definition.id = candidate.definition_id
+					)
+					OR candidate.survivor_value_id NOT IN (
+						SELECT id FROM person_attribute_values
+					)
+					OR candidate.absorbed_value_id NOT IN (
+						SELECT id FROM person_attribute_values
+					)
+					OR (candidate.resolution_value_id IS NOT NULL
+						AND candidate.resolution_value_id NOT IN (
+							SELECT id FROM person_attribute_values
+						))
+				  )
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_merge_rows journal
+				JOIN src.person_attribute_values value
+				  ON value.id = journal.original_row_id
+				JOIN src.attribute_definitions source_definition
+				  ON source_definition.id = value.definition_id
+				JOIN attribute_definitions destination_definition
+				  ON destination_definition.universal_id = source_definition.universal_id
+				WHERE journal.merge_id = merge_record.id
+				  AND journal.table_name = 'person_attribute_values'
+				  AND source_definition.id <> destination_definition.id
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM src.person_merge_rows journal
+				WHERE journal.merge_id = merge_record.id
+				  AND journal.table_name = 'daily_note_entry_persons'
+			  )`); err != nil {
+			return fmt.Errorf("select complete person merge packets: %w", err)
+		}
+	}
+	if options.IncludeProfiles && options.IncludeVCardResources {
+		if err := pruneIncompletePersonMergePacketsAndAliases(tx); err != nil {
+			return err
+		}
+	}
+	var selectedPackets int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(&selectedPackets); err != nil {
+		return fmt.Errorf("count copied person merge packets: %w", err)
+	}
+	result.OmittedPersonMergePackets = result.PersonMergePackets - selectedPackets
+	result.PersonMergePackets = selectedPackets
+	// Operation results retain the identity revision committed in the source
+	// archive. Preserve that archive's current revision whenever a complete
+	// packet crosses the subset boundary, so replayed results never claim a
+	// revision ahead of the destination's cache authority. Keep the larger
+	// value if a future caller ever copies into a pre-populated destination.
+	if _, err := tx.Exec(`INSERT INTO archive_metadata (key, value)
+		SELECT 'identity_revision', source_revision.value
+		FROM src.archive_metadata source_revision
+		WHERE source_revision.key = 'identity_revision'
+		  AND EXISTS (SELECT 1 FROM selected_person_merges)
+		ON CONFLICT(key) DO UPDATE SET value = CASE
+			WHEN CAST(excluded.value AS INTEGER) > CAST(archive_metadata.value AS INTEGER)
+			THEN excluded.value ELSE archive_metadata.value END`); err != nil {
+		return fmt.Errorf("preserve person merge identity revision: %w", err)
+	}
+	if _, err := copyByName(tx, "person_merges",
+		`id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person merges: %w", err)
+	}
+	if _, err := copyByName(tx, "person_splits",
+		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person splits: %w", err)
+	}
+	if _, err := copyByName(tx, "person_merge_participants",
+		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person merge participants: %w", err)
+	}
+	if _, err := copyByName(tx, "person_merge_rows",
+		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person merge rows: %w", err)
+	}
+	if _, err := copyByName(tx, "person_merge_row_person_refs",
+		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person merge row person references: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO person_merge_review_candidates (
+		id, merge_id, survivor_person_id, definition_id,
+		survivor_value_id, absorbed_value_id, state, resolution_value_id,
+		reviewed_by, reviewed_at, created_at
+	) SELECT
+		candidate.id, candidate.merge_id, candidate.survivor_person_id,
+		destination_definition.id, candidate.survivor_value_id,
+		candidate.absorbed_value_id, candidate.state, candidate.resolution_value_id,
+		candidate.reviewed_by, candidate.reviewed_at, candidate.created_at
+	FROM src.person_merge_review_candidates candidate
+	JOIN src.attribute_definitions source_definition
+	  ON source_definition.id = candidate.definition_id
+	JOIN attribute_definitions destination_definition
+	  ON destination_definition.universal_id = source_definition.universal_id
+	WHERE candidate.merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
+		return fmt.Errorf("copy person merge review candidates: %w", err)
+	}
+	if selectedPackets > 0 {
+		var historicalPersonID int64
+		if err := tx.QueryRow(`SELECT MAX(person_id) FROM (
+			SELECT survivor_person_id_at_merge AS person_id FROM person_merges
+			UNION ALL SELECT absorbed_person_id FROM person_merges
+			UNION ALL SELECT source_person_id FROM person_splits
+			UNION ALL SELECT new_person_id FROM person_splits
+		)`).Scan(&historicalPersonID); err != nil {
+			return fmt.Errorf("read historical person ID ceiling: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE sqlite_sequence SET seq = CASE
+			WHEN seq < ? THEN ? ELSE seq END WHERE name = 'persons'`,
+			historicalPersonID, historicalPersonID); err != nil {
+			return fmt.Errorf("advance subset person sequence: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq)
+			SELECT 'persons', ? WHERE NOT EXISTS (
+				SELECT 1 FROM sqlite_sequence WHERE name = 'persons'
+			)`, historicalPersonID); err != nil {
+			return fmt.Errorf("initialize subset person sequence: %w", err)
+		}
+	}
+	return nil
+}
+
+func pruneIncompletePersonMergePacketsAndAliases(tx *sql.Tx) error {
+	for {
+		var selectedBefore int64
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(
+			&selectedBefore,
+		); err != nil {
+			return fmt.Errorf("count selected person merge packets: %w", err)
+		}
+		if err := pruneIncompletePersonMergePackets(tx); err != nil {
+			return err
+		}
+		aliasResult, err := tx.Exec(`DELETE FROM person_uid_aliases
+			WHERE retired_uid IN (
+				SELECT omitted.absorbed_uid FROM src.person_merges omitted
+				WHERE omitted.id NOT IN (SELECT id FROM selected_person_merges)
+			)
+			AND retired_uid NOT IN (
+				SELECT selected.absorbed_uid FROM src.person_merges selected
+				WHERE selected.id IN (SELECT id FROM selected_person_merges)
+			)`)
+		if err != nil {
+			return fmt.Errorf("remove incomplete person merge aliases: %w", err)
+		}
+		aliasesRemoved, err := aliasResult.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count removed incomplete person merge aliases: %w", err)
+		}
+		var selectedAfter int64
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(
+			&selectedAfter,
+		); err != nil {
+			return fmt.Errorf("recount selected person merge packets: %w", err)
+		}
+		if selectedBefore == selectedAfter && aliasesRemoved == 0 {
+			return nil
+		}
+	}
+}
+
+func pruneIncompletePersonMergePackets(tx *sql.Tx) error {
+	mergeRows, err := tx.Query(`SELECT id FROM selected_person_merges ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("load selected person merge packets: %w", err)
+	}
+	defer func() { _ = mergeRows.Close() }()
+	mergeIDs := []int64{}
+	for mergeRows.Next() {
+		var mergeID int64
+		if err := mergeRows.Scan(&mergeID); err != nil {
+			_ = mergeRows.Close()
+			return fmt.Errorf("scan selected person merge packet: %w", err)
+		}
+		mergeIDs = append(mergeIDs, mergeID)
+	}
+	if err := mergeRows.Err(); err != nil {
+		_ = mergeRows.Close()
+		return fmt.Errorf("iterate selected person merge packets: %w", err)
+	}
+	if err := mergeRows.Close(); err != nil {
+		return fmt.Errorf("close selected person merge packets: %w", err)
+	}
+
+	for _, mergeID := range mergeIDs {
+		complete, err := personMergePacketRowsComplete(tx, mergeID)
+		if err != nil {
+			return err
+		}
+		if complete {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM selected_person_merges WHERE id = ?`, mergeID); err != nil {
+			return fmt.Errorf("omit incomplete person merge packet: %w", err)
+		}
+	}
+	return nil
+}
+
+func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
+	var omittedSplitOwner int
+	if err := tx.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM src.person_merge_participants lineage
+		JOIN src.person_splits split_record ON split_record.id = lineage.split_id
+		WHERE lineage.merge_id = ?
+		  AND split_record.merge_id NOT IN (SELECT id FROM selected_person_merges)
+	)`, mergeID).Scan(&omittedSplitOwner); err != nil {
+		return false, fmt.Errorf("validate person merge split dependencies: %w", err)
+	}
+	if omittedSplitOwner != 0 {
+		return false, nil
+	}
+	var snapshotBlob []byte
+	var snapshotSHA256 string
+	if err := tx.QueryRow(`SELECT snapshot_blob, snapshot_sha256
+		FROM src.person_merges WHERE id = ?`, mergeID).Scan(
+		&snapshotBlob, &snapshotSHA256,
+	); err != nil {
+		return false, fmt.Errorf("load person merge packet snapshot: %w", err)
+	}
+	snapshot, err := decodePersonMergeSnapshot(snapshotBlob, snapshotSHA256)
+	if err != nil {
+		return false, fmt.Errorf("verify person merge packet %d snapshot: %w", mergeID, err)
+	}
+	rows, err := tx.Query(`SELECT table_name, current_row_id, current_row_key,
+		action, provenance_kind, split_id, snapshot_path
+		FROM src.person_merge_rows WHERE merge_id = ?
+		ORDER BY table_name, original_row_key`, mergeID)
+	if err != nil {
+		return false, fmt.Errorf("load person merge packet rows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	packetRows := []personMergePacketRow{}
+	for rows.Next() {
+		var row personMergePacketRow
+		if err := rows.Scan(
+			&row.table, &row.currentID, &row.currentKey,
+			&row.action, &row.provenance, &row.splitID, &row.snapshotPath,
+		); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan person merge packet row: %w", err)
+		}
+		packetRows = append(packetRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate person merge packet rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close person merge packet rows: %w", err)
+	}
+	complete, err := personMergeSnapshotRowsComplete(tx, snapshot, packetRows)
+	if err != nil || !complete {
+		return complete, err
+	}
+	for _, row := range packetRows {
+		if row.table == "daily_note_entry_persons" {
+			return false, nil
+		}
+		if row.table == "person_merges" {
+			if !row.currentID.Valid {
+				return false, nil
+			}
+			var exists int
+			err := tx.QueryRow(`SELECT 1 FROM selected_person_merges WHERE id = ?`,
+				row.currentID.Int64).Scan(&exists)
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, fmt.Errorf("validate referenced person merge packet: %w", err)
+			}
+			continue
+		}
+		if row.table == personMergeReviewCandidatesTableName {
+			if !row.currentID.Valid {
+				return false, nil
+			}
+			var exists int
+			err := tx.QueryRow(`SELECT 1 FROM src.person_merge_review_candidates candidate
+				WHERE candidate.id = ? AND candidate.merge_id IN (
+					SELECT id FROM selected_person_merges
+				)`, row.currentID.Int64).Scan(&exists)
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, fmt.Errorf("validate referenced merge candidate packet: %w", err)
+			}
+			continue
+		}
+		if row.table == personRelationshipReviewsTableName && row.currentID.Valid {
+			var dependenciesComplete int
+			err := tx.QueryRow(`SELECT 1 FROM src.person_relationship_reviews review
+				WHERE review.id = ?
+				  AND (
+					review.matched_person_id IS NULL
+					OR review.matched_person_id IN (SELECT id FROM persons)
+				  )
+				  AND (
+					review.accepted_relationship_id IS NULL
+					OR review.accepted_relationship_id IN (SELECT id FROM person_relationships)
+				  )`, row.currentID.Int64).Scan(&dependenciesComplete)
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, fmt.Errorf(
+					"validate person relationship review packet dependencies: %w", err)
+			}
+		}
+		if row.splitID.Valid || row.action == "deleted_snapshot" || row.action == "recomputed" ||
+			row.provenance == string(personMergeProvenanceDerived) {
+			continue
+		}
+		spec, ok := personMergeTableRegistry[row.table]
+		if !ok {
+			return false, fmt.Errorf("validate person merge packet: unregistered table %q", row.table)
+		}
+		where, args, err := personSplitCurrentRowWhere(spec, personSplitJournalRow{
+			currentRowID: row.currentID, currentKey: row.currentKey,
+		})
+		if err != nil {
+			return false, err
+		}
+		var exists int
+		err = tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(row.table)+
+			` WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("validate person merge packet %s row: %w", row.table, err)
+		}
+	}
+	return true, nil
+}
+
+type personMergePacketRow struct {
+	table, action, provenance, snapshotPath string
+	currentID                               sql.NullInt64
+	currentKey                              sql.NullString
+	splitID                                 sql.NullInt64
+}
+
+// personMergeSnapshotRowsComplete proves that every immutable snapshot row is
+// inside the destination's selected-data closure. Journal rows alone are not
+// sufficient: unchanged survivor-side rows are deliberately pruned from the
+// journal, but remain in snapshot_blob with their full historical contents.
+func personMergeSnapshotRowsComplete(
+	tx *sql.Tx, snapshot personMergeSnapshot, packetRows []personMergePacketRow,
+) (bool, error) {
+	lineagePeople := make(map[int64]struct{}, len(snapshot.Persons))
+	for _, person := range snapshot.Persons {
+		lineagePeople[person.ID] = struct{}{}
+		for _, participantID := range person.ParticipantIDs {
+			present, err := subsetRowIDExists(tx, "participants", participantID)
+			if err != nil || !present {
+				return present, err
+			}
+		}
+	}
+	journalByPath := make(map[string]personMergePacketRow, len(packetRows))
+	for _, row := range packetRows {
+		journalByPath[row.snapshotPath] = row
+	}
+	for index, row := range snapshot.Rows {
+		if row.TableName == "daily_note_entry_persons" {
+			// These rows can embed message, owner, or note data outside the
+			// selected archive. The immutable snapshot cannot be redacted.
+			return false, nil
+		}
+		journal, hasJournal := journalByPath["rows/"+strconv.Itoa(index)]
+		present, err := personMergeSnapshotRowPresent(tx, row, journal, hasJournal)
+		if err != nil || !present {
+			return present, err
+		}
+		complete, err := personMergeSnapshotDependenciesComplete(tx, row, lineagePeople)
+		if err != nil || !complete {
+			return complete, err
+		}
+	}
+	return true, nil
+}
+
+func personMergeSnapshotRowPresent(
+	tx *sql.Tx, row personMergeSnapshotRow, journal personMergePacketRow, hasJournal bool,
+) (bool, error) {
+	if hasJournal && journal.action == "deleted_snapshot" {
+		return true, nil
+	}
+	keys := []string{row.RowKey}
+	if hasJournal && journal.currentKey.Valid && !journal.splitID.Valid {
+		keys = append(keys, journal.currentKey.String)
+	}
+	seen := map[string]struct{}{}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		switch row.TableName {
+		case "person_merges":
+			id, ok, err := personMergeSnapshotSingleIntegerKey(key, "id")
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				continue
+			}
+			var present int
+			err = tx.QueryRow(`SELECT 1 FROM selected_person_merges WHERE id = ?`, id).Scan(&present)
+			if err == nil {
+				return true, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return false, fmt.Errorf("validate snapshot person merge dependency: %w", err)
+			}
+		case personMergeReviewCandidatesTableName:
+			id, ok, err := personMergeSnapshotSingleIntegerKey(key, "id")
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				continue
+			}
+			var present int
+			err = tx.QueryRow(`SELECT 1 FROM src.person_merge_review_candidates candidate
+				WHERE candidate.id = ?
+				  AND candidate.merge_id IN (SELECT id FROM selected_person_merges)`, id).Scan(&present)
+			if err == nil {
+				return true, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return false, fmt.Errorf("validate snapshot review candidate dependency: %w", err)
+			}
+		default:
+			spec, ok := personMergeTableRegistry[row.TableName]
+			if !ok {
+				return false, fmt.Errorf("validate person merge snapshot: unregistered table %q", row.TableName)
+			}
+			where, args, err := personSplitRowKeyWhere(spec, key)
+			if err != nil {
+				return false, err
+			}
+			var present int
+			err = tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(row.TableName)+
+				` WHERE `+where+` LIMIT 1`, args...).Scan(&present)
+			if err == nil {
+				return true, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return false, fmt.Errorf("validate snapshot %s row: %w", row.TableName, err)
+			}
+		}
+	}
+	return false, nil
+}
+
+func personMergeSnapshotDependenciesComplete(
+	tx *sql.Tx, row personMergeSnapshotRow, lineagePeople map[int64]struct{},
+) (bool, error) {
+	spec, ok := personMergeTableRegistry[row.TableName]
+	if !ok {
+		return false, fmt.Errorf("validate person merge snapshot dependencies: unregistered table %q", row.TableName)
+	}
+	for _, reference := range spec.PersonReferences {
+		if reference.Kind == personMergeReferencePolymorphic &&
+			personSplitSnapshotRowText(row, reference.KindColumn) != reference.KindValue {
+			continue
+		}
+		personID, present := personMergeSnapshotIntegerColumn(row, reference.IDColumn)
+		if !present {
+			continue
+		}
+		if _, lineage := lineagePeople[personID]; lineage {
+			continue
+		}
+		included, err := subsetRowIDExists(tx, "persons", personID)
+		if err != nil || !included {
+			return included, err
+		}
+	}
+	for _, catalog := range []struct {
+		table, column string
+	}{
+		{table: "relationship_types", column: "relationship_type_id"},
+		{table: "attribute_definitions", column: "definition_id"},
+	} {
+		usesCatalog := (row.TableName == personRelationshipsTableName &&
+			catalog.table == "relationship_types") ||
+			((row.TableName == personAttributeValuesTableName ||
+				row.TableName == "organization_attribute_values" ||
+				row.TableName == personMergeReviewCandidatesTableName) &&
+				catalog.table == "attribute_definitions")
+		if !usesCatalog {
+			continue
+		}
+		sourceID, present := personMergeSnapshotIntegerColumn(row, catalog.column)
+		if !present {
+			continue
+		}
+		preserved, err := personMergeSnapshotCatalogIDPreserved(tx, catalog.table, sourceID)
+		if err != nil || !preserved {
+			return preserved, err
+		}
+	}
+
+	dependencies := map[string][]struct {
+		column, table string
+	}{
+		personRelationshipsTableName:       {{"relationship_type_id", "relationship_types"}},
+		personRelationshipReviewsTableName: {{"accepted_relationship_id", personRelationshipsTableName}},
+		personAttributeValuesTableName:     {{"definition_id", "attribute_definitions"}},
+		"organization_attribute_values": {
+			{"organization_id", "organizations"}, {"definition_id", "attribute_definitions"},
+		},
+		personMergeReviewCandidatesTableName: {
+			{"merge_id", "selected_person_merges"},
+			{"definition_id", "attribute_definitions"},
+			{"survivor_value_id", personAttributeValuesTableName},
+			{"absorbed_value_id", personAttributeValuesTableName},
+			{"resolution_value_id", personAttributeValuesTableName},
+		},
+		"identity_match_candidate_redirects": {
+			{"retired_candidate_id", identityMatchCandidatesTableName},
+			{"surviving_candidate_id", identityMatchCandidatesTableName},
+		},
+		identityMatchCandidateSourcesTableName: {
+			{"candidate_id", identityMatchCandidatesTableName}, {sourceIDColumnName, "sources"},
+		},
+		identityMatchEvidenceTableName: {
+			{"candidate_id", identityMatchCandidatesTableName},
+		},
+		identityMatchEvidenceSourcesTableName: {
+			{"evidence_id", identityMatchEvidenceTableName}, {sourceIDColumnName, "sources"},
+		},
+		"employments": {
+			{"organization_id", "organizations"}, {"address_id", "organization_addresses"},
+		},
+	}
+	for _, dependency := range dependencies[row.TableName] {
+		id, present := personMergeSnapshotIntegerColumn(row, dependency.column)
+		if !present {
+			continue
+		}
+		included, err := subsetRowIDExists(tx, dependency.table, id)
+		if err != nil || !included {
+			return included, err
+		}
+	}
+
+	if row.TableName == identityMatchCandidatesTableName {
+		for _, side := range []string{"left", "right"} {
+			kind := personSplitSnapshotRowText(row, side+"_kind")
+			id, present := personMergeSnapshotIntegerColumn(row, side+"_id")
+			if !present {
+				return false, nil
+			}
+			table := map[string]string{
+				"person": "persons", "participant": "participants",
+				"observation":   "participant_contact_observations",
+				"contact_point": personContactPointsTableName,
+			}[kind]
+			if table == "" {
+				return false, nil
+			}
+			if kind == "person" {
+				if _, lineage := lineagePeople[id]; lineage {
+					continue
+				}
+			}
+			included, err := subsetRowIDExists(tx, table, id)
+			if err != nil || !included {
+				return included, err
+			}
+		}
+	}
+	for _, table := range []string{personContactPointsTableName, identityMatchCandidatesTableName} {
+		if row.TableName != table {
+			continue
+		}
+		serviceID, present := personMergeSnapshotIntegerColumn(row, "service_id")
+		if present {
+			preserved, err := personMergeSnapshotServiceIDPreserved(tx, serviceID)
+			if err != nil || !preserved {
+				return preserved, err
+			}
+		}
+	}
+	return true, nil
+}
+
+func personMergeSnapshotServiceIDPreserved(tx *sql.Tx, sourceID int64) (bool, error) {
+	var destinationID int64
+	err := tx.QueryRow(`SELECT destination_id FROM selected_profile_service_map
+		WHERE source_id = ?`, sourceID).Scan(&destinationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("validate snapshot communication service mapping: %w", err)
+	}
+	// Snapshot blobs are immutable audit records. If the database-local ID was
+	// remapped, copying the blob would make a later split restore the wrong
+	// service; omit the packet rather than rewriting and re-signing history.
+	return destinationID == sourceID, nil
+}
+
+func personMergeSnapshotCatalogIDPreserved(
+	tx *sql.Tx, table string, sourceID int64,
+) (bool, error) {
+	identifier := personSplitIdentifier(table)
+	var destinationID int64
+	err := tx.QueryRow(`SELECT destination.id
+		FROM src.`+identifier+` source
+		JOIN `+identifier+` destination
+		  ON destination.universal_id = source.universal_id
+		WHERE source.id = ?`, sourceID).Scan(&destinationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("validate snapshot %s mapping: %w", table, err)
+	}
+	return destinationID == sourceID, nil
+}
+
+func personMergeSnapshotIntegerColumn(row personMergeSnapshotRow, name string) (int64, bool) {
+	for _, column := range row.Columns {
+		if column.Name == name && column.Value.Integer != nil {
+			return *column.Value.Integer, true
+		}
+	}
+	return 0, false
+}
+
+func personMergeSnapshotSingleIntegerKey(encoded, name string) (int64, bool, error) {
+	var key []personMergeSnapshotColumn
+	if err := json.Unmarshal([]byte(encoded), &key); err != nil {
+		return 0, false, fmt.Errorf("decode person merge snapshot row key: %w", err)
+	}
+	if len(key) != 1 || key[0].Name != name || key[0].Value.Integer == nil {
+		return 0, false, nil
+	}
+	return *key[0].Value.Integer, true, nil
+}
+
+func subsetRowIDExists(tx *sql.Tx, table string, id int64) (bool, error) {
+	var present int
+	err := tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(table)+` WHERE id = ? LIMIT 1`, id).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("validate subset %s dependency: %w", table, err)
+	}
+	return true, nil
+}
+
 type subsetServiceReference struct {
 	table string
 	where string
@@ -917,7 +1680,7 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 				where: `participant_id IN (SELECT id FROM participants)`,
 			},
 			subsetServiceReference{
-				table: "identity_match_candidates",
+				table: identityMatchCandidatesTableName,
 				where: subsetSourceIdentityMatchCandidateWhere,
 			},
 		)
@@ -1134,7 +1897,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	// source_resource_uid arrived after the relationship tables; a source
 	// that predates it has no column to read, and its rows carry no resource.
 	edgeResourceUID, err := sourceColumnExpression(
-		tx, "person_relationships", "source_resource_uid", "edge")
+		tx, personRelationshipsTableName, "source_resource_uid", "edge")
 	if err != nil {
 		return err
 	}
@@ -1289,22 +2052,22 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
 	}
-	hasCandidates, err := sourceTableExists(tx, "identity_match_candidates")
+	hasCandidates, err := sourceTableExists(tx, identityMatchCandidatesTableName)
 	if err != nil {
 		return 0, fmt.Errorf("check identity match candidate schema: %w", err)
 	}
 	if hasCandidates {
 		if err := copyByNameWithCommunicationServiceMap(
-			tx, "identity_match_candidates", subsetSourceIdentityMatchCandidateWhere,
+			tx, identityMatchCandidatesTableName, subsetSourceIdentityMatchCandidateWhere,
 		); err != nil {
 			return 0, fmt.Errorf("copy identity_match_candidates: %w", err)
 		}
-		hasEvidence, err := sourceTableExists(tx, "identity_match_evidence")
+		hasEvidence, err := sourceTableExists(tx, identityMatchEvidenceTableName)
 		if err != nil {
 			return 0, fmt.Errorf("check identity match evidence schema: %w", err)
 		}
 		if hasEvidence {
-			if _, err := copyByName(tx, "identity_match_evidence",
+			if _, err := copyByName(tx, identityMatchEvidenceTableName,
 				`candidate_id IN (SELECT id FROM identity_match_candidates)`); err != nil {
 				return 0, fmt.Errorf("copy identity_match_evidence: %w", err)
 			}
@@ -1316,11 +2079,11 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			ownerKey   string
 		}{
 			{
-				table: "identity_match_candidate_sources", ownerTable: "identity_match_candidates",
+				table: identityMatchCandidateSourcesTableName, ownerTable: identityMatchCandidatesTableName,
 				ownerKey: "candidate_id",
 			},
 			{
-				table: "identity_match_evidence_sources", ownerTable: "identity_match_evidence",
+				table: identityMatchEvidenceSourcesTableName, ownerTable: identityMatchEvidenceTableName,
 				ownerKey: "evidence_id",
 			},
 		}
@@ -1412,7 +2175,7 @@ var vcardMappingOwnerTables = map[string]struct{}{
 	"persons": {}, "person_names": {}, "person_contact_points": {},
 	"person_addresses": {}, "person_dates": {}, "person_categories": {},
 	"person_media": {}, "person_attribute_values": {}, "employments": {},
-	"person_relationships": {}, "person_relationship_reviews": {},
+	personRelationshipsTableName: {}, "person_relationship_reviews": {},
 }
 
 // releaseVCardMappingsToMissingOwners drops, from every copied envelope, the
