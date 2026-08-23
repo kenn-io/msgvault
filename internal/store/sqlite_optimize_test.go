@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,5 +145,51 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 			"every pooled connection must use the refreshed planner statistics")
 		assert.NotContains(refreshedPlan, "idx_messages_source (source_id=?)",
 			"no pooled connection may retain the statistics-free plan")
+	}
+}
+
+func TestOptimizeSQLiteSerializesConcurrentMaintenance(t *testing.T) {
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+
+	const poolSize = 4
+	s.db.SetMaxOpenConns(poolSize)
+	s.db.SetMaxIdleConns(poolSize)
+	blockers := make([]*sql.Conn, 0, poolSize-1)
+	for range poolSize - 1 {
+		conn, connErr := s.db.Conn(t.Context())
+		require.NoError(connErr)
+		blockers = append(blockers, conn)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	started := make(chan struct{}, poolSize)
+	results := make(chan error, poolSize)
+	for range poolSize {
+		go func() {
+			started <- struct{}{}
+			results <- s.optimizeSQLite(ctx)
+		}()
+	}
+	for range poolSize {
+		<-started
+	}
+	require.Eventually(func() bool {
+		stats := s.db.Stats()
+		return stats.InUse == poolSize && stats.WaitCount > 0
+	}, time.Second, time.Millisecond)
+	// Give every unguarded call time to queue behind the exhausted pool.
+	time.Sleep(25 * time.Millisecond)
+	for _, conn := range blockers {
+		require.NoError(conn.Close())
+	}
+
+	for range poolSize {
+		require.NoError(<-results)
 	}
 }

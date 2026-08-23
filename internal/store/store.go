@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,6 +50,8 @@ type Store struct {
 	readOnly      bool // Opened via OpenReadOnly; skips WAL checkpoint on close
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
+
+	sqliteOptimizeMu sync.Mutex
 
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the
@@ -447,6 +450,8 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
+	s.sqliteOptimizeMu.Lock()
+	defer s.sqliteOptimizeMu.Unlock()
 
 	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
 	// results only into the SQLite connection that runs it; holding every slot
