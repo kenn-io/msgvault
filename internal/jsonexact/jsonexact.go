@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 )
@@ -19,7 +20,74 @@ func Validate(data []byte, target any) error {
 	if targetType == nil {
 		return errors.New("JSON exact-key target must not be nil")
 	}
+	if err := validateUniqueMembers(data); err != nil {
+		return err
+	}
 	return validate(data, targetType, "$", map[reflect.Type]map[string]reflect.Type{})
+}
+
+func validateUniqueMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanUniqueValue(decoder, "$"); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple top-level JSON values")
+		}
+		return fmt.Errorf("decode trailing JSON value: %w", err)
+	}
+	return nil
+}
+
+func scanUniqueValue(decoder *json.Decoder, path string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode JSON value at %s: %w", path, err)
+	}
+	delim, structured := token.(json.Delim)
+	if !structured {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return fmt.Errorf("decode JSON member at %s: %w", path, err)
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("decode JSON member name at %s", path)
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON member at %s", path)
+			}
+			seen[key] = struct{}{}
+			if err := scanUniqueValue(decoder, path+"."+key); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return fmt.Errorf("decode JSON object at %s", path)
+		}
+	case '[':
+		for index := 0; decoder.More(); index++ {
+			if err := scanUniqueValue(decoder, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return fmt.Errorf("decode JSON array at %s", path)
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %s", delim, path)
+	}
+	return nil
 }
 
 func validate(

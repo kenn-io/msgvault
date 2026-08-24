@@ -1,0 +1,15 @@
+{
+  "task_id": "opaque-job-42",
+  "status": "completed",
+  "result": {
+    "structured_data": {
+      "attribute:summary": "Synthetic public profile summary",
+      "attribute:score": 42,
+      "name": "Test User",
+      "company": "Example Labs"
+    },
+    "confidence_score": 9,
+    "findings": []
+  },
+  "charge_amount": 12
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
@@ -1133,10 +1134,17 @@ func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
 	srv := &Server{cfg: &config.Config{}}
 	srv.cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_EMBED_API_KEY"
 	srv.cfg.Attachments.Documents.APIKeyEnv = "MSGVAULT_DOCUMENT_API_KEY"
+	srv.cfg.People.Enrichment.SuppressionKeyEnv = "MSGVAULT_ENRICHMENT_SUPPRESSION_KEY"
+	srv.cfg.People.Enrichment.Providers = []personenrichment.ProviderConfig{{
+		APIKeyEnv: "MSGVAULT_EXA_API_KEY",
+	}}
 
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_IMAP_PASSWORD"), "static allowlist entry")
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"), "configured embedding api_key_env")
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_DOCUMENT_API_KEY"), "configured document api_key_env")
+	assert.True(srv.cliRunEnvAllowed("MSGVAULT_ENRICHMENT_SUPPRESSION_KEY"),
+		"configured enrichment suppression key")
+	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EXA_API_KEY"), "configured enrichment provider key")
 	assert.False(srv.cliRunEnvAllowed("PATH"), "arbitrary env stays rejected")
 
 	unconfigured := &Server{cfg: &config.Config{}}

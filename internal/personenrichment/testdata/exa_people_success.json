@@ -1,0 +1,58 @@
+{
+  "requestId": "request_test_people_42",
+  "results": [
+    {
+      "title": "Test User - Engineer",
+      "url": "https://profiles.example.test/test-user",
+      "publishedDate": "2026-08-20T10:00:00Z",
+      "entities": [
+        {
+          "id": "person_test_42",
+          "type": "person",
+          "version": 1,
+          "properties": {
+            "name": "Test User",
+            "firstName": "Test",
+            "lastName": "User",
+            "location": "Test City",
+            "workHistory": [
+              {
+                "title": "Engineer",
+                "location": "Test City",
+                "dates": {
+                  "from": "2022-01-01",
+                  "to": null
+                },
+                "company": {
+                  "id": "company_test_7",
+                  "name": "Example Labs"
+                }
+              }
+            ],
+            "educationHistory": [
+              {
+                "degree": "BS Computing",
+                "dates": {
+                  "from": "2016",
+                  "to": "2020"
+                },
+                "institution": {
+                  "id": null,
+                  "name": "Example University"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "resolvedSearchType": "neural",
+  "searchTime": 0.25,
+  "costDollars": {
+    "total": 0.007,
+    "search": {
+      "neural": 0.007
+    }
+  }
+}

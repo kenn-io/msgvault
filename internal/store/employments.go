@@ -87,10 +87,12 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 				return err
 			}
 			if input.Source.IsDeclared() {
-				return s.appendManualPersonFactEmploymentPinTx(
-					ctx, tx, input.PersonID, string(input.Source))
+				if err := s.appendManualPersonFactEmploymentPinTx(
+					ctx, tx, input.PersonID, string(input.Source)); err != nil {
+					return err
+				}
 			}
-			return nil
+			return s.publishPersonIdentityEnrichmentTx(ctx, tx, input.PersonID)
 		})
 		if err != nil {
 			return nil, err
@@ -147,7 +149,8 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 					}
 				}
 			}
-			return nil
+			return s.publishPersonIdentityEnrichmentTx(
+				ctx, tx, snapshot.PersonID, input.PersonID)
 		})
 		if err != nil {
 			return nil, err
@@ -177,8 +180,11 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 			if err != nil {
 				return err
 			}
-			return s.appendManualPersonFactEmploymentPinTx(
-				ctx, tx, snapshot.PersonID, string(ProvenanceUser))
+			if err := s.appendManualPersonFactEmploymentPinTx(
+				ctx, tx, snapshot.PersonID, string(ProvenanceUser)); err != nil {
+				return err
+			}
+			return s.publishPersonIdentityEnrichmentTx(ctx, tx, snapshot.PersonID)
 		})
 		if err != nil {
 			return nil, err
@@ -226,8 +232,11 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if err != nil {
 			return fmt.Errorf("promote employment %d: %w", id, err)
 		}
-		return s.appendManualPersonFactEmploymentPinTx(
-			ctx, tx, current.PersonID, string(ProvenanceUser))
+		if err := s.appendManualPersonFactEmploymentPinTx(
+			ctx, tx, current.PersonID, string(ProvenanceUser)); err != nil {
+			return err
+		}
+		return s.publishPersonIdentityEnrichmentTx(ctx, tx, current.PersonID)
 	})
 	if err != nil {
 		return nil, err
@@ -263,8 +272,11 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 		if err != nil {
 			return fmt.Errorf("delete employment %d: %w", id, err)
 		}
-		return s.appendManualPersonFactEmploymentPinTx(
-			ctx, tx, snapshot.PersonID, string(ProvenanceUser))
+		if err := s.appendManualPersonFactEmploymentPinTx(
+			ctx, tx, snapshot.PersonID, string(ProvenanceUser)); err != nil {
+			return err
+		}
+		return s.publishPersonIdentityEnrichmentTx(ctx, tx, snapshot.PersonID)
 	})
 }
 
@@ -579,18 +591,22 @@ func (s *Store) verifyEmploymentReferencesTx(ctx context.Context, tx *loggedTx, 
 
 // claimEmploymentPeopleTx is the gate for public employment mutations. It
 // locks each affected person in ascending ID order so two writes over the same
-// pair cannot deadlock, and bumps their vCard projection revision: a person's
-// snapshot carries their employments and each employer's full profile, so any
-// employment write changes their projection. Automatic fact projection uses
-// lockEmploymentPeopleTx directly because the outer fact transaction owns its
-// single vCard bump.
+// pair cannot deadlock, then advances both generations owned by a public
+// employment mutation. The vCard projection changes because the snapshot
+// carries employments; the person record revision fences enrichment attempts
+// built from the old current-company identity. Automatic fact projection uses
+// lockEmploymentPeopleTx directly because its outer transaction owns its
+// projection bump and must not invalidate the attempt applying those facts.
 func (s *Store) claimEmploymentPeopleTx(
 	ctx context.Context, tx *loggedTx, personIDs ...int64,
 ) error {
 	if err := s.lockEmploymentPeopleTx(ctx, tx, personIDs...); err != nil {
 		return err
 	}
-	return s.bumpPersonVCardProjectionsTx(ctx, tx, personIDs...)
+	if err := s.bumpPersonVCardProjectionsTx(ctx, tx, personIDs...); err != nil {
+		return err
+	}
+	return s.bumpAuthorizedPersonEnrichmentRevisionsTx(ctx, tx, personIDs...)
 }
 
 func (s *Store) lockEmploymentPeopleTx(

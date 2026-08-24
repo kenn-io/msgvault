@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -434,6 +435,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
+	if err := registerPersonEnrichmentJob(
+		ctx, sched, s, cfg.People.Enrichment); err != nil {
+		return fmt.Errorf("schedule person enrichment: %w", err)
+	}
 
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
 		logger.Warn("beeper is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
@@ -548,10 +553,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		},
 	}).WithLogger(logger)
 	storeAdapter := &storeAPIAdapter{
-		store:                 s,
-		attachmentMaintenance: attachmentMaint,
-		meetingImporter:       meetingImporter,
-		analyticsDir:          cfg.AnalyticsDir(),
+		store:                  s,
+		attachmentMaintenance:  attachmentMaint,
+		meetingImporter:        meetingImporter,
+		analyticsDir:           cfg.AnalyticsDir(),
+		personEnrichmentConfig: cfg.People.Enrichment,
+		lookupEnv:              os.LookupEnv,
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
@@ -1130,7 +1137,9 @@ type storeAPIAdapter struct {
 	meetingImporter       *meetingimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
-	analyticsDir string
+	analyticsDir           string
+	personEnrichmentConfig personenrichment.Config
+	lookupEnv              personenrichment.CredentialLookup
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -2180,7 +2189,167 @@ func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
 }
 
 func (a *storeAPIAdapter) DeletePersonContext(ctx context.Context, id, expectedRevision int64) error {
-	return a.store.DeletePersonContext(ctx, id, expectedRevision)
+	if !a.personEnrichmentConfig.Enabled {
+		return a.store.DeletePersonContext(ctx, id, expectedRevision)
+	}
+	lookup := a.lookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	key, ok := lookup(a.personEnrichmentConfig.SuppressionKeyEnv)
+	if !ok || key == "" {
+		return fmt.Errorf("person enrichment suppression key environment %q is not set",
+			a.personEnrichmentConfig.SuppressionKeyEnv)
+	}
+	keyBytes := []byte(key)
+	hasher, err := personenrichment.NewSuppressionHasher(keyBytes)
+	clear(keyBytes)
+	if err != nil {
+		return fmt.Errorf("load person enrichment suppression key for deletion: %w", err)
+	}
+	configuredKeyID, err := hasher.KeyID()
+	if err != nil {
+		return fmt.Errorf("load person enrichment suppression key ID for deletion: %w", err)
+	}
+	keyIDs, err := a.store.ListPersonEnrichmentSuppressionKeyIDsContext(ctx)
+	if err != nil {
+		return fmt.Errorf("load person enrichment suppression key state for deletion: %w", err)
+	}
+	for _, keyID := range keyIDs {
+		if keyID != configuredKeyID {
+			return personenrichment.ErrSuppressionKeyMismatch
+		}
+	}
+	current, err := a.personEnrichmentDeletionDigests(ctx, id, hasher)
+	if err != nil {
+		return err
+	}
+	return a.store.DeletePersonWithEnrichmentSuppressionsContext(ctx,
+		store.DeletePersonEnrichmentInput{
+			PersonID: id, ExpectedRevision: expectedRevision, Actor: "api",
+			Reason: store.PersonEnrichmentSuppressionDeletion, ConfiguredKeyID: configuredKeyID,
+			CurrentIdentifiers: current,
+		})
+}
+
+func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
+	ctx context.Context,
+	personID int64,
+	hasher *personenrichment.SuppressionHasher,
+) ([]store.PersonEnrichmentSuppressionInput, error) {
+	person, err := a.store.GetPersonContext(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
+	input, err := a.store.LoadRequestInput(ctx, personenrichment.WorkLease{PersonID: person.ID})
+	if err != nil {
+		return nil, fmt.Errorf("load current person enrichment identifiers for deletion: %w", err)
+	}
+	defer func() {
+		clearPersonEnrichmentCandidates(input.Names)
+		clearPersonEnrichmentCandidates(input.CurrentCompanies)
+		clearPersonEnrichmentCandidates(input.Emails)
+		clearPersonEnrichmentCandidates(input.Phones)
+		clearPersonEnrichmentCandidates(input.PublicProfileURLs)
+	}()
+	rows, err := a.store.DB().QueryContext(ctx, `
+		SELECT provider_namespace FROM person_enrichment_profiles
+		GROUP BY provider_namespace ORDER BY provider_namespace`)
+	if err != nil {
+		return nil, fmt.Errorf("list persisted person enrichment namespaces for deletion: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	namespaces := make([]string, 0)
+	for rows.Next() {
+		var namespace string
+		if err := rows.Scan(&namespace); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("read persisted person enrichment namespace for deletion: %w", err)
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close persisted person enrichment namespaces for deletion: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate persisted person enrichment namespaces for deletion: %w", err)
+	}
+
+	digests := make([]store.PersonEnrichmentSuppressionInput, 0)
+	seen := make(map[string]struct{})
+	appendDigest := func(namespace string, class personenrichment.SuppressionIdentifierClass, values ...string) error {
+		normalized, normalizeErr := personenrichment.NormalizeSuppressionIdentifier(class, values)
+		for i := range values {
+			values[i] = ""
+		}
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+		digest := hasher.Digest(namespace, normalized.Class, normalized.NormalizationVersion, normalized.Value)
+		normalized.Value = ""
+		key := digest.ProviderNamespace + "\x00" + string(digest.IdentifierClass) + "\x00" +
+			digest.NormalizationVersion + "\x00" + digest.KeyID + "\x00" + string(digest.Digest)
+		if _, exists := seen[key]; exists {
+			return nil
+		}
+		seen[key] = struct{}{}
+		digests = append(digests, store.PersonEnrichmentSuppressionInput{
+			ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+			NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID,
+			Digest: digest.Digest,
+		})
+		return nil
+	}
+	for _, namespace := range namespaces {
+		for i := range input.Emails {
+			if err := appendDigest(namespace, personenrichment.SuppressionEmail, input.Emails[i].Value); err != nil {
+				return nil, fmt.Errorf("normalize current email for deletion: %w", err)
+			}
+		}
+		for i := range input.Phones {
+			if err := appendDigest(namespace, personenrichment.SuppressionPhone, input.Phones[i].Value); err != nil {
+				return nil, fmt.Errorf("normalize current phone for deletion: %w", err)
+			}
+		}
+		for i := range input.PublicProfileURLs {
+			if err := appendDigest(namespace, personenrichment.SuppressionPublicProfileURL,
+				input.PublicProfileURLs[i].Value); err != nil {
+				return nil, fmt.Errorf("normalize current public profile URL for deletion: %w", err)
+			}
+		}
+		for i := range input.Names {
+			for j := range input.CurrentCompanies {
+				if err := appendDigest(namespace, personenrichment.SuppressionNameCompany,
+					input.Names[i].Value, input.CurrentCompanies[j].Value); err != nil {
+					return nil, fmt.Errorf("normalize current name-company identity for deletion: %w", err)
+				}
+			}
+		}
+		providerIDs, loadErr := a.store.LoadProviderPersonIDs(ctx, personID, namespace)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		for i := range providerIDs {
+			if err := appendDigest(namespace, personenrichment.SuppressionProviderPersonID, providerIDs[i]); err != nil {
+				clearPersonEnrichmentStrings(providerIDs)
+				return nil, fmt.Errorf("normalize stored provider identity for deletion: %w", err)
+			}
+		}
+		clearPersonEnrichmentStrings(providerIDs)
+	}
+	return digests, nil
+}
+
+func clearPersonEnrichmentCandidates(values []personenrichment.IdentityCandidate) {
+	for i := range values {
+		values[i].Value = ""
+	}
+}
+
+func clearPersonEnrichmentStrings(values []string) {
+	for i := range values {
+		values[i] = ""
+	}
 }
 
 func (a *storeAPIAdapter) PersonForParticipantsContext(
@@ -2563,6 +2732,181 @@ func (a *storeAPIAdapter) CountSyncRunItems(syncRunID int64, status string) (int
 
 func (a *storeAPIAdapter) ListSyncRunItems(syncRunID int64, status string, limit int) ([]store.SyncRunItem, error) {
 	return a.store.ListSyncRunItems(syncRunID, status, limit)
+}
+
+const personEnrichmentJob = "person-enrichment"
+
+type personEnrichmentScheduleWorker interface {
+	RunOnce(ctx context.Context, runID int64) (bool, error)
+}
+
+// personEnrichmentSchedule owns only wake-up ordering. Runs, attempts, retry
+// times, provider jobs, and spend remain database-owned.
+type personEnrichmentSchedule struct {
+	Store        *store.Store
+	Worker       personEnrichmentScheduleWorker
+	CatchUpLimit int
+}
+
+func (r *personEnrichmentSchedule) Wake(ctx context.Context, occurrence time.Time) error {
+	if r == nil || r.Store == nil || r.Worker == nil || occurrence.IsZero() ||
+		r.CatchUpLimit < 1 || r.CatchUpLimit > 200 {
+		return errors.New("person enrichment schedule is invalid")
+	}
+	runs := make([]personenrichment.DurableRun, 0)
+	var afterID int64
+	var afterRequestedAt time.Time
+	for {
+		page, err := r.Store.ListRunningRuns(ctx, personenrichment.RunningRunFilter{
+			AfterRequestedAt: afterRequestedAt, AfterID: afterID, Limit: 200,
+		})
+		if err != nil {
+			return fmt.Errorf("list running person enrichment runs: %w", err)
+		}
+		runs = append(runs, page...)
+		if len(page) < 200 {
+			break
+		}
+		afterID = page[len(page)-1].ID
+		afterRequestedAt = page[len(page)-1].RequestedAt
+	}
+	for _, run := range runs {
+		if err := r.drainRun(ctx, run.ID); err != nil {
+			return err
+		}
+	}
+
+	requestedAt := occurrence.UTC().Truncate(time.Minute)
+	run, _, err := r.Store.StartRun(ctx, personenrichment.RunStart{
+		Kind: "scheduled", RequestedBy: canonicalPersonEnrichmentOccurrence(requestedAt),
+		RequestedAt: requestedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("start scheduled person enrichment run: %w", err)
+	}
+	if run.State != "running" {
+		return nil
+	}
+	for {
+		count, err := r.Store.EnqueueDuePersonEnrichmentContext(
+			ctx, requestedAt, r.CatchUpLimit)
+		if err != nil {
+			return fmt.Errorf("catch up person enrichment work: %w", err)
+		}
+		if count < r.CatchUpLimit {
+			break
+		}
+	}
+	return r.drainRun(ctx, run.ID)
+}
+
+func (r *personEnrichmentSchedule) drainRun(ctx context.Context, runID int64) error {
+	for {
+		processed, err := r.Worker.RunOnce(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("run person enrichment work for run %d: %w", runID, err)
+		}
+		if !processed {
+			break
+		}
+	}
+	err := r.Store.CompleteRun(ctx, runID, personenrichment.RunCompletion{
+		State: "", CompletedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrRunNotTerminal) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("complete person enrichment run %d: %w", runID, err)
+	}
+	return nil
+}
+
+func canonicalPersonEnrichmentOccurrence(occurrence time.Time) string {
+	return occurrence.UTC().Truncate(time.Minute).Format(time.RFC3339)
+}
+
+func registerPersonEnrichmentJob(
+	ctx context.Context,
+	sched *scheduler.Scheduler,
+	st *store.Store,
+	enrichmentConfig personenrichment.Config,
+) error {
+	if !enrichmentConfig.Enabled {
+		return nil
+	}
+	if sched == nil || st == nil {
+		return errors.New("person enrichment schedule requires scheduler and store")
+	}
+	if err := enrichmentConfig.Validate(); err != nil {
+		return err
+	}
+	suppressionKey, ok := os.LookupEnv(enrichmentConfig.SuppressionKeyEnv)
+	if !ok || suppressionKey == "" {
+		return fmt.Errorf("person enrichment suppression key environment %q is not set",
+			enrichmentConfig.SuppressionKeyEnv)
+	}
+	hasher, err := personenrichment.NewSuppressionHasher([]byte(suppressionKey))
+	if err != nil {
+		return fmt.Errorf("load person enrichment suppression key: %w", err)
+	}
+	catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
+	if err != nil {
+		return fmt.Errorf("build person enrichment target catalog: %w", err)
+	}
+	factories := make(map[string]personenrichment.ProviderFactory)
+	providerConfigs := make(map[string]personenrichment.ProviderConfig)
+	for _, configured := range enrichmentConfig.Providers {
+		provider := configured
+		if !provider.Enabled {
+			continue
+		}
+		profile, err := provider.Profile(catalog)
+		if err != nil {
+			return fmt.Errorf("build person enrichment profile %q: %w", provider.Name, err)
+		}
+		if _, err := st.EnsurePersonEnrichmentProfile(ctx, profile); err != nil {
+			return fmt.Errorf("ensure person enrichment profile %q: %w", provider.Name, err)
+		}
+		providerConfigs[provider.Name] = provider
+		switch provider.Kind {
+		case personenrichment.ProviderExa:
+			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
+				return personenrichment.NewExaProvider(config, credential, http.DefaultClient)
+			}
+		case personenrichment.ProviderSixtyfour:
+			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
+				return personenrichment.NewSixtyfourProvider(config, credential, http.DefaultClient)
+			}
+		default:
+			return fmt.Errorf("unsupported person enrichment provider kind %q", provider.Kind)
+		}
+	}
+	if len(factories) == 0 {
+		return errors.New("person enrichment has no structurally valid enabled provider")
+	}
+	gate, err := personenrichment.NewEgressGate(st, st, hasher, os.LookupEnv)
+	if err != nil {
+		return fmt.Errorf("configure person enrichment egress: %w", err)
+	}
+	worker, err := personenrichment.NewWorker(st, st, *gate, factories, personenrichment.WorkerOptions{
+		Owner: "daemon-person-enrichment", LeaseDuration: enrichmentConfig.LeaseDuration,
+		RenewEvery: enrichmentConfig.LeaseDuration / 4, Clock: time.Now,
+		Jitter:          func(delay time.Duration) time.Duration { return delay },
+		ProviderConfigs: providerConfigs,
+	})
+	if err != nil {
+		return fmt.Errorf("configure person enrichment worker: %w", err)
+	}
+	runner := &personEnrichmentSchedule{
+		Store: st, Worker: worker, CatchUpLimit: min(enrichmentConfig.BatchSize, 200),
+	}
+	return sched.AddJob(scheduler.Job{
+		Name: personEnrichmentJob, Schedule: enrichmentConfig.Schedule,
+		Run: func(ctx context.Context) error {
+			return runner.Wake(ctx, time.Now())
+		},
+	})
 }
 
 // schedulerAdapter adapts scheduler.Scheduler to api.SyncScheduler.

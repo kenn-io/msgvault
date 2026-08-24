@@ -148,21 +148,57 @@ func prepareClaim(
 			}
 			continue
 		}
-		if validationErr := validateEvidenceInput(evidence); validationErr != nil {
-			if prepared.Failure == nil {
-				prepared.Failure = evidenceFailure(validationErr)
-			}
-			continue
-		}
 		evidence.EventTime = portableFactTime(evidence.EventTime)
 		evidence.RecordedTime = portableFactTime(evidence.RecordedTime)
+		alignExternal := aligner != nil &&
+			(evidence.SourceClass == EvidencePublic || evidence.SourceClass == EvidenceProviderAssertion)
+		if alignExternal {
+			result, alignErr := aligner.Align(ctx, copyEvidenceInput(evidence))
+			if alignErr != nil {
+				return PreparedClaim{}, fmt.Errorf("align evidence %q: %w", evidence.SourceRef, alignErr)
+			}
+			if !result.Accepted {
+				failure := result.Failure
+				if failure == nil {
+					failure = &ValidationFailure{
+						Action: DecisionInvalid, Reason: ReasonUnalignedEvidence,
+						Detail: "external evidence could not be aligned",
+					}
+				}
+				if !validValidationFailure(failure) {
+					return PreparedClaim{}, errors.New("aligner returned a failure outside the closed vocabulary")
+				}
+				if prepared.Failure == nil {
+					prepared.Failure = copyValidationFailure(failure)
+				}
+				continue
+			}
+			if result.Failure != nil {
+				return PreparedClaim{}, errors.New("accepted alignment result must not contain a failure")
+			}
+			evidence.SourceVersion = result.SourceVersion
+			evidence.ContentSHA256 = result.ContentSHA256
+			if validationErr := validateEvidenceInput(evidence); validationErr != nil {
+				if prepared.Failure == nil {
+					prepared.Failure = evidenceFailure(validationErr)
+				}
+				continue
+			}
+		} else {
+			if validationErr := validateEvidenceInput(evidence); validationErr != nil {
+				if prepared.Failure == nil {
+					prepared.Failure = evidenceFailure(validationErr)
+				}
+				continue
+			}
+		}
 		if evidence.SourceClass == EvidenceArchive {
 			if aligner == nil {
 				return PreparedClaim{}, errors.New("archive evidence aligner is required")
 			}
 			result, alignErr := aligner.Align(ctx, copyEvidenceInput(evidence))
 			if alignErr != nil {
-				return PreparedClaim{}, fmt.Errorf("align archive evidence %q: %w", evidence.SourceRef, alignErr)
+				return PreparedClaim{}, fmt.Errorf("align evidence %q: %w", evidence.SourceRef, alignErr)
 			}
 			if !result.Accepted {
 				failure := result.Failure

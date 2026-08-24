@@ -375,6 +375,233 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_person_inference_consents_active
     ON person_inference_consents(profile_fingerprint)
     WHERE revoked_at IS NULL;
 
+-- External person enrichment is a distinct egress purpose. Each immutable
+-- runtime policy requires its own exact grant; inference consent cannot
+-- authorize it even if a fingerprint were ever to coincide.
+CREATE TABLE IF NOT EXISTS person_enrichment_profiles (
+    fingerprint       TEXT PRIMARY KEY,
+    provider_name     TEXT NOT NULL,
+    provider_kind     TEXT NOT NULL CHECK (provider_kind IN ('exa', 'sixtyfour')),
+    provider_namespace TEXT NOT NULL,
+    endpoint          TEXT NOT NULL,
+    api_key_env       TEXT NOT NULL,
+    policy_json       JSON NOT NULL,
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_consents (
+    id                  INTEGER PRIMARY KEY,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    granted_by          TEXT NOT NULL,
+    granted_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by          TEXT,
+    revoked_at          DATETIME,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_enrichment_consents_active
+    ON person_enrichment_consents(profile_fingerprint)
+    WHERE revoked_at IS NULL;
+
+-- Suppressions outlive curated people and contain only provider-scoped keyed
+-- digests. They intentionally have no person FK or recoverable identifier.
+CREATE TABLE IF NOT EXISTS person_enrichment_suppressions (
+    id                    INTEGER PRIMARY KEY,
+    provider_namespace    TEXT NOT NULL,
+    identifier_class      TEXT NOT NULL CHECK (identifier_class IN ('email', 'phone', 'public_profile_url', 'provider_person_id', 'name_company')),
+    normalization_version TEXT NOT NULL,
+    key_id                 TEXT NOT NULL,
+    digest                 BLOB NOT NULL,
+    reason                 TEXT NOT NULL CHECK (reason IN ('deletion', 'opt_out', 'data_subject_request')),
+    actor                  TEXT NOT NULL,
+    created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (provider_namespace, identifier_class, normalization_version, key_id, digest)
+);
+
+-- Runs are idempotent spend scopes. Scheduled requested_by values are
+-- canonical UTC occurrences; manual values are caller-supplied idempotency
+-- keys.
+CREATE TABLE IF NOT EXISTS person_enrichment_runs (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('scheduled', 'manual')),
+    requested_by TEXT NOT NULL,
+    requested_at DATETIME NOT NULL,
+    started_at DATETIME,
+    completed_at DATETIME,
+    state TEXT NOT NULL CHECK(state IN ('queued', 'running', 'succeeded', 'partial', 'failed')),
+    requested_count INTEGER NOT NULL DEFAULT 0 CHECK(requested_count >= 0),
+    started_count INTEGER NOT NULL DEFAULT 0 CHECK(started_count >= 0),
+    succeeded_count INTEGER NOT NULL DEFAULT 0 CHECK(succeeded_count >= 0),
+    failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count >= 0),
+    suppressed_count INTEGER NOT NULL DEFAULT 0 CHECK(suppressed_count >= 0),
+    identity_rejected_count INTEGER NOT NULL DEFAULT 0 CHECK(identity_rejected_count >= 0),
+    failure_class TEXT,
+    safe_error TEXT,
+    UNIQUE(kind, requested_by)
+);
+
+-- Manual idempotency keys are immutably bound to one target. person_id is
+-- deliberately not an FK so deleting a person does not erase or block the
+-- historical idempotency scope.
+CREATE TABLE IF NOT EXISTS person_enrichment_manual_run_targets (
+    run_id INTEGER PRIMARY KEY REFERENCES person_enrichment_runs(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL CHECK(person_id > 0),
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- SQLite accepts this deferred forward reference to attempts. The nullable,
+-- unique pointer is the only authority for which attempt a restart resumes.
+CREATE TABLE IF NOT EXISTS person_enrichment_work (
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    trigger_mask INTEGER NOT NULL CHECK(trigger_mask > 0),
+    trigger_generation TEXT NOT NULL,
+    due_at DATETIME NOT NULL,
+    lease_owner TEXT,
+    lease_fence INTEGER NOT NULL DEFAULT 0 CHECK(lease_fence >= 0),
+    lease_until DATETIME,
+    run_id INTEGER REFERENCES person_enrichment_runs(id) ON DELETE RESTRICT,
+    active_attempt_id INTEGER UNIQUE REFERENCES person_enrichment_attempts(id) DEFERRABLE INITIALLY DEFERRED,
+    has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY(person_id, profile_fingerprint),
+    CHECK ((lease_owner IS NULL) = (lease_until IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_attempts (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES person_enrichment_runs(id) ON DELETE RESTRICT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('tracked', 'identity', 'claim_expiry', 'refresh', 'manual')),
+    trigger_generation TEXT NOT NULL,
+    person_revision INTEGER NOT NULL CHECK(person_revision >= 0),
+    payload_hash TEXT NOT NULL,
+    request_hash TEXT NOT NULL UNIQUE,
+    fact_generation_key TEXT,
+    state TEXT NOT NULL CHECK(state IN ('queued', 'starting', 'pending', 'retry_wait', 'succeeded', 'terminal', 'suppressed', 'identity_rejected', 'uncertain_start')),
+    provider_request_id TEXT,
+    provider_job_id TEXT,
+    adapter_version TEXT,
+    schema_version TEXT,
+    generated_schema INTEGER NOT NULL DEFAULT 0 CHECK(generated_schema IN (0, 1)),
+    generated_schema_hash TEXT,
+    targets_json TEXT,
+    program_fingerprint TEXT,
+    provider_started_at DATETIME,
+    lease_owner TEXT,
+    lease_fence INTEGER NOT NULL CHECK(lease_fence >= 0),
+    lease_until DATETIME,
+    next_action_at DATETIME,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    hard_cost_cap_enforced INTEGER NOT NULL CHECK(hard_cost_cap_enforced IN (0, 1)),
+    reserved_cost_usd_micros INTEGER NOT NULL CHECK(reserved_cost_usd_micros >= 0),
+    actual_cost_usd_micros INTEGER CHECK(actual_cost_usd_micros >= 0),
+    failure_class TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME,
+    CHECK ((generated_schema = 1 AND generated_schema_hash IS NOT NULL) OR
+           (generated_schema = 0 AND generated_schema_hash IS NULL))
+);
+
+-- Returned suppression identifiers retain only the sealed keyed digest
+-- manifest produced before the store boundary. Raw and normalized values are
+-- intentionally unrepresentable here.
+CREATE TABLE IF NOT EXISTS person_enrichment_attempt_identifiers (
+    attempt_id INTEGER NOT NULL REFERENCES person_enrichment_attempts(id) ON DELETE CASCADE,
+    provider_namespace TEXT NOT NULL,
+    identifier_class TEXT NOT NULL CHECK(identifier_class IN ('email', 'phone', 'public_profile_url', 'provider_person_id', 'name_company')),
+    normalization_version TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    digest BLOB NOT NULL,
+    PRIMARY KEY(attempt_id, provider_namespace, identifier_class, normalization_version, key_id, digest)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_provider_identities (
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    provider_namespace TEXT NOT NULL,
+    provider_person_id TEXT NOT NULL,
+    confidence INTEGER NOT NULL CHECK(confidence >= 0 AND confidence <= 1000),
+    verified_at DATETIME NOT NULL,
+    PRIMARY KEY(person_id, provider_namespace, provider_person_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_enrichment_provider_identity_unique
+    ON person_enrichment_provider_identities(provider_namespace, provider_person_id);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_citations (
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    citation_key TEXT NOT NULL,
+    canonical_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    publisher TEXT NOT NULL,
+    excerpt TEXT NOT NULL,
+    published_at DATETIME,
+    retrieved_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(person_id, citation_key)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_attempt_citations (
+    attempt_id INTEGER NOT NULL REFERENCES person_enrichment_attempts(id) ON DELETE CASCADE,
+    citation_id INTEGER NOT NULL REFERENCES person_enrichment_citations(id) ON DELETE CASCADE,
+    PRIMARY KEY(attempt_id, citation_id)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_attempt_sources (
+    attempt_id INTEGER NOT NULL REFERENCES person_enrichment_attempts(id) ON DELETE CASCADE,
+    canonical_url TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('cited', 'visited', 'failed', 'blocked', 'unsupported')),
+    observed_at DATETIME NOT NULL,
+    PRIMARY KEY(attempt_id, canonical_url, outcome)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_run_counters (
+    run_id INTEGER PRIMARY KEY REFERENCES person_enrichment_runs(id) ON DELETE CASCADE,
+    requests_started INTEGER NOT NULL DEFAULT 0 CHECK(requests_started >= 0),
+    cost_reserved_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_reserved_usd_micros >= 0),
+    cost_charged_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_charged_usd_micros >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_person_day_counters (
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    utc_day TEXT NOT NULL,
+    requests_started INTEGER NOT NULL DEFAULT 0 CHECK(requests_started >= 0),
+    cost_reserved_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_reserved_usd_micros >= 0),
+    cost_charged_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_charged_usd_micros >= 0),
+    PRIMARY KEY(person_id, profile_fingerprint, utc_day)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_day_counters (
+    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
+    utc_day TEXT NOT NULL,
+    requests_started INTEGER NOT NULL DEFAULT 0 CHECK(requests_started >= 0),
+    cost_reserved_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_reserved_usd_micros >= 0),
+    cost_charged_usd_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_charged_usd_micros >= 0),
+    PRIMARY KEY(profile_fingerprint, utc_day)
+);
+
+CREATE TABLE IF NOT EXISTS person_enrichment_profile_accounting (
+    profile_fingerprint TEXT PRIMARY KEY REFERENCES person_enrichment_profiles(fingerprint),
+    starts_disabled INTEGER NOT NULL DEFAULT 0 CHECK(starts_disabled IN (0, 1)),
+    safe_error TEXT,
+    disabled_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS person_enrichment_work_due
+    ON person_enrichment_work(profile_fingerprint, due_at);
+CREATE INDEX IF NOT EXISTS person_enrichment_work_lease
+    ON person_enrichment_work(run_id, lease_until);
+CREATE INDEX IF NOT EXISTS person_enrichment_attempts_next_action
+    ON person_enrichment_attempts(state, next_action_at);
+CREATE INDEX IF NOT EXISTS person_enrichment_attempts_person_created
+    ON person_enrichment_attempts(person_id, created_at);
+CREATE INDEX IF NOT EXISTS person_enrichment_attempts_run_state
+    ON person_enrichment_attempts(run_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS person_enrichment_attempts_provider_job
+    ON person_enrichment_attempts(profile_fingerprint, provider_job_id)
+    WHERE provider_job_id IS NOT NULL;
+
 -- Curated-person semantic embedding is a distinct outbound-data purpose from
 -- people-sweep inference. Separate profile and grant tables make cross-purpose
 -- authorization impossible even if two policies happened to hash alike.

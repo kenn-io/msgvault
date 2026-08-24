@@ -47,11 +47,6 @@ var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // future evidence pack. It never identifies raw attachment or media bytes.
 type SourceClass string
 
-// PeopleConfig groups configuration for durable people.
-type PeopleConfig struct {
-	Sweep Config `toml:"sweep"`
-}
-
 // Config controls the model-backed people sweep. Disabled is the safe default.
 //
 //nolint:recvcheck // ApplyDefaults mutates while validation and profile construction do not.

@@ -50,6 +50,17 @@ password = "must-not-live-here"
 	assert.NotContains(t, err.Error(), "must-not-live-here")
 }
 
+func TestConfigPeopleDefaultsKeepBothSubsystemsDisabled(t *testing.T) {
+	checks := assert.New(t)
+	cfg := NewDefaultConfig()
+	checks.False(cfg.People.Sweep.Enabled)
+	checks.False(cfg.People.Enrichment.Enabled)
+	checks.Equal("*/15 * * * *", cfg.People.Enrichment.Schedule)
+	checks.Equal(25, cfg.People.Enrichment.BatchSize)
+	checks.Equal(5*time.Minute, cfg.People.Enrichment.LeaseDuration)
+	checks.Empty(cfg.People.Enrichment.Providers)
+}
+
 func TestServerConfigDefaults(t *testing.T) {
 	// Create a temp dir without a config file
 	tmpDir := t.TempDir()

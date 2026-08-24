@@ -132,6 +132,38 @@ func TestEvidenceAlignmentBindsImmutableSourceVersion(t *testing.T) {
 	assert.Equal([]string{wantKey}, claims[0].EvidenceKeys)
 }
 
+func TestPreparePersonFactGenerationAlignsExternalEvidenceWhenAlignerIsSupplied(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	public := validArchiveEvidence()
+	public.SourceClass = EvidencePublic
+	public.SourceRef = "citation-key"
+	public.SourceURL = "https://example.com/profile"
+	public.SpanStart = nil
+	public.SpanEnd = nil
+	public.SourceVersion = "submitted-version"
+	public.ContentSHA256 = ""
+	input := validGenerationInput()
+	input.Claims = []ProposedClaim{validClaim(public)}
+	called := 0
+	prepared, err := PreparePersonFactGeneration(t.Context(), input,
+		evidenceAlignerFunc(func(_ context.Context, got EvidenceInput) (AlignmentResult, error) {
+			called++
+			assert.Equal("citation-key", got.SourceRef)
+			return AlignmentResult{
+				Accepted: true, SourceVersion: "citation-version-v1",
+				ContentSHA256: strings.Repeat("c", 64),
+			}, nil
+		}))
+	require.NoError(err)
+	assert.Equal(1, called)
+	claims := prepared.Claims()
+	require.Len(claims, 1)
+	require.Len(claims[0].Evidence, 1)
+	assert.Equal("citation-version-v1", claims[0].Evidence[0].SourceVersion)
+	assert.Equal(strings.Repeat("c", 64), claims[0].Evidence[0].ContentSHA256)
+}
+
 func TestEvidenceSubjectIsCanonicalPersonID(t *testing.T) {
 	tests := []struct {
 		name    string

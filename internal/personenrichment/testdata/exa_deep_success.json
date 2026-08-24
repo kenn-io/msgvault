@@ -1,0 +1,55 @@
+{
+  "requestId": "request_test_deep_42",
+  "results": [
+    {
+      "title": "Synthetic public profile",
+      "url": "https://sources.example.test/test-user",
+      "publishedDate": "2026-08-21T11:00:00Z"
+    }
+  ],
+  "output": {
+    "content": {
+      "attribute:summary": "Synthetic profile summary",
+      "system:employment": [
+        {
+          "organization": {
+            "name": "Example Labs"
+          },
+          "title": "Engineer",
+          "location": "Test City",
+          "start_date": {
+            "year": 2022,
+            "month": 1,
+            "day": 1
+          }
+        }
+      ]
+    },
+    "grounding": [
+      {
+        "field": "attribute:summary",
+        "citations": [
+          {
+            "url": "https://sources.example.test/test-user",
+            "title": "Synthetic public profile"
+          }
+        ],
+        "confidence": "high"
+      },
+      {
+        "field": "system:employment",
+        "citations": [
+          {
+            "url": "https://sources.example.test/test-user/work",
+            "title": "Synthetic work history"
+          }
+        ],
+        "confidence": "medium"
+      }
+    ]
+  },
+  "searchTime": 0.75,
+  "costDollars": {
+    "total": 0.012
+  }
+}

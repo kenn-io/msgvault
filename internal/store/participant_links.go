@@ -622,7 +622,12 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			return err
 		}
 		affectedMembers := sortedComponentMembers(lo, edges)
-		affectedPeople, err := s.trackedPersonIDsForParticipantsTx(
+		affectedPeople, err := personIDsForParticipantsTx(
+			context.Background(), tx, affectedMembers)
+		if err != nil {
+			return err
+		}
+		trackedPeople, err := s.trackedPersonIDsForParticipantsTx(
 			context.Background(), tx, affectedMembers)
 		if err != nil {
 			return err
@@ -650,9 +655,13 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 		if err != nil {
 			return err
 		}
-		return s.publishPersonIdentityScopeChangesTx(
-			context.Background(), tx, affectedPeople,
-			peoplesweep.EvidenceEffectIdentityReassigned)
+		if err := s.publishPersonIdentityScopeChangesTx(
+			context.Background(), tx, trackedPeople,
+			peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+			return err
+		}
+		return s.invalidatePersonEnrichmentIdentitiesTx(
+			context.Background(), tx, affectedPeople...)
 	})
 	return revision, err
 }

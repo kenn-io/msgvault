@@ -1386,6 +1386,145 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 	}
 }
 
+func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipantContext(ctx, 2)
+	require.NoError(err)
+
+	fingerprint := strings.Repeat("a", 64)
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	tx, err := source.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO person_enrichment_profiles
+			(fingerprint, provider_name, provider_kind, provider_namespace,
+			 endpoint, api_key_env, policy_json)
+		 VALUES (?, 'subset-provider', 'exa', 'https://provider.example.test',
+			 'https://provider.example.test/search', 'SUBSET_PROVIDER_KEY', '{}')`, []any{fingerprint}},
+		{`INSERT INTO person_enrichment_consents
+			(profile_fingerprint, granted_by) VALUES (?, 'subset-test')`, []any{fingerprint}},
+		{`INSERT INTO person_enrichment_suppressions
+			(provider_namespace, identifier_class, normalization_version, key_id,
+			 digest, reason, actor)
+		 VALUES ('https://provider.example.test', 'email', 'email-v1',
+			 'subset-key', ?, 'opt_out', 'subset-test')`, []any{[]byte("synthetic-suppression-digest")}},
+		{`INSERT INTO person_enrichment_runs
+			(id, kind, requested_by, requested_at, started_at, state)
+		 VALUES (1, 'manual', 'subset-run', ?, ?, 'running')`, []any{now, now}},
+		{`INSERT INTO person_enrichment_manual_run_targets
+			(run_id, person_id, profile_fingerprint) VALUES (1, ?, ?)`, []any{person.ID, fingerprint}},
+		{`INSERT INTO person_enrichment_work
+			(person_id, profile_fingerprint, trigger_mask, trigger_generation,
+			 due_at, lease_owner, lease_fence, lease_until, run_id)
+		 VALUES (?, ?, 16, 'manual:subset-run', ?, 'subset-worker', 1, ?, 1)`,
+			[]any{person.ID, fingerprint, now, now.Add(time.Minute)}},
+		{`INSERT INTO person_enrichment_attempts
+			(id, run_id, person_id, profile_fingerprint, trigger_kind,
+			 trigger_generation, person_revision, payload_hash, request_hash,
+			 state, provider_job_id, adapter_version, schema_version,
+			 program_fingerprint, lease_owner, lease_fence, lease_until,
+			 next_action_at, hard_cost_cap_enforced, reserved_cost_usd_micros)
+		 VALUES (1, 1, ?, ?, 'manual', 'manual:subset-run', ?, ?, ?,
+			 'pending', 'subset-job', 'subset-adapter-v1', 'subset-wire-v1', ?,
+			 'subset-worker', 1, ?, ?, 1, 700)`, []any{
+			person.ID, fingerprint, person.Revision, strings.Repeat("b", 64),
+			strings.Repeat("c", 64), strings.Repeat("d", 64),
+			now.Add(time.Minute), now.Add(time.Minute),
+		}},
+		{`UPDATE person_enrichment_work SET active_attempt_id = 1
+		 WHERE person_id = ? AND profile_fingerprint = ?`, []any{person.ID, fingerprint}},
+		{`INSERT INTO person_enrichment_attempt_identifiers
+			(attempt_id, provider_namespace, identifier_class,
+			 normalization_version, key_id, digest)
+		 VALUES (1, 'https://provider.example.test', 'email', 'email-v1',
+			 'subset-key', ?)`, []any{[]byte("synthetic-attempt-digest")}},
+		{`INSERT INTO person_enrichment_provider_identities
+			(person_id, provider_namespace, provider_person_id, confidence, verified_at)
+		 VALUES (?, 'https://provider.example.test', 'synthetic-provider-person', 900, ?)`,
+			[]any{person.ID, now}},
+		{`INSERT INTO person_enrichment_citations
+			(id, person_id, citation_key, canonical_url, title, publisher,
+			 excerpt, retrieved_at)
+		 VALUES (1, ?, 'subset-citation', 'https://source.example.test/profile',
+			 'Synthetic profile', 'Synthetic publisher', 'Synthetic excerpt', ?)`,
+			[]any{person.ID, now}},
+		{`INSERT INTO person_enrichment_attempt_citations
+			(attempt_id, citation_id) VALUES (1, 1)`, nil},
+		{`INSERT INTO person_enrichment_attempt_sources
+			(attempt_id, canonical_url, outcome, observed_at)
+		 VALUES (1, 'https://source.example.test/profile', 'cited', ?)`, []any{now}},
+		{`INSERT INTO person_enrichment_run_counters
+			(run_id, requests_started, cost_reserved_usd_micros)
+		 VALUES (1, 1, 700)`, nil},
+		{`INSERT INTO person_enrichment_person_day_counters
+			(person_id, profile_fingerprint, utc_day, requests_started,
+			 cost_reserved_usd_micros)
+		 VALUES (?, ?, '2026-08-23', 1, 700)`, []any{person.ID, fingerprint}},
+		{`INSERT INTO person_enrichment_day_counters
+			(profile_fingerprint, utc_day, requests_started, cost_reserved_usd_micros)
+		 VALUES (?, '2026-08-23', 1, 700)`, []any{fingerprint}},
+		{`INSERT INTO person_enrichment_profile_accounting
+			(profile_fingerprint, starts_disabled, safe_error)
+		 VALUES (?, 1, 'synthetic accounting stop')`, []any{fingerprint}},
+	}
+	for _, statement := range statements {
+		_, err = tx.ExecContext(ctx, statement.query, statement.args...)
+		require.NoError(err)
+	}
+	require.NoError(tx.Commit())
+	require.NoError(source.Close())
+
+	tables := []string{
+		"person_enrichment_profiles",
+		"person_enrichment_consents",
+		"person_enrichment_suppressions",
+		"person_enrichment_runs",
+		"person_enrichment_manual_run_targets",
+		"person_enrichment_work",
+		"person_enrichment_attempts",
+		"person_enrichment_attempt_identifiers",
+		"person_enrichment_provider_identities",
+		"person_enrichment_citations",
+		"person_enrichment_attempt_citations",
+		"person_enrichment_attempt_sources",
+		"person_enrichment_run_counters",
+		"person_enrichment_person_day_counters",
+		"person_enrichment_day_counters",
+		"person_enrichment_profile_accounting",
+	}
+	sourceDB, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	for _, table := range tables {
+		var count int
+		require.NoError(sourceDB.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)
+		assert.Positive(count, table+" source fixture")
+	}
+	require.NoError(sourceDB.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 5, CopySubsetOptions{
+		IncludeProfiles: true, IncludeAttributes: true,
+	})
+	require.NoError(err)
+	destination, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { require.NoError(destination.Close()) }()
+	for _, table := range tables {
+		var count int
+		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)
+		assert.Zero(count, table+" must not cross the subset boundary")
+	}
+}
+
 func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

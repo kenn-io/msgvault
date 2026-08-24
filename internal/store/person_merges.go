@@ -445,6 +445,11 @@ func (s *Store) mergePersonsOnce(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, survivor.ID); err != nil {
 			return err
 		}
+		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+			ctx, tx, survivor.ID,
+		); err != nil {
+			return err
+		}
 		if err := s.recordPersonMergePostRowsTx(
 			ctx, tx, mergeID, absorbed.ID, snapshot,
 		); err != nil {

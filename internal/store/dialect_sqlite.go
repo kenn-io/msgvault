@@ -1992,6 +1992,9 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE organization_media ADD COLUMN source_resource_uid TEXT`, "organization_media.source_resource_uid"},
 		{`ALTER TABLE person_relationships ADD COLUMN source_resource_uid TEXT`, "person_relationships.source_resource_uid"},
 		{`ALTER TABLE person_relationship_reviews ADD COLUMN source_resource_uid TEXT`, "person_relationship_reviews.source_resource_uid"},
+		{`ALTER TABLE person_enrichment_attempts ADD COLUMN targets_json TEXT`, "person_enrichment_attempts.targets_json"},
+		{`ALTER TABLE person_enrichment_attempts ADD COLUMN provider_started_at DATETIME`, "person_enrichment_attempts.provider_started_at"},
+		{`ALTER TABLE person_enrichment_work ADD COLUMN has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
 	}
 }
 

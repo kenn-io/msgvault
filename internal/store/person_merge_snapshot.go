@@ -234,6 +234,29 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_sweep_attempts", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
+	// Enrichment rows are derived work, provider identity, audit, and accounting
+	// state. They stay scoped to the person that produced them and cascade with
+	// an absorbed root instead of becoming survivor profile state.
+	"person_enrichment_work": {
+		TableName: "person_enrichment_work", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_enrichment_attempts": {
+		TableName: "person_enrichment_attempts", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_enrichment_provider_identities": {
+		TableName: "person_enrichment_provider_identities", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_enrichment_citations": {
+		TableName: "person_enrichment_citations", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_enrichment_person_day_counters": {
+		TableName: "person_enrichment_person_day_counters", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
 	// Fact-ledger history remains scoped to the person whose identity produced
 	// it, so an absorbed person's ledger cascades with that root. Explicit pin
 	// events are profile state, however, and must survive an exact split.

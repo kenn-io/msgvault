@@ -451,6 +451,8 @@ func TestDeletingAPersonRemovesTheirEmploymentsButNotTheOrganization(t *testing.
 	organization := mustOrganization(t, st, "Example Org")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser})
 	require.NoError(err)
+	person, err = st.GetPersonContext(ctx, person.ID)
+	require.NoError(err)
 	require.NoError(st.DeletePerson(person.ID, person.Revision))
 	remaining, err := st.ListEmploymentsContext(ctx, store.EmploymentFilter{OrganizationID: organization.ID})
 	require.NoError(err)

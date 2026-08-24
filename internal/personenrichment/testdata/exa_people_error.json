@@ -1,0 +1,6 @@
+{
+  "requestId": "request_test_error_42",
+  "error": {
+    "message": "Synthetic provider failure"
+  }
+}

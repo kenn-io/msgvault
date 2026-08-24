@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -1465,6 +1466,9 @@ func cliRunCommandAllowed(args []string) bool {
 		if len(args) < 3 {
 			return false
 		}
+		if args[1] == "enrichment" {
+			return cliRunPersonEnrichmentAllowed(args[2:])
+		}
 		switch args[1] {
 		case "provider":
 			switch args[2] {
@@ -1537,6 +1541,129 @@ func cliRunCommandAllowed(args []string) bool {
 	}
 }
 
+func cliRunPersonEnrichmentAllowed(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	operation := args[0]
+	values, positionals, ok := cliRunStrictFlagValues(args[1:])
+	if !ok {
+		return false
+	}
+	allowed := func(names ...string) bool {
+		set := make(map[string]struct{}, len(names)+4)
+		for _, name := range names {
+			set[name] = struct{}{}
+		}
+		for _, name := range []string{"log-level", "verbose", "log-sql", "log-sql-slow-ms"} {
+			set[name] = struct{}{}
+		}
+		for name := range values {
+			if _, exists := set[name]; !exists {
+				return false
+			}
+		}
+		return true
+	}
+	switch operation {
+	case "status":
+		return len(positionals) == 0 && allowed("limit", "json")
+	case "profiles":
+		return len(positionals) == 0 && allowed("json")
+	case "consent":
+		return len(positionals) == 1 && isLowerSHA256(positionals[0]) && allowed("json")
+	case "revoke":
+		return len(positionals) <= 1 && allowed("all", "json") &&
+			(len(positionals) == 0 || isLowerSHA256(positionals[0]))
+	case "run":
+		return len(positionals) == 0 && allowed("person", "provider", "idempotency-key", "json") &&
+			cliRunPositiveInt(values["person"]) && cliRunSafeToken(values["provider"]) &&
+			cliRunSafeToken(values["idempotency-key"])
+	case "suppress":
+		if len(positionals) != 0 || !allowed(
+			"person", "provider-namespace", "identifier-class", "normalization-version",
+			"key-id", "digest", "reason", "actor") {
+			return false
+		}
+		if person := values["person"]; person != "" {
+			return cliRunPositiveInt(person) && values["provider-namespace"] == "" &&
+				values["identifier-class"] == "" && values["normalization-version"] == "" &&
+				values["key-id"] == "" && values["digest"] == "" && values["actor"] == "" &&
+				(values["reason"] == "opt_out" || values["reason"] == "data_subject_request")
+		}
+		namespace := values["provider-namespace"]
+		kind, fingerprint, found := strings.Cut(namespace, ":")
+		class := values["identifier-class"]
+		versionByClass := map[string]string{
+			"email": "email-v1", "phone": "phone-v1", "public_profile_url": "public-url-v1",
+			"provider_person_id": "provider-person-id-v1", "name_company": "name-company-v1",
+		}
+		version, validClass := versionByClass[class]
+		return found && (kind == "exa" || kind == "sixtyfour") && isLowerSHA256(fingerprint) &&
+			validClass && values["normalization-version"] == version &&
+			isLowerSHA256(values["key-id"]) && isLowerSHA256(values["digest"]) &&
+			(values["reason"] == "opt_out" || values["reason"] == "data_subject_request") &&
+			values["actor"] == "cli"
+	default:
+		return false
+	}
+}
+
+func cliRunStrictFlagValues(args []string) (map[string]string, []string, bool) {
+	values := make(map[string]string)
+	positionals := make([]string, 0)
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--") {
+			positionals = append(positionals, arg)
+			continue
+		}
+		nameValue := strings.TrimPrefix(arg, "--")
+		name, value, hasValue := strings.Cut(nameValue, "=")
+		if name == "" {
+			return nil, nil, false
+		}
+		if !hasValue {
+			value = "true"
+		}
+		if _, duplicate := values[name]; duplicate {
+			return nil, nil, false
+		}
+		values[name] = value
+	}
+	return values, positionals, true
+}
+
+func cliRunPositiveInt(value string) bool {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return err == nil && parsed > 0
+}
+
+func cliRunSafeToken(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:-", char) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isLowerSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // newCLINDJSONEventWriter streams events as NDJSON. Write deadlines are
 // handled once per request by timeoutMiddleware, which clears the server's
 // absolute WriteTimeout for long daemon requests; every NDJSON route is in
@@ -1571,8 +1698,14 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 		s.cfg.Vector.Embeddings.APIKeyEnv,
 		s.cfg.Attachments.Documents.APIKeyEnv,
 		s.configuredPeopleProviderKeyEnv(),
+		s.cfg.People.Enrichment.SuppressionKeyEnv,
 	} {
 		if keyEnv != "" && name == keyEnv {
+			return true
+		}
+	}
+	for _, provider := range s.cfg.People.Enrichment.Providers {
+		if provider.APIKeyEnv != "" && name == provider.APIKeyEnv {
 			return true
 		}
 	}

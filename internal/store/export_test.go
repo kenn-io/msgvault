@@ -1,6 +1,13 @@
 package store
 
-import "fmt"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"go.kenn.io/msgvault/internal/personenrichment"
+)
 
 // ParseDBTime is exported for testing unexported timestamp parsing behavior.
 var ParseDBTime = parseDBTime
@@ -147,4 +154,87 @@ func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func(
 func (s *Store) SetPersonMergeAfterSnapshotHookForTest(fn func()) func() {
 	s.personMergeAfterSnapshotHook = fn
 	return func() { s.personMergeAfterSnapshotHook = nil }
+}
+
+// SetPersonEnrichmentClockForTest installs a deterministic clock on one Store.
+func SetPersonEnrichmentClockForTest(s *Store, clock func() time.Time) {
+	s.personEnrichmentClock = clock
+}
+
+// SetPersonEnrichmentBudgetBarrierForTest coordinates real concurrent budget
+// reservations after counter creation and before their fixed-order locks.
+func SetPersonEnrichmentBudgetBarrierForTest(s *Store, barrier func()) {
+	s.personEnrichmentBudgetBarrier = barrier
+}
+
+// SetPersonEnrichmentRunBarrierForTest coordinates run-lock interleavings.
+func SetPersonEnrichmentRunBarrierForTest(s *Store, barrier func(phase string)) {
+	s.personEnrichmentRunBarrier = barrier
+}
+
+// SetPersonEnrichmentTxBarrierForTest coordinates person/work/attempt lock order.
+func SetPersonEnrichmentTxBarrierForTest(s *Store, barrier func(phase string)) {
+	s.personEnrichmentTxBarrier = barrier
+}
+
+// setPersonEnrichmentProviderIdentityBarrierForTest pauses one Store after its
+// durable provider-identity key lock and before the ownership read.
+func setPersonEnrichmentProviderIdentityBarrierForTest(
+	s *Store, barrier func(phase string, tx *loggedTx),
+) {
+	s.personEnrichmentOwnershipBarrier = barrier
+}
+
+// ReservePersonEnrichmentBudgetForTest exercises the exact transaction-local
+// reservation helper used by BeginAttempt without bypassing its counter logic.
+func ReservePersonEnrichmentBudgetForTest(
+	ctx context.Context, s *Store, start personenrichment.AttemptStart,
+) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		policy, err := loadPersonEnrichmentBudgetPolicyTx(ctx, tx, start.ProfileFingerprint)
+		if err != nil {
+			return err
+		}
+		return s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start)
+	})
+}
+
+func EnsurePersonEnrichmentBudgetCountersForTest(
+	ctx context.Context, s *Store, start personenrichment.AttemptStart,
+) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return ensurePersonEnrichmentBudgetCountersTx(
+			ctx, tx, start, s.personEnrichmentTime().Format("2006-01-02"),
+		)
+	})
+}
+
+type PersonEnrichmentAttemptCompletion = personEnrichmentAttemptCompletion
+
+func CompletePersonEnrichmentAttemptForTest(
+	ctx context.Context,
+	s *Store,
+	token personenrichment.LeaseToken,
+	completion PersonEnrichmentAttemptCompletion,
+) error {
+	return s.completePersonEnrichmentAttemptContext(ctx, token, completion)
+}
+
+func RollbackPersonEnrichmentAttemptCompletionForTest(
+	ctx context.Context,
+	s *Store,
+	token personenrichment.LeaseToken,
+	completion PersonEnrichmentAttemptCompletion,
+) error {
+	errRollback := errors.New("rollback successful person enrichment completion")
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, completeErr := s.completePersonEnrichmentAttemptTx(ctx, tx, token, completion); completeErr != nil {
+			return completeErr
+		}
+		return errRollback
+	})
+	if errors.Is(err, errRollback) {
+		return nil
+	}
+	return err
 }

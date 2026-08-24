@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personenrichment"
 )
 
 // PersonTracking reports whether a durable person is selected for future
@@ -71,20 +74,27 @@ func (s *Store) SetPersonTrackingContext(
 ) (*PersonTracking, error) {
 	var state *PersonTracking
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("tracking_before_person_lock")
+		}
 		if err := s.lockProfileIdentityKeyTxContext(
 			ctx, tx, "person-fact-generation", personID); err != nil {
 			return err
 		}
-		var exists int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM persons WHERE id = ?`, personID).Scan(&exists); err != nil {
-			return fmt.Errorf("check person %d for tracking: %w", personID, err)
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
 		}
-		if exists == 0 {
+		revision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("track person %d: %w", personID, ErrPersonNotFound)
 		}
+		if err != nil {
+			return err
+		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("tracking_person_locked")
+		}
 
-		var err error
 		if tracked {
 			var result sql.Result
 			result, err = tx.ExecContext(ctx, `
@@ -126,6 +136,20 @@ func (s *Store) SetPersonTrackingContext(
 		}
 		if err != nil {
 			return fmt.Errorf("set person %d tracking to %t: %w", personID, tracked, err)
+		}
+		if tracked {
+			if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
+				personenrichment.TriggerTracked, "revision:"+strconv.FormatInt(revision, 10),
+				s.personEnrichmentTime()); err != nil {
+				return err
+			}
+		} else {
+			if s.personEnrichmentTxBarrier != nil {
+				s.personEnrichmentTxBarrier("untrack_authority_removed")
+			}
+			if err := s.cancelPersonEnrichmentTx(ctx, tx, personID, ""); err != nil {
+				return err
+			}
 		}
 		state, err = s.getPersonTrackingTx(ctx, tx, personID)
 		return err

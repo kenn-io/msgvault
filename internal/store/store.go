@@ -79,6 +79,11 @@ type Store struct {
 	identityMatchAcceptBeforeDecisionHook func()
 	personOperationBeforeIdentityLockHook func()
 	personMergeAfterSnapshotHook          func()
+	personEnrichmentClock                 func() time.Time
+	personEnrichmentBudgetBarrier         func()
+	personEnrichmentRunBarrier            func(phase string)
+	personEnrichmentTxBarrier             func(phase string)
+	personEnrichmentOwnershipBarrier      func(phase string, tx *loggedTx)
 
 	// Zero means "use the production batch size"; see
 	// contentChangedBackfillBatch. Per-Store for the same reason.

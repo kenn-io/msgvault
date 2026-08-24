@@ -92,7 +92,7 @@ func (s *Store) AddPersonNameContext(ctx context.Context, personID int64, input 
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		return nil
+		return s.publishPersonIdentityEnrichmentTx(ctx, tx, personID)
 	})
 	return result, err
 }
@@ -115,7 +115,10 @@ func (s *Store) SupersedePersonNameContext(ctx context.Context, personID, nameID
 		if err := s.supersedePersonNameTx(ctx, tx, personID, nameID, activeUntil); err != nil {
 			return err
 		}
-		return s.bumpPersonRevisionsTx(ctx, tx, personID)
+		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+			return err
+		}
+		return s.publishPersonIdentityEnrichmentTx(ctx, tx, personID)
 	})
 }
 

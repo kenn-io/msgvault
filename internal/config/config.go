@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
@@ -421,12 +422,19 @@ type Config struct {
 	Discord      DiscordConfig                   `toml:"discord"`
 	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity     ActivityConfig                  `toml:"activity"`
-	People       peoplesweep.PeopleConfig        `toml:"people"`
+	People       PeopleConfig                    `toml:"people"`
 	Teams        TeamsConfig                     `toml:"teams"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
 	configPath string // resolved path to the loaded config file
+}
+
+// PeopleConfig keeps the existing archive sweep and external enrichment as
+// sibling, independently disabled subsystems.
+type PeopleConfig struct {
+	Sweep      peoplesweep.Config      `toml:"sweep"`
+	Enrichment personenrichment.Config `toml:"enrichment"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -682,6 +690,7 @@ func NewDefaultConfig() *Config {
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
+	cfg.People.Enrichment.ApplyDefaults()
 	return cfg
 }
 
@@ -871,6 +880,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.People.Sweep.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.People.Enrichment.ApplyDefaults()
+	if err := cfg.People.Enrichment.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {

@@ -3472,6 +3472,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if err != nil {
 			return err
 		}
+		personRevisionBumped := false
 		if personID != 0 {
 			changed, err := s.mergePersonBindingsTx(
 				context.Background(), tx, personID, oldID, unionMembers)
@@ -3483,6 +3484,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 					context.Background(), tx, personID); err != nil {
 					return err
 				}
+				personRevisionBumped = true
 			}
 		}
 
@@ -3608,9 +3610,17 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 			return err
 		}
 		if personID != 0 {
-			return s.publishPersonIdentityScopeChangesTx(
+			if err := s.publishPersonIdentityScopeChangesTx(
 				context.Background(), tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned)
+				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+				return err
+			}
+			if personRevisionBumped {
+				return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+					context.Background(), tx, personID)
+			}
+			return s.invalidatePersonEnrichmentIdentitiesTx(
+				context.Background(), tx, personID)
 		}
 		return nil
 	})

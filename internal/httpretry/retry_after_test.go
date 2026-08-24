@@ -1,6 +1,7 @@
 package httpretry
 
 import (
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -33,6 +34,25 @@ func TestRetryAfterBoundsProviderDelay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, RetryAfter(tt.header, tt.attempt, tt.maximum))
+		})
+	}
+}
+
+func TestRetryAfterAtHonorsHTTPDate(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		header  string
+		maximum time.Duration
+		want    time.Duration
+	}{
+		{name: "future", header: now.Add(37 * time.Second).Format(http.TimeFormat), maximum: time.Minute, want: 37 * time.Second},
+		{name: "past is immediate", header: now.Add(-time.Second).Format(http.TimeFormat), maximum: time.Minute, want: 0},
+		{name: "future capped", header: now.Add(2 * time.Hour).Format(http.TimeFormat), maximum: time.Minute, want: time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, RetryAfterAt(tt.header, 3, tt.maximum, now))
 		})
 	}
 }
