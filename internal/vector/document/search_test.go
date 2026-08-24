@@ -24,6 +24,35 @@ type countingSearchLedger struct {
 	searchCalls int
 }
 
+type changingSearchAuthorityLedger struct {
+	SearchLedger
+
+	generationAfterCollection *store.DocumentVectorGeneration
+	revisionAfterCollection   bool
+	generationReads           int
+	revisionReads             int
+}
+
+func (ledger *changingSearchAuthorityLedger) GetActiveDocumentVectorGeneration(
+	ctx context.Context,
+) (*store.DocumentVectorGeneration, error) {
+	ledger.generationReads++
+	if ledger.generationReads > 1 && ledger.generationAfterCollection != nil {
+		generation := *ledger.generationAfterCollection
+		return &generation, nil
+	}
+	return ledger.SearchLedger.GetActiveDocumentVectorGeneration(ctx)
+}
+
+func (ledger *changingSearchAuthorityLedger) GetDocumentIndexRevision(ctx context.Context) (int64, error) {
+	ledger.revisionReads++
+	revision, err := ledger.SearchLedger.GetDocumentIndexRevision(ctx)
+	if err == nil && ledger.revisionReads > 1 && ledger.revisionAfterCollection {
+		revision++
+	}
+	return revision, err
+}
+
 func (ledger *countingSearchLedger) SearchDocuments(
 	ctx context.Context,
 	request store.DocumentSearchRequest,
@@ -127,6 +156,40 @@ func TestSearchServiceSemanticReturnsAuthoritativeOccurrenceProvenance(t *testin
 	assertions.Equal(3, backend.searches[0].dimension)
 	assertions.Equal([]float32{1, 0, 0}, backend.searches[0].query)
 	assertions.Equal(semanticBackendPageSize, backend.searches[0].k)
+}
+
+func TestSearchServiceRejectsAuthorityChangesDuringCandidateCollection(t *testing.T) {
+	fixture := seedSemanticSearch(t, "authority evidence")
+	changedGeneration := fixture.generation
+	changedGeneration.ID++
+	changedGeneration.Fingerprint = strings.Repeat("e", 64)
+	for _, test := range []struct {
+		name            string
+		generationAfter *store.DocumentVectorGeneration
+		revisionAfter   bool
+	}{
+		{name: "generation activation", generationAfter: &changedGeneration},
+		{name: "document reindex", revisionAfter: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			ledger := &changingSearchAuthorityLedger{
+				SearchLedger: fixture.store.Store, generationAfterCollection: test.generationAfter,
+				revisionAfterCollection: test.revisionAfter,
+			}
+			embedder := &searchQueryEmbedder{vector: []float32{1, 0, 0}}
+			backend := &searchBackend{hits: []Hit{{Token: fixture.claims[0].Token, Score: .9, Rank: 1}}}
+			service := NewSearchService(SearchDeps{Ledger: ledger, Embedder: embedder, Backend: backend})
+
+			_, err := service.Search(t.Context(), store.DocumentSearchRequest{
+				Query: "authority", SearchMode: string(SearchModeSemantic), CandidateLimit: 10,
+			})
+
+			requirements.ErrorIs(err, store.ErrDocumentSearchCursorStale)
+			assertions.Equal([]string{"authority"}, embedder.queries)
+		})
+	}
 }
 
 func TestSearchServiceSemanticPagesPastOutOfScopeGlobalHits(t *testing.T) {

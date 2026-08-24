@@ -144,6 +144,9 @@ func (s *SearchService) Search(ctx context.Context, request store.DocumentSearch
 	default:
 		return store.DocumentSearchResponse{}, fmt.Errorf("%w: unsupported effective mode", store.ErrDocumentSearchInvalidRequest)
 	}
+	if err := s.validateSearchAuthorityUnchanged(ctx, *generation, revision); err != nil {
+		return store.DocumentSearchResponse{}, err
+	}
 	digest, err := digestSearchCandidates(candidates)
 	if err != nil {
 		return store.DocumentSearchResponse{}, err
@@ -174,6 +177,36 @@ func (s *SearchService) Search(ctx context.Context, request store.DocumentSearch
 		}
 	}
 	return response, nil
+}
+
+func (s *SearchService) validateSearchAuthorityUnchanged(
+	ctx context.Context,
+	expected store.DocumentVectorGeneration,
+	expectedRevision int64,
+) error {
+	active, err := s.deps.Ledger.GetActiveDocumentVectorGeneration(ctx)
+	if err != nil {
+		return fmt.Errorf("revalidate active document vector generation: %w", err)
+	}
+	if active == nil || active.ID != expected.ID || active.Fingerprint != expected.Fingerprint ||
+		active.TargetExtractionProfileID != expected.TargetExtractionProfileID {
+		return store.ErrDocumentSearchCursorStale
+	}
+	target, err := s.deps.Ledger.GetDocumentVectorTargetProfileID(ctx)
+	if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
+		return store.ErrDocumentSearchCursorStale
+	}
+	if err != nil {
+		return fmt.Errorf("revalidate document vector target profile: %w", err)
+	}
+	revision, err := s.deps.Ledger.GetDocumentIndexRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("revalidate document search revision: %w", err)
+	}
+	if target != expected.TargetExtractionProfileID || revision != expectedRevision {
+		return store.ErrDocumentSearchCursorStale
+	}
+	return nil
 }
 
 func (s *SearchService) effectiveMode(requested SearchMode, generation *store.DocumentVectorGeneration) (SearchMode, error) {
