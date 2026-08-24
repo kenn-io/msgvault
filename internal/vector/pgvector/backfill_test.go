@@ -750,35 +750,19 @@ func TestReadOnlyOpen_PerformsNoWrites(t *testing.T) {
 	assert.Equal(0, marked, "ReadOnly Open must NOT mark the backfill ledger")
 }
 
-// lowTimeoutMS is the SESSION statement_timeout the low-timeout backfill handle
-// runs under. It is sized to sit comfortably ABOVE the backfill's cheap
-// pre-flight reads (catalog probe, ledger check, active-generation lookup —
-// sub-millisecond once the catalog cache is warmed, see openLowTimeoutHandle)
-// yet far BELOW the stamp UPDATE over lowTimeoutSeedRows rows (≈190ms,
-// measured). The fix's `SET LOCAL statement_timeout = 0` lifts it for the tx, so
-// post-fix the UPDATE completes; pre-fix it is cancelled with SQLSTATE 57014.
-const lowTimeoutMS = 50
+// lowTimeoutMS leaves ample time for the backfill's catalog and ledger probes.
+// A statement-level trigger below delays only the stamp UPDATE beyond this
+// limit, so the test does not depend on database or runner throughput.
+const lowTimeoutMS = 1000
 
-// lowTimeoutSeedRows is the number of embedded-but-unstamped messages the
-// regression test seeds. Sized so the stamp UPDATE's nested-loop semi-join over
-// these rows reliably exceeds lowTimeoutMS (≈190ms at 30k, ≈4x margin) while
-// staying cheap to seed (one bulk INSERT … SELECT generate_series).
-const lowTimeoutSeedRows = 30000
+const lowTimeoutSeedRows = 4
 
 // openLowTimeoutHandle opens a dedicated single-connection *sql.DB on the SAME
 // per-test schema as db, with the session statement_timeout pinned to
 // lowTimeoutMS. SetMaxOpenConns(1) makes the SET sticky: every query the
 // backfill issues on this handle runs on the one connection that carries the low
-// session timeout, so the test is deterministic — the timeout provably applies
-// to the exact connection the backfill uses (no pool flakiness). The schema is
-// read from db's live search_path so both handles see the same tables.
-//
-// The PostgreSQL catalog cache is WARMED (an information_schema probe of the
-// same shape the backfill's messagesHasEmbedGen guard issues) BEFORE the timeout
-// is lowered: the first such probe on a fresh connection is cold (~15ms), but
-// warm reruns are sub-millisecond, so warming guarantees the backfill's
-// pre-flight reads clear lowTimeoutMS with a large margin. Only the heavy stamp
-// UPDATE is meant to trip the timeout.
+// session timeout. The schema is read from db's live search_path so both
+// handles see the same tables.
 func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 	t.Helper()
 
@@ -805,17 +789,6 @@ func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 	low.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = low.Close() })
 
-	// Warm the catalog cache on this connection so the backfill's pre-flight
-	// reads (the same information_schema probe) are sub-millisecond, well under
-	// lowTimeoutMS. Done BEFORE lowering the timeout so the cold first probe is
-	// never itself cancelled.
-	var n int
-	require.NoError(t, low.QueryRow(
-		`SELECT COUNT(*) FROM information_schema.columns
-		  WHERE table_name = 'messages' AND column_name = 'embed_gen'
-		    AND table_schema = ANY (current_schemas(false))`).Scan(&n),
-		"warm catalog cache on low handle")
-
 	_, err = low.Exec(fmt.Sprintf(`SET statement_timeout = '%dms'`, lowTimeoutMS))
 	require.NoError(t, err, "set low statement_timeout on low handle")
 	return low
@@ -828,15 +801,11 @@ func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 // upgrade never completed. The fix adds `SET LOCAL statement_timeout = 0` as the
 // first statement inside the backfill tx (and the orphan-reset tx).
 //
-// Determinism: rather than reproduce 28s of work, we pin the SESSION
-// statement_timeout to lowTimeoutMS on a SINGLE-connection handle
-// (SetMaxOpenConns(1)) and run the backfill on that handle. With
-// lowTimeoutSeedRows embedded rows the stamp UPDATE takes ≈190ms — well over the
-// 50ms timeout — so PRE-FIX it is cancelled (57014); POST-FIX the tx's
-// `SET LOCAL statement_timeout = 0` lifts the timeout for exactly that tx, so
-// the backfill commits and stamps embed_gen. The backfill's cheap pre-flight
-// reads stay well under the timeout (catalog cache warmed in
-// openLowTimeoutHandle).
+// Determinism: rather than reproduce 28s of data-dependent work, a
+// statement-level trigger delays the stamp UPDATE for 1.5 seconds. The SESSION
+// statement_timeout is one second on a single-connection handle, so pre-fix the
+// UPDATE is cancelled (57014); post-fix the tx's `SET LOCAL statement_timeout =
+// 0` lifts the timeout for exactly that tx.
 //
 // Ordering matters: ALL seeding (schema, messages, embeddings, the embed_gen
 // reset, the ledger clear) runs on the NORMAL db handle BEFORE the low timeout
@@ -904,6 +873,24 @@ func TestBackfillEmbedGen_CompletesUnderLowStatementTimeout(t *testing.T) {
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
 	require.NoError(
 		err, "clear backfill ledger")
+
+	// Delay the production UPDATE once per statement, independent of how fast
+	// this runner processes the small fixture. The trigger is added after setup
+	// so only the backfill stamp is delayed.
+	_, err = db.ExecContext(ctx, `
+		CREATE FUNCTION delay_embed_gen_backfill() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			PERFORM pg_sleep(1.5);
+			RETURN NULL;
+		END
+		$$`)
+	require.NoError(err, "create deterministic backfill delay")
+	_, err = db.ExecContext(ctx, `
+		CREATE TRIGGER delay_embed_gen_backfill
+		BEFORE UPDATE OF embed_gen ON messages
+		FOR EACH STATEMENT EXECUTE FUNCTION delay_embed_gen_backfill()`)
+	require.NoError(err, "install deterministic backfill delay")
 
 	// NOW switch to the low-timeout single-connection handle and run the backfill
 	// on it. Pre-fix the stamp UPDATE is cancelled (57014); post-fix the tx's
