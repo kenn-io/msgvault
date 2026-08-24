@@ -190,6 +190,31 @@ func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
 	require.NoError(<-firstDone)
 }
 
+func TestOptimizeSQLiteBoundsPoolReservation(t *testing.T) {
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	s.db.SetMaxOpenConns(2)
+	s.db.SetMaxIdleConns(2)
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
+
+	result := make(chan error, 1)
+	go func() { result <- s.optimizeSQLite(context.Background()) }()
+	select {
+	case optimizeErr := <-result:
+		require.ErrorIs(optimizeErr, context.DeadlineExceeded)
+	case <-time.After(2 * time.Second):
+		require.NoError(blocker.Close())
+		<-result
+		require.FailNow("planner maintenance did not bound pool reservation")
+	}
+	require.NoError(blocker.Close())
+}
+
 func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

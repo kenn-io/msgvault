@@ -413,13 +413,15 @@ func OpenPostgresDB(dbURL string) (*sql.DB, func(), error) {
 	return openPostgresDB(dbURL, false)
 }
 
+const sqliteOptimizeTimeout = time.Second
+
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
 		if !s.IsPostgreSQL() {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
 			if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
 				slog.Warn("SQLite planner statistics maintenance failed",
 					"trigger", "store close",
@@ -464,6 +466,8 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 		return nil
 	}
 	defer s.sqliteOptimizeMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, sqliteOptimizeTimeout)
+	defer cancel()
 
 	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
 	// results only into the SQLite connection that runs it; holding every slot
