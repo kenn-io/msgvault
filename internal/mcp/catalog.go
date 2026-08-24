@@ -677,6 +677,9 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
 	limit.Default = json.RawMessage("20")
+	mode := stringSchema("Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider",
+		"auto", "lexical", "semantic", "hybrid")
+	mode.Default = json.RawMessage(`"lexical"`)
 	direction := stringSchema("How the owning message relates to the person",
 		"from_person", "to_person", "group")
 	definition := readDefinition(
@@ -700,10 +703,12 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
-			toolArgAfter:  stringSchema("Only messages on or after YYYY-MM-DD"),
-			toolArgBefore: stringSchema("Only messages before YYYY-MM-DD"),
-			toolArgLimit:  limit,
-			toolArgCursor: stringSchema("Opaque cursor from the previous page"),
+			toolArgAfter:      stringSchema("Only messages on or after YYYY-MM-DD"),
+			toolArgBefore:     stringSchema("Only messages before YYYY-MM-DD"),
+			toolArgLimit:      limit,
+			toolArgCursor:     stringSchema("Opaque cursor from the previous page"),
+			toolArgMode:       mode,
+			"candidate_limit": boundedIntegerSchema("Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)", 1, store.MaxLexicalDocumentSearchCandidateLimit),
 		}, toolArgQuery),
 		outputSchemaFor[store.DocumentSearchResponse](),
 		(*handlers).searchDocuments,

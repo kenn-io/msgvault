@@ -27,21 +27,28 @@ func TestSearchDocumentsUsesGeneratedDaemonContract(t *testing.T) {
 		assert.Equal("2026-08-01T00:00:00Z", r.URL.Query().Get("after"))
 		assert.Equal("2026-08-20T00:00:00Z", r.URL.Query().Get("before"))
 		assert.Equal("5", r.URL.Query().Get("limit"))
+		assert.Equal("hybrid", r.URL.Query().Get("mode"))
+		assert.Equal("88", r.URL.Query().Get("candidate_limit"))
 		w.Header().Set("Content-Type", "application/json")
 		occurredAt := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
 		assert.NoError(json.NewEncoder(w).Encode(store.DocumentSearchResponse{
-			Revision: 9, Truncated: true,
+			Revision: 9, Truncated: true, EffectiveMode: "hybrid",
+			VectorGenerationID: 31, VectorGenerationFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Results: []store.DocumentSearchResult{{
 				AttachmentID: 22, MessageID: 23, ConversationID: 24, SourceID: 3,
 				SourceMessageID: "synthetic-message", OccurredAt: &occurredAt,
 				OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
 				Filename: "claim.docx", Excerpt: "damaged carton", ProfileID: "profile",
 				ExtractionID: "extraction", Provider: "mistral", Model: "ocr",
-				MatchedSignals: []string{"content"}, Rank: 1,
+				MatchedSignals: []string{"content", "semantic"}, Rank: 1,
 				PersonProvenance: &personscope.Provenance{
 					ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
 					Directions: []personscope.Direction{personscope.FromPerson},
 				},
+				LexicalRank: 2, SemanticRank: 1, SemanticScore: 0.875, FusionScore: 0.032,
+				VectorToken:        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				VectorGenerationID: 31, VectorGenerationFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				VectorEmbeddingProfile: "vector.embeddings", VectorModel: "embed-test", VectorDimension: 3,
 			}},
 		}))
 	}))
@@ -54,19 +61,34 @@ func TestSearchDocumentsUsesGeneratedDaemonContract(t *testing.T) {
 		Query: "damaged carton", SourceIDs: []int64{3, 7}, AttachmentID: 22, PageSize: 5,
 		PersonID: 40, Directions: []personscope.Direction{personscope.FromPerson, personscope.Group},
 		After: &after, Before: &before,
+		SearchMode: "hybrid", CandidateLimit: 88,
 	})
 	require.NoError(err)
 	assert.Equal(int64(9), response.Revision)
 	assert.True(response.Truncated)
+	assert.Equal("hybrid", response.EffectiveMode)
+	assert.Equal(int64(31), response.VectorGenerationID)
+	assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", response.VectorGenerationFingerprint)
 	require.Len(response.Results, 1)
-	assert.Equal("claim.docx", response.Results[0].Filename)
-	assert.Equal(int64(24), response.Results[0].ConversationID)
-	assert.Equal("synthetic-message", response.Results[0].SourceMessageID)
-	require.NotNil(response.Results[0].OccurredAt)
-	assert.Equal(time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC), *response.Results[0].OccurredAt)
-	assert.Equal([]string{"content"}, response.Results[0].MatchedSignals)
-	require.NotNil(response.Results[0].PersonProvenance)
-	assert.Equal([]personscope.Role{personscope.RoleFrom}, response.Results[0].PersonProvenance.Roles)
+	row := response.Results[0]
+	assert.Equal("claim.docx", row.Filename)
+	assert.Equal(int64(24), row.ConversationID)
+	assert.Equal("synthetic-message", row.SourceMessageID)
+	require.NotNil(row.OccurredAt)
+	assert.Equal(time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC), *row.OccurredAt)
+	assert.Equal([]string{"content", "semantic"}, row.MatchedSignals)
+	assert.Equal(2, row.LexicalRank)
+	assert.Equal(1, row.SemanticRank)
+	assert.InDelta(0.875, row.SemanticScore, 0.0001)
+	assert.InDelta(0.032, row.FusionScore, 0.0001)
+	assert.Equal("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", row.VectorToken)
+	assert.Equal(int64(31), row.VectorGenerationID)
+	assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", row.VectorGenerationFingerprint)
+	assert.Equal("vector.embeddings", row.VectorEmbeddingProfile)
+	assert.Equal("embed-test", row.VectorModel)
+	assert.Equal(3, row.VectorDimension)
+	require.NotNil(row.PersonProvenance)
+	assert.Equal([]personscope.Role{personscope.RoleFrom}, row.PersonProvenance.Roles)
 }
 
 func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {

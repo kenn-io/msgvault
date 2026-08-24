@@ -1426,6 +1426,17 @@ func cliRunCommandAllowed(args []string) bool {
 		if len(args) < 2 {
 			return false
 		}
+		if args[1] == "vectors" {
+			if len(args) < 3 {
+				return false
+			}
+			switch args[2] {
+			case "build", "consent", "rebuild", "resume", "retire", "retry", "status":
+				return true
+			default:
+				return false
+			}
+		}
 		switch args[1] {
 		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
 			return true

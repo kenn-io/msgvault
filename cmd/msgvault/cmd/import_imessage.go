@@ -356,7 +356,7 @@ func resolveImessageSource(s *store.Store) (*store.Source, error) {
 	if err == nil && len(sources) > 0 {
 		var best *store.Source
 		for _, src := range sources {
-			if src.Identifier != "local" {
+			if src.Identifier != localValue {
 				if best == nil || src.ID > best.ID {
 					best = src
 				}
@@ -367,7 +367,7 @@ func resolveImessageSource(s *store.Store) (*store.Source, error) {
 		}
 		return sources[0], nil
 	}
-	return s.GetOrCreateSource("apple_messages", "local")
+	return s.GetOrCreateSource("apple_messages", localValue)
 }
 
 func init() {

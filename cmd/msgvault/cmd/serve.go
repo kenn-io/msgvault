@@ -1163,6 +1163,7 @@ var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
+var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ContactStateContext(
@@ -1279,6 +1280,24 @@ func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
 ) (int64, error) {
 	return a.store.CountIncompleteDocumentExtractionRebuild(
 		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
+	)
+}
+
+func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
+	return a.store.GetDocumentVectorTargetProfileID(ctx)
+}
+
+func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
+	ctx context.Context,
+	configured store.DocumentVectorGenerationSpec,
+	documentEgressFingerprint, queryEgressFingerprint string,
+	generationID int64,
+	afterToken string,
+	limit int,
+) (store.DocumentVectorOperationsStatus, error) {
+	return a.store.GetDocumentVectorOperationsStatus(
+		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
+		generationID, afterToken, limit,
 	)
 }
 

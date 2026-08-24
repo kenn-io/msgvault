@@ -2195,6 +2195,10 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     units_processed       INTEGER,
     returned_model        TEXT,
     manifest_checksum     TEXT,
+    normalization_version INTEGER,
+    document_family       TEXT,
+    unit_kind             TEXT,
+    normalized_truncated  BOOLEAN NOT NULL DEFAULT FALSE,
     terminal_reason       TEXT,
     source_sequence       INTEGER NOT NULL DEFAULT 0,
     created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2209,6 +2213,8 @@ CREATE INDEX IF NOT EXISTS idx_document_extractions_owner
     ON document_extractions(profile_id, canonical_blob_hash, extraction_input_key, state);
 CREATE INDEX IF NOT EXISTS idx_document_extractions_lease
     ON document_extractions(state, lease_until);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_extractions_vector_identity
+    ON document_extractions(id, profile_id, canonical_blob_hash, extraction_input_key, source_sequence);
 
 -- One renewable claim per stable content owner. The monotonic fence prevents
 -- an expired worker from publishing after a later worker has taken ownership.
@@ -2249,6 +2255,7 @@ CREATE TABLE IF NOT EXISTS document_units (
     checksum              TEXT NOT NULL,
     char_count            INTEGER NOT NULL,
     truncated             BOOLEAN NOT NULL DEFAULT FALSE,
+    heading_marks         JSON NOT NULL DEFAULT '[]',
     PRIMARY KEY (extraction_id, unit_index),
     CHECK (unit_index >= 0),
     CHECK (char_count >= 0)
@@ -2275,6 +2282,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     CHECK (first_unit_index >= 0 AND last_unit_index >= first_unit_index),
     CHECK (synthetic_prefix_len >= 0 AND char_count >= 0)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_chunks_vector_identity
+    ON document_chunks(id, extraction_id, chunk_key, checksum);
 
 CREATE TABLE IF NOT EXISTS document_chunk_spans (
     extraction_id         TEXT NOT NULL,
@@ -2325,6 +2334,85 @@ CREATE TABLE IF NOT EXISTS document_index_state (
     updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 INSERT OR IGNORE INTO document_index_state(singleton, revision) VALUES (1, 0);
+
+-- Document vectors are a corpus separate from message embeddings. The main
+-- archive database owns generation and publication authority; vector backends
+-- only store the opaque token below.
+CREATE TABLE IF NOT EXISTS document_vector_generations (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint                  TEXT NOT NULL,
+    target_extraction_profile_id TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    state                        TEXT NOT NULL CHECK (state IN ('building', 'active', 'retired')),
+    created_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    activated_at                 DATETIME,
+    retired_at                   DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_building
+    ON document_vector_generations(state) WHERE state = 'building';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_active
+    ON document_vector_generations(state) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_document_vector_generations_live_fingerprint
+    ON document_vector_generations(fingerprint) WHERE state <> 'retired';
+
+-- Hosted embedding consent is bound to both the reusable generation policy
+-- and a separate canonical egress destination fingerprint. It deliberately
+-- contains no credentials, raw endpoints, or provider payloads.
+CREATE TABLE IF NOT EXISTS document_vector_consents (
+    egress_fingerprint           TEXT PRIMARY KEY,
+    purpose                      TEXT NOT NULL CHECK (purpose IN ('document_embedding', 'query_embedding')),
+    generation_fingerprint       TEXT NOT NULL,
+    target_extraction_profile_id  TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    consented_at                 DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_provider_usage (
+    fingerprint          TEXT PRIMARY KEY,
+    provider_calls       INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
+    provider_documents   INTEGER NOT NULL DEFAULT 0 CHECK (provider_documents >= 0),
+    provider_chunks      INTEGER NOT NULL DEFAULT 0 CHECK (provider_chunks >= 0),
+    provider_input_chars INTEGER NOT NULL DEFAULT 0 CHECK (provider_input_chars >= 0),
+    updated_at           DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_build_progress (
+    generation_id  INTEGER PRIMARY KEY REFERENCES document_vector_generations(id) ON DELETE CASCADE,
+    after_chunk_id INTEGER NOT NULL CHECK (after_chunk_id > 0),
+    updated_at     DATETIME NOT NULL
+);
+
+-- Publication rows are deliberately complete before a vector backend exists:
+-- the durable token is the only identifier a backend receives.
+CREATE TABLE IF NOT EXISTS document_vector_publications (
+    generation_id                INTEGER NOT NULL REFERENCES document_vector_generations(id) ON DELETE RESTRICT,
+    extraction_id                TEXT NOT NULL,
+    extraction_profile_id        TEXT NOT NULL,
+    canonical_blob_hash          TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    extraction_input_key         TEXT NOT NULL,
+    chunk_id                     INTEGER NOT NULL,
+    chunk_key                    TEXT NOT NULL,
+    chunk_checksum               TEXT NOT NULL,
+    source_sequence              INTEGER NOT NULL,
+    token                        TEXT NOT NULL UNIQUE,
+    state                        TEXT NOT NULL CHECK (state IN ('pending', 'ready', 'failed')),
+    lease_owner                  TEXT,
+    lease_fence                  INTEGER NOT NULL DEFAULT 0,
+    lease_until                  DATETIME,
+    attempt_count                INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_retry_at                DATETIME,
+    error_code                   TEXT,
+    backend_cleaned_at           DATETIME,
+    created_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, extraction_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_publications_cleanup
+    ON document_vector_publications(generation_id, backend_cleaned_at, token);
 
 -- Foreign-key cascades can remove occurrences before asynchronous attachment
 -- reconciliation observes the deletion. Invalidate search cursors at the

@@ -141,6 +141,7 @@ func startVectorInit(
 			apiServer.SetVectorFeatures(
 				vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
 			)
+			apiServer.SetDocumentSearchService(vf.DocumentSearch)
 			// Preflight drift detection: vector-search requests re-resolve the
 			// durable account scope (throttled) so drift latches index_stale
 			// even on daemons whose embed job never runs (empty cron,
@@ -216,6 +217,9 @@ func startVectorInit(
 			if err := registerVisualJob(sched, vf.Visual); err != nil {
 				logger.Error("register multimodal job failed", "error", err)
 			}
+		}
+		if err := registerDocumentVectorJob(sched, vf, s); err != nil {
+			logger.Error("register document vector job failed", "error", err)
 		}
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
@@ -463,6 +467,32 @@ func embedScopeDriftCheck(s *store.Store, initialized vector.BuildScope) func(co
 // vector init can register it once the backend is ready.
 type embedJobRegistrar interface {
 	SetEmbedJob(job *scheduler.EmbedJob, schedule string, runAfterSync bool) error
+}
+
+type documentVectorJobRegistrar interface {
+	SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error
+}
+
+func registerDocumentVectorJob(sched documentVectorJobRegistrar, vf *vectorFeatures, st *store.Store) error {
+	if vf == nil || vf.DocumentBackend == nil {
+		return nil
+	}
+	limit := vf.Cfg.Embeddings.BatchSize
+	if limit < 1 {
+		limit = defaultDocumentVectorOperationLimit
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	job := func(ctx context.Context) error {
+		return runScheduledDocumentVectorGeneration(ctx, st, vf, limit)
+	}
+	if err := sched.SetDocumentVectorJob(job, cfg.Vector.Embed.Schedule.Cron, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
+		return fmt.Errorf("register document vector job: %w", err)
+	}
+	logger.Info("document vectors scheduled", "cron", cfg.Vector.Embed.Schedule.Cron,
+		"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync)
+	return nil
 }
 
 func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Store, apiServer *api.Server) error {

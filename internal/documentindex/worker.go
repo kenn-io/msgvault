@@ -400,6 +400,8 @@ func publicationFromNormalized(
 		LeaseOwner:             claim.LeaseOwner, LeaseFence: claim.LeaseFence,
 		ReturnedModel: providerResult.ReturnedModel, ProviderBytes: providerResult.ProviderBytes,
 		UnitsProcessed: providerResult.UnitsProcessed, ManifestChecksum: normalized.Checksum,
+		NormalizationVersion: normalized.PolicyVersion, DocumentFamily: normalized.Family,
+		UnitKind: normalized.UnitKind, NormalizedTruncated: normalized.Truncated,
 		RequestCount: providerResult.Metrics.Requests, RetryCount: providerResult.Metrics.Retries,
 		ProviderLatencyMS: requestLatencyMillis(providerResult.Metrics.Latency),
 		Units:             make([]store.DocumentPublishedUnit, len(normalized.Units)),
@@ -410,6 +412,7 @@ func publicationFromNormalized(
 			Index: unit.Index, Kind: unit.Kind, Text: unit.Text, Header: unit.Header, Footer: unit.Footer,
 			Width: unit.Dimensions.Width, Height: unit.Dimensions.Height, DPI: unit.Dimensions.DPI,
 			Checksum: unit.Checksum, CharCount: unit.CharCount, Truncated: unit.Truncated,
+			HeadingMarks: unit.HeadingMarks,
 		}
 	}
 	for i, chunk := range normalized.Chunks {

@@ -45,6 +45,25 @@ func TestStoreAPIAdapterServesAttributeDefinitions(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
+func TestStoreAPIAdapterServesDocumentVectorStatus(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = true
+	c.Attachments.Documents.Index.Embeddings.Enabled = true
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: c,
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/vectors/status", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.JSONEq(t, `{"enabled":true,"configured":false}`, response.Body.String())
+}
+
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)

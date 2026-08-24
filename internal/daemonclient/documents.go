@@ -26,6 +26,7 @@ func (c *Client) SearchDocuments(
 				After:         optionalTimeRFC3339(request.After),
 				Before:        optionalTimeRFC3339(request.Before),
 				Limit:         optionalPositiveInt64(request.PageSize), Cursor: optionalString(request.Cursor),
+				Mode: optionalString(request.SearchMode), CandidateLimit: optionalPositiveInt64(request.CandidateLimit),
 			},
 		})
 	})
@@ -66,8 +67,10 @@ func documentSearchFromGenerated(response *generated.DocumentSearchResponse) sto
 		return store.DocumentSearchResponse{Results: []store.DocumentSearchResult{}}
 	}
 	result := store.DocumentSearchResponse{
-		Revision: response.Revision,
-		Results:  make([]store.DocumentSearchResult, len(response.Results)),
+		Revision: response.Revision, EffectiveMode: stringValue(response.EffectiveMode),
+		VectorGenerationID:          int64Value(response.VectorGenerationID),
+		VectorGenerationFingerprint: stringValue(response.VectorGenerationFingerprint),
+		Results:                     make([]store.DocumentSearchResult, len(response.Results)),
 	}
 	if response.Truncated != nil {
 		result.Truncated = *response.Truncated
@@ -90,6 +93,12 @@ func documentSearchFromGenerated(response *generated.DocumentSearchResponse) sto
 			ProfileID: row.ProfileID, ExtractionID: row.ExtractionID,
 			Provider: row.Provider, Model: row.Model, MatchedSignals: row.MatchedSignals,
 			Truncated: row.Truncated, Rank: int(row.Rank),
+			LexicalRank: int(int64Value(row.LexicalRank)), SemanticRank: int(int64Value(row.SemanticRank)),
+			SemanticScore: float64Value(row.SemanticScore), FusionScore: float64Value(row.FusionScore),
+			VectorToken: stringValue(row.VectorToken), VectorGenerationID: int64Value(row.VectorGenerationID),
+			VectorGenerationFingerprint: stringValue(row.VectorGenerationFingerprint),
+			VectorEmbeddingProfile:      stringValue(row.VectorEmbeddingProfile), VectorModel: stringValue(row.VectorModel),
+			VectorDimension: int(int64Value(row.VectorDimension)),
 		}
 		if row.PersonProvenance != nil {
 			result.Results[index].PersonProvenance = &personscope.Provenance{
@@ -117,6 +126,13 @@ func documentDirectionStrings(directions []personscope.Direction) []string {
 		result[i] = string(direction)
 	}
 	return result
+}
+
+func float64Value(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func documentIndexStatusFromGenerated(

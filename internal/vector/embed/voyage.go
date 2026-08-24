@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // VoyageConfig controls the contextualized embeddings client.
@@ -24,6 +26,9 @@ type VoyageConfig struct {
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
 	BeforeRequest BeforeRequestFunc
+	// RejectRedirects prevents provider responses from replaying embedding input
+	// to another URL. BeforeRequest clients always reject redirects as well.
+	RejectRedirects bool
 }
 
 // VoyageClient calls Voyage's nested contextualized embeddings endpoint.
@@ -50,7 +55,7 @@ func NewVoyageClient(cfg VoyageConfig) *VoyageClient {
 		cfg.Limits.MaxUTF8Bytes = defaultVoyageRequestLimits.MaxUTF8Bytes
 	}
 	cfg.Limits = capVoyageRequestLimits(cfg.Limits)
-	return &VoyageClient{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest)}
+	return &VoyageClient{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest, cfg.RejectRedirects)}
 }
 
 type voyageRequest struct {
@@ -227,35 +232,35 @@ func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][
 
 func (c *VoyageClient) decodeVoyageResponse(response voyageResponse, inputs [][]string) ([][][]float32, error) {
 	if len(response.Data) != len(inputs) {
-		return nil, fmt.Errorf("embed: Voyage outer response count mismatch: got %d, expected %d", len(response.Data), len(inputs))
+		return nil, fmt.Errorf("%w: Voyage outer response count mismatch: got %d, expected %d", vector.ErrInvalidProviderShape, len(response.Data), len(inputs))
 	}
 	results := make([][][]float32, len(inputs))
 	outerSeen := make([]bool, len(inputs))
 	for _, outer := range response.Data {
 		if outer.Index < 0 || outer.Index >= len(inputs) {
-			return nil, fmt.Errorf("embed: Voyage invalid outer index %d (len=%d)", outer.Index, len(inputs))
+			return nil, fmt.Errorf("%w: Voyage invalid outer index %d (len=%d)", vector.ErrInvalidProviderShape, outer.Index, len(inputs))
 		}
 		if outerSeen[outer.Index] {
-			return nil, fmt.Errorf("embed: Voyage duplicate outer index %d", outer.Index)
+			return nil, fmt.Errorf("%w: Voyage duplicate outer index %d", vector.ErrInvalidProviderShape, outer.Index)
 		}
 		outerSeen[outer.Index] = true
 
 		expectedChunks := len(inputs[outer.Index])
 		if len(outer.Data) != expectedChunks {
-			return nil, fmt.Errorf("embed: Voyage inner response count mismatch at outer index %d: got %d, expected %d", outer.Index, len(outer.Data), expectedChunks)
+			return nil, fmt.Errorf("%w: Voyage inner response count mismatch at outer index %d: got %d, expected %d", vector.ErrInvalidProviderShape, outer.Index, len(outer.Data), expectedChunks)
 		}
 		vectors := make([][]float32, expectedChunks)
 		innerSeen := make([]bool, expectedChunks)
 		for _, inner := range outer.Data {
 			if inner.Index < 0 || inner.Index >= expectedChunks {
-				return nil, fmt.Errorf("embed: Voyage invalid inner index %d at outer index %d (len=%d)", inner.Index, outer.Index, expectedChunks)
+				return nil, fmt.Errorf("%w: Voyage invalid inner index %d at outer index %d (len=%d)", vector.ErrInvalidProviderShape, inner.Index, outer.Index, expectedChunks)
 			}
 			if innerSeen[inner.Index] {
-				return nil, fmt.Errorf("embed: Voyage duplicate inner index %d at outer index %d", inner.Index, outer.Index)
+				return nil, fmt.Errorf("%w: Voyage duplicate inner index %d at outer index %d", vector.ErrInvalidProviderShape, inner.Index, outer.Index)
 			}
 			innerSeen[inner.Index] = true
 			if len(inner.Embedding) != c.cfg.Dimension {
-				return nil, fmt.Errorf("embed: Voyage dimension mismatch at outer index %d, inner index %d: got %d, configured %d", outer.Index, inner.Index, len(inner.Embedding), c.cfg.Dimension)
+				return nil, fmt.Errorf("%w: Voyage dimension mismatch at outer index %d, inner index %d: got %d, configured %d", vector.ErrInvalidProviderVector, outer.Index, inner.Index, len(inner.Embedding), c.cfg.Dimension)
 			}
 			vectors[inner.Index] = inner.Embedding
 		}
@@ -263,7 +268,7 @@ func (c *VoyageClient) decodeVoyageResponse(response voyageResponse, inputs [][]
 	}
 	for i, seen := range outerSeen {
 		if !seen {
-			return nil, fmt.Errorf("embed: Voyage missing outer index %d", i)
+			return nil, fmt.Errorf("%w: Voyage missing outer index %d", vector.ErrInvalidProviderShape, i)
 		}
 	}
 	return results, nil

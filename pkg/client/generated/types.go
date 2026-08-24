@@ -2105,10 +2105,13 @@ func (d DocumentIndexStatusResponse) Validate() error {
 }
 
 type DocumentSearchResponse struct {
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Results    []DocumentSearchResult `json:"results,omitempty" validate:"required"`
-	Revision   int64                  `json:"revision"`
-	Truncated  *bool                  `json:"truncated,omitempty"`
+	EffectiveMode               *string                `json:"effective_mode,omitempty"`
+	NextCursor                  *string                `json:"next_cursor,omitempty"`
+	Results                     []DocumentSearchResult `json:"results,omitempty" validate:"required"`
+	Revision                    int64                  `json:"revision"`
+	Truncated                   *bool                  `json:"truncated,omitempty"`
+	VectorGenerationFingerprint *string                `json:"vector_generation_fingerprint,omitempty"`
+	VectorGenerationID          *int64                 `json:"vector_generation_id,omitempty"`
 }
 
 func (d DocumentSearchResponse) Validate() error {
@@ -2127,35 +2130,45 @@ func (d DocumentSearchResponse) Validate() error {
 }
 
 type DocumentSearchResult struct {
-	AttachmentID      int64       `json:"attachment_id"`
-	CanonicalBlobHash string      `json:"canonical_blob_hash" validate:"required"`
-	ChunkKey          string      `json:"chunk_key" validate:"required"`
-	ChunkOrdinal      int64       `json:"chunk_ordinal"`
-	ContainingTitle   *string     `json:"containing_title,omitempty"`
-	ConversationID    int64       `json:"conversation_id"`
-	Excerpt           string      `json:"excerpt" validate:"required"`
-	ExtractionID      string      `json:"extraction_id" validate:"required"`
-	Filename          *string     `json:"filename,omitempty"`
-	FirstUnitIndex    int64       `json:"first_unit_index"`
-	HeadingPath       []string    `json:"heading_path,omitempty"`
-	HighlightEnd      int64       `json:"highlight_end"`
-	HighlightStart    int64       `json:"highlight_start"`
-	LastUnitIndex     int64       `json:"last_unit_index"`
-	MatchedSignals    []string    `json:"matched_signals,omitempty" validate:"required"`
-	MessageID         int64       `json:"message_id"`
-	MimeType          *string     `json:"mime_type,omitempty"`
-	Model             string      `json:"model" validate:"required"`
-	OccurredAt        *time.Time  `json:"occurred_at,omitempty"`
-	OccurrenceKey     string      `json:"occurrence_key" validate:"required"`
-	OtherLiveCopies   int64       `json:"other_live_copies"`
-	PersonProvenance  *Provenance `json:"person_provenance,omitempty"`
-	ProfileID         string      `json:"profile_id" validate:"required"`
-	Provider          string      `json:"provider" validate:"required"`
-	Rank              int64       `json:"rank"`
-	SourceID          int64       `json:"source_id"`
-	SourceMessageID   *string     `json:"source_message_id,omitempty"`
-	SourcePartKey     *string     `json:"source_part_key,omitempty"`
-	Truncated         bool        `json:"truncated"`
+	AttachmentID                int64       `json:"attachment_id"`
+	CanonicalBlobHash           string      `json:"canonical_blob_hash" validate:"required"`
+	ChunkKey                    string      `json:"chunk_key" validate:"required"`
+	ChunkOrdinal                int64       `json:"chunk_ordinal"`
+	ContainingTitle             *string     `json:"containing_title,omitempty"`
+	ConversationID              int64       `json:"conversation_id"`
+	Excerpt                     string      `json:"excerpt" validate:"required"`
+	ExtractionID                string      `json:"extraction_id" validate:"required"`
+	Filename                    *string     `json:"filename,omitempty"`
+	FirstUnitIndex              int64       `json:"first_unit_index"`
+	FusionScore                 *float64    `json:"fusion_score,omitempty"`
+	HeadingPath                 []string    `json:"heading_path,omitempty"`
+	HighlightEnd                int64       `json:"highlight_end"`
+	HighlightStart              int64       `json:"highlight_start"`
+	LastUnitIndex               int64       `json:"last_unit_index"`
+	LexicalRank                 *int64      `json:"lexical_rank,omitempty"`
+	MatchedSignals              []string    `json:"matched_signals,omitempty" validate:"required"`
+	MessageID                   int64       `json:"message_id"`
+	MimeType                    *string     `json:"mime_type,omitempty"`
+	Model                       string      `json:"model" validate:"required"`
+	OccurredAt                  *time.Time  `json:"occurred_at,omitempty"`
+	OccurrenceKey               string      `json:"occurrence_key" validate:"required"`
+	OtherLiveCopies             int64       `json:"other_live_copies"`
+	PersonProvenance            *Provenance `json:"person_provenance,omitempty"`
+	ProfileID                   string      `json:"profile_id" validate:"required"`
+	Provider                    string      `json:"provider" validate:"required"`
+	Rank                        int64       `json:"rank"`
+	SemanticRank                *int64      `json:"semantic_rank,omitempty"`
+	SemanticScore               *float64    `json:"semantic_score,omitempty"`
+	SourceID                    int64       `json:"source_id"`
+	SourceMessageID             *string     `json:"source_message_id,omitempty"`
+	SourcePartKey               *string     `json:"source_part_key,omitempty"`
+	Truncated                   bool        `json:"truncated"`
+	VectorDimension             *int64      `json:"vector_dimension,omitempty"`
+	VectorEmbeddingProfile      *string     `json:"vector_embedding_profile,omitempty"`
+	VectorGenerationFingerprint *string     `json:"vector_generation_fingerprint,omitempty"`
+	VectorGenerationID          *int64      `json:"vector_generation_id,omitempty"`
+	VectorModel                 *string     `json:"vector_model,omitempty"`
+	VectorToken                 *string     `json:"vector_token,omitempty"`
 }
 
 func (d DocumentSearchResult) Validate() error {
@@ -2198,6 +2211,215 @@ func (d DocumentSearchResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type DocumentVectorConsent struct {
+	ConsentedAt               time.Time `json:"consented_at" validate:"required"`
+	Dimension                 int64     `json:"dimension"`
+	EgressFingerprint         string    `json:"egress_fingerprint" validate:"required"`
+	EmbeddingProfile          string    `json:"embedding_profile" validate:"required"`
+	Fingerprint               string    `json:"fingerprint" validate:"required"`
+	Model                     string    `json:"model" validate:"required"`
+	Purpose                   string    `json:"purpose" validate:"required"`
+	TargetExtractionProfileID string    `json:"target_extraction_profile_id" validate:"required"`
+}
+
+func (d DocumentVectorConsent) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocumentVectorCoverage struct {
+	Ready    int64 `json:"ready"`
+	Required int64 `json:"required"`
+}
+
+type DocumentVectorFailureDiagnostic struct {
+	AttemptCount int64      `json:"attempt_count"`
+	ErrorCode    string     `json:"error_code" validate:"required"`
+	NextRetryAt  *time.Time `json:"next_retry_at,omitempty"`
+	Terminal     bool       `json:"terminal"`
+	Token        string     `json:"token" validate:"required"`
+}
+
+func (d DocumentVectorFailureDiagnostic) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocumentVectorGeneration struct {
+	ActivatedAt               *time.Time `json:"activated_at,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at" validate:"required"`
+	Dimension                 int64      `json:"dimension"`
+	EmbeddingProfile          string     `json:"embedding_profile" validate:"required"`
+	Fingerprint               string     `json:"fingerprint" validate:"required"`
+	ID                        int64      `json:"id"`
+	Model                     string     `json:"model" validate:"required"`
+	RetiredAt                 *time.Time `json:"retired_at,omitempty"`
+	State                     string     `json:"state" validate:"required"`
+	TargetExtractionProfileID string     `json:"target_extraction_profile_id" validate:"required"`
+}
+
+func (d DocumentVectorGeneration) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocumentVectorGenerationSpec struct {
+	Dimension                 int64  `json:"dimension"`
+	EmbeddingProfile          string `json:"embedding_profile" validate:"required"`
+	Fingerprint               string `json:"fingerprint" validate:"required"`
+	Model                     string `json:"model" validate:"required"`
+	TargetExtractionProfileID string `json:"target_extraction_profile_id" validate:"required"`
+}
+
+func (d DocumentVectorGenerationSpec) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocumentVectorGenerationStatus struct {
+	Blocked                  bool                              `json:"blocked"`
+	CleanupPending           int64                             `json:"cleanup_pending"`
+	FailureAfterGenerationID *int64                            `json:"failure_after_generation_id,omitempty"`
+	FailureAfterToken        *string                           `json:"failure_after_token,omitempty"`
+	Failures                 []DocumentVectorFailureDiagnostic `json:"failures,omitempty" validate:"required"`
+	FailuresExhausted        bool                              `json:"failures_exhausted"`
+	GenerationID             int64                             `json:"generation_id"`
+	Pending                  int64                             `json:"pending"`
+	ReadyLive                int64                             `json:"ready_live"`
+	Retryable                int64                             `json:"retryable"`
+	StaleObsolete            int64                             `json:"stale_obsolete"`
+	State                    string                            `json:"state" validate:"required"`
+	Terminal                 int64                             `json:"terminal"`
+}
+
+func (d DocumentVectorGenerationStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Failures {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Failures[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocumentVectorOperationsResponse struct {
+	Configured                           bool                            `json:"configured"`
+	Enabled                              bool                            `json:"enabled"`
+	ScheduledRegistrationRequiresRestart *bool                           `json:"scheduled_registration_requires_restart,omitempty"`
+	Status                               *DocumentVectorOperationsStatus `json:"status,omitempty"`
+}
+
+func (d DocumentVectorOperationsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if d.Status != nil {
+		if v, ok := any(d.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocumentVectorOperationsStatus struct {
+	Active                              *DocumentVectorGeneration       `json:"active,omitempty"`
+	Building                            *DocumentVectorGeneration       `json:"building,omitempty"`
+	ConfiguredDocumentEgressFingerprint string                          `json:"configured_document_egress_fingerprint" validate:"required"`
+	ConfiguredQueryEgressFingerprint    string                          `json:"configured_query_egress_fingerprint" validate:"required"`
+	ConfiguredSpec                      DocumentVectorGenerationSpec    `json:"configured_spec"`
+	Coverage                            *DocumentVectorCoverage         `json:"coverage,omitempty"`
+	DocumentConsent                     *DocumentVectorConsent          `json:"document_consent,omitempty"`
+	QueryConsent                        *DocumentVectorConsent          `json:"query_consent,omitempty"`
+	Selected                            *DocumentVectorGenerationStatus `json:"selected,omitempty"`
+	Usage                               DocumentVectorProviderUsage     `json:"usage"`
+}
+
+func (d DocumentVectorOperationsStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if d.Active != nil {
+		if v, ok := any(d.Active).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Active", err)
+			}
+		}
+	}
+	if d.Building != nil {
+		if v, ok := any(d.Building).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Building", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.ConfiguredDocumentEgressFingerprint, "required"); err != nil {
+		errors = errors.Append("ConfiguredDocumentEgressFingerprint", err)
+	}
+	if err := typesValidator.Var(d.ConfiguredQueryEgressFingerprint, "required"); err != nil {
+		errors = errors.Append("ConfiguredQueryEgressFingerprint", err)
+	}
+	if v, ok := any(d.ConfiguredSpec).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ConfiguredSpec", err)
+		}
+	}
+	if d.Coverage != nil {
+		if v, ok := any(d.Coverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Coverage", err)
+			}
+		}
+	}
+	if d.DocumentConsent != nil {
+		if v, ok := any(d.DocumentConsent).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("DocumentConsent", err)
+			}
+		}
+	}
+	if d.QueryConsent != nil {
+		if v, ok := any(d.QueryConsent).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("QueryConsent", err)
+			}
+		}
+	}
+	if d.Selected != nil {
+		if v, ok := any(d.Selected).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Selected", err)
+			}
+		}
+	}
+	if v, ok := any(d.Usage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Usage", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocumentVectorProviderUsage struct {
+	Fingerprint        string     `json:"fingerprint" validate:"required"`
+	ProviderCalls      int64      `json:"provider_calls"`
+	ProviderChunks     int64      `json:"provider_chunks"`
+	ProviderDocuments  int64      `json:"provider_documents"`
+	ProviderInputChars int64      `json:"provider_input_chars"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+}
+
+func (d DocumentVectorProviderUsage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DomainContextSummaryHTTPResponse struct {

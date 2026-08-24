@@ -58,9 +58,7 @@ type Document struct {
 }
 
 // DocumentInput is one document's ordered embedding inputs.
-type DocumentInput struct {
-	Chunks []string
-}
+type DocumentInput = vector.DocumentInput
 
 // SemanticClient separates query embedding from document embedding while
 // preserving document boundaries. EmbedDocuments can return a completed

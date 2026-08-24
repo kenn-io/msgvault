@@ -427,6 +427,7 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 		"directions": []any{"from_person", "group"},
 		"after":      "2026-08-01", "before": "2026-08-20",
 		"limit": float64(5), "cursor": "opaque",
+		"mode": "lexical", "candidate_limit": float64(1001),
 	})
 	assert.Equal("carton damage", searcher.request.Query)
 	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
@@ -439,6 +440,8 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	require.NotNil(searcher.request.Before)
 	assert.Equal(5, searcher.request.PageSize)
 	assert.Equal("opaque", searcher.request.Cursor)
+	assert.Equal("lexical", searcher.request.SearchMode)
+	assert.Equal(1001, searcher.request.CandidateLimit)
 	require.Len(response.Results, 1)
 	assert.Equal("inspection.xlsx", response.Results[0].Filename)
 	assert.Equal("mistral", response.Results[0].Provider)
@@ -454,6 +457,16 @@ func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
 	})
 	assert.Contains(t, resultText(t, result), "attachment_id must be a positive integer")
 	assert.Empty(t, searcher.request.Query, "an invalid exact filter must never be silently dropped")
+}
+
+func TestSearchDocumentAttachmentsRejectsSemanticCandidateLimitAboveBound(t *testing.T) {
+	searcher := &recordingDocumentSearcher{}
+	h := &handlers{documentSearcher: searcher}
+	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
+		"query": "carton damage", "mode": "semantic", "candidate_limit": float64(1001),
+	})
+	assert.Contains(t, resultText(t, result), "candidate_limit must be an integer between 1 and 1000")
+	assert.Empty(t, searcher.request.Query)
 }
 
 func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {

@@ -593,6 +593,16 @@ type GetDocumentIndexStatusErrorResponseJSON429 = ErrorResponse
 
 type GetDocumentIndexStatusErrorResponseJSON503 = ErrorResponse
 
+type GetDocumentVectorStatusResponse = DocumentVectorOperationsResponse
+
+type GetDocumentVectorStatusErrorResponse = ErrorResponse
+
+type GetDocumentVectorStatusErrorResponseJSON = ErrorResponse
+
+type GetDocumentVectorStatusErrorResponseJSON429 = ErrorResponse
+
+type GetDocumentVectorStatusErrorResponseJSON503 = ErrorResponse
+
 type SearchDomainsResponse = DomainSearchHTTPResponse
 
 type SearchDomainsErrorResponse = ErrorResponse
@@ -3320,6 +3330,17 @@ type GetDocumentIndexStatusResp struct {
 	JSON403      *GetDocumentIndexStatusErrorResponseJSON
 	JSON429      *GetDocumentIndexStatusErrorResponseJSON429
 	JSON503      *GetDocumentIndexStatusErrorResponseJSON503
+}
+
+type GetDocumentVectorStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDocumentVectorStatusResponse
+	JSON400      *GetDocumentVectorStatusErrorResponse
+	JSON403      *GetDocumentVectorStatusErrorResponseJSON
+	JSON429      *GetDocumentVectorStatusErrorResponseJSON429
+	JSON503      *GetDocumentVectorStatusErrorResponseJSON503
 }
 
 type SearchDomainsResp struct {

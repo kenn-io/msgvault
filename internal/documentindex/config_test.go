@@ -51,6 +51,24 @@ func TestDocumentsConfigRejectsUnavailableIndexOptOut(t *testing.T) {
 	assert.False(t, config.StoresChunkText())
 }
 
+func TestDocumentsConfigAllowsNamedEmbeddingProfileWithLexicalFallback(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "vector.embeddings"
+
+	require.NoError(t, config.Validate())
+	assert.True(t, config.LexicalEnabled())
+	assert.True(t, config.StoresChunkText())
+}
+
+func TestDocumentsConfigRejectsUnknownEmbeddingProfile(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "other.embeddings"
+
+	require.ErrorContains(t, config.Validate(), "profile must be \"vector.embeddings\"")
+}
+
 func TestDocumentsConfigRejectsUnsafePolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -74,7 +92,10 @@ func TestDocumentsConfigRejectsUnsafePolicy(t *testing.T) {
 		{name: "training", mutate: func(c *DocumentsConfig) { c.TrainingPosture = "never" }, want: "training_posture"},
 		{name: "lexical without text", mutate: func(c *DocumentsConfig) { disabled := false; c.Index.StoreChunkText = &disabled }, want: "must both be true"},
 		{name: "stored text without lexical", mutate: func(c *DocumentsConfig) { disabled := false; c.Index.Lexical = &disabled }, want: "must both be true"},
-		{name: "premature vectors", mutate: func(c *DocumentsConfig) { c.Index.Embeddings.Enabled = true }, want: "not available"},
+		{name: "unknown embedding profile", mutate: func(c *DocumentsConfig) {
+			c.Index.Embeddings.Enabled = true
+			c.Index.Embeddings.Profile = "other.embeddings"
+		}, want: "profile must be \"vector.embeddings\""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -155,6 +176,32 @@ func TestDocumentsProfileFingerprintIsDeterministicAndPolicyBound(t *testing.T) 
 	assert.NotEqual(first, seventh)
 }
 
+func TestDocumentsProfileFingerprintExcludesEmbeddingOptIn(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	requirements.NoError(err)
+	manifest := testCapabilityManifest(t, policy)
+
+	before, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+	beforePolicy, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+
+	config.Index.Embeddings.Enabled = true
+	config.Index.Embeddings.Profile = "vector.embeddings"
+	after, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+	afterPolicy, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	requirements.NoError(err)
+
+	assertions.Equal(before, after)
+	assertions.Equal(string(beforePolicy), string(afterPolicy))
+}
+
 func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -169,7 +216,7 @@ func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
 
 	policyJSON, err := config.ProfilePolicyJSON(manifest, []string{"text/csv", "application/pdf", "text/csv"})
 	require.NoError(err)
-	expected := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","model":"mistral-ocr-4-0","retention":"zdr","training":"opted-out","max_file_bytes":52428800,"max_pages_per_document":500,"max_response_bytes":67108864,"max_normalized_chars":25000000,"max_spool_bytes":536870912,"min_free_space_bytes":1073741824,"request_timeout_nanos":300000000000,"max_retries":3,"max_pages_per_run":10000,"max_estimated_cost_usd_per_run":50,"message_types":["chat","email"],"allowed_media_types":["application/pdf","text/csv"],"document_policy_fingerprint":"2614ee7d1bcac019ca6a7b78147be1954af97ebb22600ce0c22a36384f0813cd","lexical":true,"store_chunk_text":true,"extract_header":true,"extract_footer":true,"normalization_version":2,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000}`
+	expected := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","model":"mistral-ocr-4-0","retention":"zdr","training":"opted-out","max_file_bytes":52428800,"max_pages_per_document":500,"max_response_bytes":67108864,"max_normalized_chars":25000000,"max_spool_bytes":536870912,"min_free_space_bytes":1073741824,"request_timeout_nanos":300000000000,"max_retries":3,"max_pages_per_run":10000,"max_estimated_cost_usd_per_run":50,"message_types":["chat","email"],"allowed_media_types":["application/pdf","text/csv"],"document_policy_fingerprint":"466816abfedf47e64d25db7b38262b15d3a52077fd0856340fedd0227b600843","lexical":true,"store_chunk_text":true,"extract_header":true,"extract_footer":true,"normalization_version":3,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000}`
 	assert.JSONEq(expected, string(policyJSON))
 
 	fingerprint, err := config.ProfileFingerprint(manifest, []string{"application/pdf", "text/csv"})

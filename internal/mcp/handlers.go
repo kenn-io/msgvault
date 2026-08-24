@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -761,11 +762,39 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 		limit = int(parsedLimit)
 	}
 	cursor, _ := args[toolArgCursor].(string)
+	mode, _ := args[toolArgMode].(string)
+	parsedMode := vectordocument.SearchModeAuto
+	if mode != "" {
+		parsed, parseErr := vectordocument.ParseSearchMode(mode)
+		if parseErr != nil {
+			return toolErrorResult(parseErr.Error()), nil
+		}
+		parsedMode = parsed
+		mode = string(parsed)
+	}
+	candidateLimit := 0
+	if _, found := args["candidate_limit"]; found {
+		parsed, parseErr := positiveInt64Arg(args, "candidate_limit")
+		if parseErr != nil {
+			return toolErrorResult(parseErr.Error()), nil
+		}
+		maxCandidateLimit := store.MaxLexicalDocumentSearchCandidateLimit
+		if parsedMode == vectordocument.SearchModeSemantic || parsedMode == vectordocument.SearchModeHybrid {
+			maxCandidateLimit = store.MaxDocumentSearchCandidateLimit
+		}
+		if parsed > int64(maxCandidateLimit) {
+			return toolErrorResult(fmt.Sprintf(
+				"candidate_limit must be an integer between 1 and %d for this mode", maxCandidateLimit,
+			)), nil
+		}
+		candidateLimit = int(parsed)
+	}
 	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
 		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
 		AttachmentID: attachmentID, MessageID: messageID,
 		PersonID: personID, ParticipantID: participantID, Directions: directions,
 		After: after, Before: before, PageSize: limit, Cursor: cursor,
+		SearchMode: mode, CandidateLimit: candidateLimit,
 	})
 	if err != nil {
 		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil

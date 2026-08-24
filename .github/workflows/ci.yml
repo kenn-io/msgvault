@@ -92,6 +92,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Test build without vector backends
+        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+
       - name: Check OpenAPI artifacts
         run: make openapi-check
 

@@ -7,9 +7,60 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	docbankdocument "go.kenn.io/docbank/document"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-normalized-v3", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-normalized-v3", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	policy, err := docbankdocument.NewNormalizePolicy(10_000)
+	require.NoError(err)
+	normalized, err := docbankdocument.NormalizeDocument(docbankdocument.SourceDocument{
+		Family: "pdf", UnitKind: "page", Units: []docbankdocument.SourceUnit{{
+			Index: 0, Markdown: "# Evidence\n\nStored identity",
+		}},
+	}, policy)
+	require.NoError(err)
+	publication := publicationFor(t, claim, normalized.Chunks[0].Text, normalized.Chunks[0].Checksum)
+	publication.ManifestChecksum = normalized.Checksum
+	publication.NormalizationVersion = normalized.PolicyVersion
+	publication.DocumentFamily = normalized.Family
+	publication.UnitKind = normalized.UnitKind
+	publication.NormalizedTruncated = normalized.Truncated
+	publication.Units[0] = store.DocumentPublishedUnit{
+		Index: 0, Kind: normalized.Units[0].Kind, Text: normalized.Units[0].Text,
+		Header: normalized.Units[0].Header, Footer: normalized.Units[0].Footer,
+		Width: normalized.Units[0].Dimensions.Width, Height: normalized.Units[0].Dimensions.Height,
+		DPI: normalized.Units[0].Dimensions.DPI, Checksum: normalized.Units[0].Checksum,
+		CharCount: normalized.Units[0].CharCount, Truncated: normalized.Units[0].Truncated,
+		HeadingMarks: normalized.Units[0].HeadingMarks,
+	}
+	publication.Chunks[0].Key = normalized.Chunks[0].Key
+	publication.Chunks[0].HeadingPath = normalized.Chunks[0].HeadingPath
+	publication.Chunks[0].Truncated = normalized.Chunks[0].Truncated
+	publication.Chunks[0].Spans[0] = store.DocumentPublishedSpan{
+		UnitIndex: normalized.Chunks[0].Spans[0].UnitIndex,
+		CharStart: normalized.Chunks[0].Spans[0].CharStart,
+		CharEnd:   normalized.Chunks[0].Spans[0].CharEnd,
+	}
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publication))
+
+	loaded, err := f.Store.LoadNormalizedDocument(t.Context(), claim.ExtractionID)
+
+	require.NoError(err)
+	assert.Equal(normalized, loaded)
+}
 
 func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T) {
 	require := require.New(t)
@@ -42,7 +93,7 @@ func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T
 	wrongFence.LeaseFence++
 	err = f.Store.RenewDocumentExtractionClaim(t.Context(), wrongFence, time.Now().UTC().Add(15*time.Minute))
 	require.ErrorIs(err, store.ErrDocumentExtractionFenceLost)
-	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 		firstClaim, "old searchable quasar evidence", strings.Repeat("d", 64),
 	)))
 	assert.Equal(1, documentFTSMatchCount(t, f.Store, "quasar"))
@@ -58,7 +109,7 @@ func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T
 	assert.Equal([]string{"old searchable quasar evidence"}, currentDocumentTexts(t, f, profile.ID, hash),
 		"a staging replacement must not hide the ready head")
 
-	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 		secondClaim, "new searchable nebula evidence", strings.Repeat("e", 64),
 	)))
 	assert.Equal([]string{"new searchable nebula evidence"}, currentDocumentTexts(t, f, profile.ID, hash))
@@ -82,7 +133,7 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 		LocalBytes: 128, SourceSequence: 1,
 	}))
 	require.NoError(err)
-	publication := publicationFor(claim, "short text", strings.Repeat("f", 64))
+	publication := publicationFor(t, claim, "short text", strings.Repeat("f", 64))
 	publication.Chunks[0].Spans[0].CharEnd = 100
 	require.ErrorContains(f.Store.PublishDocumentExtraction(t.Context(), publication), "span 0 is invalid")
 
@@ -94,6 +145,31 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT state FROM document_extractions WHERE id = ?`), claim.ExtractionID).Scan(&state))
 	assert.Equal(t, "staging", state)
+}
+
+func TestDocumentExtractionPublicationRequiresNormalizedIdentity(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-missing-normalized-identity", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-missing-normalized-identity", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	requirements.NoError(err)
+
+	for name, clearIdentity := range map[string]func(*store.DocumentExtractionPublication){
+		"normalization version": func(publication *store.DocumentExtractionPublication) { publication.NormalizationVersion = 0 },
+		"document family":       func(publication *store.DocumentExtractionPublication) { publication.DocumentFamily = "" },
+		"unit kind":             func(publication *store.DocumentExtractionPublication) { publication.UnitKind = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			publication := publicationFor(t, claim, "normalized identity", strings.Repeat("f", 64))
+			clearIdentity(&publication)
+			require.ErrorContains(t, f.Store.PublishDocumentExtraction(t.Context(), publication), "normalized identity")
+		})
+	}
 }
 
 func TestDocumentExtractionClaimRequiresAuthoritativeRoleProvenance(t *testing.T) {
@@ -170,7 +246,7 @@ func TestDocumentExtractionPublicationRechecksClaimedOccurrenceScope(t *testing.
 			_, err = f.Store.DB().Exec(f.Store.Rebind(test.update), claim.OccurrenceAttachmentID)
 			require.NoError(err)
 
-			err = f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+			err = f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 				claim, "must not publish", strings.Repeat("f", 64),
 			))
 			require.ErrorContains(err, "claimed occurrence is no longer eligible")
@@ -194,7 +270,7 @@ func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.
 
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	require.NoError(err)
-	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 		claim, "hashless alias evidence", strings.Repeat("a", 64),
 	)))
 }
@@ -406,10 +482,14 @@ func seedDocumentPublicationAuthority(
 }
 
 func publicationFor(
+	t *testing.T,
 	claim store.DocumentExtractionClaim,
 	text string,
 	checksum string,
 ) store.DocumentExtractionPublication {
+	t.Helper()
+	policy, err := docbankdocument.NewNormalizePolicy(1)
+	require.NoError(t, err)
 	return store.DocumentExtractionPublication{
 		ExtractionID: claim.ExtractionID, ProfileID: claim.ProfileID,
 		CanonicalBlobHash: claim.CanonicalBlobHash, ExtractionInputKey: claim.ExtractionInputKey,
@@ -419,7 +499,8 @@ func publicationFor(
 		LeaseOwner:             claim.LeaseOwner, LeaseFence: claim.LeaseFence,
 		ReturnedModel: "mistral-ocr-4-0", UnitsProcessed: 1,
 		RequestCount: 1, ProviderLatencyMS: 25,
-		ManifestChecksum: strings.Repeat("c", 64),
+		ManifestChecksum: strings.Repeat("c", 64), NormalizationVersion: policy.Identity().Version,
+		DocumentFamily: "pdf", UnitKind: "page",
 		Units: []store.DocumentPublishedUnit{{
 			Index: 0, Kind: "page", Text: text, Checksum: checksum, CharCount: len([]rune(text)),
 		}},

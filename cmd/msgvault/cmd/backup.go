@@ -265,11 +265,31 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
 		AuxiliaryTarget:    backupapp.NewDocumentAuxiliaryTarget(),
+		BeforePublication:  backupapp.InvalidateRestoredDocumentVectors,
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
+	if backupRestoreOverwrite {
+		if err := removeRestoredSQLiteVectorBackend(backupRestoreTarget); err != nil {
+			return err
+		}
+	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
+}
+
+func removeRestoredSQLiteVectorBackend(target string) error {
+	root, err := os.OpenRoot(target)
+	if err != nil {
+		return fmt.Errorf("backup restore: open restored target for vector reset: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	for _, name := range []string{"vectors.db", "vectors.db-wal", "vectors.db-shm", "vectors.db-journal"} {
+		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("backup restore: remove excluded vector backend %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func backupRestorePackedContentTarget(loose bool) backup.PackedContentTarget {

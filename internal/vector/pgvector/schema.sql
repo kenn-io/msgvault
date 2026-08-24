@@ -144,7 +144,6 @@ CREATE TABLE IF NOT EXISTS embedding_document_progress (
     reconcile_cursor TEXT NOT NULL DEFAULT '',
     journal_cursor   TEXT NOT NULL DEFAULT ''
 );
-
 -- Visual vectors share the PostgreSQL database with their authoritative
 -- publication rows but remain independently keyed by an opaque publication
 -- token. A prepared vector cannot be searched until visual_publications points
@@ -159,3 +158,24 @@ CREATE INDEX IF NOT EXISTS idx_visual_vectors_hnsw_d1024
     ON visual_vectors
     USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
     WHERE dimension = 1024;
+
+-- Independent attachment-document vectors. Tokens are opaque globally unique
+-- publication identities; generation IDs intentionally do not reference the
+-- message-vector index_generations table.
+CREATE TABLE IF NOT EXISTS document_vector_backend_generations (
+    generation_id BIGINT PRIMARY KEY,
+    dimension     INTEGER NOT NULL CHECK (dimension > 0),
+    UNIQUE (generation_id, dimension)
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_embeddings (
+    token         TEXT PRIMARY KEY,
+    generation_id BIGINT NOT NULL,
+    dimension     INTEGER NOT NULL CHECK (dimension > 0),
+    embedding     vector NOT NULL,
+    CONSTRAINT document_vector_embeddings_generation_dimension_fkey
+        FOREIGN KEY (generation_id, dimension)
+        REFERENCES document_vector_backend_generations(generation_id, dimension)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_generation
+    ON document_vector_embeddings(generation_id, dimension, token);
