@@ -27,7 +27,11 @@ type BuildOptions struct {
 	CommittedRoot  string
 	StagedBaseRoot string
 	OutputRoot     string
-	Progress       func(dataset string, elapsed time.Duration)
+	// EffectiveAt pins recency decay and future-event exclusion to the cache
+	// publication snapshot. A zero value falls back to the newest committed
+	// activity timestamp, which keeps direct package callers deterministic.
+	EffectiveAt time.Time
+	Progress    func(dataset string, elapsed time.Duration)
 }
 
 // ActivityStats records the fan-out chosen by the flat activity grain.
@@ -99,11 +103,23 @@ func Build(
 		return BuildResult{}, err
 	}
 	activity := b.activityRelation()
+	effectiveAt, err := b.relationshipEffectiveAt(ctx, activity)
+	if err != nil {
+		return BuildResult{}, err
+	}
 	if err := b.materializeBuildTable(
 		ctx,
 		directoryBuildRelation,
 		buildDirectorySQL(b.base),
 		"relationship_directory",
+	); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.materializeBuildTable(
+		ctx,
+		temperatureBuildRelation,
+		buildRelationshipTemperatureDailySQL(activity, effectiveAt),
+		"relationship_temperature_daily",
 	); err != nil {
 		return BuildResult{}, err
 	}
@@ -115,7 +131,7 @@ func Build(
 	); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL()); err != nil {
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
@@ -330,7 +346,7 @@ func (b builder) materializeBuildTable(
 
 func (b builder) dropBuildTables() error {
 	var result error
-	for _, table := range []string{logicalBuildRelation, directoryBuildRelation} {
+	for _, table := range []string{logicalBuildRelation, temperatureBuildRelation, directoryBuildRelation} {
 		if _, err := b.db.ExecContext(
 			context.Background(),
 			"DROP TABLE IF EXISTS "+table,
@@ -339,6 +355,22 @@ func (b builder) dropBuildTables() error {
 		}
 	}
 	return result
+}
+
+func (b builder) relationshipEffectiveAt(ctx context.Context, activity string) (time.Time, error) {
+	if !b.opts.EffectiveAt.IsZero() {
+		return b.opts.EffectiveAt.UTC(), nil
+	}
+	var newest sql.NullTime
+	if err := b.db.QueryRowContext(ctx,
+		"SELECT max(occurred_at) FROM "+activity,
+	).Scan(&newest); err != nil {
+		return time.Time{}, fmt.Errorf("read relationship score effective time: %w", err)
+	}
+	if newest.Valid {
+		return newest.Time.UTC(), nil
+	}
+	return time.Unix(0, 0).UTC(), nil
 }
 
 func validateBuildOptions(opts BuildOptions) error {

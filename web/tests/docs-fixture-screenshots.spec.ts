@@ -109,6 +109,7 @@ test.describe('documentation fixture capture', () => {
         await expect(timeline).toBeVisible();
         await expect.poll(async () => await timeline.getByRole('row').count()).toBeGreaterThan(0);
         await expect(timeline.locator('[role="row"]').first()).toContainText(/\S/);
+        await expect(page.getByLabel('Relationship activity intensity from less to more')).toBeVisible();
         await captureEvidence(page, filename, { maxDiffPixelRatio });
       }
     }

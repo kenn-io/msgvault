@@ -1,4 +1,3 @@
-//nolint:goconst // JSON Schema property names intentionally repeat the stable MCP wire names.
 package mcp
 
 import (
@@ -25,6 +24,7 @@ type toolSecurityClass uint8
 const (
 	toolSecurityRead toolSecurityClass = iota
 	toolSecurityWrite
+	toolSecurityProfileWrite
 )
 
 type catalogCapabilities struct {
@@ -32,6 +32,7 @@ type catalogCapabilities struct {
 	vectorInMessage bool
 	similarMessages bool
 	documentSearch  bool
+	people          bool
 	visualSearch    bool
 }
 
@@ -46,23 +47,23 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 		ToolSearchVisualAttachments,
 		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance.",
 		closedObject(map[string]*jsonschema.Schema{
-			"text":             stringSchema("Natural-language visual query"),
-			"image_base64":     stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
-			"limit":            nonNegativeIntegerSchema("Maximum results (1-100, default 20)", 20),
-			"sender_person_id": safeIDSchema("Legacy alias for person_id with from_person direction"),
-			"person_id":        safeIDSchema("Only attachments related to this durable person ID"),
-			"participant_id":   safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
+			bodyFormatText:       stringSchema("Natural-language visual query"),
+			"image_base64":       stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
+			toolArgLimit:         nonNegativeIntegerSchema("Maximum results (1-100, default 20)", 20),
+			"sender_person_id":   safeIDSchema("Legacy alias for person_id with from_person direction"),
+			toolArgPersonID:      safeIDSchema("Only attachments related to this durable person ID"),
+			toolArgParticipantID: safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
 			"directions": {
 				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
-			"source_id":   safeIDSchema("Only attachments from this source ID"),
-			"message_id":  safeIDSchema("Only attachments owned by this message ID"),
-			"filename":    stringSchema("Case-insensitive filename substring filter"),
-			"mime_prefix": stringSchema("Case-insensitive MIME prefix filter, such as image/"),
-			"cursor":      stringSchema("Opaque next_cursor from the previous response"),
-			"after":       stringSchema("Only messages on or after YYYY-MM-DD"),
-			"before":      stringSchema("Only messages before YYYY-MM-DD"),
+			"source_id":      safeIDSchema("Only attachments from this source ID"),
+			toolArgMessageID: safeIDSchema("Only attachments owned by this message ID"),
+			"filename":       stringSchema("Case-insensitive filename substring filter"),
+			"mime_prefix":    stringSchema("Case-insensitive MIME prefix filter, such as image/"),
+			toolArgCursor:    stringSchema("Opaque next_cursor from the previous response"),
+			toolArgAfter:     stringSchema("Only messages on or after YYYY-MM-DD"),
+			toolArgBefore:    stringSchema("Only messages before YYYY-MM-DD"),
 		}),
 		outputSchemaFor[visual.SearchResponse](),
 		(*handlers).searchVisualAttachments,
@@ -106,6 +107,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
 		documentSearch:  opts.DocumentSearcher != nil,
+		people:          opts.PeopleBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
 	}
 }
@@ -113,19 +115,20 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only thirty-two possible capability keys, which also keeps
+// request. There are only sixty-four possible capability keys, which also keeps
 // the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 32)
-	for mask := range 32 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 64)
+	for mask := range 64 {
 		capabilities := catalogCapabilities{
-			semanticSearch:  mask&0b10000 != 0,
-			vectorInMessage: mask&0b01000 != 0,
-			similarMessages: mask&0b00100 != 0,
-			documentSearch:  mask&0b00010 != 0,
-			visualSearch:    mask&0b00001 != 0,
+			semanticSearch:  mask&0b100000 != 0,
+			vectorInMessage: mask&0b010000 != 0,
+			similarMessages: mask&0b001000 != 0,
+			documentSearch:  mask&0b000100 != 0,
+			people:          mask&0b000010 != 0,
+			visualSearch:    mask&0b000001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
@@ -143,6 +146,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		getPersonNotesDefinition(nil),
+		getPersonRelationshipDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
 		searchByDomainsDefinition(nil),
@@ -151,10 +156,13 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),
 		searchMetadataDefinition(nil),
+		searchPeopleDefinition(nil),
 		searchPersonFilesDefinition(nil),
 		searchVisualAttachmentsDefinition(),
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
+		promotePersonDefinition(nil),
+		updatePersonNotesDefinition(nil),
 	}
 
 	available := definitions[:0]
@@ -203,11 +211,23 @@ func writeDefinition(
 	}
 }
 
+func profileWriteDefinition(
+	name, description string,
+	inputSchema, outputSchema *jsonschema.Schema,
+	handler catalogToolHandler,
+) toolDefinition {
+	definition := writeDefinition(name, description, inputSchema, outputSchema, handler)
+	definition.security = toolSecurityProfileWrite
+	return definition
+}
+
 func alwaysAvailable(catalogCapabilities) bool { return true }
 
 func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMessages }
 
 func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSearch }
+
+func peopleAvailable(c catalogCapabilities) bool { return c.people }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false
@@ -355,11 +375,11 @@ func searchMetadataDefinition(_ *handlers) toolDefinition {
 		searchIntro+searchMetadataPaginationDoc+
 			"For body keywords use search_message_bodies; for vector/hybrid search use semantic_search_messages.",
 		closedObject(map[string]*jsonschema.Schema{
-			"query":   stringSchema(queryDesc),
-			"account": accountProperty(),
-			"limit":   searchLimitProperty(),
-			"offset":  offsetProperty(),
-		}, "query"),
+			toolArgQuery:   stringSchema(queryDesc),
+			toolArgAccount: accountProperty(),
+			toolArgLimit:   searchLimitProperty(),
+			toolArgOffset:  offsetProperty(),
+		}, toolArgQuery),
 		outputSchemaFor[searchMetadataResponse](),
 		(*handlers).searchMetadata,
 	)
@@ -369,22 +389,22 @@ func searchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDefinition 
 	description := "Deprecated compatibility tool; use search_metadata when mode is omitted and semantic_search_messages for mode=vector or mode=hybrid. " +
 		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " " + searchMetadataPaginationDoc
 	properties := map[string]*jsonschema.Schema{
-		"query": stringSchema(
+		toolArgQuery: stringSchema(
 			"Search query; omit mode for metadata search or set mode=vector|hybrid for semantic search",
 		),
-		"account": accountProperty(),
-		"limit":   searchLimitProperty(),
-		"offset":  offsetProperty(),
+		toolArgAccount: accountProperty(),
+		toolArgLimit:   searchLimitProperty(),
+		toolArgOffset:  offsetProperty(),
 	}
 	if vectorAvailable {
-		properties["mode"] = stringSchema("Search mode: vector or hybrid. Omit for metadata search.", searchModeVector, searchModeHybrid)
+		properties[toolArgMode] = stringSchema("Search mode: vector or hybrid. Omit for metadata search.", searchModeVector, searchModeHybrid)
 		properties["explain"] = booleanSchema("Include per-signal scores for vector/hybrid results")
-		properties["min_score"] = scoreSchema("Minimum semantic score for returned chunk excerpts; does not filter ranked messages")
+		properties[toolArgMinScore] = scoreSchema("Minimum semantic score for returned chunk excerpts; does not filter ranked messages")
 	}
 	return readDefinition(
 		ToolSearchMessages,
 		description,
-		closedObject(properties, "query"),
+		closedObject(properties, toolArgQuery),
 		searchMessagesOutputSchema(),
 		(*handlers).searchMessages,
 	)
@@ -414,11 +434,11 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
 			"Body search does not return a total; use has_more to detect more pages.",
 		closedObject(map[string]*jsonschema.Schema{
-			"query":   stringSchema(queryDesc),
-			"account": accountProperty(),
-			"limit":   searchLimitProperty(),
-			"offset":  offsetProperty(),
-		}, "query"),
+			toolArgQuery:   stringSchema(queryDesc),
+			toolArgAccount: accountProperty(),
+			toolArgLimit:   searchLimitProperty(),
+			toolArgOffset:  offsetProperty(),
+		}, toolArgQuery),
 		outputSchemaFor[searchMessageBodiesResponse](),
 		(*handlers).searchMessageBodies,
 	)
@@ -430,8 +450,8 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 			ToolSemanticSearchMessages,
 			"Semantic (embedding) search over message bodies is unavailable: vector search is not configured on this server.",
 			closedObject(map[string]*jsonschema.Schema{
-				"query": stringSchema("Free-text query to embed (requires at least one free-text term)"),
-			}, "query"),
+				toolArgQuery: stringSchema("Free-text query to embed (requires at least one free-text term)"),
+			}, toolArgQuery),
 			outputSchemaFor[searchMessageBodiesResponse](),
 			(*handlers).semanticSearchMessages,
 		)
@@ -455,14 +475,14 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more, mode, pool_saturated, generation. "+
 			"total is not available; use has_more to page.",
 		closedObject(map[string]*jsonschema.Schema{
-			"query":     stringSchema(queryDesc),
-			"account":   accountProperty(),
-			"limit":     searchLimitProperty(),
-			"offset":    offsetProperty(),
-			"mode":      mode,
-			"explain":   booleanSchema("Include per-signal scores in the response (for debugging or ranking inspection)"),
-			"min_score": scoreSchema("Minimum chunk similarity score for included match excerpts (default 0); does not filter ranked messages"),
-		}, "query"),
+			toolArgQuery:    stringSchema(queryDesc),
+			toolArgAccount:  accountProperty(),
+			toolArgLimit:    searchLimitProperty(),
+			toolArgOffset:   offsetProperty(),
+			toolArgMode:     mode,
+			"explain":       booleanSchema("Include per-signal scores in the response (for debugging or ranking inspection)"),
+			toolArgMinScore: scoreSchema("Minimum chunk similarity score for included match excerpts (default 0); does not filter ranked messages"),
+		}, toolArgQuery),
 		outputSchemaFor[searchMessageBodiesResponse](),
 		(*handlers).semanticSearchMessages,
 	)
@@ -480,12 +500,12 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":          safeIDSchema("Message ID"),
-			"offset":      nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
-			"center_at":   signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
-			"max_chars":   signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
-			"body_format": bodyFormat,
-			"full_body":   booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"id":            safeIDSchema("Message ID"),
+			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
+			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
+			"body_format":   bodyFormat,
+			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
 		}, "id"),
 		outputSchemaFor[getMessageResponse](),
 		(*handlers).getMessage,
@@ -497,8 +517,8 @@ func getAttachmentDefinition(_ *handlers) toolDefinition {
 		ToolGetAttachment,
 		"Get attachment content by attachment ID. Returns metadata as text and the file content as an embedded resource blob. Use get_message first to find attachment IDs.",
 		closedObject(map[string]*jsonschema.Schema{
-			"attachment_id": safeIDSchema("Attachment ID (from get_message response)"),
-		}, "attachment_id"),
+			toolArgAttachmentID: safeIDSchema("Attachment ID (from get_message response)"),
+		}, toolArgAttachmentID),
 		outputSchemaFor[getAttachmentResponse](),
 		(*handlers).getAttachment,
 	)
@@ -509,9 +529,9 @@ func exportAttachmentDefinition(_ *handlers) toolDefinition {
 		ToolExportAttachment,
 		"Save an attachment to the local filesystem. Use this for file types that cannot be displayed inline (e.g. PDFs, documents). Returns the saved file path.",
 		closedObject(map[string]*jsonschema.Schema{
-			"attachment_id": safeIDSchema("Attachment ID (from get_message response)"),
-			"destination":   stringSchema("Directory to save the file to (default: ~/Downloads)"),
-		}, "attachment_id"),
+			toolArgAttachmentID: safeIDSchema("Attachment ID (from get_message response)"),
+			toolArgDestination:  stringSchema("Directory to save the file to (default: ~/Downloads)"),
+		}, toolArgAttachmentID),
 		outputSchemaFor[exportAttachmentResponse](),
 		(*handlers).exportAttachment,
 	)
@@ -522,10 +542,10 @@ func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition
 		"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
 		"Use char_offset with get_message center_at to read a larger window around any match."
 	properties := map[string]*jsonschema.Schema{
-		"id":     safeIDSchema("Message ID"),
-		"query":  stringSchema("Search query (keyword term, or semantic query when mode=vector)"),
-		"limit":  nonNegativeIntegerSchema("Maximum matches to return (default 10)", 10),
-		"offset": offsetProperty(),
+		"id":          safeIDSchema("Message ID"),
+		toolArgQuery:  stringSchema("Search query (keyword term, or semantic query when mode=vector)"),
+		toolArgLimit:  nonNegativeIntegerSchema("Maximum matches to return (default 10)", 10),
+		toolArgOffset: offsetProperty(),
 	}
 	if vectorAvailable {
 		description = "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
@@ -534,13 +554,13 @@ func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition
 			"Use a present char_offset with get_message center_at to read a larger window around the match."
 		mode := stringSchema("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)", searchModeKeyword, searchModeVector)
 		mode.Default = json.RawMessage(`"keyword"`)
-		properties["mode"] = mode
-		properties["min_score"] = scoreSchema("Minimum chunk similarity score (0–1) when mode=vector (default 0)")
+		properties[toolArgMode] = mode
+		properties[toolArgMinScore] = scoreSchema("Minimum chunk similarity score (0–1) when mode=vector (default 0)")
 	}
 	return readDefinition(
 		ToolSearchInMessage,
 		description,
-		closedObject(properties, "id", "query"),
+		closedObject(properties, "id", toolArgQuery),
 		outputSchemaFor[searchInMessageResponse](),
 		(*handlers).searchInMessage,
 	)
@@ -555,16 +575,16 @@ func listMessagesDefinition(_ *handlers) toolDefinition {
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 			"total=-1 because the full count is not computed; use has_more for paging.",
 		closedObject(map[string]*jsonschema.Schema{
-			"account":         accountProperty(),
-			"from":            stringSchema("Filter by sender email address"),
+			toolArgAccount:    accountProperty(),
+			toolArgFrom:       stringSchema("Filter by sender email address"),
 			"to":              stringSchema("Filter by recipient email address"),
 			"label":           stringSchema("Filter by Gmail label"),
-			"after":           afterProperty(),
-			"before":          beforeProperty(),
+			toolArgAfter:      afterProperty(),
+			toolArgBefore:     beforeProperty(),
 			"has_attachment":  booleanSchema("Only messages with attachments"),
 			"conversation_id": safeIDSchema("Filter by conversation/thread ID"),
-			"limit":           searchLimitProperty(),
-			"offset":          offsetProperty(),
+			toolArgLimit:      searchLimitProperty(),
+			toolArgOffset:     offsetProperty(),
 		}),
 		outputSchemaFor[listMessagesResponse](),
 		(*handlers).listMessages,
@@ -587,12 +607,12 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 		"Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
 			"Returns an object with a data array containing objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
 		closedObject(map[string]*jsonschema.Schema{
-			"group_by": stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", "sender", "recipient", "domain", "label", "time"),
-			"account":  accountProperty(),
-			"limit":    nonNegativeIntegerSchema("Maximum results to return (default 50)", 50),
-			"after":    afterProperty(),
-			"before":   beforeProperty(),
-		}, "group_by"),
+			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", "time"),
+			toolArgAccount: accountProperty(),
+			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 50)", 50),
+			toolArgAfter:   afterProperty(),
+			toolArgBefore:  beforeProperty(),
+		}, toolArgGroupBy),
 		outputSchemaFor[aggregateResponse](),
 		(*handlers).aggregate,
 	)
@@ -604,12 +624,12 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. "+
 			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
 		closedObject(map[string]*jsonschema.Schema{
-			"domains": stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
-			"limit":   nonNegativeIntegerSchema("Maximum results to return (default 100)", 100),
-			"offset":  offsetProperty(),
-			"after":   afterProperty(),
-			"before":  beforeProperty(),
-		}, "domains"),
+			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
+			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100)", 100),
+			toolArgOffset:  offsetProperty(),
+			toolArgAfter:   afterProperty(),
+			toolArgBefore:  beforeProperty(),
+		}, toolArgDomains),
 		outputSchemaFor[searchByDomainsResponse](),
 		(*handlers).searchByDomains,
 	)
@@ -620,13 +640,13 @@ func stageDeletionDefinition(_ *handlers) toolDefinition {
 		ToolStageDeletion,
 		"Stage messages for deletion. Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately - run 'msgvault delete-staged' CLI command to execute staged deletions.",
 		closedObject(map[string]*jsonschema.Schema{
-			"account":        accountProperty(),
-			"query":          stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
-			"from":           stringSchema("Filter by sender email address"),
+			toolArgAccount:   accountProperty(),
+			toolArgQuery:     stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
+			toolArgFrom:      stringSchema("Filter by sender email address"),
 			"domain":         stringSchema("Filter by sender domain (e.g. 'linkedin.com')"),
 			"label":          stringSchema("Filter by Gmail label (e.g. 'CATEGORY_PROMOTIONS')"),
-			"after":          afterProperty(),
-			"before":         beforeProperty(),
+			toolArgAfter:     afterProperty(),
+			toolArgBefore:    beforeProperty(),
 			"has_attachment": booleanSchema("Only messages with attachments"),
 		}),
 		outputSchemaFor[stageDeletionResponse](),
@@ -639,14 +659,14 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 		ToolFindSimilarMessages,
 		"Find messages whose embeddings are closest to the given message. Requires vector search to be configured and an active index generation.",
 		closedObject(map[string]*jsonschema.Schema{
-			"message_id":     safeIDSchema("Seed message ID; its embedding is used as the query vector"),
-			"limit":          nonNegativeIntegerSchema("Maximum results to return (default 20)", 20),
-			"account":        accountProperty(),
+			toolArgMessageID: safeIDSchema("Seed message ID; its embedding is used as the query vector"),
+			toolArgLimit:     nonNegativeIntegerSchema("Maximum results to return (default 20)", 20),
+			toolArgAccount:   accountProperty(),
 			"message_type":   stringSchema("Restrict results to one message type, such as email, sms, mms, fbmessenger, or calendar_event"),
-			"after":          afterProperty(),
-			"before":         beforeProperty(),
+			toolArgAfter:     afterProperty(),
+			toolArgBefore:    beforeProperty(),
 			"has_attachment": booleanSchema("Only messages with attachments"),
-		}, "message_id"),
+		}, toolArgMessageID),
 		outputSchemaFor[similarMessagesResponse](),
 		(*handlers).findSimilarMessages,
 	)
@@ -663,7 +683,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 		ToolSearchDocuments,
 		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
 		closedObject(map[string]*jsonschema.Schema{
-			"query": stringSchema("Document content or filename query; terms are ANDed"),
+			toolArgQuery: stringSchema("Document content or filename query; terms are ANDed"),
 			"source_ids": {
 				Type: "array", Description: "Optional source ID scope",
 				Items: safeIDSchema("Source ID"),
@@ -672,19 +692,19 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 				Type: "array", Description: "Optional containing message type scope",
 				Items: stringSchema("Containing message type"),
 			},
-			"attachment_id":  safeIDSchema("Optional exact attachment occurrence ID"),
-			"message_id":     safeIDSchema("Optional exact containing message ID"),
-			"person_id":      safeIDSchema("Optional durable person ID"),
-			"participant_id": safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
+			toolArgAttachmentID:  safeIDSchema("Optional exact attachment occurrence ID"),
+			toolArgMessageID:     safeIDSchema("Optional exact containing message ID"),
+			toolArgPersonID:      safeIDSchema("Optional durable person ID"),
+			toolArgParticipantID: safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
 			"directions": {
 				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
-			"after":  stringSchema("Only messages on or after YYYY-MM-DD"),
-			"before": stringSchema("Only messages before YYYY-MM-DD"),
-			"limit":  limit,
-			"cursor": stringSchema("Opaque cursor from the previous page"),
-		}, "query"),
+			toolArgAfter:  stringSchema("Only messages on or after YYYY-MM-DD"),
+			toolArgBefore: stringSchema("Only messages before YYYY-MM-DD"),
+			toolArgLimit:  limit,
+			toolArgCursor: stringSchema("Opaque cursor from the previous page"),
+		}, toolArgQuery),
 		outputSchemaFor[store.DocumentSearchResponse](),
 		(*handlers).searchDocuments,
 	)
@@ -698,26 +718,26 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 	direction := stringSchema("How the owning message relates to the person",
 		"from_person", "to_person", "group")
 	mimeFamily := stringSchema("Stable MIME family",
-		"image", "pdf", "audio", "video", "text", "document", "archive", "other")
+		"image", "pdf", "audio", "video", bodyFormatText, "document", "archive", "other")
 	return readDefinition(
 		ToolSearchPersonFiles,
 		"Search authoritative attachment metadata for one durable person. Results preserve exact attachment occurrence, owning message, conversation, source, matched participant, role, and direction provenance.",
 		closedObject(map[string]*jsonschema.Schema{
-			"person_id": safeIDSchema("Durable person ID"),
+			toolArgPersonID: safeIDSchema("Durable person ID"),
 			"directions": {
 				Type: "array", Description: "Optional union of from_person, to_person, and group",
 				Items: direction,
 			},
-			"after":    stringSchema("Only messages on or after YYYY-MM-DD"),
-			"before":   stringSchema("Only messages before YYYY-MM-DD"),
-			"filename": stringSchema("Case-insensitive filename substring filter"),
+			toolArgAfter:  stringSchema("Only messages on or after YYYY-MM-DD"),
+			toolArgBefore: stringSchema("Only messages before YYYY-MM-DD"),
+			"filename":    stringSchema("Case-insensitive filename substring filter"),
 			"mime_families": {
 				Type: "array", Description: "Optional stable MIME-family filter",
 				Items: mimeFamily,
 			},
-			"limit":  limit,
-			"cursor": stringSchema("Opaque cursor from the previous metadata page"),
-		}, "person_id"),
+			toolArgLimit:  limit,
+			toolArgCursor: stringSchema("Opaque cursor from the previous metadata page"),
+		}, toolArgPersonID),
 		outputSchemaFor[generated.PersonFileSearchHTTPResponse](),
 		(*handlers).searchPersonFiles,
 	)

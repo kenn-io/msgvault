@@ -1147,6 +1147,7 @@ var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.PersonCompletionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
@@ -2150,6 +2151,12 @@ func (a *storeAPIAdapter) DecidePersonMergeCandidateContext(
 	return a.store.DecidePersonMergeCandidateContext(ctx, request)
 }
 
+func (a *storeAPIAdapter) CompletePersonProfilesContext(
+	ctx context.Context, request store.PersonCompletionQuery,
+) ([]store.PersonCompletion, error) {
+	return a.store.CompletePersonProfilesContext(ctx, request)
+}
+
 func (a *storeAPIAdapter) GetPersonProfileContext(
 	ctx context.Context, personID int64,
 ) (*store.PersonProfile, error) {
@@ -2234,6 +2241,12 @@ func (a *storeAPIAdapter) SetPersonAttributeValueContext(
 	ctx context.Context, input store.PersonAttributeValueInput,
 ) (*store.PersonAttributeWrite, error) {
 	return a.store.SetPersonAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) AppendPersonNoteContext(
+	ctx context.Context, input store.PersonNoteAppendInput,
+) (*store.PersonAttributeWrite, error) {
+	return a.store.AppendPersonNoteContext(ctx, input)
 }
 
 func (a *storeAPIAdapter) SupersedePersonAttributeValueContext(

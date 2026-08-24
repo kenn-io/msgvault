@@ -43,6 +43,32 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 	assertions.Empty(files)
 }
 
+func TestStoreAPIAdapterExposesCuratedPeopleCompletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"email", "completion-adapter@example.test", "Completion Adapter",
+	)
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	_, err = st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+		NameKind: store.PersonNameNickname, Formatted: new("Adapter Nickname"),
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+
+	adapter := &storeAPIAdapter{store: st}
+	rows, err := adapter.CompletePersonProfilesContext(t.Context(), store.PersonCompletionQuery{
+		Query: "nickname", Limit: 8,
+	})
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal(participantID, rows[0].ParticipantID)
+	assert.Equal("Adapter Nickname", rows[0].Value)
+}
+
 func TestStoreAPIAdapterRecreatesConsentedDocumentSearchConsumer(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

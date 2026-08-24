@@ -608,6 +608,9 @@ type ListPersonAttributesQuery struct {
 
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
+
+	// UniversalID Restrict the response to one portable definition identifier
+	UniversalID *string `json:"universal_id,omitempty"`
 }
 
 type ClearPersonAttributeQuery struct {
@@ -679,6 +682,11 @@ type ListPersonMergesQuery struct {
 
 	// Offset Results to skip
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type AppendPersonNoteQuery struct {
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
 }
 
 type ListPersonRelationshipsQuery struct {
@@ -1031,6 +1039,9 @@ type ListTextConversationsQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
+
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`
 
@@ -1069,8 +1080,14 @@ type ListTextConversationsQuery struct {
 }
 
 type ListTextConversationMessagesQuery struct {
+	// SearchQuery Full-text search within the conversation
+	SearchQuery *string `json:"search_query,omitempty"`
+
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
+
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
 
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`

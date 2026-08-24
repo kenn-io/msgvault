@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -37,6 +35,8 @@ func (m Model) handleTextKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleTextListKeys(msg)
 	case textLevelTimeline:
 		return m.handleTextTimelineKeys(msg)
+	case textLevelDetail:
+		return m.handleTextDetailKeys(msg)
 	}
 	return m, nil
 }
@@ -52,7 +52,7 @@ func (m Model) handleTextListKeys(
 	}
 
 	switch msg.String() {
-	case "tab", "Tab":
+	case keyNameTab, "Tab":
 		m.cycleTextViewType(true)
 		m.loading = true
 		cmd := m.loadTextData()
@@ -67,7 +67,7 @@ func (m Model) handleTextListKeys(
 	case keyNameEnter:
 		return m.textDrillDown()
 
-	case keyNameEsc, "backspace":
+	case keyNameEsc, keyNameBackspace:
 		return m.textGoBack()
 
 	case "s":
@@ -120,6 +120,8 @@ func (m Model) handleTextTimelineKeys(
 	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case keyNameEnter:
+		return m.textDrillDown()
 	case "r":
 		// Reverse chronological order
 		if m.textState.filter.SortDirection == query.SortAsc {
@@ -139,7 +141,7 @@ func (m Model) handleTextTimelineKeys(
 		m.searchInput.Focus()
 		return m, nil
 
-	case keyNameEsc, "backspace":
+	case keyNameEsc, keyNameBackspace:
 		return m.textGoBack()
 
 	case "j", keyNameDown, keyNameCtrlN:
@@ -150,7 +152,7 @@ func (m Model) handleTextTimelineKeys(
 		m.textMoveCursor(-1)
 		return m, nil
 
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		step := m.visibleRows()
 		m.textState.cursor -= step
 		m.textState.scrollOffset -= step
@@ -162,7 +164,7 @@ func (m Model) handleTextTimelineKeys(
 		}
 		return m, nil
 
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		itemCount := m.textRowCount()
 		step := m.visibleRows()
 		m.textState.cursor += step
@@ -179,17 +181,29 @@ func (m Model) handleTextTimelineKeys(
 		}
 		return m, nil
 
-	case "home":
+	case keyNameHome:
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		return m, nil
 
-	case "end", "G":
+	case keyNameEnd, "G":
 		maxIdx := max(m.textRowCount()-1, 0)
 		m.textState.cursor = maxIdx
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) handleTextDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if !m.detailSearchActive && m.detailSearchQuery == "" {
+		switch msg.String() {
+		case keyNameEsc, keyNameBackspace:
+			return m.textGoBack()
+		case "left", "h", "right", "l", "T":
+			return m, nil
+		}
+	}
+	return m.handleMessageDetailKeys(msg)
 }
 
 // handleTextInlineSearchKeys handles keys when inline search is
@@ -204,57 +218,48 @@ func (m Model) handleTextInlineSearchKeys(
 		if queryStr == "" {
 			return m, nil
 		}
-		// In timeline view, filter locally (messages already loaded
-		// with full body text). In other views, use global FTS.
-		if m.textState.level == textLevelTimeline {
-			// Save unfiltered messages on first search so repeated
-			// searches filter from the original set, not stacked results.
+		// Timeline search stays scoped to the selected conversation and runs
+		// through the full-text index. Other views use global FTS.
+		if m.textState.level == textLevelTimeline && !m.textState.globalSearchTimeline {
+			// Save the unfiltered page and breadcrumb only once so repeated
+			// searches replace the active query instead of stacking history.
 			if m.textState.unfilteredMessages == nil {
 				m.textState.unfilteredMessages = m.textState.messages
 				// Push breadcrumb only on first search to avoid stacking
 				m.textState.breadcrumbs = append(
 					m.textState.breadcrumbs,
 					textNavSnapshot{
-						level:          m.textState.level,
-						viewType:       m.textState.viewType,
-						cursor:         m.textState.cursor,
-						scrollOffset:   m.textState.scrollOffset,
-						filter:         m.textState.filter,
-						selectedConvID: m.textState.selectedConvID,
+						level:                m.textState.level,
+						viewType:             m.textState.viewType,
+						cursor:               m.textState.cursor,
+						scrollOffset:         m.textState.scrollOffset,
+						filter:               m.textState.filter,
+						selectedConvID:       m.textState.selectedConvID,
+						globalSearchTimeline: m.textState.globalSearchTimeline,
 					},
 				)
 			}
-			source := m.textState.unfilteredMessages
-			needle := strings.ToLower(queryStr)
-			var filtered []query.MessageSummary
-			for _, msg := range source {
-				body := strings.ToLower(msg.BodyText)
-				if body == "" {
-					body = strings.ToLower(msg.Snippet)
-				}
-				sender := strings.ToLower(
-					msg.FromName + " " + msg.FromPhone,
-				)
-				if strings.Contains(body, needle) ||
-					strings.Contains(sender, needle) {
-					filtered = append(filtered, msg)
-				}
-			}
-			m.textState.messages = filtered
+			m.textState.filter.SearchQuery = queryStr
 			m.textState.cursor = 0
 			m.textState.scrollOffset = 0
-			return m, nil
+			m.loading = true
+			return m, m.loadTextMessages()
+		}
+		if m.textState.level == textLevelTimeline {
+			m.loading = true
+			return m, m.loadTextSearch(queryStr)
 		}
 		// Save current state so Esc can return from search results
 		m.textState.breadcrumbs = append(
 			m.textState.breadcrumbs,
 			textNavSnapshot{
-				level:          m.textState.level,
-				viewType:       m.textState.viewType,
-				cursor:         m.textState.cursor,
-				scrollOffset:   m.textState.scrollOffset,
-				filter:         m.textState.filter,
-				selectedConvID: m.textState.selectedConvID,
+				level:                m.textState.level,
+				viewType:             m.textState.viewType,
+				cursor:               m.textState.cursor,
+				scrollOffset:         m.textState.scrollOffset,
+				filter:               m.textState.filter,
+				selectedConvID:       m.textState.selectedConvID,
+				globalSearchTimeline: m.textState.globalSearchTimeline,
 			},
 		)
 		m.loading = true
@@ -345,7 +350,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 			)
 		}
 		return true
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		step := m.visibleRows()
 		m.textState.cursor -= step
 		m.textState.scrollOffset -= step
@@ -356,7 +361,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 			m.textState.scrollOffset = 0
 		}
 		return true
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		step := m.visibleRows()
 		m.textState.cursor += step
 		m.textState.scrollOffset += step
@@ -371,11 +376,11 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 			m.textState.scrollOffset = maxScroll
 		}
 		return true
-	case "home":
+	case keyNameHome:
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		return true
-	case "end", "G":
+	case keyNameEnd, "G":
 		maxIdx := max(itemCount-1, 0)
 		m.textState.cursor = maxIdx
 		m.textState.scrollOffset = calculateScrollOffset(
@@ -398,6 +403,8 @@ func (m Model) textRowCount() int {
 		return len(m.textState.aggregateRows)
 	case textLevelTimeline:
 		return len(m.textState.messages)
+	case textLevelDetail:
+		return 0
 	}
 	return 0
 }
@@ -434,16 +441,18 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		m.textState.breadcrumbs = append(
 			m.textState.breadcrumbs,
 			textNavSnapshot{
-				level:          m.textState.level,
-				viewType:       m.textState.viewType,
-				cursor:         m.textState.cursor,
-				scrollOffset:   m.textState.scrollOffset,
-				filter:         m.textState.filter,
-				selectedConvID: m.textState.selectedConvID,
+				level:                m.textState.level,
+				viewType:             m.textState.viewType,
+				cursor:               m.textState.cursor,
+				scrollOffset:         m.textState.scrollOffset,
+				filter:               m.textState.filter,
+				selectedConvID:       m.textState.selectedConvID,
+				globalSearchTimeline: m.textState.globalSearchTimeline,
 			},
 		)
 		m.textState.selectedConvID = conv.ConversationID
 		m.textState.level = textLevelTimeline
+		m.textState.globalSearchTimeline = false
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
@@ -458,12 +467,13 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		m.textState.breadcrumbs = append(
 			m.textState.breadcrumbs,
 			textNavSnapshot{
-				level:          m.textState.level,
-				viewType:       m.textState.viewType,
-				cursor:         m.textState.cursor,
-				scrollOffset:   m.textState.scrollOffset,
-				filter:         m.textState.filter,
-				selectedConvID: m.textState.selectedConvID,
+				level:                m.textState.level,
+				viewType:             m.textState.viewType,
+				cursor:               m.textState.cursor,
+				scrollOffset:         m.textState.scrollOffset,
+				filter:               m.textState.filter,
+				selectedConvID:       m.textState.selectedConvID,
+				globalSearchTimeline: m.textState.globalSearchTimeline,
 			},
 		)
 		// Apply aggregate filter and drill to conversations
@@ -487,13 +497,58 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case textLevelTimeline:
-		// Drill-down doesn't fire from the timeline level (no children).
+		if m.textState.cursor < 0 || m.textState.cursor >= len(m.textState.messages) {
+			return m, nil
+		}
+		message := m.textState.messages[m.textState.cursor]
+		m.textState.breadcrumbs = append(m.textState.breadcrumbs, textNavSnapshot{
+			level: m.textState.level, viewType: m.textState.viewType,
+			cursor: m.textState.cursor, scrollOffset: m.textState.scrollOffset,
+			filter: m.textState.filter, selectedConvID: m.textState.selectedConvID,
+			selectedMessageID:    m.textState.selectedMessageID,
+			globalSearchTimeline: m.textState.globalSearchTimeline,
+		})
+		m.textState.selectedMessageID = message.ID
+		m.textState.level = textLevelDetail
+		m.messageDetail = nil
+		m.detailScroll = 0
+		m.detailSearchActive = false
+		m.detailSearchQuery = ""
+		m.detailSearchMatches = nil
+		m.detailSearchMatchIndex = 0
+		m.loading = true
+		return m, m.loadTextMessage(message.ID)
+
+	case textLevelDetail:
+		return m, nil
 	}
 	return m, nil
 }
 
 // textGoBack returns to the previous text navigation state.
 func (m Model) textGoBack() (tea.Model, tea.Cmd) {
+	if m.textState.level == textLevelDetail {
+		if len(m.textState.breadcrumbs) == 0 {
+			return m, nil
+		}
+		snap := m.textState.breadcrumbs[len(m.textState.breadcrumbs)-1]
+		m.textState.breadcrumbs = m.textState.breadcrumbs[:len(m.textState.breadcrumbs)-1]
+		m.textState.level = snap.level
+		m.textState.viewType = snap.viewType
+		m.textState.cursor = snap.cursor
+		m.textState.scrollOffset = snap.scrollOffset
+		m.textState.filter = snap.filter
+		m.textState.selectedConvID = snap.selectedConvID
+		m.textState.selectedMessageID = snap.selectedMessageID
+		m.textState.globalSearchTimeline = snap.globalSearchTimeline
+		m.messageDetail = nil
+		m.detailSearchActive = false
+		m.detailSearchQuery = ""
+		m.detailSearchMatches = nil
+		m.detailSearchMatchIndex = 0
+		m.loading = false
+		return m, nil
+	}
 	// If we have unfiltered messages (from a timeline search), restore
 	// them directly without reloading. This is instant and avoids
 	// re-querying the database.
@@ -506,6 +561,8 @@ func (m Model) textGoBack() (tea.Model, tea.Cmd) {
 			m.textState.breadcrumbs = m.textState.breadcrumbs[:len(m.textState.breadcrumbs)-1]
 			m.textState.cursor = snap.cursor
 			m.textState.scrollOffset = snap.scrollOffset
+			m.textState.filter = snap.filter
+			m.textState.globalSearchTimeline = snap.globalSearchTimeline
 		} else {
 			m.textState.cursor = 0
 			m.textState.scrollOffset = 0
@@ -523,6 +580,7 @@ func (m Model) textGoBack() (tea.Model, tea.Cmd) {
 	m.textState.scrollOffset = snap.scrollOffset
 	m.textState.filter = snap.filter
 	m.textState.selectedConvID = snap.selectedConvID
+	m.textState.globalSearchTimeline = snap.globalSearchTimeline
 	m.loading = true
 	cmd := m.loadTextData()
 	return m, cmd

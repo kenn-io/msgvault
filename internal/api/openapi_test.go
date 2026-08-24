@@ -38,7 +38,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.9.0", APISchemaVersion)
+	assert.Equal("2.10.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -60,11 +60,11 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.9.0", APISchemaVersion)
+	assert.Equal(t, "2.10.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.9.0", APISchemaVersion)
+	assert.Equal(t, "2.10.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -88,7 +88,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.9.0", APISchemaVersion,
+	assert.Equal(t, "2.10.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -399,7 +399,7 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	assert.Equal("2.9.0", APISchemaVersion,
+	assert.Equal("2.10.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -418,6 +418,47 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require.NotNil(value, "person attribute value path")
 	assert.NotNil(value.Put, "person attribute set operation")
 	assert.NotNil(value.Delete, "person attribute clear operation")
+
+	createSchema := operationBodySchema(t, doc, definitions.Post)
+	assert.Contains(createSchema.Properties, "slug")
+	assert.NotContains(createSchema.Required, "slug",
+		"the server generates a slug when the client omits it")
+}
+
+func TestOpenAPIParticipantInboxAndTextScopeContracts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := OpenAPIDocument()
+
+	inboxes := doc.Paths["/api/v1/participants/{id}/inboxes"]
+	requirements.NotNil(inboxes)
+	requirements.NotNil(inboxes.Get)
+	requirements.Len(inboxes.Get.Parameters, 1)
+	assertions.Equal("id", inboxes.Get.Parameters[0].Name)
+	assertions.Equal("path", inboxes.Get.Parameters[0].In)
+	assertions.True(inboxes.Get.Parameters[0].Required)
+
+	for _, path := range []string{
+		"/api/v1/text/conversations",
+		"/api/v1/text/conversations/{id}/messages",
+	} {
+		operation := doc.Paths[path].Get
+		requirements.NotNil(operation, path)
+		var participantIDs *huma.Param
+		for _, parameter := range operation.Parameters {
+			if parameter.Name == "participant_id" {
+				participantIDs = parameter
+				break
+			}
+		}
+		requirements.NotNil(participantIDs, path)
+		assertions.Equal("query", participantIDs.In)
+		requirements.NotNil(participantIDs.Schema)
+		assertions.Equal(huma.TypeArray, participantIDs.Schema.Type)
+		requirements.NotNil(participantIDs.Schema.Items)
+		assertions.Equal(huma.TypeInteger, participantIDs.Schema.Items.Type)
+		assertions.Equal("int64", participantIDs.Schema.Items.Format)
+	}
 }
 
 func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
@@ -472,7 +513,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.9.0", APISchemaVersion,
+	assertions.Equal("2.10.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -492,7 +533,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.9.0", APISchemaVersion,
+	assert.Equal("2.10.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -520,7 +561,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.9.0", APISchemaVersion,
+	assertions.Equal("2.10.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -565,8 +606,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// document search added in 1.44.0, participant/people separation added in
 	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
 	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, CardDAV routes
-	// in 2.8.0, and person merge/split operations in 2.9.0 did not touch it.
-	assert.Equal("2.9.0", APISchemaVersion, "meeting import is an additive schema release")
+	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
+	// calendars in 2.10.0 did not touch it.
+	assert.Equal("2.10.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -821,6 +863,23 @@ func TestOpenAPIClientServiceEnumsPreserveExistingGoNames(t *testing.T) {
 		requirements.NotNil(schema.Properties[property], property)
 		assertions.Equal(want, schema.Properties[property].Extensions["x-enum-names"], property)
 	}
+}
+
+func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["AppendPersonNoteRequest"]
+	requirements.NotNil(schema)
+	requirements.NotNil(schema.Properties["source"])
+	assertions.Equal([]any{
+		"AppendPersonNoteRequestSourceUser",
+		"AppendPersonNoteRequestSourceCarddavImport",
+		"AppendPersonNoteRequestSourceVcardImport",
+		"AppendPersonNoteRequestSourceArchiveObservation",
+		"AppendPersonNoteRequestSourceExtraction",
+		"AppendPersonNoteRequestSourceEnrichment",
+		"AppendPersonNoteRequestSourceSystem",
+	}, schema.Properties["source"].Extensions["x-enum-names"])
 }
 
 func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {

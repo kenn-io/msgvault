@@ -63,6 +63,11 @@ func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
 	assert.Equal(t, int64(7), conflict.A.Profiles[0].Person.ID)
 }
 
+func TestGeneratedEmploymentSourceConstantsRemainAssignable(t *testing.T) {
+	var source = generated.User
+	assert.Equal(t, generated.EmploymentBodySource("user"), source)
+}
+
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

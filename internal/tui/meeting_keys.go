@@ -41,7 +41,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case keyNameEsc, "backspace":
+	case keyNameEsc, keyNameBackspace:
 		if m.meetingState.searchQuery != "" {
 			m.meetingState.searchQuery = ""
 			m.meetingState.searchInput.SetValue("")
@@ -180,7 +180,7 @@ func (m *Model) maybeLoadMoreMeetings() tea.Cmd {
 
 func (m Model) handleMeetingDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case keyNameEsc, "backspace":
+	case keyNameEsc, keyNameBackspace:
 		m.meetingState.level = meetingLevelList
 		m.meetingState.detailScroll = 0
 		m.meetingState.detailRequestID++
@@ -191,9 +191,9 @@ func (m Model) handleMeetingDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		m.meetingState.detailScroll = max(m.meetingState.detailScroll-1, 0)
 	case keyNameDown, "j", keyNameCtrlN:
 		m.meetingState.detailScroll++
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		m.meetingState.detailScroll = max(m.meetingState.detailScroll-m.visibleRows(), 0)
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		m.meetingState.detailScroll += m.visibleRows()
 	case "left", "h":
 		return m.changeMeetingDetail(-1)
@@ -351,17 +351,17 @@ func (m *Model) navigateMeetingList(key string) bool {
 			m.meetingState.cursor++
 			changed = true
 		}
-	case "home":
+	case keyNameHome:
 		m.meetingState.cursor = 0
 		m.meetingState.scrollOffset = 0
 		return true
-	case "end", "G":
+	case keyNameEnd, "G":
 		m.meetingState.cursor = max(count-1, 0)
 		changed = true
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		m.meetingState.cursor = max(m.meetingState.cursor-m.visibleRows(), 0)
 		changed = true
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		m.meetingState.cursor = min(m.meetingState.cursor+m.visibleRows(), max(count-1, 0))
 		changed = true
 	default:

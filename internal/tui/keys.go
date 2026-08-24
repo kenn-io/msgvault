@@ -10,11 +10,27 @@ import (
 
 // Key names matched against tea.KeyPressMsg.String() in the key-handling switches.
 const (
-	keyNameEnter = "enter"
-	keyNameEsc   = "esc"
-	keyNameDown  = "down"
-	keyNameCtrlN = "ctrl+n"
-	keyNameCtrlP = "ctrl+p"
+	keyNameEnter     = "enter"
+	keyNameEsc       = "esc"
+	keyNameDown      = "down"
+	keyNameCtrlN     = "ctrl+n"
+	keyNameCtrlP     = "ctrl+p"
+	keyNameTab       = "tab"
+	keyNameBackspace = "backspace"
+	keyNameCtrlU     = "ctrl+u"
+	keyNameCtrlD     = "ctrl+d"
+	keyNamePageUp    = "pgup"
+	keyNamePageDown  = "pgdown"
+	keyNameHome      = "home"
+	keyNameEnd       = "end"
+
+	listIndicatorBlank = "   "
+	helpLabelHelp      = "? help"
+	helpLabelVertical  = "↑/↓"
+	helpLabelBack      = "Esc back"
+	helpLabelEsc       = "Esc"
+	helpLabelEnter     = "Enter"
+	sourceTypeWhatsApp = "whatsapp"
 )
 
 // handleInlineSearchKeys handles keys when inline search bar is active.
@@ -30,7 +46,7 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.quitting = true
 		return m, tea.Quit
 
-	case "tab":
+	case keyNameTab:
 		// Toggle search mode — only meaningful at message list level
 		// where Fast (Parquet metadata) and Deep (FTS5 body) differ.
 		// At aggregate level, both modes run the same query.
@@ -145,8 +161,16 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.modal = modalHelp
 		return m, nil, true
 	case "m":
+		leavingPeople := m.mode == modePeople
+		if leavingPeople {
+			m.settlePeopleDirectoryLoad()
+			m.swapPeopleMeetingState()
+			m.swapPeopleTextState()
+		}
+		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil)
+		m.switchMessageReaderState(next)
 		m.presentationGeneration++
-		m.mode = nextMode(m.mode, m.textEngine != nil)
+		m.mode = next
 		// A frozen view and the email search loading flags describe the mode
 		// being left. Do not let them obscure or animate the destination mode.
 		m.transitionBuffer = ""
@@ -155,9 +179,20 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		switch m.mode {
 		case modeTexts:
 			m.textState.filter.SourceID = m.accountFilter
+			var loadCmd tea.Cmd
+			if m.textState.level == textLevelDetail {
+				if m.messageDetail == nil && m.textState.selectedMessageID > 0 {
+					loadCmd = m.loadTextMessage(m.textState.selectedMessageID)
+				}
+			} else if m.textState.level != textLevelTimeline || !m.textState.globalSearchTimeline {
+				loadCmd = m.loadTextData()
+			}
+			if loadCmd == nil {
+				m.loading = false
+				return m, nil, true
+			}
 			m.loading = true
 			spinCmd := m.startSpinner()
-			loadCmd := m.loadTextConversations()
 			return m, tea.Batch(spinCmd, loadCmd), true
 		case modeMeetings:
 			m.meetingState.listLoading = false
@@ -174,6 +209,80 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.meetingState.searchSnapshotInvalid = true
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadMeetingMessages()), true
+		case modePeople:
+			m.swapPeopleMeetingState()
+			m.swapPeopleTextState()
+			m.peopleState.directoryLoading = false
+			m.peopleState.loadingMore = false
+			m.peopleState.contactLoading = false
+			if m.peopleState.level != peopleLevelDirectory {
+				if m.peopleState.contact != nil {
+					if m.peopleState.level == peopleLevelMeetingDetail &&
+						m.meetingState.detail == nil &&
+						m.peopleState.selectedContentMessage > 0 {
+						m.peopleState.requestID++
+						m.peopleState.meetingsErr = nil
+						m.meetingState.detailLoading = true
+						m.loading = true
+						return m, tea.Batch(
+							m.startSpinner(),
+							m.loadPeopleMeeting(m.peopleState.selectedContentMessage),
+						), true
+					}
+					if m.peopleState.level == peopleLevelActivityMessage &&
+						m.messageDetail == nil &&
+						m.peopleState.selectedContentMessage > 0 {
+						m.peopleState.requestID++
+						m.peopleState.activityErr = nil
+						m.peopleState.messageLoading = true
+						m.loading = true
+						return m, tea.Batch(
+							m.startSpinner(),
+							m.loadPeopleActivityMessage(m.peopleState.selectedContentMessage),
+						), true
+					}
+					if m.peopleState.level == peopleLevelContact &&
+						m.peopleState.tab == peopleTabOverview &&
+						m.peopleState.relationshipCalendar == nil {
+						m.peopleState.requestID++
+						if cmd := m.beginPeopleRelationshipLoad(); cmd != nil {
+							m.loading = true
+							return m, tea.Batch(m.startSpinner(), cmd), true
+						}
+					}
+					if (m.peopleState.tab == peopleTabMeetings &&
+						!m.peopleState.meetingsLoaded) ||
+						(m.peopleState.tab == peopleTabFiles &&
+							!m.peopleState.filesLoaded) ||
+						(m.peopleState.tab == peopleTabActivity &&
+							!m.peopleState.activityLoaded) {
+						updated, cmd := m.activatePeopleTab(m.peopleState.tab)
+						return updated, cmd, true
+					}
+					m.loading = false
+					return m, nil, true
+				}
+				m.peopleState.requestID++
+				m.peopleState.err = nil
+				m.peopleState.contactLoading = true
+				m.loading = true
+				spinCmd := m.startSpinner()
+				return m, tea.Batch(
+					spinCmd,
+					m.loadPeopleContact(m.peopleState.participantID),
+				), true
+			}
+			if m.peopleState.initialized {
+				m.loading = false
+				return m, nil, true
+			}
+			m.peopleState.requestID++
+			m.peopleState.paginationRestarted = false
+			m.peopleState.err = nil
+			m.peopleState.directoryLoading = true
+			m.loading = true
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadPeopleDirectory("", false)), true
 		default:
 			m.loading = true
 			m.aggregateRequestID++
@@ -290,7 +399,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// View switching - 'g' cycles through groupings, Tab also works
 	// Sub-agg skips the drill view type (can't sub-group by the same dimension)
-	case "g", "tab":
+	case "g", keyNameTab:
 		skipView := query.ViewType(-1)
 		if isSub {
 			skipView = m.drillViewType
@@ -391,7 +500,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Check if we need to load more deep search results after pgdown
 	key := msg.String()
-	if (key == "pgdown" || key == "ctrl+d") &&
+	if (key == keyNamePageDown || key == keyNameCtrlD) &&
 		m.searchQuery != "" && m.searchMode == searchModeDeep &&
 		m.searchTotalCount == -1 && !m.searchLoadingMore && !m.loading &&
 		m.cursor >= len(m.messages)-1 && len(m.messages) > 0 {
@@ -465,7 +574,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.activateInlineSearch("search (Tab: deep)")
 
 	// Sub-grouping: switch to aggregate breakdown within current filter
-	case "tab":
+	case keyNameTab:
 		if m.hasActiveSemanticSearch() {
 			return m, nil
 		}
@@ -820,7 +929,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		} else {
 			return m.showFlash("At bottom")
 		}
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
 		if m.detailScroll == 0 {
@@ -830,7 +939,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		if m.detailScroll < 0 {
 			m.detailScroll = 0
 		}
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
 		maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
@@ -839,9 +948,9 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		}
 		m.detailScroll += m.detailPageSize()
 		m.clampDetailScroll()
-	case "home", "g":
+	case keyNameHome, "g":
 		m.detailScroll = 0
-	case "end", "G":
+	case keyNameEnd, "G":
 		m.detailScroll = max(m.detailLineCount-m.detailPageSize(), 0)
 
 	// View thread
@@ -905,7 +1014,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadCursor++
 			m.ensureThreadCursorVisible()
 		}
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		step := m.visibleRows()
 		m.threadCursor -= step
 		m.threadScrollOffset -= step
@@ -915,7 +1024,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.threadScrollOffset < 0 {
 			m.threadScrollOffset = 0
 		}
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		step := m.visibleRows()
 		itemCount := len(m.threadMessages)
 		m.threadCursor += step
@@ -1203,9 +1312,9 @@ func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.helpScroll > 0 {
 			m.helpScroll--
 		}
-	case "pgdown":
+	case keyNamePageDown:
 		m.helpScroll += 10
-	case "pgup":
+	case keyNamePageUp:
 		m.helpScroll -= 10
 		if m.helpScroll < 0 {
 			m.helpScroll = 0

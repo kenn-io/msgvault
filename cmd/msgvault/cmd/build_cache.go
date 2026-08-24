@@ -1452,6 +1452,7 @@ func buildCacheLocked(
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
+		EffectiveAt:    cacheWatermark,
 		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {

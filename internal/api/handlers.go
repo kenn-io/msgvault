@@ -33,6 +33,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const textViewConversationsValue = "conversations"
+
 // maxPageSize is the hard upper bound for any paginated endpoint.
 const maxPageSize = 500
 
@@ -2039,6 +2041,7 @@ type TextConversationRow struct {
 }
 
 type TextConversationsResponse struct {
+	CacheRevision string                `json:"cache_revision"`
 	Count         int                   `json:"count"`
 	HasMore       bool                  `json:"has_more"`
 	Offset        int                   `json:"offset"`
@@ -2047,6 +2050,15 @@ type TextConversationsResponse struct {
 }
 
 type TextMessagesResponse struct {
+	CacheRevision string                 `json:"cache_revision"`
+	Count         int                    `json:"count"`
+	HasMore       bool                   `json:"has_more"`
+	Offset        int                    `json:"offset"`
+	Limit         int                    `json:"limit"`
+	Messages      []query.MessageSummary `json:"messages"`
+}
+
+type TextSearchResponse struct {
 	Count    int                    `json:"count"`
 	HasMore  bool                   `json:"has_more"`
 	Offset   int                    `json:"offset"`
@@ -2159,7 +2171,7 @@ func parseTimeGranularity(s string) (query.TimeGranularity, bool) {
 
 func parseTextViewType(s string) (query.TextViewType, bool) {
 	switch strings.ToLower(s) {
-	case "conversations":
+	case textViewConversationsValue:
 		return query.TextViewConversations, true
 	case "contacts":
 		return query.TextViewContacts, true
@@ -2179,7 +2191,7 @@ func parseTextViewType(s string) (query.TextViewType, bool) {
 func textViewTypeString(v query.TextViewType) string {
 	switch v {
 	case query.TextViewConversations:
-		return "conversations"
+		return textViewConversationsValue
 	case query.TextViewContacts:
 		return "contacts"
 	case query.TextViewContactNames:
@@ -2408,6 +2420,16 @@ func parseTextFilter(r *http.Request) (query.TextFilter, error) {
 	} else if ok {
 		filter.SourceID = &id
 	}
+	if ids, ok, err := queryInt64s(r, "participant_id"); err != nil {
+		return filter, err
+	} else if ok {
+		for _, id := range ids {
+			if id <= 0 {
+				return filter, newParamError("participant_id", "query parameter \"participant_id\" must contain only positive integers")
+			}
+		}
+		filter.ParticipantIDs = ids
+	}
 	if v := r.URL.Query().Get("time_period"); v != "" {
 		filter.TimeRange.Period = v
 	}
@@ -2553,6 +2575,17 @@ func (s *Server) textEngine(ctx context.Context, w http.ResponseWriter) (query.T
 		return nil, false
 	}
 	return textEngine, true
+}
+
+func (s *Server) textSnapshotReader(
+	textEngine query.TextEngine, w http.ResponseWriter,
+) (query.TextSnapshotReader, bool) {
+	reader, ok := textEngine.(query.TextSnapshotReader)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "text_snapshot_unavailable", "Text snapshot revision is not available")
+		return nil, false
+	}
+	return reader, true
 }
 
 // toTotalStatsResponse converts query.TotalStats to JSON format.
@@ -3714,6 +3747,10 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	snapshotReader, ok := s.textSnapshotReader(textEngine, w)
+	if !ok {
+		return
+	}
 
 	filter, err := parseTextFilter(r)
 	if err != nil {
@@ -3729,7 +3766,9 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 
 	requestLimit := filter.Pagination.Limit
 	filter.Pagination.Limit = requestLimit + 1
-	rows, err := textEngine.ListConversations(r.Context(), filter)
+	rows, cacheRevision, err := snapshotReader.ListConversationsSnapshot(
+		r.Context(), filter,
+	)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -3750,6 +3789,7 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, TextConversationsResponse{
+		CacheRevision: cacheRevision,
 		Count:         len(conversations),
 		HasMore:       hasMore,
 		Offset:        filter.Pagination.Offset,
@@ -3806,6 +3846,10 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	snapshotReader, ok := s.textSnapshotReader(textEngine, w)
+	if !ok {
+		return
+	}
 
 	idStr := r.PathValue("id")
 	conversationID, err := strconv.ParseInt(idStr, 10, 64)
@@ -3819,6 +3863,7 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 		s.rejectBadParam(w, err)
 		return
 	}
+	filter.SearchQuery = r.URL.Query().Get("search_query")
 	if filter.Pagination.Limit <= 0 {
 		filter.Pagination.Limit = maxPageSize
 	}
@@ -3828,7 +3873,9 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 
 	requestLimit := filter.Pagination.Limit
 	filter.Pagination.Limit = requestLimit + 1
-	messages, err := textEngine.ListConversationMessages(r.Context(), conversationID, filter)
+	messages, cacheRevision, err := snapshotReader.ListConversationMessagesSnapshot(
+		r.Context(), conversationID, filter,
+	)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -3847,11 +3894,12 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSON(w, http.StatusOK, TextMessagesResponse{
-		Count:    len(messages),
-		HasMore:  hasMore,
-		Offset:   filter.Pagination.Offset,
-		Limit:    requestLimit,
-		Messages: messages,
+		CacheRevision: cacheRevision,
+		Count:         len(messages),
+		HasMore:       hasMore,
+		Offset:        filter.Pagination.Offset,
+		Limit:         requestLimit,
+		Messages:      messages,
 	})
 }
 
@@ -3905,7 +3953,7 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 		messages = []query.MessageSummary{}
 	}
 
-	writeJSON(w, http.StatusOK, TextMessagesResponse{
+	writeJSON(w, http.StatusOK, TextSearchResponse{
 		Count:    len(messages),
 		HasMore:  hasMore,
 		Offset:   offset,

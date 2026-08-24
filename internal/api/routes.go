@@ -436,7 +436,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[TextConversationsResponse](apiV1, "listTextConversations", http.MethodGet, "/text/conversations", "List text conversations", s.handleTextConversations)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getTextAggregates", http.MethodGet, "/text/aggregates", "Get text aggregate rows", s.handleTextAggregates)
 	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "listTextConversationMessages", http.MethodGet, "/text/conversations/{id}/messages", "List messages in a text conversation", s.handleTextConversationMessages)
-	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "searchTextMessages", http.MethodGet, "/text/search", "Search text messages", s.handleTextSearch)
+	registerAPIV1RawHumaJSONRoute[TextSearchResponse](apiV1, "searchTextMessages", http.MethodGet, "/text/search", "Search text messages", s.handleTextSearch)
 	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTextStats", http.MethodGet, "/text/stats", "Get text message totals", s.handleTextStats)
 
 	registerAPIV1RawHumaJSONRoute[AccountListResponse](apiV1, "listAccounts", http.MethodGet, "/accounts", "List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources", s.handleListAccounts)
@@ -725,9 +725,9 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathIntegerParam("Attachment ID")}
 	case "getFile", "getFileContent":
 		return []*huma.Param{pathIntegerParam("File attachment ID")}
-	case "getParticipant", "getParticipantTimeline", "getParticipantContextSummary", "searchParticipantFiles":
+	case "getParticipant", "getParticipantTimeline", "getParticipantContextSummary", "searchParticipantFiles", "listParticipantInboxes":
 		return []*huma.Param{pathIntegerParam("Observed participant cluster member ID")}
-	case "getRelationshipTimeline":
+	case "getRelationshipTimeline", "getRelationshipCalendar":
 		return []*huma.Param{pathIntegerParam("Any member participant ID of the counterpart's identity cluster")}
 	case "getDomain", "getDomainTimeline", "getDomainContextSummary", "searchDomainFiles":
 		return []*huma.Param{pathStringParam("domain", "Exact normalized domain fact")}
@@ -824,7 +824,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		}
 	case "listTextConversationMessages":
-		return append([]*huma.Param{pathIntegerParam("Conversation ID")}, textFilterParams()...)
+		return append([]*huma.Param{
+			pathIntegerParam("Conversation ID"),
+			queryStringParam("search_query", "Full-text search within the conversation", false),
+		}, textFilterParams()...)
 	case "searchTextMessages":
 		return []*huma.Param{
 			queryStringParam("q", "Search query", true),
@@ -949,6 +952,7 @@ func changesParams() []*huma.Param {
 func textFilterParams() []*huma.Param {
 	return []*huma.Param{
 		queryIntegerParam("source_id", "Source ID"),
+		queryIntegerArrayParam("participant_id", "Exact participant cluster member IDs"),
 		queryStringParam("contact_phone", "Sender phone/address filter", false),
 		queryStringParam("contact_name", "Sender display-name filter", false),
 		queryStringParam("source_type", "Source type filter", false),

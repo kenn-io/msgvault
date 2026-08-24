@@ -110,7 +110,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 ), person_flags AS (
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
-	       le.occurred_at, le.is_from_me, le.entry_kind,
+	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
@@ -118,7 +118,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	UNION ALL
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
-	       le.occurred_at, le.is_from_me, le.entry_kind,
+	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
@@ -376,9 +376,12 @@ func (e *DuckDBEngine) searchPeople(
 	if err != nil {
 		return nil, err
 	}
-	order, err := identitySearchOrder(request.Sort, "display_label", "person_id")
+	order, err := identitySearchOrder(request.Sort, identityDisplayLabelField, "person_id")
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(request.Query) != "" && request.Explore.Search.Mode == SearchNone {
+		order = "match_rank ASC, current_temperature DESC, last_at DESC, person_id ASC"
 	}
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
@@ -450,7 +453,11 @@ func (e *DuckDBEngine) searchPeople(
 			&row.PartialLabel,
 			&identifiersJSON,
 			&row.ActivityCount,
+			&row.MeetingCount,
 			&row.FileCount,
+			&row.CurrentRelationshipTemperature,
+			&row.PeakRelationshipTemperature,
+			&row.PeakRelationshipYear,
 			&sourceCountsJSON,
 			&row.FirstAt,
 			&row.LastAt,
@@ -479,25 +486,27 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	directory := quoteIdentitySQLPath(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
-	var predicates []string
-	var args []any
-	if searchText = strings.TrimSpace(searchText); searchText != "" {
-		predicates = append(predicates, `EXISTS (
-			SELECT 1
-			FROM unnest(d.search_values) AS searched(value)
-			WHERE contains(searched.value, lower(?))
-		)`)
-		args = append(args, searchText)
-	}
-	where := "true"
-	if len(predicates) > 0 {
-		where = strings.Join(predicates, " AND ")
+	searchText = strings.TrimSpace(searchText)
+	if searchText == "" {
+		return `
+			SELECT d.*, d.canonical_id AS person_id, 0::INTEGER AS match_rank
+			FROM read_parquet('` + directory + `') d
+		`, nil
 	}
 	return `
-		SELECT d.*, d.canonical_id AS person_id
+		SELECT d.*, d.canonical_id AS person_id, matched.match_rank
 		FROM read_parquet('` + directory + `') d
-		WHERE ` + where + `
-	`, args
+		CROSS JOIN LATERAL (
+			SELECT min(CASE
+				WHEN searched.value = lower(?) THEN 0
+				WHEN starts_with(searched.value, lower(?)) THEN 1
+				ELSE 2
+			END)::INTEGER AS match_rank
+			FROM unnest(d.search_values) AS searched(value)
+			WHERE contains(searched.value, lower(?))
+		) matched
+		WHERE matched.match_rank IS NOT NULL
+	`, []any{searchText, searchText, searchText}
 }
 
 func (e *DuckDBEngine) unfilteredPeopleSQL(
@@ -533,6 +542,7 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
+	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
@@ -541,6 +551,7 @@ person_stats AS (
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
+	       sum(meeting_count)::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -555,7 +566,9 @@ person_stats AS (
 ), population AS (
 	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
 	       c.member_ids, c.search_values, c.is_owner,
-	       t.activity_count, t.file_count, s.source_counts,
+	       c.match_rank,
+	       c.current_temperature, c.peak_temperature, c.peak_year,
+	       t.activity_count, t.meeting_count, t.file_count, s.source_counts,
 	       t.first_at, t.last_at
 	FROM identity_candidates c
 	JOIN person_totals t USING (canonical_id)
@@ -580,6 +593,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	SELECT c.canonical_id,
 	       item.source_type,
 	       item.activity_count,
+	       item.meeting_count,
 	       item.file_count,
 	       item.first_at,
 	       item.last_at
@@ -589,6 +603,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(activity_count)::BIGINT AS activity_count,
+	       sum(meeting_count)::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -608,7 +623,9 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), population AS (
 	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
 	       c.member_ids, c.search_values, c.is_owner,
-	       t.activity_count, t.file_count, s.source_counts,
+	       c.match_rank,
+	       c.current_temperature, c.peak_temperature, c.peak_year,
+	       t.activity_count, t.meeting_count, t.file_count, s.source_counts,
 	       t.first_at, t.last_at
 	FROM identity_candidates c
 	JOIN person_totals t USING (canonical_id)
@@ -651,8 +668,12 @@ SELECT p.person_id,
 	       FROM read_parquet('` + identifiers + `') pi
 	       WHERE list_contains(p.member_ids, pi.participant_id)
        ) AS VARCHAR), '[]') AS identifiers,
-       p.activity_count,
-       p.file_count,
+	       p.activity_count,
+	       p.meeting_count,
+	       p.file_count,
+	       p.current_temperature,
+	       p.peak_temperature,
+	       p.peak_year,
        coalesce(CAST(to_json(p.source_counts) AS VARCHAR), '[]') AS source_counts,
        p.first_at,
        p.last_at,

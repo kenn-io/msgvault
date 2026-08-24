@@ -51,7 +51,7 @@ type AttributeDefinitionsResponse struct {
 // CreateAttributeDefinitionRequest is the user-creatable definition subset.
 type CreateAttributeDefinitionRequest struct {
 	ObjectType    string                  `json:"object_type" enum:"person,organization"`
-	Slug          string                  `json:"slug"`
+	Slug          string                  `json:"slug,omitempty"`
 	Label         string                  `json:"label"`
 	Description   *string                 `json:"description,omitempty"`
 	ValueType     string                  `json:"value_type"`
@@ -291,12 +291,14 @@ func (s *Server) writeAttributeError(w http.ResponseWriter, err error) {
 	if s.writeIfContextError(w, err) {
 		return
 	}
+	var valueConflict *store.AttributeValueConflictError
 	switch {
 	case errors.Is(err, store.ErrAttributeUniquenessUnsupported):
 		writeError(w, http.StatusBadRequest, "attribute_uniqueness_unsupported", err.Error())
-	case errors.Is(err, store.ErrAttributeDefinitionInvalid),
-		errors.Is(err, store.ErrAttributeValueInvalid):
+	case errors.Is(err, store.ErrAttributeDefinitionInvalid):
 		writeError(w, http.StatusBadRequest, "attribute_invalid", err.Error())
+	case errors.Is(err, store.ErrAttributeValueInvalid):
+		writeError(w, http.StatusBadRequest, "attribute_value_invalid", err.Error())
 	case errors.Is(err, store.ErrAttributeDefinitionNotFound):
 		writeError(w, http.StatusNotFound, "attribute_definition_not_found",
 			"Attribute definition not found")
@@ -324,6 +326,17 @@ func (s *Server) writeAttributeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "attribute_definition_not_writable", err.Error())
 	case errors.Is(err, store.ErrAttributeDefinitionInactive):
 		writeError(w, http.StatusConflict, "attribute_definition_inactive", err.Error())
+	case errors.As(err, &valueConflict):
+		response := PersonAttributeConflictResponse{
+			Error:        "attribute_value_conflict",
+			Message:      "Attribute value changed; reload and retry",
+			CurrentValue: valueConflict.CurrentValue,
+		}
+		if valueConflict.CurrentValue != nil {
+			currentValueID := valueConflict.CurrentValue.ID
+			response.CurrentValueID = &currentValueID
+		}
+		writeJSON(w, http.StatusConflict, response)
 	case errors.Is(err, store.ErrAttributeValueConflict):
 		writeError(w, http.StatusConflict, "attribute_value_conflict",
 			"Attribute value changed; reload and retry")

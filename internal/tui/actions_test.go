@@ -307,7 +307,7 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 
 	assert.Empty(t, capturedFilter.Sender)
 	assert.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
-	assert.Equal(t, "email", capturedFilter.MessageType)
+	assert.Equal(t, emailMessageType, capturedFilter.MessageType)
 }
 
 func TestStageForDeletion_EmailScopeExcludesMixedMessageTypes(t *testing.T) {
@@ -315,8 +315,8 @@ func TestStageForDeletion_EmailScopeExcludesMixedMessageTypes(t *testing.T) {
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
-	typedEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "typed email", MessageType: "email"})
-	legacyEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "legacy email", MessageType: "email"})
+	typedEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "typed email", MessageType: emailMessageType})
+	legacyEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "legacy email", MessageType: emailMessageType})
 	tdb.AddMessage(dbtest.MessageOpts{Subject: "meeting", MessageType: "meeting_transcript"})
 	tdb.AddMessage(dbtest.MessageOpts{Subject: "text", MessageType: "sms"})
 	_, err := tdb.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyEmailID)

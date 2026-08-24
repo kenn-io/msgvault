@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
@@ -34,11 +35,30 @@ const (
 	defaultSearchLimit     = 20
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
-	searchContextChars = 300
-	defaultBodyChars   = 2000
-	bodyFormatAuto     = "auto"
-	bodyFormatText     = "text"
-	bodyFormatHTML     = "html"
+	searchContextChars   = 300
+	defaultBodyChars     = 2000
+	bodyFormatAuto       = "auto"
+	bodyFormatText       = "text"
+	bodyFormatHTML       = "html"
+	toolArgQuery         = "query"
+	toolArgLimit         = "limit"
+	toolArgCursor        = "cursor"
+	toolArgPersonID      = "person_id"
+	toolArgParticipantID = "participant_id"
+	toolArgMode          = "mode"
+	toolArgMessageID     = "message_id"
+	toolArgAfter         = "after"
+	toolArgBefore        = "before"
+	toolArgAccount       = "account"
+	toolArgOffset        = "offset"
+	toolArgMinScore      = "min_score"
+	toolArgMaxChars      = "max_chars"
+	toolArgAttachmentID  = "attachment_id"
+	toolArgDestination   = "destination"
+	toolArgFrom          = "from"
+	toolArgGroupBy       = "group_by"
+	toolArgDomains       = "domains"
+	toolArgSender        = "sender"
 	// maxBodyChars caps the body slice returned by get_message regardless of what
 	// the caller requests via max_chars. Prevents a single tool call from flooding
 	// the context window; callers page forward using offset.
@@ -89,7 +109,7 @@ func newPaginatedResponseNoTotal[T any](data []T, offset int, hasMore bool) pagi
 }
 
 func searchLimitArg(args map[string]any) int {
-	limit := limitArg(args, "limit", defaultSearchLimit)
+	limit := limitArg(args, toolArgLimit, defaultSearchLimit)
 	if limit <= 0 {
 		return defaultSearchLimit
 	}
@@ -113,6 +133,7 @@ type handlers struct {
 	dataDir            string
 	documentSearcher   DocumentSearcher
 	personFileSearcher PersonFileSearcher
+	peopleBackend      peoplebrowser.Backend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -150,13 +171,13 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 		return toolErrorResult("visual_search_not_ready: visual attachment search is unavailable"), nil
 	}
 	args := req.GetArguments()
-	text, _ := args["text"].(string)
+	text, _ := args[bodyFormatText].(string)
 	imageBase64, _ := args["image_base64"].(string)
 	if (strings.TrimSpace(text) == "") == (imageBase64 == "") {
 		return toolErrorResult("invalid_visual_query: provide exactly one of text or image_base64"), nil
 	}
 	limit := 20
-	if raw, ok := args["limit"].(float64); ok {
+	if raw, ok := args[toolArgLimit].(float64); ok {
 		if raw < 1 || raw > 100 || raw != math.Trunc(raw) {
 			return toolErrorResult("invalid_limit: limit must be between 1 and 100"), nil
 		}
@@ -183,15 +204,15 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 	if toolErr != nil {
 		return toolErr, nil
 	}
-	messageID, toolErr := parsePositiveID("message_id")
+	messageID, toolErr := parsePositiveID(toolArgMessageID)
 	if toolErr != nil {
 		return toolErr, nil
 	}
-	personID, toolErr := parsePositiveID("person_id")
+	personID, toolErr := parsePositiveID(toolArgPersonID)
 	if toolErr != nil {
 		return toolErr, nil
 	}
-	participantID, toolErr := parsePositiveID("participant_id")
+	participantID, toolErr := parsePositiveID(toolArgParticipantID)
 	if toolErr != nil {
 		return toolErr, nil
 	}
@@ -218,14 +239,14 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 	if len(directions) > 0 && personID == 0 && participantID == 0 {
 		return toolErrorResult("directions require person_id or participant_id"), nil
 	}
-	cursor, _ := args["cursor"].(string)
+	cursor, _ := args[toolArgCursor].(string)
 	filename, _ := args["filename"].(string)
 	mimePrefix, _ := args["mime_prefix"].(string)
-	after, err := getDateArg(args, "after")
+	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	before, err := getDateArg(args, "before")
+	before, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -279,7 +300,7 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 		return toolErrorResult("person_file_search_unavailable: person file search is not configured"), nil
 	}
 	args := req.GetArguments()
-	personID, err := getIDArg(args, "person_id")
+	personID, err := getIDArg(args, toolArgPersonID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -301,11 +322,11 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 	if len(directions) > 0 {
 		directions = normalizedDirections
 	}
-	after, err := getDateArg(args, "after")
+	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	before, err := getDateArg(args, "before")
+	before, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -328,15 +349,15 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 		}
 	}
 	limit := 100
-	if _, found := args["limit"]; found {
-		parsed, parseErr := positiveInt64Arg(args, "limit")
+	if _, found := args[toolArgLimit]; found {
+		parsed, parseErr := positiveInt64Arg(args, toolArgLimit)
 		if parseErr != nil || parsed > 100 {
 			return toolErrorResult("limit must be an integer between 1 and 100"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 		}
 		limit = int(parsed)
 	}
 	filename, _ := args["filename"].(string)
-	cursor, _ := args["cursor"].(string)
+	cursor, _ := args[toolArgCursor].(string)
 	response, err := h.personFileSearcher.SearchPersonFiles(ctx, PersonFileSearchRequest{
 		PersonID: personID, Directions: directions, After: after, Before: before,
 		Filename: strings.TrimSpace(filename), MIMEFamilies: families, Limit: limit, Cursor: cursor,
@@ -604,7 +625,7 @@ type searchMessageItem struct {
 // migrate to the split tools. An omitted mode retains metadata-search
 // semantics; vector and hybrid modes delegate to semantic_search_messages.
 func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
-	mode, _ := req.GetArguments()["mode"].(string)
+	mode, _ := req.GetArguments()[toolArgMode].(string)
 	switch mode {
 	case "":
 		return h.searchMetadata(ctx, req)
@@ -623,7 +644,7 @@ func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolRe
 func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	queryStr, _ := args["query"].(string)
+	queryStr, _ := args[toolArgQuery].(string)
 	if queryStr == "" {
 		return toolErrorResult("query parameter is required"), nil
 	}
@@ -637,9 +658,9 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 
 	limit := searchLimitArg(args)
-	offset := limitArg(args, "offset", 0)
+	offset := limitArg(args, toolArgOffset, 0)
 
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve metadata-search account", err)
@@ -666,7 +687,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
-	queryText, _ := args["query"].(string)
+	queryText, _ := args[toolArgQuery].(string)
 	if strings.TrimSpace(queryText) == "" {
 		return toolErrorResult("query parameter is required"), nil
 	}
@@ -681,19 +702,19 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	attachmentID, err := positiveInt64Arg(args, "attachment_id")
+	attachmentID, err := positiveInt64Arg(args, toolArgAttachmentID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	messageID, err := positiveInt64Arg(args, "message_id")
+	messageID, err := positiveInt64Arg(args, toolArgMessageID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	personID, err := positiveInt64Arg(args, "person_id")
+	personID, err := positiveInt64Arg(args, toolArgPersonID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	participantID, err := positiveInt64Arg(args, "participant_id")
+	participantID, err := positiveInt64Arg(args, toolArgParticipantID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -717,11 +738,11 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 			return toolErrorResult(err.Error()), nil
 		}
 	}
-	after, err := getDateArg(args, "after")
+	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	before, err := getDateArg(args, "before")
+	before, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -729,8 +750,8 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("invalid date range: after must be before before"), nil
 	}
 	limit := 20
-	if _, found := args["limit"]; found {
-		parsedLimit, parseErr := positiveInt64Arg(args, "limit")
+	if _, found := args[toolArgLimit]; found {
+		parsedLimit, parseErr := positiveInt64Arg(args, toolArgLimit)
 		if parseErr != nil {
 			return toolErrorResult(parseErr.Error()), nil
 		}
@@ -739,7 +760,7 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 		}
 		limit = int(parsedLimit)
 	}
-	cursor, _ := args["cursor"].(string)
+	cursor, _ := args[toolArgCursor].(string)
 	response, err := h.documentSearcher.SearchDocuments(ctx, store.DocumentSearchRequest{
 		Query: queryText, SourceIDs: sourceIDs, MessageTypes: messageTypes,
 		AttachmentID: attachmentID, MessageID: messageID,
@@ -781,12 +802,12 @@ func unsupportedSearchOperatorMessage(q *search.Query) string {
 func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	queryStr, _ := args["query"].(string)
+	queryStr, _ := args[toolArgQuery].(string)
 	if queryStr == "" {
 		return toolErrorResult("query parameter is required"), nil
 	}
 
-	mode, _ := args["mode"].(string)
+	mode, _ := args[toolArgMode].(string)
 	if mode == "" {
 		mode = searchModeKeyword
 	}
@@ -812,9 +833,9 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	}
 
 	limit := searchLimitArg(args)
-	offset := limitArg(args, "offset", 0)
+	offset := limitArg(args, toolArgOffset, 0)
 
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve body-search account", err)
@@ -877,12 +898,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 func (h *handlers) semanticSearchMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	queryStr, _ := args["query"].(string)
+	queryStr, _ := args[toolArgQuery].(string)
 	if queryStr == "" {
 		return toolErrorResult("query parameter is required"), nil
 	}
 
-	mode, _ := args["mode"].(string)
+	mode, _ := args[toolArgMode].(string)
 	if mode == "" {
 		mode = searchModeHybrid
 	}
@@ -961,14 +982,14 @@ func (h *handlers) searchMessageBodiesHybrid(
 	}
 
 	// Resolve account filter to a source ID for the structured Filter.
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve semantic-search account", err)
 	}
 
 	limit := searchLimitArg(args)
-	offset := limitArg(args, "offset", 0)
+	offset := limitArg(args, toolArgOffset, 0)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 
@@ -1076,7 +1097,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 		page = items[offset:end]
 	}
 
-	minScore := floatArg(args, "min_score", 0)
+	minScore := floatArg(args, toolArgMinScore, 0)
 	if err := h.attachVectorChunkMatches(ctx, meta.Generation.ID, meta.QueryVector, page, minScore); err != nil {
 		return nil, err
 	}
@@ -1110,7 +1131,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
 	limit := searchLimitArg(args)
-	offset := limitArg(args, "offset", 0)
+	offset := limitArg(args, toolArgOffset, 0)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
@@ -1120,7 +1141,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		), nil
 	}
 
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
@@ -1128,7 +1149,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,
-		MinScore:       floatArg(args, "min_score", 0),
+		MinScore:       floatArg(args, toolArgMinScore, 0),
 	})
 	if err != nil {
 		return dependencyError("search daemon semantic index", err)
@@ -1217,7 +1238,7 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req toolRequest) (*t
 	}
 	args := req.GetArguments()
 
-	seedID, err := getIDArg(args, "message_id")
+	seedID, err := getIDArg(args, toolArgMessageID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -1296,7 +1317,7 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req toolRequest) (*t
 func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	seedID, err := getIDArg(args, "message_id")
+	seedID, err := getIDArg(args, toolArgMessageID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -1305,13 +1326,13 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolR
 	if maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
 		limit = maxPage
 	}
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	messageType, _ := args["message_type"].(string)
-	after, err := getDateArg(args, "after")
+	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	before, err := getDateArg(args, "before")
+	before, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -1356,7 +1377,7 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolR
 func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[string]any) (vector.Filter, error) {
 	var f vector.Filter
 
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	srcID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return f, err
@@ -1372,14 +1393,14 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 		tr := true
 		f.HasAttachment = &tr
 	}
-	after, err := getDateArg(args, "after")
+	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return f, &expectedHandlerError{message: err.Error()}
 	}
 	if after != nil {
 		f.After = after
 	}
-	before, err := getDateArg(args, "before")
+	before, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return f, &expectedHandlerError{message: err.Error()}
 	}
@@ -1518,7 +1539,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		return toolErrorResult("message not found"), nil
 	}
 
-	maxChars := intArg(args, "max_chars", defaultBodyChars)
+	maxChars := intArg(args, toolArgMaxChars, defaultBodyChars)
 	if maxChars <= 0 {
 		maxChars = defaultBodyChars
 	} else if maxChars > maxBodyChars {
@@ -1556,7 +1577,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		// clamping to body boundaries.
 		start, end = contextWindow(bodyLen, centerAt, 0, maxChars)
 	} else {
-		start = min(intArg(args, "offset", 0), bodyLen)
+		start = min(intArg(args, toolArgOffset, 0), bodyLen)
 		end = min(start+maxChars, bodyLen)
 	}
 
@@ -1699,21 +1720,21 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	queryStr, _ := args["query"].(string)
+	queryStr, _ := args[toolArgQuery].(string)
 	queryStr = strings.TrimSpace(queryStr)
 	if queryStr == "" {
 		return toolErrorResult("query parameter is required"), nil
 	}
 
-	mode, _ := args["mode"].(string)
-	limit := limitArg(args, "limit", 10)
-	offset := limitArg(args, "offset", 0)
+	mode, _ := args[toolArgMode].(string)
+	limit := limitArg(args, toolArgLimit, 10)
+	offset := limitArg(args, toolArgOffset, 0)
 
 	switch mode {
 	case "", "keyword":
 		// default: literal term search
 	case searchModeVector:
-		return h.vectorMatchesInMessage(ctx, id, queryStr, floatArg(args, "min_score", 0), limit, offset)
+		return h.vectorMatchesInMessage(ctx, id, queryStr, floatArg(args, toolArgMinScore, 0), limit, offset)
 	default:
 		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: must be keyword (default) or %s", mode, searchModeVector),
@@ -1779,7 +1800,7 @@ var createAttachmentExportFile = func(path string, mode os.FileMode) (attachment
 func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	id, err := getIDArg(args, "attachment_id")
+	id, err := getIDArg(args, toolArgAttachmentID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -1813,7 +1834,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	id, err := getIDArg(args, "attachment_id")
+	id, err := getIDArg(args, toolArgAttachmentID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -1829,7 +1850,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*tool
 	data := payload.data
 
 	// Determine destination directory.
-	destDir, _ := args["destination"].(string)
+	destDir, _ := args[toolArgDestination].(string)
 	if destDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -1881,7 +1902,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve message-list account", err)
@@ -1891,11 +1912,11 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 		SourceID: sourceID,
 		Pagination: query.Pagination{
 			Limit:  listLimitArg(args) + 1,
-			Offset: limitArg(args, "offset", 0),
+			Offset: limitArg(args, toolArgOffset, 0),
 		},
 	}
 
-	if v, ok := args["from"].(string); ok && v != "" {
+	if v, ok := args[toolArgFrom].(string); ok && v != "" {
 		// If it looks like an email address, filter by email; otherwise by display name.
 		if strings.Contains(v, "@") || strings.HasPrefix(v, "+") {
 			filter.Sender = v
@@ -1912,10 +1933,10 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	if v, ok := args["has_attachment"].(bool); ok && v {
 		filter.WithAttachmentsOnly = true
 	}
-	if filter.After, err = getDateArg(args, "after"); err != nil {
+	if filter.After, err = getDateArg(args, toolArgAfter); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if filter.Before, err = getDateArg(args, "before"); err != nil {
+	if filter.Before, err = getDateArg(args, toolArgBefore); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
 	if v, ok := args["conversation_id"].(float64); ok && v != 0 {
@@ -1973,13 +1994,13 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	groupBy, _ := args["group_by"].(string)
+	groupBy, _ := args[toolArgGroupBy].(string)
 	if groupBy == "" {
 		return toolErrorResult("group_by parameter is required"), nil
 	}
 
 	// Look up account filter
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve aggregate account", err)
@@ -1987,22 +2008,22 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 
 	opts := query.AggregateOptions{
 		SourceID: sourceID,
-		Limit:    limitArg(args, "limit", 50),
+		Limit:    limitArg(args, toolArgLimit, 50),
 	}
 
-	if opts.After, err = getDateArg(args, "after"); err != nil {
+	if opts.After, err = getDateArg(args, toolArgAfter); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if opts.Before, err = getDateArg(args, "before"); err != nil {
+	if opts.Before, err = getDateArg(args, toolArgBefore); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
 
 	viewTypeMap := map[string]query.ViewType{
-		"sender":    query.ViewSenders,
-		"recipient": query.ViewRecipients,
-		"domain":    query.ViewDomains,
-		"label":     query.ViewLabels,
-		"time":      query.ViewTime,
+		toolArgSender: query.ViewSenders,
+		"recipient":   query.ViewRecipients,
+		"domain":      query.ViewDomains,
+		"label":       query.ViewLabels,
+		"time":        query.ViewTime,
 	}
 
 	viewType, ok := viewTypeMap[groupBy]
@@ -2049,7 +2070,7 @@ func limitArg(args map[string]any, key string, def int) int {
 }
 
 func similarLimitArg(args map[string]any) int {
-	limit := limitArg(args, "limit", defaultSearchLimit)
+	limit := limitArg(args, toolArgLimit, defaultSearchLimit)
 	if limit <= 0 {
 		return defaultSearchLimit
 	}
@@ -2116,27 +2137,27 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args["account"].(string)
+	account, _ := args[toolArgAccount].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
 		return dependencyError("resolve deletion account", err)
 	}
 
 	// Check for query vs structured filters
-	queryStr, _ := args["query"].(string)
+	queryStr, _ := args[toolArgQuery].(string)
 	queryStr = strings.TrimSpace(queryStr)
 	hasQuery := queryStr != ""
 
 	// Check for any structured filter
-	fromStr, _ := args["from"].(string)
+	fromStr, _ := args[toolArgFrom].(string)
 	domainStr, _ := args["domain"].(string)
 	labelStr, _ := args["label"].(string)
 	hasAttachment, _ := args["has_attachment"].(bool)
-	afterDate, err := getDateArg(args, "after")
+	afterDate, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	beforeDate, err := getDateArg(args, "before")
+	beforeDate, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -2321,7 +2342,7 @@ func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.
 func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	domainsStr, _ := args["domains"].(string)
+	domainsStr, _ := args[toolArgDomains].(string)
 	domainsStr = strings.TrimSpace(domainsStr)
 	if domainsStr == "" {
 		return toolErrorResult("domains is required"), nil
@@ -2339,14 +2360,14 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("at least one domain is required"), nil
 	}
 
-	limit := limitArg(args, "limit", 100)
-	offset := limitArg(args, "offset", 0)
+	limit := limitArg(args, toolArgLimit, 100)
+	offset := limitArg(args, toolArgOffset, 0)
 
-	afterDate, err := getDateArg(args, "after")
+	afterDate, err := getDateArg(args, toolArgAfter)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	beforeDate, err := getDateArg(args, "before")
+	beforeDate, err := getDateArg(args, toolArgBefore)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}

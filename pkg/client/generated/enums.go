@@ -25,6 +25,28 @@ func (a AddResultCacheState) Validate() error {
 	}
 }
 
+type AppendPersonNoteRequestSource string
+
+const (
+	AppendPersonNoteRequestSourceArchiveObservation AppendPersonNoteRequestSource = "archive_observation"
+	AppendPersonNoteRequestSourceCarddavImport      AppendPersonNoteRequestSource = "carddav_import"
+	AppendPersonNoteRequestSourceEnrichment         AppendPersonNoteRequestSource = "enrichment"
+	AppendPersonNoteRequestSourceExtraction         AppendPersonNoteRequestSource = "extraction"
+	AppendPersonNoteRequestSourceSystem             AppendPersonNoteRequestSource = "system"
+	AppendPersonNoteRequestSourceUser               AppendPersonNoteRequestSource = "user"
+	AppendPersonNoteRequestSourceVcardImport        AppendPersonNoteRequestSource = "vcard_import"
+)
+
+// Validate checks if the AppendPersonNoteRequestSource value is valid
+func (a AppendPersonNoteRequestSource) Validate() error {
+	switch a {
+	case AppendPersonNoteRequestSourceArchiveObservation, AppendPersonNoteRequestSourceCarddavImport, AppendPersonNoteRequestSourceEnrichment, AppendPersonNoteRequestSourceExtraction, AppendPersonNoteRequestSourceSystem, AppendPersonNoteRequestSourceUser, AppendPersonNoteRequestSourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid AppendPersonNoteRequestSource value, got: %v", a))
+	}
+}
+
 type CandidateClassification string
 
 const (
@@ -810,6 +832,29 @@ func (o OrganizationNameBodySource) Validate() error {
 	}
 }
 
+type ParticipantCompletionHTTPRowKind string
+
+const (
+	Name                                         ParticipantCompletionHTTPRowKind = "name"
+	ParticipantCompletionHTTPRowKindEmail        ParticipantCompletionHTTPRowKind = "email"
+	ParticipantCompletionHTTPRowKindImpp         ParticipantCompletionHTTPRowKind = "impp"
+	ParticipantCompletionHTTPRowKindOrganization ParticipantCompletionHTTPRowKind = "organization"
+	ParticipantCompletionHTTPRowKindPhone        ParticipantCompletionHTTPRowKind = "phone"
+	ParticipantCompletionHTTPRowKindUsername     ParticipantCompletionHTTPRowKind = "username"
+	Role                                         ParticipantCompletionHTTPRowKind = "role"
+	Title                                        ParticipantCompletionHTTPRowKind = "title"
+)
+
+// Validate checks if the ParticipantCompletionHTTPRowKind value is valid
+func (p ParticipantCompletionHTTPRowKind) Validate() error {
+	switch p {
+	case Name, ParticipantCompletionHTTPRowKindEmail, ParticipantCompletionHTTPRowKindImpp, ParticipantCompletionHTTPRowKindOrganization, ParticipantCompletionHTTPRowKindPhone, ParticipantCompletionHTTPRowKindUsername, Role, Title:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ParticipantCompletionHTTPRowKind value, got: %v", p))
+	}
+}
+
 type PersonFileProvenanceDirections string
 
 const (
@@ -954,6 +999,26 @@ func (p ProvenanceRoles) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ProvenanceRoles value, got: %v", p))
+	}
+}
+
+type RelationshipCalendarDayLevel string
+
+const (
+	FIRSTQUARTILE  RelationshipCalendarDayLevel = "FIRST_QUARTILE"
+	FOURTHQUARTILE RelationshipCalendarDayLevel = "FOURTH_QUARTILE"
+	NONE           RelationshipCalendarDayLevel = "NONE"
+	SECONDQUARTILE RelationshipCalendarDayLevel = "SECOND_QUARTILE"
+	THIRDQUARTILE  RelationshipCalendarDayLevel = "THIRD_QUARTILE"
+)
+
+// Validate checks if the RelationshipCalendarDayLevel value is valid
+func (r RelationshipCalendarDayLevel) Validate() error {
+	switch r {
+	case FIRSTQUARTILE, FOURTHQUARTILE, NONE, SECONDQUARTILE, THIRDQUARTILE:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RelationshipCalendarDayLevel value, got: %v", r))
 	}
 }
 

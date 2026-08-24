@@ -210,7 +210,11 @@ func (s *Store) setPersonAttributeValueOnce(
 		}
 		if input.ExpectedValueID != nil &&
 			(!hasCurrent || current.ID != *input.ExpectedValueID) {
-			return ErrAttributeValueConflict
+			conflict := &AttributeValueConflictError{}
+			if hasCurrent {
+				conflict.CurrentValue = current
+			}
+			return conflict
 		}
 		if hasCurrent {
 			if activeFrom.Before(current.ActiveFrom) {
@@ -449,7 +453,7 @@ func (s *Store) supersedePersonAttributeValueOnce(
 			return ErrAttributeValueNotFound
 		}
 		if input.ExpectedValueID != nil && current.ID != *input.ExpectedValueID {
-			return ErrAttributeValueConflict
+			return &AttributeValueConflictError{CurrentValue: current}
 		}
 		if at.Before(current.ActiveFrom) {
 			return fmt.Errorf("%w: supersede time precedes active_from",

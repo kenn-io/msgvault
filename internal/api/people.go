@@ -71,11 +71,15 @@ type identitySearchPrepared struct {
 var domainFactPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 func (s *Server) registerParticipantRoutes(api huma.API) {
+	s.registerParticipantCompletionRoute(api)
 	registerExploreRoute[IdentitySearchHTTPRequest, ParticipantSearchHTTPResponse](
 		api, "searchParticipants", "/participants/search", "Search observed participant clusters", s.handleSearchParticipants,
 	)
 	registerAnalyticalDetailRoute[query.PersonSummary](
 		api, "getParticipant", http.MethodGet, "/participants/{id}", "Get one observed participant cluster", s.handleGetParticipant,
+	)
+	registerAnalyticalDetailRoute[query.PersonInboxResponse](
+		api, "listParticipantInboxes", http.MethodGet, "/participants/{id}/inboxes", "List one participant cluster's messaging inboxes", s.handleParticipantInboxes,
 	)
 	registerExploreRoute[ExploreHTTPRequest, ParticipantContextSummaryHTTPResponse](
 		api, "getParticipantContextSummary", "/participants/{id}/summary", "Get one participant cluster's contextual analytical summary", s.handleParticipantContextSummary,
@@ -467,7 +471,7 @@ func (s *Server) forwardIdentityTimeline(w http.ResponseWriter, r *http.Request,
 
 func positiveParticipantPathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := strings.TrimPrefix(r.URL.Path, "/api/v1/participants/")
-	raw = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(raw, "/files/search"), "/timeline"), "/summary")
+	raw = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(raw, "/files/search"), "/inboxes"), "/timeline"), "/summary")
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id < 1 {
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", "participant ID must be a positive integer")

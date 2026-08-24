@@ -224,6 +224,7 @@ func refreshDerivedDatasetsOnly(
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
+		EffectiveAt:    state.LastSyncAt,
 		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {

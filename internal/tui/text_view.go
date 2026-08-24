@@ -20,6 +20,8 @@ func (m Model) renderTextView() string {
 		body = m.textAggregateView()
 	case textLevelTimeline:
 		body = m.textTimelineView()
+	case textLevelDetail:
+		body = m.messageDetailView()
 	default:
 		body = m.textConversationsView()
 	}
@@ -89,6 +91,8 @@ func (m Model) textBreadcrumb() string {
 			order = "\u2193 newest first"
 		}
 		return "Timeline " + order
+	case textLevelDetail:
+		return "Message"
 	}
 	return ""
 }
@@ -251,7 +255,7 @@ func (m Model) textConversationsView() string {
 		conv := m.textState.conversations[i]
 		isCursor := i == m.textState.cursor
 
-		indicator := "   "
+		indicator := listIndicatorBlank
 		if isCursor {
 			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
@@ -321,7 +325,7 @@ func (m Model) textAggregateView() string {
 	if len(m.textState.aggregateRows) == 0 && !m.loading {
 		var sb strings.Builder
 		sb.WriteString(m.styles.tableHeader.Render(
-			padRight("   "+m.textState.viewType.String(), m.width),
+			padRight(listIndicatorBlank+m.textState.viewType.String(), m.width),
 		))
 		sb.WriteString("\n")
 		sb.WriteString(m.styles.separator.Render(
@@ -408,7 +412,7 @@ func (m Model) textAggregateView() string {
 		row := m.textState.aggregateRows[i]
 		isCursor := i == m.textState.cursor
 
-		indicator := "   "
+		indicator := listIndicatorBlank
 		if isCursor {
 			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
@@ -468,8 +472,9 @@ func (m Model) textAggregateView() string {
 }
 
 // textTimelineView renders a chat-style message timeline.
-// Each message shows a sender/time header line followed by the full
-// body text with word wrapping — like reading a chat app.
+// Each message shows a sender/time header line followed by its list-page
+// snippet with word wrapping. A caller may also supply BodyText when it has
+// explicitly loaded a detail outside this list path.
 func (m Model) textTimelineView() string {
 	if len(m.textState.messages) == 0 && !m.loading {
 		var sb strings.Builder
@@ -517,7 +522,7 @@ func (m Model) textTimelineView() string {
 	}
 	sb.WriteString(
 		m.styles.tableHeader.Render(
-			padRight("   "+convTitle, m.width),
+			padRight(listIndicatorBlank+convTitle, m.width),
 		),
 	)
 	sb.WriteString("\n")
@@ -622,7 +627,7 @@ func (m Model) textTimelineView() string {
 			style = m.styles.altRow
 		}
 
-		indicator := "   "
+		indicator := listIndicatorBlank
 		if cl.isFirst && isCursorMsg {
 			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
@@ -637,7 +642,7 @@ func (m Model) textTimelineView() string {
 			)
 		} else {
 			// Body or blank line
-			sb.WriteString("   ")
+			sb.WriteString(listIndicatorBlank)
 			sb.WriteString(
 				style.Render(
 					padRight("  "+cl.text, m.width-3),
@@ -684,14 +689,14 @@ func (m Model) textFooterView() string {
 	switch m.textState.level {
 	case textLevelConversations, textLevelDrillConversations:
 		keys = []string{
-			"\u2191/k", "\u2193/j", "Enter",
+			"\u2191/k", "\u2193/j", helpLabelEnter,
 			"Tab group", "s sort", "A acct",
-			"m email", "? help",
+			"m email", helpLabelHelp,
 		}
 		if m.textState.level == textLevelDrillConversations {
-			keys = append([]string{"\u2191/k", "\u2193/j", "Enter",
-				"Esc back", "Tab group", "s sort",
-				"m email", "? help"}, []string{}...)
+			keys = append([]string{"\u2191/k", "\u2193/j", helpLabelEnter,
+				helpLabelBack, "Tab group", "s sort",
+				"m email", helpLabelHelp}, []string{}...)
 		}
 		n := len(m.textState.conversations)
 		if n > 0 {
@@ -702,9 +707,9 @@ func (m Model) textFooterView() string {
 
 	case textLevelAggregate:
 		keys = []string{
-			"\u2191/k", "\u2193/j", "Enter",
-			"Esc back", "Tab group", "s sort",
-			"m email", "? help",
+			"\u2191/k", "\u2193/j", helpLabelEnter,
+			helpLabelBack, "Tab group", "s sort",
+			"m email", helpLabelHelp,
 		}
 		n := len(m.textState.aggregateRows)
 		if n > 0 {
@@ -716,9 +721,22 @@ func (m Model) textFooterView() string {
 	case textLevelTimeline:
 		keys = []string{
 			"\u2191/\u2193 navigate", "r reverse",
-			"/ search", "Esc back",
-			"m email", "? help",
+			"/ search", helpLabelBack,
+			"m email", helpLabelHelp,
 		}
+		n := len(m.textState.messages)
+		if n > 0 {
+			posStr = fmt.Sprintf(
+				" %d/%d ", m.textState.cursor+1, n,
+			)
+		}
+
+	case textLevelDetail:
+		keys = []string{"↑/↓ scroll", "/ find"}
+		if m.detailSearchQuery != "" {
+			keys = append(keys, "n/N next/prev")
+		}
+		keys = append(keys, helpLabelBack, "q quit")
 		n := len(m.textState.messages)
 		if n > 0 {
 			posStr = fmt.Sprintf(

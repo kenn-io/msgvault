@@ -264,6 +264,33 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions.Nil(missingDomain)
 }
 
+func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "granola")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
+	when := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	meeting := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 701, Subject: "Weekly sync", SentAt: when,
+		MessageType: "meeting_transcript", ConversationType: "meeting",
+	})
+	b.AddFrom(meeting, person, "Alice Example")
+	chat := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: 702, SentAt: when.Add(time.Hour),
+		MessageType: "whatsapp", ConversationType: "direct_chat",
+	})
+	b.AddFrom(chat, person, "Alice Example")
+	b.AddConversationParticipant(702, person)
+	engine := b.BuildEngine()
+
+	result, err := engine.GetPerson(t.Context(), person, Context{}, nil)
+	require.NoError(err)
+	require.NotNil(result)
+	assert.Equal(int64(2), result.ActivityCount)
+	assert.Equal(int64(1), result.MeetingCount)
+}
+
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -670,4 +697,97 @@ func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
 	requirements.Len(byAlias.Rows, 1)
 	assertions.Equal(byCanonical.Rows[0].ActivityCount, byAlias.Rows[0].ActivityCount,
 		"filtering by the alias ID must agree with the canonical ID")
+}
+
+func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
+	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	hotID := b.AddParticipant("hot@example.test", "example.test", "Alex Hot")
+	coldID := b.AddParticipant("cold@example.test", "example.test", "Alex Cold")
+	b.AddOwnerParticipant(sourceID, ownerID)
+	for index := range 4 {
+		messageID := b.AddMessage(MessageOpt{
+			SourceID: sourceID, MessageType: "email", IsFromMe: true,
+			SentAt: time.Date(2026, time.January, 1+index, 12, 0, 0, 0, time.UTC),
+		})
+		b.AddFrom(messageID, ownerID, "Owner")
+		b.AddTo(messageID, hotID, "Alex Hot")
+	}
+	newerColdMessage := b.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "email", IsFromMe: true,
+		SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(newerColdMessage, ownerID, "Owner")
+	b.AddTo(newerColdMessage, coldID, "Alex Cold")
+	engine := b.BuildEngine()
+	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
+		CanonicalID: hotID, Year: 2026, Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 100, calendar.Current.Temperature)
+
+	for _, test := range []struct {
+		name    string
+		context Context
+	}{
+		{name: "unfiltered"},
+		{name: "source rollup", context: Context{SourceIDs: []int64{sourceID}}},
+		{name: "logical filter", context: Context{MessageTypes: []string{"email"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+				Explore: ExploreRequest{Context: test.context}, Query: "alex",
+				Sort: SortSpec{Field: "display_label", Direction: "asc"},
+				Page: PageSpec{Limit: 25},
+			})
+			require.NoError(err)
+			require.Len(response.Rows, 2)
+			assert.Equal(hotID, response.Rows[0].ID,
+				"temperature breaks equal-quality matches before newer activity")
+			assert.Equal(100, response.Rows[0].CurrentRelationshipTemperature)
+			assert.Equal(coldID, response.Rows[1].ID)
+		})
+	}
+}
+
+func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
+	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	canonicalID := b.AddParticipant("person@example.test", "example.test", "Person")
+	aliasID := b.AddParticipant("person@work.example", "work.example", "Person Work")
+	b.LinkCluster(canonicalID, aliasID)
+	b.AddOwnerParticipant(sourceID, ownerID)
+	for index := range 3 {
+		messageID := b.AddMessage(MessageOpt{
+			SourceID: sourceID, MessageType: "email", IsFromMe: true,
+			SentAt: time.Date(2026, time.January, 1+index, 12, 0, 0, 0, time.UTC),
+		})
+		b.AddFrom(messageID, ownerID, "Owner")
+		b.AddTo(messageID, aliasID, "Person Work")
+	}
+	engine := b.BuildEngine()
+	members := []int64{canonicalID, aliasID}
+
+	canonical, err := engine.GetPerson(t.Context(), canonicalID, Context{}, members)
+	require.NoError(err)
+	require.NotNil(canonical)
+	require.NotZero(canonical.CurrentRelationshipTemperature)
+
+	for _, context := range []Context{{}, {SourceIDs: []int64{sourceID}}} {
+		alias, err := engine.GetPerson(t.Context(), aliasID, context, members)
+		require.NoError(err)
+		require.NotNil(alias)
+		assert.Equal(aliasID, alias.ID, "person detail retains the requested alias ID")
+		assert.Equal(canonical.CurrentRelationshipTemperature,
+			alias.CurrentRelationshipTemperature)
+		assert.Equal(canonical.PeakRelationshipTemperature,
+			alias.PeakRelationshipTemperature)
+		assert.Equal(canonical.PeakRelationshipYear, alias.PeakRelationshipYear)
+	}
 }

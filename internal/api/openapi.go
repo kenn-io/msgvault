@@ -228,7 +228,11 @@ import (
 // inspection, and merge-candidate decisions. Mutations require strong person
 // revision tags;
 // merge and split also require retry-stable Idempotency-Key headers.
-const APISchemaVersion = "2.9.0"
+// 2.10.0 adds graph-relative relationship temperatures to participant summaries
+// and a timezone-aware person/year relationship calendar endpoint.
+// Additive (minor bump): existing relationship and participant routes retain
+// their request and response behavior.
+const APISchemaVersion = "2.10.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -694,6 +698,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		})
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"AppendPersonNoteRequest": {
+			exploreFilterSource: {
+				"AppendPersonNoteRequestSourceUser",
+				"AppendPersonNoteRequestSourceCarddavImport",
+				"AppendPersonNoteRequestSourceVcardImport",
+				"AppendPersonNoteRequestSourceArchiveObservation",
+				"AppendPersonNoteRequestSourceExtraction",
+				"AppendPersonNoteRequestSourceEnrichment",
+				"AppendPersonNoteRequestSourceSystem",
+			},
+		},
 		"CreateCommunicationServiceRequest": {
 			"normalization": {
 				"CreateCommunicationServiceRequestNormalizationNone",

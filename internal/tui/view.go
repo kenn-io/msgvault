@@ -27,6 +27,7 @@ type tuiStyles struct {
 	modal             lipgloss.Style
 	modalTitle        lipgloss.Style
 	flash             lipgloss.Style
+	relationshipHeat  [5]lipgloss.Style
 }
 
 func newStyles(hasDarkBackground bool) tuiStyles {
@@ -39,7 +40,7 @@ func newStyles(hasDarkBackground bool) tuiStyles {
 	bgAlt := adaptiveColor("#f0f0f0", "#181818")
 	bgCursor := adaptiveColor("#e0e0e0", "#282828")
 
-	return tuiStyles{
+	result := tuiStyles{
 		// Title bar style - bold with visible background.
 		titleBar: lipgloss.NewStyle().
 			Bold(true).
@@ -102,6 +103,10 @@ func newStyles(hasDarkBackground bool) tuiStyles {
 			Italic(true).
 			Foreground(adaptiveColor("#996600", "#ffcc00")), // Amber for visibility
 	}
+	for i, hex := range [...]string{"#3d3d3d", "#6b4b16", "#9a6818", "#d18a18", "#ffb000"} {
+		result.relationshipHeat[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(hex))
+	}
+	return result
 }
 
 var (
@@ -314,7 +319,7 @@ func (m Model) headerView() string {
 func (m Model) aggregateTableView() string {
 	if len(m.rows) == 0 && !m.loading && !m.inlineSearchActive && m.searchQuery == "" && m.err == nil {
 		var sb strings.Builder
-		sb.WriteString(m.styles.tableHeader.Render(padRight("   "+viewTypeAbbrev(m.viewType), m.width)))
+		sb.WriteString(m.styles.tableHeader.Render(padRight(listIndicatorBlank+viewTypeAbbrev(m.viewType), m.width)))
 		sb.WriteString("\n")
 		sb.WriteString(m.styles.separator.Render(strings.Repeat("\u2500", m.width)))
 		sb.WriteString("\n")
@@ -401,7 +406,7 @@ func (m Model) aggregateTableView() string {
 		} else if isChecked {
 			selIndicator = m.styles.selectedIndicator.Render(" ✓ ")
 		} else {
-			selIndicator = "   "
+			selIndicator = listIndicatorBlank
 		}
 
 		// Pad key to fixed width first, then highlight — so ANSI codes
@@ -552,7 +557,7 @@ func (m Model) messageListView() string {
 		} else if isChecked {
 			selIndicator = m.styles.selectedIndicator.Render(" ✓ ")
 		} else {
-			selIndicator = "   "
+			selIndicator = listIndicatorBlank
 		}
 
 		// Format date
@@ -917,9 +922,9 @@ func (m Model) threadView() string {
 		if isCursor {
 			selIndicator = m.styles.cursorRow.Render("▶  ")
 		} else if i%2 == 0 {
-			selIndicator = m.styles.normalRow.Render("   ")
+			selIndicator = m.styles.normalRow.Render(listIndicatorBlank)
 		} else {
-			selIndicator = m.styles.altRow.Render("   ")
+			selIndicator = m.styles.altRow.Render(listIndicatorBlank)
 		}
 
 		// Format date
@@ -1006,14 +1011,14 @@ func (m Model) footerView() string {
 		keys = []string{
 			"↑/k",
 			"↓/j",
-			"Enter",
+			helpLabelEnter,
 			"g group",
 			"s sort",
 			"A acct",
 			"a msgs",
 			"d del",
 		}
-		keys = append(keys, "? help")
+		keys = append(keys, helpLabelHelp)
 		if len(m.rows) > 0 {
 			// Use TotalUnique from aggregate rows for true total count
 			totalUnique := m.rows[0].TotalUnique
@@ -1029,15 +1034,15 @@ func (m Model) footerView() string {
 		keys = []string{
 			"↑/k",
 			"↓/j",
-			"Enter",
-			"Esc",
+			helpLabelEnter,
+			helpLabelEsc,
 			"g group",
 			"s sort",
 			"A acct",
 			"a msgs",
 			"d del",
 		}
-		keys = append(keys, "? help")
+		keys = append(keys, helpLabelHelp)
 		if len(m.rows) > 0 {
 			// Use TotalUnique from aggregate rows for true total count
 			totalUnique := m.rows[0].TotalUnique
@@ -1053,15 +1058,15 @@ func (m Model) footerView() string {
 		keys = []string{
 			"↑/k",
 			"↓/j",
-			"Enter",
-			"Esc",
+			helpLabelEnter,
+			helpLabelEsc,
 			"Space",
 			"d del",
 		}
 		if !m.hasActiveSemanticSearch() {
 			keys = append(keys, "s sort")
 		}
-		keys = append(keys, "/ search", "? help")
+		keys = append(keys, "/ search", helpLabelHelp)
 		if len(m.messages) > 0 {
 			// Show position / total - use contextStats for actual total when drilled down,
 			// or global stats for All Messages view
@@ -1093,7 +1098,7 @@ func (m Model) footerView() string {
 		if m.messageDetail != nil && len(m.messageDetail.Attachments) > 0 {
 			keys = append(keys, "e attachments")
 		}
-		keys = append(keys, "Esc back", "q quit")
+		keys = append(keys, helpLabelBack, "q quit")
 		// Show message position (N/M) in the list - reuse total from parent view
 		if len(m.messages) > 0 {
 			total := int64(len(m.messages))
@@ -1111,7 +1116,7 @@ func (m Model) footerView() string {
 		keys = []string{
 			"↑/↓ navigate",
 			"Enter view",
-			"Esc back",
+			helpLabelBack,
 			"q quit",
 		}
 		if len(m.threadMessages) > 0 {
@@ -1211,7 +1216,7 @@ var rawHelpLines = []string{
 	"  A           Select account",
 	"  f           Filter (attachments, deleted)",
 	"  e           Browse attachments (in message view)",
-	"  m           Cycle Email/Texts/Meetings",
+	"  m           Cycle Email/Texts/Meetings/People",
 	"  q           Quit",
 	"",
 	"[↑/↓] Scroll  [Any other key] Close",
@@ -1236,7 +1241,7 @@ var meetingHelpLines = []string{
 	"  r           Reverse sort order",
 	"",
 	"Other",
-	"  m           Cycle Email/Texts/Meetings",
+	"  m           Cycle Email/Texts/Meetings/People",
 	"  ?           Show this help",
 	"  q           Quit",
 	"",
@@ -1245,7 +1250,48 @@ var meetingHelpLines = []string{
 	"[↑/↓] Scroll  [Any other key] Close",
 }
 
+var peopleHelpLines = []string{
+	"People Shortcuts",
+	"",
+	"Navigation",
+	"  ↑/k, ↓/j    Move selection",
+	"  PgUp/PgDn   Page up/down",
+	"  Home/End    Go to first/last contact",
+	"  Enter       Open selected contact",
+	"  Esc         Clear search or go back",
+	"  Tab         Cycle contact tabs",
+	"  Shift-Tab   Cycle contact tabs backward",
+	"",
+	"Browse & Search",
+	"  /           Search names and identifiers",
+	"  r           Retry a failed directory load",
+	"",
+	"Other",
+	"  m           Cycle Email/Texts/Meetings/People",
+	"  ?           Show this help",
+	"  q           Quit",
+	"",
+	"[↑/↓] Scroll  [Any other key] Close",
+}
+
 func (m Model) activeHelpLines() []string {
+	if m.mode == modePeople {
+		if m.peopleState.level == peopleLevelContact && m.peopleState.tab == peopleTabOverview {
+			lines := append([]string(nil), peopleHelpLines...)
+			for i, line := range lines {
+				if line == "Browse & Search" {
+					addition := []string{
+						"  [           Previous relationship year",
+						"  ]           Next relationship year",
+					}
+					lines = append(lines[:i], append(addition, lines[i:]...)...)
+					break
+				}
+			}
+			return lines
+		}
+		return peopleHelpLines
+	}
 	if m.mode == modeMeetings {
 		return meetingHelpLines
 	}

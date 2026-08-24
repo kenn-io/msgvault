@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
 )
@@ -47,8 +48,10 @@ func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(HTTPStoreConfiguredRemote, backend.info.Kind)
 	assert.Equal(srv.URL, backend.info.URL)
-	_, ok := backend.engine.(query.TextEngine)
-	assert.True(ok, "TUI backend should expose daemon-backed text queries")
+	assert.Implements((*query.TextEngine)(nil), backend.engine,
+		"TUI backend should expose daemon-backed text queries")
+	assert.Implements((*peoplebrowser.Backend)(nil), daemonclient.NewPeopleBrowser(backend.engine),
+		"TUI backend should expose the daemon-backed People wrapper")
 	assert.Equal("remote@example.com", accounts[0].Identifier)
 	assert.Equal("gmail", accounts[0].SourceType)
 	assert.Equal(int32(1), requests.Load())
@@ -108,8 +111,10 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(HTTPStoreLocalDaemon, backend.info.Kind)
 	assert.Equal(srv.URL, backend.info.URL)
-	_, ok := backend.engine.(query.TextEngine)
-	assert.True(ok, "TUI backend should expose daemon-backed text queries")
+	assert.Implements((*query.TextEngine)(nil), backend.engine,
+		"TUI backend should expose daemon-backed text queries")
+	assert.Implements((*peoplebrowser.Backend)(nil), daemonclient.NewPeopleBrowser(backend.engine),
+		"TUI backend should expose the daemon-backed People wrapper")
 	assert.Equal("local@example.com", accounts[0].Identifier)
 	assert.Equal("gmail", accounts[0].SourceType)
 	assert.Equal(int32(1), requests.Load())
@@ -204,6 +209,47 @@ func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
 				assert.NotNil(t, searcher)
 			} else {
 				assert.Nil(t, searcher)
+			}
+		})
+	}
+}
+
+func TestTUIPeopleBackendRequiresPeopleSchema(t *testing.T) {
+	tests := []struct {
+		name          string
+		schemaVersion string
+		wantBackend   bool
+	}{
+		{name: "people schema", schemaVersion: "2.10.0", wantBackend: true},
+		{name: "newer schema", schemaVersion: "2.11.0", wantBackend: true},
+		{name: "older same-major schema", schemaVersion: "2.9.9"},
+		{name: "missing schema version"},
+		{name: "malformed schema version", schemaVersion: "current"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{"status": "ok"}
+				if tt.schemaVersion != "" {
+					body["api_schema_version"] = tt.schemaVersion
+				}
+				_ = json.NewEncoder(w).Encode(body)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+			engine := daemonclient.NewEngineAdapter(client)
+
+			backend := tuiPeopleBackend(context.Background(), client, engine)
+			if tt.wantBackend {
+				assert.NotNil(t, backend)
+			} else {
+				assert.Nil(t, backend)
 			}
 		})
 	}

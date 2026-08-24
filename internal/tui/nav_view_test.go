@@ -949,7 +949,7 @@ func TestLoadDataSetsGroupByInStatsOpts(t *testing.T) {
 	assert.Equal(query.ViewRecipients, tracker.lastOpts.GroupBy)
 	scopedSearch := search.Parse(tracker.lastOpts.SearchQuery)
 	assert.Equal([]string{"bob"}, scopedSearch.TextTerms)
-	assert.Equal([]string{"email"}, scopedSearch.MessageTypes)
+	assert.Equal([]string{emailMessageType}, scopedSearch.MessageTypes)
 
 	// Verify the result contains filteredStats
 	dlm, ok := msg.(dataLoadedMsg)

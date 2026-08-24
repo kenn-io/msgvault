@@ -36,11 +36,21 @@ type peopleAPIEngine struct {
 	timeline             query.ExploreRequest
 	timelineResult       *query.ExploreResponse
 	peopleErr            error
+	completionRequest    query.PeopleCompletionRequest
+	completionResult     *query.PeopleCompletionResponse
+	completionErr        error
 }
 
 func (e *peopleAPIEngine) SearchPeople(_ context.Context, request query.PersonSearchRequest) (*query.PersonSearchResponse, error) {
 	e.peopleRequest = request
 	return e.peopleResult, e.peopleErr
+}
+
+func (e *peopleAPIEngine) CompletePeople(
+	_ context.Context, request query.PeopleCompletionRequest,
+) (*query.PeopleCompletionResponse, error) {
+	e.completionRequest = request
+	return e.completionResult, e.completionErr
 }
 
 func (e *peopleAPIEngine) GetPerson(_ context.Context, _ int64, _ query.Context, clusterMemberIDs []int64) (*query.PersonSummary, error) {
@@ -191,7 +201,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
-		personSummaryResult: &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: 11, DisplayLabel: "Person", ActivityCount: 1}}, CacheRevision: "cache-person", SearchProvenance: query.SearchProvenance{LexicalIndexRevision: "person-rev"}},
+		personSummaryResult: &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: 11, DisplayLabel: "Person", ActivityCount: 1, MeetingCount: 4}}, CacheRevision: "cache-person", SearchProvenance: query.SearchProvenance{LexicalIndexRevision: "person-rev"}},
 		domainSummaryResult: &query.DomainSearchResponse{Rows: []query.DomainSummary{}, CacheRevision: "cache-domain"},
 	}
 	store := &mockStore{messages: []APIMessage{{ID: 42}}, total: 1}
@@ -208,6 +218,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	var personBody ParticipantContextSummaryHTTPResponse
 	requirements.NoError(json.NewDecoder(person.Body).Decode(&personBody))
 	assertions.Equal(int64(1), personBody.Summary.ActivityCount)
+	assertions.Equal(int64(4), personBody.Summary.MeetingCount)
 	assertions.Equal(query.SearchProvenance{LexicalIndexRevision: "person-rev"}, personBody.SearchProvenance)
 
 	domain := httptest.NewRecorder()
@@ -244,6 +255,34 @@ func TestPeopleSearchForwardsCanonicalContextAndNeverAcceptsNameAsIdentity(t *te
 	assertions.Equal([]int64{7}, engine.peopleRequest.Explore.Context.SourceIDs)
 	assertions.Equal("Shared Name", engine.peopleRequest.Query)
 	assertions.Equal(query.SortSpec{Field: "display_label", Direction: "asc"}, engine.peopleRequest.Sort)
+}
+
+func TestPeopleSearchSerializesRelationshipTemperatureSummary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	when := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleResult: &query.PersonSearchResponse{
+		Rows: []query.PersonSummary{{
+			ID: 11, DisplayLabel: "Person", ActivityCount: 3,
+			CurrentRelationshipTemperature: 62,
+			PeakRelationshipTemperature:    97,
+			PeakRelationshipYear:           2018,
+			FirstAt:                        when, LastAt: when,
+		}}, TotalCount: 1, CacheRevision: "cache-people",
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search",
+		bytes.NewBufferString(`{"identity_query":"Person","limit":25}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newPeopleAPIServer(engine).Router().ServeHTTP(response, request)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ParticipantSearchHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(body.Rows, 1)
+	assert.Equal(62, body.Rows[0].CurrentRelationshipTemperature)
+	assert.Equal(97, body.Rows[0].PeakRelationshipTemperature)
+	assert.Equal(2018, body.Rows[0].PeakRelationshipYear)
 }
 
 func TestPersonDetailAndTimelineRequireDurablePositiveID(t *testing.T) {

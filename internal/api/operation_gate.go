@@ -367,9 +367,10 @@ var operationGateExemptPaths = map[string]bool{
 // as explore candidate snapshots and preflight operation tokens). They use
 // POST solely because their requests are structured predicate bodies, so
 // queueing them on the operation gate would serialize pure reads behind long
-// archive mutations. Reads never needed the gate: every GET already bypasses
-// it and relies on the committed-cache revision/snapshot machinery for
-// consistency instead.
+// archive mutations. Reads never needed the gate: every GET, including
+// analytical detail routes such as participant inbox rollups, already
+// bypasses it and relies on the committed-cache revision/snapshot machinery
+// for consistency instead.
 //
 // The classification stays deny-by-default: a POST route not listed here
 // still gates. TestReadOnlyPostRoutePatternsMatchExplorationRoutes keeps this
@@ -397,6 +398,7 @@ var readOnlyPostRoutePatterns = []string{
 	// pure reads (and the mutation gate) hostage to provider latency.
 	"/api/v1/search/attachments/visual",
 	"/api/v1/files/groups",
+	"/api/v1/participants/completions",
 	"/api/v1/participants/search",
 	"/api/v1/participants/{id}/summary",
 	"/api/v1/participants/{id}/timeline",
@@ -407,6 +409,7 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/domains/{domain}/timeline",
 	"/api/v1/domains/{domain}/files/search",
 	"/api/v1/relationships",
+	"/api/v1/relationships/{id}/calendar",
 	"/api/v1/relationships/{id}/timeline",
 	"/api/v1/search/coverage",
 }

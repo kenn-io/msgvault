@@ -15,7 +15,9 @@ function person(): PersonSummary {
       { type: 'email', value: 'alice@example.com', display_value: 'Alice', participant_id: 12, is_primary: true, provenance: 'participant_identifiers' },
       { type: 'phone', value: '+15550100001', participant_id: 12, is_primary: false, provenance: 'participant_identifiers' }
     ],
-    activity_count: 42, file_count: 3, source_counts: [{ source_type: 'gmail', count: 42 }],
+    activity_count: 42, meeting_count: 0, file_count: 3,
+    current_relationship_temperature: 62, peak_relationship_temperature: 87, peak_relationship_year: 2018,
+    source_counts: [{ source_type: 'gmail', count: 42 }],
     first_at: when, last_at: when, cache_revision: 'cache-rel'
   };
 }
@@ -31,7 +33,9 @@ function searchResult(): PersonSummary {
   return {
     id: 99, display_label: 'Bob Example', partial_label: false,
     identifiers: [{ type: 'email', value: 'bob@example.com', participant_id: 99, is_primary: true, provenance: 'participant_identifiers' }],
-    activity_count: 7, file_count: 0, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
+    activity_count: 7, meeting_count: 0, file_count: 0,
+    current_relationship_temperature: 12, peak_relationship_temperature: 20, peak_relationship_year: 2024,
+    source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
   };
 }
 
@@ -46,7 +50,9 @@ function clusteredPerson(): PersonSummary {
       { type: 'phone', value: '+15550100002', participant_id: 34, is_primary: true, provenance: 'participant_identifiers' },
       { type: 'email', value: 'carol@example.com', participant_id: 56, is_primary: true, provenance: 'participant_identifiers' }
     ],
-    activity_count: 42, file_count: 3, source_counts: [{ source_type: 'gmail', count: 42 }],
+    activity_count: 42, meeting_count: 0, file_count: 3,
+    current_relationship_temperature: 62, peak_relationship_temperature: 87, peak_relationship_year: 2018,
+    source_counts: [{ source_type: 'gmail', count: 42 }],
     first_at: when, last_at: when, cache_revision: 'cache-rel',
     cluster: {
       canonical_id: 12, member_ids: [12, 34, 56],

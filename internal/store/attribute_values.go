@@ -22,6 +22,16 @@ var (
 
 var errAttributeDryRun = errors.New("attribute dry run rollback")
 
+// AttributeValueConflictError carries the authoritative current value when a
+// compare-and-swap write loses a race. Callers can still match
+// ErrAttributeValueConflict with errors.Is.
+type AttributeValueConflictError struct {
+	CurrentValue *PersonAttributeValue
+}
+
+func (*AttributeValueConflictError) Error() string { return ErrAttributeValueConflict.Error() }
+func (*AttributeValueConflictError) Unwrap() error { return ErrAttributeValueConflict }
+
 // AttributeValue is a typed value union with exactly one populated member.
 type AttributeValue struct {
 	Type       AttributeValueType `json:"type"`

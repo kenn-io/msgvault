@@ -13,7 +13,10 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
-const maxPeopleSearchLimit = 500
+const (
+	maxPeopleSearchLimit      = 500
+	identityDisplayLabelField = "display_label"
+)
 
 // PersonIdentifier is explicit stored identity evidence. Provenance names the
 // canonical read model; it does not imply that two values are interchangeable.
@@ -75,19 +78,23 @@ type PersonSearchRequest struct {
 }
 
 type PersonSummary struct {
-	ID            int64              `json:"id"`
-	DisplayLabel  string             `json:"display_label"`
-	DisplayName   string             `json:"display_name,omitempty"`
-	PartialLabel  bool               `json:"partial_label"`
-	Identifiers   []PersonIdentifier `json:"identifiers"`
-	ActivityCount int64              `json:"activity_count"`
-	FileCount     int64              `json:"file_count"`
-	SourceCounts  []SourceCount      `json:"source_counts"`
-	FirstAt       time.Time          `json:"first_at"`
-	LastAt        time.Time          `json:"last_at"`
-	CacheRevision string             `json:"cache_revision"`
-	Cluster       *PersonCluster     `json:"cluster,omitempty"`
-	Profile       *PersonProfile     `json:"profile,omitempty"`
+	ID                             int64              `json:"id"`
+	DisplayLabel                   string             `json:"display_label"`
+	DisplayName                    string             `json:"display_name,omitempty"`
+	PartialLabel                   bool               `json:"partial_label"`
+	Identifiers                    []PersonIdentifier `json:"identifiers"`
+	ActivityCount                  int64              `json:"activity_count"`
+	MeetingCount                   int64              `json:"meeting_count"`
+	FileCount                      int64              `json:"file_count"`
+	CurrentRelationshipTemperature int                `json:"current_relationship_temperature"`
+	PeakRelationshipTemperature    int                `json:"peak_relationship_temperature"`
+	PeakRelationshipYear           int                `json:"peak_relationship_year"`
+	SourceCounts                   []SourceCount      `json:"source_counts"`
+	FirstAt                        time.Time          `json:"first_at"`
+	LastAt                         time.Time          `json:"last_at"`
+	CacheRevision                  string             `json:"cache_revision"`
+	Cluster                        *PersonCluster     `json:"cluster,omitempty"`
+	Profile                        *PersonProfile     `json:"profile,omitempty"`
 }
 
 type PersonSearchResponse struct {
@@ -147,16 +154,22 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 	// resolved from the live store: clusterMemberIDs can be newer than the
 	// committed cache (an identity linked or unlinked since the last
 	// build), and the legacy aggregation honors the caller's membership, so
-	// a membership mismatch — like a request by a non-canonical alias ID or
-	// a person with no activity — falls through to it. The lookup is not
+	// a membership mismatch or a person with no activity falls through to
+	// it. A resolved alias reads the canonical rollup, then retains the
+	// requested alias ID in the response contract. The lookup is not
 	// gated on a query slot: it is a point read over the compact rollup, so
 	// it can answer while the timeline occupies the slot.
 	if identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext}) {
-		row, found, err := e.indexedPersonSummary(ctx, id, clusterMemberIDs)
+		lookupID := id
+		if len(clusterMemberIDs) > 1 {
+			lookupID = slices.Min(clusterMemberIDs)
+		}
+		row, found, err := e.indexedPersonSummary(ctx, lookupID, clusterMemberIDs)
 		if err != nil {
 			return nil, err
 		}
 		if found {
+			row.ID = id
 			return row, nil
 		}
 	}
@@ -214,7 +227,9 @@ func (e *DuckDBEngine) indexedPersonSummary(ctx context.Context, id int64, membe
 	var totalCount int64
 	if err := rows.Scan(
 		&summary.ID, &summary.DisplayLabel, &summary.DisplayName, &summary.PartialLabel,
-		&identifiersJSON, &summary.ActivityCount, &summary.FileCount,
+		&identifiersJSON, &summary.ActivityCount, &summary.MeetingCount, &summary.FileCount,
+		&summary.CurrentRelationshipTemperature, &summary.PeakRelationshipTemperature,
+		&summary.PeakRelationshipYear,
 		&sourceCountsJSON, &summary.FirstAt, &summary.LastAt, &totalCount,
 	); err != nil {
 		return nil, false, fmt.Errorf("scan indexed person summary: %w", err)
@@ -286,7 +301,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	if err != nil {
 		return nil, err
 	}
-	order, err := identitySearchOrder(request.Sort, "display_label", "person_id")
+	order, err := identitySearchOrder(request.Sort, identityDisplayLabelField, "person_id")
 	if err != nil {
 		return nil, err
 	}
@@ -377,18 +392,29 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		}
 		identifierFilter = "pi.participant_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	// Exact detail rows retain the requested participant ID, but the compact
+	// relationship scores are keyed by the resolved cluster canonical ID.
+	relationshipPersonExpr := "counted.person_id"
+	if exactID != nil && len(clusterMemberIDs) > 1 {
+		relationshipPersonExpr = "?"
+		canonicalID := slices.Min(clusterMemberIDs)
+		args = append(args, canonicalID, canonicalID, canonicalID)
+	}
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
+	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
 		` + bestNameExpr + ` AS best_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
-		COUNT(*)::BIGINT AS activity_count, COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
+		COUNT(*)::BIGINT AS activity_count,
+		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	FROM person_entries pe JOIN participants p ON p.id = pe.person_id
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
@@ -406,7 +432,13 @@ SELECT person_id, display_label, display_name,
 		is_primary := pi.is_primary, provenance := 'participant_identifiers', participant_id := pi.participant_id)
 		ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value))
 		FROM participant_identifiers pi WHERE ` + identifierFilter + `) AS VARCHAR), '[]'),
-	activity_count, file_count,
+	activity_count, meeting_count, file_count,
+	COALESCE((SELECT rp.current_temperature FROM read_parquet('` + peopleRollup + `') rp
+		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
+	COALESCE((SELECT rp.peak_temperature FROM read_parquet('` + peopleRollup + `') rp
+		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
+	COALESCE((SELECT rp.peak_year FROM read_parquet('` + peopleRollup + `') rp
+		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count
 		FROM person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
@@ -422,7 +454,9 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 		var row PersonSummary
 		var identifiersJSON, sourceCountsJSON string
 		if err := rows.Scan(&row.ID, &row.DisplayLabel, &row.DisplayName, &row.PartialLabel,
-			&identifiersJSON, &row.ActivityCount, &row.FileCount, &sourceCountsJSON,
+			&identifiersJSON, &row.ActivityCount, &row.MeetingCount, &row.FileCount,
+			&row.CurrentRelationshipTemperature, &row.PeakRelationshipTemperature,
+			&row.PeakRelationshipYear, &sourceCountsJSON,
 			&row.FirstAt, &row.LastAt, &response.TotalCount); err != nil {
 			return nil, fmt.Errorf("scan analytical person: %w", err)
 		}
@@ -493,7 +527,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, clustersGlob) +
 			sqlActivityEntryEdges(activityGlob,
-				"a.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type",
+				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	if len(memberIDs) == 0 {
@@ -518,7 +552,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 		}
 		return `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries
 	WHERE entry_key IN (
 		SELECT edge.entry_key FROM (` +
@@ -550,7 +584,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	LEFT JOIN conversations c ON c.id = m.conversation_id
 	WHERE ` + sqlIsChatPredicate("m.message_type", "COALESCE(c.conversation_type, '')") + `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
@@ -721,7 +755,7 @@ func identitySearchOrder(sort SortSpec, labelField, tieField string) (string, er
 		column = "activity_count"
 	case "latest_at":
 		column = "last_at"
-	case "display_label":
+	case identityDisplayLabelField:
 		column = labelField
 	default:
 		return "", fmt.Errorf("%w: unknown identity sort field %q", ErrInvalidExploreRequest, sort.Field)

@@ -5463,6 +5463,18 @@ type contextErrorTextEngine struct {
 	err error
 }
 
+func (e *contextErrorTextEngine) TextSnapshotRevision(context.Context, query.TextSnapshotScope) (string, error) {
+	return "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) ListConversationsSnapshot(context.Context, query.TextFilter) ([]query.ConversationRow, string, error) {
+	return nil, "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) ListConversationMessagesSnapshot(context.Context, int64, query.TextFilter) ([]query.MessageSummary, string, error) {
+	return nil, "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
 func (e *contextErrorTextEngine) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
 }
@@ -5481,6 +5493,61 @@ func (e *contextErrorTextEngine) TextSearch(context.Context, string, int, int) (
 
 func (e *contextErrorTextEngine) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+type textEngineWithoutSnapshot struct {
+	*querytest.MockEngine
+}
+
+func (*textEngineWithoutSnapshot) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
+	return []query.ConversationRow{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextAggregate(context.Context, query.TextViewType, query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) ListConversationMessages(context.Context, int64, query.TextFilter) ([]query.MessageSummary, error) {
+	return []query.MessageSummary{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
+	return &query.TotalStats{}, nil
+}
+
+func TestTextRevisionMissingCapabilityReturnsServiceUnavailable(t *testing.T) {
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	for _, path := range []string{
+		"/api/v1/text/conversations",
+		"/api/v1/text/conversations/1/messages",
+	} {
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		var body ErrorResponse
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		assert.Equal(t, "text_snapshot_unavailable", body.Error)
+	}
+}
+
+func TestTextSearchDoesNotPublishConversationSnapshotRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/text/search?q=hello", nil))
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body map[string]json.RawMessage
+	require.NoError(json.NewDecoder(response.Body).Decode(&body))
+	assert.NotContains(body, "cache_revision")
+	assert.JSONEq(`[]`, string(body["messages"]))
 }
 
 // TestTextEndpointsContextErrorReturns503 verifies that a context

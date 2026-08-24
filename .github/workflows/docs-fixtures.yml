@@ -114,3 +114,12 @@ jobs:
           MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR: ${{ runner.temp }}/docs-fixture-captures
           MSGVAULT_DOCS_SCREENSHOT_COMPARE_DIR: ${{ github.workspace }}/docs/assets/static
         run: MSGVAULT_DOCS_SCREENSHOT_PLATFORM=darwin make docs-web-screenshots
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: docs-fixture-browser-failures-darwin
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore

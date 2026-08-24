@@ -218,6 +218,34 @@ components:
         - attachment_count
         - total_unique
       type: object
+    AnnualTemperatureSummary:
+      additionalProperties: true
+      properties:
+        population:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        raw_score:
+          format: double
+          type: number
+        signals:
+          $ref: "#/components/schemas/TemperatureSignals"
+        temperature:
+          format: int64
+          type: integer
+        year:
+          format: int64
+          type: integer
+      required:
+        - year
+        - temperature
+        - rank
+        - population
+        - raw_score
+        - signals
+      type: object
     ApiHTTPError:
       additionalProperties: true
       properties:
@@ -227,6 +255,31 @@ components:
           type: string
       required:
         - error
+      type: object
+    AppendPersonNoteRequest:
+      additionalProperties: false
+      properties:
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          type: string
+        text:
+          type: string
+      required:
+        - text
       type: object
     AttachmentInfo:
       additionalProperties: true
@@ -1905,7 +1958,6 @@ components:
           type: string
       required:
         - object_type
-        - slug
         - label
         - value_type
         - field_type
@@ -5932,6 +5984,64 @@ components:
           format: int64
           type: integer
       type: object
+    ParticipantCompletionHTTPRequest:
+      additionalProperties: false
+      properties:
+        limit:
+          format: int64
+          maximum: 20
+          minimum: 0
+          type: integer
+        query:
+          type: string
+      required:
+        - query
+      type: object
+    ParticipantCompletionHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/ParticipantCompletionHTTPRow"
+          type:
+            - array
+            - "null"
+      required:
+        - rows
+        - cache_revision
+      type: object
+    ParticipantCompletionHTTPRow:
+      additionalProperties: true
+      properties:
+        display_label:
+          type: string
+        kind:
+          enum:
+            - name
+            - phone
+            - email
+            - username
+            - impp
+            - organization
+            - title
+            - role
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        source:
+          type: string
+        value:
+          type: string
+      required:
+        - participant_id
+        - display_label
+        - kind
+        - value
+        - source
+      type: object
     ParticipantContactObservation:
       additionalProperties: true
       properties:
@@ -6233,6 +6343,21 @@ components:
           type:
             - array
             - "null"
+      type: object
+    PersonAttributeConflictResponse:
+      additionalProperties: true
+      properties:
+        current_value:
+          $ref: "#/components/schemas/PersonAttributeValue"
+        current_value_id:
+          format: int64
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
       type: object
     PersonAttributeGroup:
       additionalProperties: true
@@ -6838,6 +6963,62 @@ components:
         - is_primary
         - provenance
         - participant_id
+      type: object
+    PersonInboxResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonInboxRow"
+          type:
+            - array
+            - "null"
+      required:
+        - rows
+        - cache_revision
+        - identity_revision
+      type: object
+    PersonInboxRow:
+      additionalProperties: true
+      properties:
+        conversation_count:
+          format: int64
+          type: integer
+        latest_at:
+          format: date-time
+          type: string
+        latest_received_at:
+          format: date-time
+          type: string
+        latest_sent_at:
+          format: date-time
+          type: string
+        received_count:
+          format: int64
+          type: integer
+        sent_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - conversation_count
+        - received_count
+        - sent_count
+        - latest_at
       type: object
     PersonMedia:
       additionalProperties: true
@@ -7670,6 +7851,9 @@ components:
           type: string
         cluster:
           $ref: "#/components/schemas/PersonCluster"
+        current_relationship_temperature:
+          format: int64
+          type: integer
         display_label:
           type: string
         display_name:
@@ -7692,8 +7876,17 @@ components:
         last_at:
           format: date-time
           type: string
+        meeting_count:
+          format: int64
+          type: integer
         partial_label:
           type: boolean
+        peak_relationship_temperature:
+          format: int64
+          type: integer
+        peak_relationship_year:
+          format: int64
+          type: integer
         profile:
           $ref: "#/components/schemas/PersonProfile"
         source_counts:
@@ -7708,7 +7901,11 @@ components:
         - partial_label
         - identifiers
         - activity_count
+        - meeting_count
         - file_count
+        - current_relationship_temperature
+        - peak_relationship_temperature
+        - peak_relationship_year
         - source_counts
         - first_at
         - last_at
@@ -7869,6 +8066,126 @@ components:
       required:
         - identifier
         - reason
+      type: object
+    RelationshipCalendarDay:
+      additionalProperties: true
+      properties:
+        chat:
+          format: int64
+          type: integer
+        date:
+          type: string
+        email:
+          format: int64
+          type: integer
+        level:
+          enum:
+            - NONE
+            - FIRST_QUARTILE
+            - SECOND_QUARTILE
+            - THIRD_QUARTILE
+            - FOURTH_QUARTILE
+          type: string
+        meetings:
+          format: int64
+          type: integer
+        modality_mask:
+          format: int32
+          minimum: 0
+          type: integer
+        received:
+          format: int64
+          type: integer
+        sent:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - date
+        - sent
+        - received
+        - email
+        - chat
+        - meetings
+        - total
+        - modality_mask
+        - level
+      type: object
+    RelationshipCalendarHTTPRequest:
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+        year:
+          format: int64
+          minimum: 1970
+          type: integer
+      required:
+        - year
+      type: object
+    RelationshipCalendarHTTPResponse:
+      additionalProperties: true
+      properties:
+        annual:
+          items:
+            $ref: "#/components/schemas/AnnualTemperatureSummary"
+          type:
+            - array
+            - "null"
+        cache_revision:
+          type: string
+        canonical_id:
+          format: int64
+          type: integer
+        current:
+          $ref: "#/components/schemas/TemperatureSummary"
+        days:
+          items:
+            $ref: "#/components/schemas/RelationshipCalendarDay"
+          type:
+            - array
+            - "null"
+        effective_date:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        participant_id:
+          format: int64
+          type: integer
+        peak_temperature:
+          format: int64
+          type: integer
+        peak_year:
+          format: int64
+          type: integer
+        score_version:
+          format: int64
+          type: integer
+        scoring_timezone:
+          type: string
+        timezone:
+          type: string
+        year:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - canonical_id
+        - year
+        - timezone
+        - days
+        - current
+        - annual
+        - peak_temperature
+        - peak_year
+        - scoring_timezone
+        - score_version
+        - effective_date
+        - cache_revision
+        - identity_revision
       type: object
     RelationshipReview:
       additionalProperties: true
@@ -9561,6 +9878,51 @@ components:
         - id
         - title
       type: object
+    TemperatureSignals:
+      additionalProperties: true
+      properties:
+        meeting_signal:
+          format: double
+          type: number
+        modalities:
+          format: int64
+          type: integer
+        received_volume:
+          format: double
+          type: number
+        sent_signal:
+          format: double
+          type: number
+      required:
+        - sent_signal
+        - received_volume
+        - meeting_signal
+        - modalities
+      type: object
+    TemperatureSummary:
+      additionalProperties: true
+      properties:
+        population:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        raw_score:
+          format: double
+          type: number
+        signals:
+          $ref: "#/components/schemas/TemperatureSignals"
+        temperature:
+          format: int64
+          type: integer
+      required:
+        - temperature
+        - rank
+        - population
+        - raw_score
+        - signals
+      type: object
     TextConversationRow:
       additionalProperties: true
       properties:
@@ -9592,6 +9954,8 @@ components:
     TextConversationsResponse:
       additionalProperties: true
       properties:
+        cache_revision:
+          type: string
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
@@ -9610,6 +9974,7 @@ components:
           format: int64
           type: integer
       required:
+        - cache_revision
         - count
         - has_more
         - offset
@@ -9617,6 +9982,36 @@ components:
         - conversations
       type: object
     TextMessagesResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+      required:
+        - cache_revision
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    TextSearchResponse:
       additionalProperties: true
       properties:
         count:
@@ -10037,7 +10432,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.9.0
+  version: 2.10.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -16602,6 +16997,52 @@ paths:
       summary: Download stored inline content for one organization profile media value
       tags:
         - API
+  /api/v1/participants/completions:
+    post:
+      description: Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
+      operationId: completeParticipants
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ParticipantCompletionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParticipantCompletionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Complete observed people by typed contact primitives
+      tags:
+        - API
   /api/v1/participants/search:
     post:
       operationId: searchParticipants
@@ -16753,6 +17194,43 @@ paths:
       summary: Search one participant cluster's analytical files
       tags:
         - Exploration
+  /api/v1/participants/{id}/inboxes:
+    get:
+      operationId: listParticipantInboxes
+      parameters:
+        - description: Observed participant cluster member ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInboxResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one participant cluster's messaging inboxes
+      tags:
+        - API
   /api/v1/participants/{id}/summary:
     post:
       operationId: getParticipantContextSummary
@@ -17189,6 +17667,11 @@ paths:
           name: slug
           schema:
             type: string
+        - description: Restrict the response to one portable definition identifier
+          in: query
+          name: universal_id
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -17276,8 +17759,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/PersonAttributeConflictResponse"
+          description: Conflict
         "503":
           content:
             application/json:
@@ -17345,8 +17828,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/PersonAttributeConflictResponse"
+          description: Conflict
         "503":
           content:
             application/json:
@@ -17910,6 +18393,70 @@ paths:
       security:
         - apiKey: []
       summary: List merge history for a durable person
+      tags:
+        - API
+  /api/v1/people/{id}/notes/append:
+    post:
+      operationId: appendPersonNote
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendPersonNoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Append to a person's notes
       tags:
         - API
   /api/v1/people/{id}/profile:
@@ -19213,6 +19760,61 @@ paths:
       security:
         - apiKey: []
       summary: Rank counterparts by reciprocity-weighted interaction
+      tags:
+        - Exploration
+  /api/v1/relationships/{id}/calendar:
+    post:
+      operationId: getRelationshipCalendar
+      parameters:
+        - description: Any member participant ID of the counterpart's identity cluster
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelationshipCalendarHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipCalendarHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one counterpart's timezone-aware relationship calendar
       tags:
         - Exploration
   /api/v1/relationships/{id}/timeline:
@@ -20557,6 +21159,14 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -20648,12 +21258,25 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Full-text search within the conversation
+          in: query
+          name: search_query
+          schema:
+            type: string
         - description: Source ID
           in: query
           name: source_id
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -20761,7 +21384,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TextMessagesResponse"
+                $ref: "#/components/schemas/TextSearchResponse"
           description: OK
         default:
           content:

@@ -19,6 +19,8 @@ const (
 
 // viewState encapsulates the state for a specific view (cursor, sort, filters, data).
 type viewState struct {
+	messageReaderState
+
 	level            viewLevel
 	viewType         query.ViewType
 	timeGranularity  query.TimeGranularity
@@ -42,23 +44,8 @@ type viewState struct {
 	msgListComplete    bool // True when all pages have been loaded (no more data)
 
 	// Data
-	rows          []query.AggregateRow
-	messages      []query.MessageSummary
-	messageDetail *query.MessageDetail
-
-	// Detail view specific
-	detailScroll         int
-	detailLineCount      int
-	detailMessageIndex   int
-	detailFromThread     bool
-	pendingDetailSubject string
-
-	// Detail search (find-in-page)
-	detailSearchActive     bool
-	detailSearchInput      textinput.Model
-	detailSearchQuery      string
-	detailSearchMatches    []int // Line indices with matches
-	detailSearchMatchIndex int   // Current match index
+	rows     []query.AggregateRow
+	messages []query.MessageSummary
 
 	// Thread view specific
 	threadConversationID int64
@@ -66,6 +53,25 @@ type viewState struct {
 	threadCursor         int
 	threadScrollOffset   int
 	threadTruncated      bool
+}
+
+// messageReaderState is the complete state of the shared message-detail
+// renderer. Each top-level mode owns one independent instance even though the
+// rendering and key handling are shared.
+type messageReaderState struct {
+	messageDetail *query.MessageDetail
+
+	detailScroll         int
+	detailLineCount      int
+	detailMessageIndex   int
+	detailFromThread     bool
+	pendingDetailSubject string
+
+	detailSearchActive     bool
+	detailSearchInput      textinput.Model
+	detailSearchQuery      string
+	detailSearchMatches    []int
+	detailSearchMatchIndex int
 }
 
 // navigationSnapshot stores state for navigation history.
@@ -214,7 +220,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.cursor++
 			changed = true
 		}
-	case "pgup", "ctrl+u":
+	case keyNamePageUp, keyNameCtrlU:
 		step := m.visibleRows()
 		m.cursor -= step
 		m.scrollOffset -= step
@@ -225,7 +231,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.scrollOffset = 0
 		}
 		return true
-	case "pgdown", "ctrl+d":
+	case keyNamePageDown, keyNameCtrlD:
 		step := m.visibleRows()
 		m.cursor += step
 		m.scrollOffset += step
@@ -241,11 +247,11 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.scrollOffset = maxScroll
 		}
 		return true
-	case "home":
+	case keyNameHome:
 		m.cursor = 0
 		m.scrollOffset = 0
 		return true
-	case "end", "G":
+	case keyNameEnd, "G":
 		m.cursor = max(itemCount-1, 0)
 		changed = true
 	default:

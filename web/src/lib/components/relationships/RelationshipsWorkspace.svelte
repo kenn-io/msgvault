@@ -25,6 +25,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import ReadingPane, { type ReadingPaneSelection } from '../reader/ReadingPane.svelte';
   import RelationshipHeader from './RelationshipHeader.svelte';
+  import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
@@ -412,6 +413,17 @@
                 onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                 onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
               />
+              {#if target !== null && domainOf(target) === undefined}
+                <RelationshipCalendar
+                  calendar={controller.relationshipCalendar}
+                  loading={controller.relationshipCalendarLoading}
+                  error={controller.relationshipCalendarError}
+                  year={controller.relationshipCalendarYear}
+                  firstYear={controller.relationshipCalendarFirstYear}
+                  currentYear={controller.relationshipCalendarCurrentYear}
+                  onYearChange={(year) => { void controller.loadRelationshipYear(year); }}
+                />
+              {/if}
               {#if filesOpen && filesReady}
                 <FilesWorkspace
                   {client}
