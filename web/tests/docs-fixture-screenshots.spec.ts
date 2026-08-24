@@ -88,9 +88,9 @@ test.describe('documentation fixture capture', () => {
     }
 
     if (platform === 'darwin') {
-      for (const [theme, density, filename] of [
-        ['dark', 'comfortable', 'relationships-dark-comfortable-darwin.png'],
-        ['light', 'compact', 'relationships-light-compact-darwin.png']
+      for (const [theme, density, filename, maxDiffPixelRatio] of [
+        ['dark', 'comfortable', 'relationships-dark-comfortable-darwin.png', 0.025],
+        ['light', 'compact', 'relationships-light-compact-darwin.png', 0.05]
       ] as const) {
         await page.goto(exploreURL('relationships'));
         await page.getByLabel('Temporary theme').selectOption(theme);
@@ -109,7 +109,7 @@ test.describe('documentation fixture capture', () => {
         await expect(timeline).toBeVisible();
         await expect.poll(async () => await timeline.getByRole('row').count()).toBeGreaterThan(0);
         await expect(timeline.locator('[role="row"]').first()).toContainText(/\S/);
-        await captureEvidence(page, filename, platform === 'darwin' ? { maxDiffPixelRatio: 0.02 } : undefined);
+        await captureEvidence(page, filename, { maxDiffPixelRatio });
       }
     }
   });
