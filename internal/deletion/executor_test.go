@@ -591,32 +591,38 @@ func TestExecutor_ExecuteBatch_RejectsTrashResume(t *testing.T) {
 }
 
 func TestExecutor_DeleteOne_LocalTombstoneFailureIsRetryable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	tc := NewTestContext(t)
-	require.NoError(t, tc.Store.Close(), "close store")
+	require.NoError(tc.Store.Close(), "close store")
 
 	result, err := tc.Exec.deleteOne(context.Background(), 1, "msg-1", MethodDelete)
 
-	assert.Equal(t, resultFailed, result)
-	assert.Error(t, err)
-	assert.Len(t, tc.MockAPI.DeleteCalls, 1)
+	assert.Equal(resultFailed, result)
+	assert.Error(err)
+	assert.Len(tc.MockAPI.DeleteCalls, 1)
 }
 
 func TestExecutor_Execute_LocalTombstoneFailureLeavesManifestInProgress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("local tombstone retry", []string{"msg-1"})
-	require.NoError(t, tc.Store.Close(), "close store")
+	require.NoError(tc.Store.Close(), "close store")
 
 	err := tc.ExecuteWithOpts(manifest.ID, &ExecuteOptions{Method: MethodDelete, BatchSize: 1, Resume: true})
 
-	assert.Error(t, err)
+	assert.Error(err)
 	inProgress, listErr := tc.Mgr.ListInProgress()
-	require.NoError(t, listErr)
-	if assert.Len(t, inProgress, 1) {
-		assert.Equal(t, []string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+	require.NoError(listErr)
+	if assert.Len(inProgress, 1) {
+		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.FailedIDs)
 	}
 }
 
 func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInProgress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	tc := NewTestContext(t)
 	manifest := NewManifest("batch tombstone retry", []string{"msg-1"})
 	manifest.Status = StatusInProgress
@@ -626,16 +632,16 @@ func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInP
 		FailedIDs:          []string{"msg-1"},
 		LastProcessedIndex: 1,
 	}
-	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest")
-	require.NoError(t, tc.Store.Close(), "close store")
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest")
+	require.NoError(tc.Store.Close(), "close store")
 
 	err := tc.ExecuteBatch(manifest.ID)
 
-	assert.Error(t, err)
+	assert.Error(err)
 	inProgress, listErr := tc.Mgr.ListInProgress()
-	require.NoError(t, listErr)
-	if assert.Len(t, inProgress, 1) {
-		assert.Equal(t, []string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+	require.NoError(listErr)
+	if assert.Len(inProgress, 1) {
+		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.FailedIDs)
 	}
 }
 
