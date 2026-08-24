@@ -62,24 +62,37 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 		"successful sync must analyze populated message indexes")
 }
 
-func TestSyncCheckpointRefreshesSQLitePlannerStatistics(t *testing.T) {
-	assert := assert.New(t)
+func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
 	require := require.New(t)
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
-
-	seedLiveMessages(t, s, 100)
-	assert.Zero(messagePlannerStatisticCount(t, s),
-		"message statistics must be absent before the maintenance boundary")
+	s.db.SetMaxOpenConns(2)
+	s.db.SetMaxIdleConns(2)
+	seedLiveMessages(t, s, 1)
 
 	syncID, err := s.StartSync(1, "full")
 	require.NoError(err)
-	require.NoError(s.UpdateSyncCheckpoint(syncID, &Checkpoint{MessagesProcessed: 100}))
-	assert.Positive(messagePlannerStatisticCount(t, s),
-		"sync checkpoints must analyze populated message indexes")
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
+
+	checkpointDone := make(chan error, 1)
+	go func() {
+		checkpointDone <- s.UpdateSyncCheckpointContext(
+			context.Background(), syncID, &Checkpoint{MessagesProcessed: 100},
+		)
+	}()
+	select {
+	case checkpointErr := <-checkpointDone:
+		require.NoError(checkpointErr)
+	case <-time.After(250 * time.Millisecond):
+		require.NoError(blocker.Close())
+		<-checkpointDone
+		require.FailNow("sync checkpoint waited to reserve the SQLite pool")
+	}
+	require.NoError(blocker.Close())
 }
 
 func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {

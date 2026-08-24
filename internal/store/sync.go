@@ -299,7 +299,6 @@ func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, c
 	`, cp.PageToken, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID); err != nil {
 		return err
 	}
-	s.optimizeSQLiteBestEffort(ctx, "sync checkpoint")
 	return nil
 }
 
