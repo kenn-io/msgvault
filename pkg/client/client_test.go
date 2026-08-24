@@ -38,6 +38,31 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
+	requirements := require.New(t)
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	payload, err := json.Marshal(generated.PersonMergeRequiredError{
+		ErrorData: "person_merge_required",
+		Message:   "These identities belong to different profiles",
+		Profiles: []generated.PersonMergeProfile{{
+			Etag: `"person-7-rev-3"`,
+			Person: generated.Person{
+				ID: 7, Revision: 3, VcardUID: "person-7",
+				ParticipantIds: []int64{11}, CreatedAt: now, UpdatedAt: now,
+			},
+		}},
+	})
+	requirements.NoError(err)
+
+	var response generated.LinkIdentityParticipantsErrorResponse
+	requirements.NoError(json.Unmarshal(payload, &response))
+	conflict := response.LinkIdentityParticipants_ErrorResponse_AnyOf
+	requirements.NotNil(conflict)
+	requirements.True(conflict.IsA())
+	requirements.Len(conflict.A.Profiles, 1)
+	assert.Equal(t, int64(7), conflict.A.Profiles[0].Person.ID)
+}
+
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -83,6 +108,87 @@ func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {
 	encoded, err := json.Marshal(body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"display_name":null}`, string(encoded))
+}
+
+func TestGeneratedPersonMergeRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method)
+		assert.Equal("/api/v1/people/7/merge", r.URL.Path)
+		assert.Equal(`"person-7-r3", "person-9-r2"`, r.Header.Get("If-Match"))
+		assert.Equal("generated-client-merge", r.Header.Get("Idempotency-Key"))
+		var body generated.MergePersonRequest
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+			http.Error(w, "invalid merge request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(int64(9), body.AbsorbedPersonID)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"person-7-r4"`)
+		_, _ = w.Write([]byte(`{
+			"person":{
+				"id":7,"vcard_uid":"survivor-uid","revision":4,
+				"participant_ids":[70,90],
+				"created_at":"2026-08-19T00:00:00Z",
+				"updated_at":"2026-08-19T00:01:00Z"
+			},
+			"merge":{
+				"id":12,"survivor_person_id":7,"absorbed_person_id":9,
+				"current_person_id":7,"survivor_vcard_uid":"survivor-uid",
+				"absorbed_vcard_uid":"absorbed-uid",
+				"survivor_revision_before":3,"absorbed_revision_before":2,
+				"survivor_revision_after":4,"actor":"user",
+				"snapshot_version":1,
+				"snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"created_at":"2026-08-19T00:01:00Z"
+			},
+			"review_candidates":[{
+				"id":21,"merge_id":12,"person_id":7,"definition_id":4,
+				"survivor_value_id":31,"absorbed_value_id":32,"state":"pending",
+				"created_at":"2026-08-19T00:01:00Z"
+			}],
+			"identity_revision":42,
+			"cache_state":"ready"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	require.NoError(err)
+
+	response, err := client.MergePersonsWithResponse(
+		context.Background(), &generated.MergePersonsRequestOptions{
+			PathParams: &generated.MergePersonsPath{ID: 7},
+			Header: &generated.MergePersonsHeaders{
+				IfMatch:        `"person-7-r3", "person-9-r2"`,
+				IdempotencyKey: "generated-client-merge",
+			},
+			Body: &generated.MergePersonsBody{AbsorbedPersonID: 9},
+		},
+	)
+	require.NoError(err)
+	require.NotNil(response.JSON200)
+	assert.Equal(int64(7), response.JSON200.Person.ID)
+	assert.Equal(int64(12), response.JSON200.Merge.ID)
+	assert.Equal(int64(42), response.JSON200.IdentityRevision)
+	assert.Equal(generated.PersonMergeResultCacheStateReady, response.JSON200.CacheState)
+	require.Len(response.JSON200.ReviewCandidates, 1)
+	assert.Equal(int64(21), response.JSON200.ReviewCandidates[0].ID)
+	require.NotNil(response.Headers200)
+	assert.Equal(`"person-7-r4"`, response.Headers200.ETag)
+}
+
+func TestGeneratedPersonMergeSnapshotPreservesArbitraryJSON(t *testing.T) {
+	want := `{
+		"version":1,
+		"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"snapshot":{"persons":[{"id":7}],"rows":{"person_names":[1,2]}}
+	}`
+	var snapshot generated.PersonMergeSnapshotResponse
+	require.NoError(t, json.Unmarshal([]byte(want), &snapshot))
+	encoded, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	assert.JSONEq(t, want, string(encoded))
 }
 
 func TestGeneratedDailyNotePersonIDsRequirePositiveValues(t *testing.T) {

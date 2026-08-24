@@ -673,6 +673,14 @@ type ListPersonEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonMergesQuery struct {
+	// Limit Maximum results
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Results to skip
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
 }

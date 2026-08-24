@@ -195,6 +195,8 @@ func TestCORSPreflightHeaders(t *testing.T) {
 		"preflight must allow If-Match for settings and saved-view concurrency tokens")
 	assert.Contains(headers, "X-Request-Id",
 		"preflight must allow X-Request-Id for task-creation idempotency keys")
+	assert.Contains(headers, "Idempotency-Key",
+		"preflight must allow person merge and split idempotency keys")
 	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
 }
 
@@ -209,13 +211,13 @@ func TestCORSExposeHeaders(t *testing.T) {
 			name:           "exact origin exposes ETag",
 			allowedOrigins: []string{"http://dashboard.example"},
 			origin:         "http://dashboard.example",
-			wantExposed:    "ETag",
+			wantExposed:    "ETag, X-New-Person-ETag",
 		},
 		{
 			name:           "wildcard origin exposes ETag",
 			allowedOrigins: []string{"*"},
 			origin:         "http://localhost:3000",
-			wantExposed:    "ETag",
+			wantExposed:    "ETag, X-New-Person-ETag",
 		},
 		{
 			name:           "unlisted origin gets no expose header",

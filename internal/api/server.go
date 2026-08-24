@@ -1117,7 +1117,7 @@ func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 			stopWatch()
 			s.logger.Info("http request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				pathKey, r.URL.Path,
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"duration", time.Since(start),
@@ -1151,7 +1151,7 @@ func (s *Server) watchInProgressRequest(r *http.Request, start time.Time) func()
 			case <-timer.C:
 				s.logger.Warn("http request in progress",
 					"method", method,
-					"path", path,
+					pathKey, path,
 					"request_id", requestID,
 					"elapsed", time.Since(start),
 				)
@@ -1173,7 +1173,7 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 			if recovered := recover(); recovered != nil {
 				s.logger.Error("panic serving request",
 					"panic", recovered,
-					"path", r.URL.Path,
+					pathKey, r.URL.Path,
 					"request_id", requestIDFromContext(r.Context()),
 				)
 				if !ww.WroteHeader() {
@@ -1283,7 +1283,7 @@ func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
 
 func (s *Server) logUnauthorizedAPIRequest(r *http.Request) {
 	s.logger.Warn("unauthorized API request",
-		"path", r.URL.Path,
+		pathKey, r.URL.Path,
 		"remote_addr", r.RemoteAddr,
 	)
 }

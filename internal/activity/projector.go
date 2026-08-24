@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	DefaultBatchSize         = 500
-	MaxProjectionBatchSize   = 10_000
-	projectorStaleRetries    = 3
-	projectorPassRetries     = 8
-	defaultProjectorTimezone = "UTC"
+	DefaultBatchSize             = 500
+	DefaultMaxDirectCounterparts = store.DefaultMaxDirectActivityCounterparts
+	MaxProjectionBatchSize       = 10_000
+	projectorStaleRetries        = 3
+	projectorPassRetries         = 8
+	defaultProjectorTimezone     = "UTC"
 )
 
 var (
@@ -822,7 +823,7 @@ func (p *Projector) projections(
 			return nil, fmt.Errorf(
 				"activity: date message %d: %w", candidate.MessageID, err)
 		}
-		classification := Classify(candidate, maxDirectCounterparts)
+		classification := store.ClassifyActivityCandidate(candidate, maxDirectCounterparts)
 		projection.Event = &store.ActivityEvent{
 			MessageID:                        candidate.MessageID,
 			RefKind:                          classification.RefKind,

@@ -49,7 +49,7 @@ func BuilderPolicy(tempDirectory string) Policy {
 		MemoryLimit:          "2GB",
 		Threads:              min(runtime.GOMAXPROCS(0), 2),
 		TempDirectory:        tempDirectory,
-		MaxTempDirectorySize: "8GB",
+		MaxTempDirectorySize: "32GB",
 	}
 }
 

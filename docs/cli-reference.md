@@ -1289,6 +1289,11 @@ msgvault person get <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
 msgvault person delete <person-id>
+msgvault person merge <survivor-id> <absorbed-id> [flags]
+msgvault person split <source-person-id> [flags]
+msgvault person merge-history <person-id> [--json]
+msgvault person merge-show <merge-id> [--snapshot] [--json]
+msgvault person merge-candidate <candidate-id> [flags]
 
 msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
@@ -1297,7 +1302,34 @@ msgvault person attributes clear <person-id> <slug> [flags]
 
 `promote` is idempotent. `set-display-name` preserves the profile's stable ID
 and vCard UID. `delete` permanently retires that UID and removes the profile's
-participant bindings.
+participant bindings. A person with active merge lineage cannot be deleted
+until that lineage is fully split.
+
+`merge` keeps the survivor's ID and vCard UID, moves the absorbed profile into
+it, and records a reversible merge packet. Profiles with active CardDAV
+publication are rejected. `split` creates a new person and UID; repeat
+`--participant` to select multiple absorbed lineages, or omit it for a merge
+whose absorbed profile had no participants.
+
+| Merge flag | Applies to | Description |
+|---|---|---|
+| `--survivor-revision <n>` | `merge` | Required expected revision of the surviving person |
+| `--absorbed-revision <n>` | `merge` | Required expected revision of the absorbed person |
+| `--idempotency-key <key>` | `merge`, `split` | Required retry key; reusing it with a different request is rejected |
+| `--merge-id <id>` | `split` | Required merge record to reverse |
+| `--participant <id>` | `split` | Absorbed participant lineage to move; repeat as needed |
+| `--revision <n>` | `split`, `merge-candidate` | Required expected revision of the current person |
+| `--person-id <id>` | `merge-candidate` | Person that owns the review candidate |
+| `--decision <accepted\|rejected>` | `merge-candidate` | Resolve a conflicting single-value attribute |
+| `--snapshot` | `merge-show` | Read and verify the immutable merge snapshot |
+| `--json` | all merge commands | Output structured JSON |
+
+Exact splits restore the pre-merge profiles when their lineage and referenced
+rows remain available. For partial splits, use `--json` to inspect ambiguous or
+unrestored rows. Complete merge packets retain merge-time profile values even
+after later redaction and require the strongest profile-data options when
+copied into a subset. See [People, Profiles, and Source Identities](/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
+for the workflow and lifecycle boundaries.
 
 | Attribute flag | Applies to | Description |
 |---|---|---|

@@ -3398,6 +3398,11 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
 			return err
 		}
+		if err := rewritePersonMergeParticipantLineageTx(
+			context.Background(), tx, oldID, newID,
+		); err != nil {
+			return err
+		}
 		_, err = tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
 		return err
 	})

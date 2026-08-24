@@ -19,7 +19,7 @@ func TestBuilderPolicyDefaults(t *testing.T) {
 	assertions.Equal("2GB", policy.MemoryLimit)
 	assertions.Equal(min(runtime.GOMAXPROCS(0), 2), policy.Threads)
 	assertions.Equal(tempDir, policy.TempDirectory)
-	assertions.Equal("8GB", policy.MaxTempDirectorySize)
+	assertions.Equal("32GB", policy.MaxTempDirectorySize)
 }
 
 func TestBuilderPolicyWithOverrides(t *testing.T) {

@@ -133,6 +133,23 @@ func (c CreateCommunicationServiceRequestScopePolicy) Validate() error {
 	}
 }
 
+type DecidePersonMergeCandidateRequestDecision string
+
+const (
+	Accept DecidePersonMergeCandidateRequestDecision = "accept"
+	Reject DecidePersonMergeCandidateRequestDecision = "reject"
+)
+
+// Validate checks if the DecidePersonMergeCandidateRequestDecision value is valid
+func (d DecidePersonMergeCandidateRequestDecision) Validate() error {
+	switch d {
+	case Accept, Reject:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DecidePersonMergeCandidateRequestDecision value, got: %v", d))
+	}
+}
+
 type DiscoverEventType string
 
 const (
@@ -865,6 +882,40 @@ func (p PersonFileSearchRowContentState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchRowContentState value, got: %v", p))
+	}
+}
+
+type PersonMergeResultCacheState string
+
+const (
+	PersonMergeResultCacheStateReady PersonMergeResultCacheState = "ready"
+	PersonMergeResultCacheStateStale PersonMergeResultCacheState = "stale"
+)
+
+// Validate checks if the PersonMergeResultCacheState value is valid
+func (p PersonMergeResultCacheState) Validate() error {
+	switch p {
+	case PersonMergeResultCacheStateReady, PersonMergeResultCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonMergeResultCacheState value, got: %v", p))
+	}
+}
+
+type PersonSplitResultCacheState string
+
+const (
+	PersonSplitResultCacheStateReady PersonSplitResultCacheState = "ready"
+	PersonSplitResultCacheStateStale PersonSplitResultCacheState = "stale"
+)
+
+// Validate checks if the PersonSplitResultCacheState value is valid
+func (p PersonSplitResultCacheState) Validate() error {
+	switch p {
+	case PersonSplitResultCacheStateReady, PersonSplitResultCacheStateStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSplitResultCacheState value, got: %v", p))
 	}
 }
 

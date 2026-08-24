@@ -239,6 +239,14 @@ func (s *Store) LoadActivityCandidatesByIDContext(
 	ctx context.Context,
 	messageIDs []int64,
 ) ([]ActivityCandidate, error) {
+	return s.loadActivityCandidatesByIDQueryerContext(ctx, s.db, messageIDs)
+}
+
+func (s *Store) loadActivityCandidatesByIDQueryerContext(
+	ctx context.Context,
+	queryer contextRowsQuerier,
+	messageIDs []int64,
+) ([]ActivityCandidate, error) {
 	unique := make(map[int64]struct{}, len(messageIDs))
 	for _, messageID := range messageIDs {
 		if messageID <= 0 {
@@ -255,13 +263,19 @@ func (s *Store) LoadActivityCandidatesByIDContext(
 		sorted = append(sorted, messageID)
 	}
 	slices.Sort(sorted)
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sorted)), ",")
-	args := make([]any, len(sorted))
-	for index, messageID := range sorted {
-		args[index] = messageID
-	}
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(
-		activityCandidateStateCTE+`
+	candidates := make([]ActivityCandidate, 0, len(sorted))
+	for start := 0; start < len(sorted); start += activityCandidateIDChunk {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		chunk := sorted[start:min(start+activityCandidateIDChunk, len(sorted))]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, len(chunk))
+		for index, messageID := range chunk {
+			args[index] = messageID
+		}
+		rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(
+			activityCandidateStateCTE+`
 		SELECT `+activityCandidateColumns+`,
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
@@ -271,15 +285,17 @@ func (s *Store) LoadActivityCandidatesByIDContext(
 		CROSS JOIN activity_current_state r
 		WHERE m.id IN (`+placeholders+`)
 		ORDER BY m.id
-	`), args...)
-	if err != nil {
-		return nil, fmt.Errorf("load exact activity candidates: %w", err)
+		`), args...)
+		if err != nil {
+			return nil, fmt.Errorf("load exact activity candidates: %w", err)
+		}
+		loaded, err := scanActivityCandidateRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, loaded...)
 	}
-	candidates, err := scanActivityCandidateRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	return s.attachActivityCounterpartsContext(ctx, candidates)
+	return s.attachActivityCounterpartsQueryerContext(ctx, queryer, candidates)
 }
 
 func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
@@ -364,6 +380,11 @@ func activityUsableTime(value *time.Time) bool {
 	return value != nil && !value.IsZero()
 }
 
+// activityCandidateIDChunk bounds exact candidate loads and the row locks used
+// by merge/split activity reconciliation. Keeping both paths on the same
+// ascending chunks avoids backend parameter limits without changing lock order.
+const activityCandidateIDChunk = 512
+
 // activityCounterpartIDChunk bounds the ID list of one counterpart query.
 // The query repeats the list four times and SQLite caps bound variables at
 // 32,766, so the projector's maximum batch (10,000 candidates) must attach
@@ -372,6 +393,14 @@ const activityCounterpartIDChunk = 512
 
 func (s *Store) attachActivityCounterpartsContext(
 	ctx context.Context,
+	candidates []ActivityCandidate,
+) ([]ActivityCandidate, error) {
+	return s.attachActivityCounterpartsQueryerContext(ctx, s.db, candidates)
+}
+
+func (s *Store) attachActivityCounterpartsQueryerContext(
+	ctx context.Context,
+	queryer contextRowsQuerier,
 	candidates []ActivityCandidate,
 ) ([]ActivityCandidate, error) {
 	if len(candidates) == 0 {
@@ -387,7 +416,7 @@ func (s *Store) attachActivityCounterpartsContext(
 	for start := 0; start < len(messageIDs); start += activityCounterpartIDChunk {
 		end := min(start+activityCounterpartIDChunk, len(messageIDs))
 		if err := s.attachActivityCounterpartChunkContext(
-			ctx, byMessageID, messageIDs[start:end],
+			ctx, queryer, byMessageID, messageIDs[start:end],
 		); err != nil {
 			return nil, err
 		}
@@ -397,6 +426,7 @@ func (s *Store) attachActivityCounterpartsContext(
 
 func (s *Store) attachActivityCounterpartChunkContext(
 	ctx context.Context,
+	queryer contextRowsQuerier,
 	byMessageID map[int64]*ActivityCandidate,
 	messageIDs []any,
 ) error {
@@ -573,7 +603,7 @@ func (s *Store) attachActivityCounterpartChunkContext(
 	args = append(args, messageIDs...)
 	args = append(args, messageIDs...)
 	args = append(args, messageIDs...)
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return fmt.Errorf("load activity counterparts: %w", err)
 	}

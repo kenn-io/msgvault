@@ -508,10 +508,10 @@ func writePersonRelationship(w http.ResponseWriter, status int, edge *store.Pers
 }
 
 func addRelationshipIDParameter(operation *huma.Operation, description string) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: description, Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: pathKey, Required: true, Description: description, Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
 }
 func addRelationshipIfMatchParameter(operation *huma.Operation, subject string) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: "header", Required: true, Description: "Strong ETag returned by the latest " + subject + " read", Schema: &huma.Schema{Type: huma.TypeString}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: headerParamLocation, Required: true, Description: "Strong ETag returned by the latest " + subject + " read", Schema: &huma.Schema{Type: huma.TypeString}})
 }
 func addRelationshipTypeHeaders(response *huma.Response, location bool) {
 	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong relationship type revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}

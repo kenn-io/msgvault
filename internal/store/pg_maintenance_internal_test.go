@@ -18,22 +18,20 @@ import (
 )
 
 // skipUnlessPostgresInternal skips the calling internal (package store) test
-// unless MSGVAULT_TEST_DB points at PostgreSQL. The maintenance escape hatch
-// (SET LOCAL statement_timeout = 0) and the cascade-lock invariant are
-// PostgreSQL-only: SQLite has no statement_timeout and no LOCK TABLE.
+// unless MSGVAULT_TEST_DB points at PostgreSQL.
 func skipUnlessPostgresInternal(t *testing.T) string {
 	t.Helper()
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
-		t.Skip("PG-only: maintenance timeout hatch / cascade lock invariant; requires MSGVAULT_TEST_DB pointing at PostgreSQL")
+		t.Skip("PG-only: requires MSGVAULT_TEST_DB pointing at PostgreSQL")
 	}
 	return testDB
 }
 
 // newPGStoreInternal opens a schema-isolated PostgreSQL store for an internal
 // (package store) test. It mirrors testutil.newPostgresTestStore but lives in
-// package store so the test can reach unexported symbols (exclusiveLockTables,
-// runMaintenance). The schema is dropped on cleanup.
+// package store so tests can reach unexported symbols. The schema is dropped
+// on cleanup.
 func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 	t.Helper()
 

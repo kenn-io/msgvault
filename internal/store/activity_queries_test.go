@@ -714,9 +714,8 @@ func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
 }
 
 // TestAttachActivityCounterpartsChunksLargeBatches loads more candidates than
-// one counterpart chunk (512 IDs) so the attach path exercises multiple
-// chunked queries; the query repeats its ID list four times, and an unchunked
-// maximum batch would exceed SQLite's bound-variable limit.
+// one candidate and counterpart chunk (512 IDs), exercising both bounded
+// queries in the public exact-load path.
 func TestAttachActivityCounterpartsChunksLargeBatches(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

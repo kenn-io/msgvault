@@ -2187,6 +2187,21 @@ components:
         notes:
           type: string
       type: object
+    DecidePersonMergeCandidateRequest:
+      additionalProperties: false
+      properties:
+        decision:
+          enum:
+            - accept
+            - reject
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - decision
+      type: object
     DeepSearchResponse:
       additionalProperties: true
       properties:
@@ -4664,6 +4679,15 @@ components:
         - losing_organization_id
         - losing_revision
       type: object
+    MergePersonRequest:
+      additionalProperties: false
+      properties:
+        absorbed_person_id:
+          format: int64
+          type: integer
+      required:
+        - absorbed_person_id
+      type: object
     MessageDetail:
       additionalProperties: true
       properties:
@@ -6882,6 +6906,336 @@ components:
             - array
             - "null"
       type: object
+    PersonMerge:
+      additionalProperties: true
+      properties:
+        absorbed_person_id:
+          format: int64
+          type: integer
+        absorbed_revision_before:
+          format: int64
+          type: integer
+        absorbed_vcard_uid:
+          type: string
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        current_person_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        snapshot_sha256:
+          type: string
+        snapshot_version:
+          format: int64
+          type: integer
+        survivor_person_id:
+          format: int64
+          type: integer
+        survivor_revision_after:
+          format: int64
+          type: integer
+        survivor_revision_before:
+          format: int64
+          type: integer
+        survivor_vcard_uid:
+          type: string
+      required:
+        - id
+        - survivor_person_id
+        - absorbed_person_id
+        - survivor_vcard_uid
+        - absorbed_vcard_uid
+        - survivor_revision_before
+        - absorbed_revision_before
+        - survivor_revision_after
+        - actor
+        - snapshot_version
+        - snapshot_sha256
+        - created_at
+      type: object
+    PersonMergeDetail:
+      additionalProperties: true
+      properties:
+        merge:
+          $ref: "#/components/schemas/PersonMerge"
+        participants:
+          items:
+            $ref: "#/components/schemas/PersonMergeParticipant"
+          type:
+            - array
+            - "null"
+        review_candidates:
+          items:
+            $ref: "#/components/schemas/PersonMergeReviewCandidate"
+          type:
+            - array
+            - "null"
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonMergeRow"
+          type:
+            - array
+            - "null"
+        splits:
+          items:
+            $ref: "#/components/schemas/PersonSplit"
+          type:
+            - array
+            - "null"
+      required:
+        - merge
+        - participants
+        - rows
+        - splits
+        - review_candidates
+      type: object
+    PersonMergeParticipant:
+      additionalProperties: true
+      properties:
+        merge_id:
+          format: int64
+          type: integer
+        origin_side:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        split_id:
+          format: int64
+          type: integer
+      required:
+        - merge_id
+        - participant_id
+        - origin_side
+      type: object
+    PersonMergeProfile:
+      additionalProperties: true
+      properties:
+        etag:
+          type: string
+        person:
+          $ref: "#/components/schemas/Person"
+      required:
+        - person
+        - etag
+      type: object
+    PersonMergeRequiredError:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        profiles:
+          items:
+            $ref: "#/components/schemas/PersonMergeProfile"
+          type:
+            - array
+            - "null"
+      required:
+        - error
+        - message
+        - profiles
+      type: object
+    PersonMergeResult:
+      additionalProperties: true
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        merge:
+          $ref: "#/components/schemas/PersonMerge"
+        person:
+          $ref: "#/components/schemas/Person"
+        review_candidates:
+          items:
+            $ref: "#/components/schemas/PersonMergeReviewCandidate"
+          type:
+            - array
+            - "null"
+      required:
+        - person
+        - merge
+        - review_candidates
+        - identity_revision
+        - cache_state
+      type: object
+    PersonMergeReviewCandidate:
+      additionalProperties: true
+      properties:
+        absorbed_value_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        definition_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        merge_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        resolution_value_id:
+          format: int64
+          type: integer
+        reviewed_at:
+          format: date-time
+          type: string
+        reviewed_by:
+          type: string
+        state:
+          type: string
+        survivor_value_id:
+          format: int64
+          type: integer
+      required:
+        - id
+        - merge_id
+        - person_id
+        - definition_id
+        - survivor_value_id
+        - absorbed_value_id
+        - state
+        - created_at
+      type: object
+    PersonMergeRow:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        current_row_id:
+          format: int64
+          type: integer
+        current_row_key:
+          type: string
+        merge_id:
+          format: int64
+          type: integer
+        origin_side:
+          type: string
+        original_row_id:
+          format: int64
+          type: integer
+        original_row_key:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        provenance_kind:
+          type: string
+        snapshot_path:
+          type: string
+        split_id:
+          format: int64
+          type: integer
+        table_name:
+          type: string
+      required:
+        - merge_id
+        - table_name
+        - original_row_key
+        - origin_side
+        - provenance_kind
+        - action
+        - snapshot_path
+      type: object
+    PersonMergeRowRef:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        original_row_id:
+          format: int64
+          type: integer
+        original_row_key:
+          type: string
+        table_name:
+          type: string
+      required:
+        - table_name
+        - original_row_key
+        - action
+      type: object
+    PersonMergeSnapshotResponse:
+      additionalProperties: true
+      properties:
+        sha256:
+          type: string
+        snapshot: {}
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - sha256
+        - snapshot
+      type: object
+    PersonMergeSummary:
+      additionalProperties: true
+      properties:
+        merge:
+          $ref: "#/components/schemas/PersonMerge"
+        participant_count:
+          format: int64
+          type: integer
+        pending_candidate_count:
+          format: int64
+          type: integer
+        row_action_counts:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        row_count:
+          format: int64
+          type: integer
+        split_count:
+          format: int64
+          type: integer
+      required:
+        - merge
+        - participant_count
+        - row_count
+        - split_count
+        - pending_candidate_count
+        - row_action_counts
+      type: object
+    PersonMergesResponse:
+      additionalProperties: true
+      properties:
+        limit:
+          format: int64
+          type: integer
+        merges:
+          items:
+            $ref: "#/components/schemas/PersonMergeSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+      required:
+        - merges
+        - limit
+        - offset
+      type: object
     PersonName:
       additionalProperties: true
       properties:
@@ -7219,6 +7573,92 @@ components:
       required:
         - person
         - score
+      type: object
+    PersonSplit:
+      additionalProperties: true
+      properties:
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        exact_reversal:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        merge_id:
+          format: int64
+          type: integer
+        new_person_id:
+          format: int64
+          type: integer
+        new_person_uid:
+          type: string
+        source_person_id:
+          format: int64
+          type: integer
+        source_revision_after:
+          format: int64
+          type: integer
+        source_revision_before:
+          format: int64
+          type: integer
+      required:
+        - id
+        - merge_id
+        - source_person_id
+        - new_person_id
+        - new_person_uid
+        - source_revision_before
+        - source_revision_after
+        - actor
+        - exact_reversal
+        - created_at
+      type: object
+    PersonSplitResult:
+      additionalProperties: true
+      properties:
+        ambiguous_rows:
+          items:
+            $ref: "#/components/schemas/PersonMergeRowRef"
+          type:
+            - array
+            - "null"
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        exact_reversal:
+          type: boolean
+        identity_revision:
+          format: int64
+          type: integer
+        new_person:
+          $ref: "#/components/schemas/Person"
+        source_person:
+          $ref: "#/components/schemas/Person"
+        split:
+          $ref: "#/components/schemas/PersonSplit"
+        uid_alias_disposition:
+          type: string
+        unrestored_rows:
+          items:
+            $ref: "#/components/schemas/PersonMergeRowRef"
+          type:
+            - array
+            - "null"
+      required:
+        - split
+        - source_person
+        - new_person
+        - exact_reversal
+        - uid_alias_disposition
+        - ambiguous_rows
+        - unrestored_rows
+        - identity_revision
+        - cache_state
       type: object
     PersonSummary:
       additionalProperties: true
@@ -8515,6 +8955,23 @@ components:
       required:
         - accounts
       type: object
+    SplitPersonRequest:
+      additionalProperties: false
+      properties:
+        merge_id:
+          format: int64
+          type: integer
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+      required:
+        - merge_id
+        - participant_ids
+      type: object
     StageDeletionFilter:
       additionalProperties: false
       properties:
@@ -9580,7 +10037,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.8.0
+  version: 2.9.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -14335,6 +14792,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/IdentityLinkResponse"
           description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/PersonMergeRequiredError"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
         default:
           content:
             application/json:
@@ -14426,8 +14891,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                anyOf:
+                  - $ref: "#/components/schemas/PersonMergeRequiredError"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
         "503":
           content:
             application/json:
@@ -17296,6 +17763,155 @@ paths:
       summary: Search one durable person's analytical files
       tags:
         - Exploration
+  /api/v1/people/{id}/merge:
+    post:
+      operationId: mergePersons
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exactly two comma-separated strong person revision tags, one for each profile
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+        - description: Opaque 1..128-byte retry key
+          in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergePersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergeResult"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Merge one durable person profile into another
+      tags:
+        - API
+  /api/v1/people/{id}/merges:
+    get:
+      operationId: listPersonMerges
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum results
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Results to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergesResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List merge history for a durable person
+      tags:
+        - API
   /api/v1/people/{id}/profile:
     get:
       description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
@@ -17593,6 +18209,100 @@ paths:
       summary: List one person's relationships
       tags:
         - API
+  /api/v1/people/{id}/split:
+    post:
+      operationId: splitPersonMerge
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+        - description: Opaque 1..128-byte retry key
+          in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SplitPersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonSplitResult"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+            X-New-Person-ETag:
+              description: Strong revision tag for the new person created by a split
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Split absorbed participant lineage into a new person
+      tags:
+        - API
   /api/v1/people/{id}/tracking:
     get:
       operationId: getPersonTracking
@@ -17684,6 +18394,202 @@ paths:
       security:
         - apiKey: []
       summary: Replace a person's tracking state
+      tags:
+        - API
+  /api/v1/person-merge-candidates/{candidate_id}/decision:
+    post:
+      operationId: decidePersonMergeCandidate
+      parameters:
+        - description: Person merge review candidate ID
+          in: path
+          name: candidate_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecidePersonMergeCandidateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergeReviewCandidate"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Accept or reject a person merge attribute candidate
+      tags:
+        - API
+  /api/v1/person-merges/{merge_id}:
+    get:
+      operationId: getPersonMerge
+      parameters:
+        - description: Durable person merge ID
+          in: path
+          name: merge_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergeDetail"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect one durable person merge
+      tags:
+        - API
+  /api/v1/person-merges/{merge_id}/snapshot:
+    get:
+      operationId: getPersonMergeSnapshot
+      parameters:
+        - description: Durable person merge ID
+          in: path
+          name: merge_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergeSnapshotResponse"
+          description: OK
+          headers:
+            Cache-Control:
+              description: Always no-store because the response contains merge provenance
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read and verify one person merge snapshot
       tags:
         - API
   /api/v1/person-relationship-reviews:

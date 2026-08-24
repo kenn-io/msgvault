@@ -132,8 +132,8 @@ func (s *Store) bumpVCardSourceResourceOwnersTx(
 		return err
 	}
 	relatedIDs, err := s.vcardSourceResourceIDsTx(ctx, tx, []sourceResourceColumn{
-		{table: "person_relationships", column: "source_person_id"},
-		{table: "person_relationships", column: "target_person_id"},
+		{table: personRelationshipsTableName, column: "source_person_id"},
+		{table: personRelationshipsTableName, column: "target_person_id"},
 		{table: "person_relationship_reviews", column: "person_id"},
 	}, sourceRef, sourceResourceUID)
 	if err != nil {
@@ -207,7 +207,7 @@ func (s *Store) rewriteVCardSourceResourceProvenanceTx(
 		len(vcardOrganizationComponentTables)+3)
 	tables = append(tables, vcardPersonComponentTables...)
 	tables = append(tables,
-		"person_relationships", "person_relationship_reviews",
+		personRelationshipsTableName, "person_relationship_reviews",
 		"participant_contact_observations",
 	)
 	tables = append(tables, vcardOrganizationComponentTables...)
@@ -215,7 +215,7 @@ func (s *Store) rewriteVCardSourceResourceProvenanceTx(
 		set := "source_resource_uid = ?, updated_at = " + s.dialect.Now()
 		// Edges carry their own compare-and-swap revision; the other rows
 		// are versioned through their owner.
-		if table == "person_relationships" {
+		if table == personRelationshipsTableName {
 			set += ", revision = revision + 1"
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE `+table+` SET `+set+`

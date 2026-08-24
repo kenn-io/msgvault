@@ -83,22 +83,75 @@ func (s *Store) AcceptIdentityMatchCandidateContext(
 	}
 
 	accepted := candidate
+	beforeTransition := candidate
+	transitioned := false
 	if candidate.State != IdentityMatchStateAccepted ||
 		(decidedBy == string(ProvenanceUser) &&
 			(candidate.DecidedBy == nil || *candidate.DecidedBy != string(ProvenanceUser))) {
-		accepted, err = s.DecideIdentityMatchCandidateContext(
+		if s.identityMatchAcceptBeforeDecisionHook != nil {
+			s.identityMatchAcceptBeforeDecisionHook()
+		}
+		accepted, beforeTransition, err = s.decideIdentityMatchCandidateContext(
 			ctx, candidateID, IdentityMatchStateAccepted, decidedBy, notes)
 		if err != nil {
 			return nil, 0, err
 		}
+		transitioned = true
 	}
 
 	applied, revision, _, err := s.applyAcceptedIdentityMatchCandidateContext(
 		ctx, accepted, decidedBy)
 	if err != nil {
+		if transitioned && decidedBy == string(ProvenanceUser) &&
+			errors.Is(err, ErrPersonBindingConflict) {
+			if restoreErr := s.restoreIdentityMatchDecisionAfterBindingConflictContext(
+				ctx, beforeTransition, accepted,
+			); restoreErr != nil {
+				return nil, 0, errors.Join(err, restoreErr)
+			}
+		}
 		return nil, 0, err
 	}
 	return applied, revision, nil
+}
+
+// restoreIdentityMatchDecisionAfterBindingConflictContext makes the user
+// accept path compare-and-set from the caller's perspective. If a person
+// binding appeared between an API preflight and application, the merge offer
+// must not consume the candidate. Recovery of a previously accepted pending
+// decision still records a conflict through the normal resume path.
+func (s *Store) restoreIdentityMatchDecisionAfterBindingConflictContext(
+	ctx context.Context, before, accepted *IdentityMatchCandidate,
+) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if accepted.DecidedAt == nil {
+			return errors.New("restore identity match decision: accepted decision has no timestamp")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
+			state = ?, decided_by = ?, decided_at = ?, notes = ?,
+			application_pending = ?, observation_conflict_origin = ?,
+			pre_conflict_state = ?,
+			updated_at = ?
+			WHERE id = ? AND state = 'conflict' AND application_pending = FALSE
+			  AND notes = ?`,
+			before.State, before.DecidedBy, before.DecidedAt, before.Notes,
+			before.applicationPending, before.conflictState.observationOrigin,
+			before.conflictState.preConflictState, before.UpdatedAt, before.ID,
+			"accepted match spans two durable person profiles; not applied",
+		)
+		if err != nil {
+			return fmt.Errorf("restore identity match decision after binding conflict: %w", err)
+		}
+		if changed, rowsErr := result.RowsAffected(); rowsErr != nil {
+			return fmt.Errorf("count restored identity match decision: %w", rowsErr)
+		} else if changed != 1 {
+			return errors.New("restore identity match decision: candidate changed concurrently")
+		}
+		return nil
+	})
 }
 
 // ResumeAcceptedIdentityMatchCandidateContext completes the link half of one

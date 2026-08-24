@@ -2114,6 +2114,42 @@ func (a *storeAPIAdapter) PersonForParticipantsContext(
 	return a.store.PersonForParticipantsContext(ctx, participantIDs)
 }
 
+func (a *storeAPIAdapter) MergePersonsContext(
+	ctx context.Context, request store.PersonMergeRequest,
+) (*store.PersonMergeResult, error) {
+	return a.store.MergePersonsContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) SplitPersonMergeContext(
+	ctx context.Context, request store.PersonSplitRequest,
+) (*store.PersonSplitResult, error) {
+	return a.store.SplitPersonMergeContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) ListPersonMergesPageContext(
+	ctx context.Context, personID int64, limit, offset int,
+) ([]store.PersonMergeSummary, error) {
+	return a.store.ListPersonMergesPageContext(ctx, personID, limit, offset)
+}
+
+func (a *storeAPIAdapter) GetPersonMergeContext(
+	ctx context.Context, mergeID int64,
+) (*store.PersonMergeDetail, error) {
+	return a.store.GetPersonMergeContext(ctx, mergeID)
+}
+
+func (a *storeAPIAdapter) GetPersonMergeSnapshotContext(
+	ctx context.Context, mergeID int64,
+) (*store.PersonMergeSnapshotResponse, error) {
+	return a.store.GetPersonMergeSnapshotContext(ctx, mergeID)
+}
+
+func (a *storeAPIAdapter) DecidePersonMergeCandidateContext(
+	ctx context.Context, request store.PersonMergeCandidateDecisionRequest,
+) (*store.PersonMergeCandidateDecisionResult, error) {
+	return a.store.DecidePersonMergeCandidateContext(ctx, request)
+}
+
 func (a *storeAPIAdapter) GetPersonProfileContext(
 	ctx context.Context, personID int64,
 ) (*store.PersonProfile, error) {
