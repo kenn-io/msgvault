@@ -453,10 +453,12 @@ func TestWorkerRunMakesMalformedHTTPProviderResponsesTerminal(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, err := w.Write([]byte(test.response))
-				assert.NoError(t, err)
+				assertions.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
@@ -467,12 +469,12 @@ func TestWorkerRunMakesMalformedHTTPProviderResponsesTerminal(t *testing.T) {
 
 			result, err := worker.Run(t.Context(), 1, 1)
 
-			require.Error(t, err)
-			assert.Equal(t, 1, result.Terminal)
-			assert.Zero(t, result.Retry)
-			require.Len(t, ledger.failures, 1)
-			assert.True(t, ledger.failures[0].terminal)
-			assert.Equal(t, test.wantCode, ledger.failures[0].errorCode)
+			requirements.Error(err)
+			assertions.Equal(1, result.Terminal)
+			assertions.Zero(result.Retry)
+			requirements.Len(ledger.failures, 1)
+			assertions.True(ledger.failures[0].terminal)
+			assertions.Equal(test.wantCode, ledger.failures[0].errorCode)
 		})
 	}
 }

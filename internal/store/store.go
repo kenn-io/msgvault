@@ -51,7 +51,8 @@ type Store struct {
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
 
-	sqliteOptimizeMu sync.Mutex
+	sqliteOptimizeMu          sync.Mutex
+	documentVectorOperationMu sync.Mutex
 
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the

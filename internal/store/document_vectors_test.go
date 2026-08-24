@@ -69,6 +69,47 @@ func TestDocumentVectorOperationLockSerializesPostgresWriters(t *testing.T) {
 	requirements.NoError(<-secondDone)
 }
 
+func TestDocumentVectorOperationLockSerializesSQLiteWriters(t *testing.T) {
+	requirements := require.New(t)
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite-only process-local writer lock")
+	}
+	f := storetest.New(t)
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- f.Store.WithDocumentVectorOperationLock(t.Context(), func() error {
+			close(firstEntered)
+			<-releaseFirst
+			return nil
+		})
+	}()
+	<-firstEntered
+
+	secondEntered := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- f.Store.WithDocumentVectorOperationLock(t.Context(), func() error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-secondEntered:
+		requirements.FailNow("second document-vector writer entered while the first held the lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirst)
+	requirements.NoError(<-firstDone)
+	select {
+	case <-secondEntered:
+	case <-time.After(2 * time.Second):
+		requirements.FailNow("second document-vector writer did not acquire the released lock")
+	}
+	requirements.NoError(<-secondDone)
+}
+
 func runDocumentVectorGenerationLifecycleContract(t *testing.T) {
 	t.Helper()
 	t.Run("consent usage progress and same-policy rebuild", testDocumentVectorOperationsState)
