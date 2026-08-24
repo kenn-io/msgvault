@@ -348,8 +348,10 @@ func (w *Worker) beginAndStart(
 		})
 	})
 	if err != nil {
-		if errors.Is(err, ErrRequestBudgetExceeded) || errors.Is(err, ErrCostBudgetExceeded) ||
-			errors.Is(err, ErrAccountingDisabled) {
+		if errors.Is(err, ErrRequestBudgetExceeded) || errors.Is(err, ErrCostBudgetExceeded) {
+			return w.deferBudgetExhausted(ctx, lease.Token, input)
+		}
+		if errors.Is(err, ErrAccountingDisabled) {
 			return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
 		}
 		return fmt.Errorf("begin person enrichment attempt: %w", err)
@@ -357,6 +359,18 @@ func (w *Worker) beginAndStart(
 	lease.Token = attempt.Token
 	lease.ActiveAttempt = attempt
 	return w.startAttempt(ctx, lease, request, profile, config, provider, knownIDs)
+}
+
+func (w *Worker) deferBudgetExhausted(
+	ctx context.Context, token LeaseToken, input RequestInput,
+) error {
+	now := w.options.Clock().UTC()
+	nextDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	failure := safeFailure(FailurePolicy, 0, "", "enrichment budget exhausted")
+	return w.work.ReleaseWork(ctx, token, WorkRelease{
+		Outcome: "defer", Failure: &failure, NextActionAt: &nextDay,
+		PersonRevision: input.PersonRevision,
+	})
 }
 
 func guaranteedCharge(
@@ -455,6 +469,13 @@ func (w *Worker) startAttempt(
 	provider Provider,
 	knownIDs []string,
 ) error {
+	if err := w.work.AuthorizeAttemptDispatch(ctx, lease.Token); err != nil {
+		if errors.Is(err, ErrConsentRequired) {
+			return w.work.MarkTerminal(ctx, lease.Token,
+				safeFailure(FailurePolicy, 0, "", "enrichment consent revoked before dispatch"))
+		}
+		return fmt.Errorf("authorize person enrichment dispatch: %w", err)
+	}
 	callCtx, cancel := context.WithTimeout(ctx, config.RequestTimeout)
 	started, err := provider.Start(callCtx, request)
 	cancel()

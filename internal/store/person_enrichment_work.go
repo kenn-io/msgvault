@@ -380,7 +380,7 @@ func (s *Store) RenewLease(
 func (s *Store) ReleaseWork(
 	ctx context.Context, token personenrichment.LeaseToken, release personenrichment.WorkRelease,
 ) error {
-	if release.Outcome != "policy" && release.Outcome != "suppressed" &&
+	if release.Outcome != "policy" && release.Outcome != "suppressed" && release.Outcome != "defer" &&
 		release.Outcome != "retry" && release.Outcome != "complete" {
 		return fmt.Errorf("invalid person enrichment work release outcome %q", release.Outcome)
 	}
@@ -389,6 +389,19 @@ func (s *Store) ReleaseWork(
 			return err
 		}
 		switch release.Outcome {
+		case "defer":
+			if token.AttemptID != 0 || release.NextActionAt == nil ||
+				!release.NextActionAt.After(s.personEnrichmentTime()) {
+				return errors.New("person enrichment defer release requires no attempt and a future next action")
+			}
+			if release.Failure != nil {
+				if err := validateSafeFailure(*release.Failure); err != nil {
+					return err
+				}
+			}
+			return updateEnrichmentWorkLeaseTx(ctx, tx, token,
+				`due_at = ?, run_id = NULL, lease_owner = NULL, lease_until = NULL`,
+				release.NextActionAt.UTC())
 		case "retry":
 			if release.NextActionAt == nil || !release.NextActionAt.After(s.personEnrichmentTime()) {
 				return errors.New("person enrichment retry release requires a future next action")
@@ -791,13 +804,51 @@ func (s *Store) RecordProviderStarted(
 			    generated_schema_hash = ?, targets_json = ?, program_fingerprint = ?,
 			    provider_started_at = ?
 			WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?
-			  AND state = 'starting'`, nullableOpaqueID(started.RequestID), nullableOpaqueID(started.JobID),
+			  AND state = 'starting' AND dispatch_authorized_at IS NOT NULL`, nullableOpaqueID(started.RequestID), nullableOpaqueID(started.JobID),
 			strings.TrimSpace(started.AdapterVersion), strings.TrimSpace(started.SchemaVersion),
 			started.GeneratedSchema, nullableTrimmed(started.GeneratedSchemaHash),
 			targetsJSON, started.ProgramFingerprint, nullableProviderStartedAt(started),
 			token.AttemptID, token.RunID, token.Owner, token.Fence)
 		if err != nil {
 			return fmt.Errorf("record person enrichment provider start: %w", err)
+		}
+		return requireOneLeaseRow(result)
+	})
+}
+
+func (s *Store) AuthorizeAttemptDispatch(
+	ctx context.Context, token personenrichment.LeaseToken,
+) error {
+	if token.AttemptID <= 0 {
+		return errors.New("person enrichment dispatch authorization requires an active attempt")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, token.WorkPersonID); err != nil {
+			return err
+		}
+		if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
+			return err
+		}
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_enrichment_consents
+			WHERE profile_fingerprint = ? AND revoked_at IS NULL)`,
+			token.ProfileFingerprint).Scan(&active); err != nil {
+			return fmt.Errorf("check person enrichment dispatch consent: %w", err)
+		}
+		if !active {
+			return personenrichment.ErrConsentRequired
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+			SET dispatch_authorized_at = ?
+			WHERE id = ? AND run_id = ? AND person_id = ? AND profile_fingerprint = ?
+			  AND lease_owner = ? AND lease_fence = ? AND state = 'starting'`, s.personEnrichmentTime(), token.AttemptID,
+			token.RunID, token.WorkPersonID, token.ProfileFingerprint, token.Owner, token.Fence)
+		if err != nil {
+			return fmt.Errorf("authorize person enrichment dispatch: %w", err)
 		}
 		return requireOneLeaseRow(result)
 	})

@@ -117,6 +117,9 @@ func TestProviderProfileFingerprintCoversConsentedPolicy(t *testing.T) {
 			c.Mode = ""
 			c.Tier = "standard"
 			c.NumResults = 0
+			c.AllowedIdentifiers = []personenrichment.IdentifierClass{
+				personenrichment.IdentifierName, personenrichment.IdentifierCurrentCompany,
+			}
 		}},
 		{"credential environment", func(c *personenrichment.ProviderConfig, _ *personfacts.Catalog) { c.APIKeyEnv = "OTHER_API_KEY" }},
 		{"identifier set", func(c *personenrichment.ProviderConfig, _ *personfacts.Catalog) {

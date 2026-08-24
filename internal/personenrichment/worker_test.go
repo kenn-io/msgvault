@@ -605,9 +605,12 @@ type beginAttemptErrorStore struct {
 }
 
 func (s *beginAttemptErrorStore) BeginAttempt(
-	context.Context, personenrichment.LeaseToken, personenrichment.AttemptStart,
+	ctx context.Context, token personenrichment.LeaseToken, start personenrichment.AttemptStart,
 ) (*personenrichment.DurableAttempt, bool, error) {
-	return nil, false, s.err
+	if s.err != nil {
+		return nil, false, s.err
+	}
+	return s.WorkStore.BeginAttempt(ctx, token, start)
 }
 
 func (s *beginAttemptErrorStore) ReleaseWork(
@@ -615,6 +618,73 @@ func (s *beginAttemptErrorStore) ReleaseWork(
 ) error {
 	s.releases.Add(1)
 	return s.WorkStore.ReleaseWork(ctx, token, release)
+}
+
+func TestWorkerRetriesSameRevisionInLaterRunAfterBudgetExhaustion(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "budget-next-run", nil)
+	f.enqueue(t)
+	work := &beginAttemptErrorStore{WorkStore: f.store, err: personenrichment.ErrRequestBudgetExceeded}
+	var starts atomic.Int64
+	provider := &functionProvider{
+		start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
+			starts.Add(1)
+			result := workerResult(t, request, f.target, "budget-next-run-request", "", false, "", personenrichment.Cost{})
+			return personenrichment.Attempt{
+				State: personenrichment.AttemptComplete, RequestID: result.RequestID,
+				StartedAt: time.Now().UTC(), AdapterVersion: result.AdapterVersion,
+				SchemaVersion: result.SchemaVersion, ProgramFingerprint: workerProgramFingerprint(t, false, ""),
+				Result: &result,
+			}, nil
+		},
+		poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+			return personenrichment.Result{}, errors.New("unexpected poll")
+		},
+	}
+	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
+	options.Clock = func() time.Time { return f.now }
+	worker, err := personenrichment.NewWorker(
+		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(
+			personenrichment.ProviderConfig, string,
+		) (personenrichment.Provider, error) {
+			return provider, nil
+		}}, options,
+	)
+	requirements.NoError(err)
+
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	checks.Zero(starts.Load())
+	requirements.NoError(f.store.CompleteRun(t.Context(), f.run.ID, personenrichment.RunCompletion{
+		State: "succeeded", CompletedAt: f.now,
+	}))
+	workRows, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(workRows, 1)
+	requirements.Nil(workRows[0].RunID)
+
+	work.err = nil
+	f.now = workRows[0].DueAt.Add(time.Second)
+	nextRun, created, err := f.store.StartRun(t.Context(), personenrichment.RunStart{
+		Kind: "scheduled", RequestedBy: "worker:budget-next-run:retry", RequestedAt: f.now,
+	})
+	requirements.NoError(err)
+	requirements.True(created)
+	processed, err = worker.RunOnce(t.Context(), nextRun.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	checks.Equal(int64(1), starts.Load())
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: f.person.ID, RunID: nextRun.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(attempts, 1)
+	checks.Equal("succeeded", attempts[0].State)
 }
 
 func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.T) {
@@ -627,7 +697,7 @@ func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.
 	}{
 		{name: "infrastructure", injected: errors.New("synthetic database failure"), wantError: true},
 		{name: "request budget policy", injected: personenrichment.ErrRequestBudgetExceeded,
-			wantReleases: 1, wantState: "terminal"},
+			wantReleases: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -669,6 +739,14 @@ func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.
 			require.NoError(t, listErr)
 			if test.wantState == "" {
 				assert.Empty(t, attempts)
+				if errors.Is(test.injected, personenrichment.ErrRequestBudgetExceeded) {
+					workRows, workErr := f.store.ListPersonEnrichmentWorkContext(t.Context(),
+						store.PersonEnrichmentWorkFilter{PersonID: f.person.ID,
+							ProfileFingerprint: f.profile.Fingerprint, Limit: 10})
+					require.NoError(t, workErr)
+					require.Len(t, workRows, 1)
+					assert.Nil(t, workRows[0].ActiveAttemptID)
+				}
 				return
 			}
 			require.Len(t, attempts, 1)

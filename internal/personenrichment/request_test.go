@@ -197,6 +197,27 @@ func TestBuildRequestEnforcesExaModeIdentityRequirements(t *testing.T) {
 	}
 }
 
+func TestBuildRequestOmitsIncompleteOptionalNamePairWhenExaUsesProfileURL(t *testing.T) {
+	target := requestTarget("attribute:bio", false)
+	request, _, err := personenrichment.BuildRequest(personenrichment.RequestInput{
+		PersonID:          1,
+		Names:             []personenrichment.IdentityCandidate{{StableID: 1, Value: "Alice Example"}},
+		PublicProfileURLs: []personenrichment.IdentityCandidate{{StableID: 2, Value: "https://example.com/alice"}},
+		Catalog:           personfacts.Catalog{Targets: []personfacts.TargetDescriptor{target}},
+		Trigger:           personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "tracked:1"},
+	}, personenrichment.ProviderProfile{
+		Kind: personenrichment.ProviderExa, Mode: "people", Fingerprint: "profile",
+		AllowedIdentifiers: []personenrichment.IdentifierClass{
+			personenrichment.IdentifierName, personenrichment.IdentifierCurrentCompany,
+			personenrichment.IdentifierPublicProfileURL,
+		}, Targets: []personfacts.TargetDescriptor{target},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, request.Identity.Name)
+	assert.Empty(t, request.Identity.CurrentCompany)
+	assert.Equal(t, []string{"https://example.com/alice"}, request.Identity.PublicProfileURLs)
+}
+
 func TestBuildRequestEnforcesSixtyfourSuppressionBoundIdentity(t *testing.T) {
 	target := requestTarget("attribute:bio", false)
 	base := personenrichment.RequestInput{

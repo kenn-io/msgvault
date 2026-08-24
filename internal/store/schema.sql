@@ -488,6 +488,7 @@ CREATE TABLE IF NOT EXISTS person_enrichment_attempts (
     targets_json TEXT,
     program_fingerprint TEXT,
     provider_started_at DATETIME,
+    dispatch_authorized_at DATETIME,
     lease_owner TEXT,
     lease_fence INTEGER NOT NULL CHECK(lease_fence >= 0),
     lease_until DATETIME,

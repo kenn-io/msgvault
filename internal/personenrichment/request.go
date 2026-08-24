@@ -66,6 +66,11 @@ func BuildRequest(input RequestInput, profile ProviderProfile) (Request, Request
 	if err != nil {
 		return Request{}, RequestHashes{}, err
 	}
+	if profile.Kind == ProviderExa && len(identity.PublicProfileURLs) > 0 &&
+		(identity.Name == "") != (identity.CurrentCompany == "") {
+		identity.Name = ""
+		identity.CurrentCompany = ""
+	}
 	if err := validateRequestIdentityForProfile(identity, profile); err != nil {
 		return Request{}, RequestHashes{}, err
 	}

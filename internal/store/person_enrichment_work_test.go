@@ -176,6 +176,35 @@ func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *tes
 	}
 }
 
+func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *testing.T) {
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "dispatch-consent")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "dispatch-consent-worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "d"))
+	require.NoError(t, err)
+
+	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+	var authorized bool
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT dispatch_authorized_at IS NOT NULL FROM person_enrichment_attempts WHERE id = ?`),
+		attempt.ID).Scan(&authorized))
+	assert.True(t, authorized)
+
+	changed, err := f.store.RevokePersonEnrichmentConsent(
+		t.Context(), f.profile.Fingerprint, "dispatch-test")
+	require.NoError(t, err)
+	assert.True(t, changed)
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT dispatch_authorized_at IS NOT NULL FROM person_enrichment_attempts WHERE id = ?`),
+		attempt.ID).Scan(&authorized))
+	assert.True(t, authorized)
+	require.ErrorIs(t,
+		f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token),
+		personenrichment.ErrConsentRequired)
+}
+
 func TestPersonEnrichmentLeaseRejectsStaleWorkerAfterReclaim(t *testing.T) {
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
