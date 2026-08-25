@@ -62,6 +62,7 @@ const (
 	migrationIdentityMatchSourceSupport  = "identity_match_source_support_v1"
 	migrationVCardSourceResourceIdentity = "vcard_source_resource_identity_v1"
 	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
+	migrationGmailChatClassification     = "gmail_chat_classification_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.
@@ -70,6 +71,45 @@ const (
 	// FTS bookkeeping sweeps no longer requeue the archive.
 	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
 )
+
+func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE conversations
+		SET conversation_type = 'chat', updated_at = `+s.dialect.Now()+`
+		WHERE conversation_type = 'email_thread'
+		  AND id IN (
+			SELECT m.conversation_id
+			FROM labels label
+			JOIN sources source ON source.id = label.source_id
+			JOIN message_labels ml ON ml.label_id = label.id
+			JOIN messages m ON m.id = ml.message_id AND m.source_id = source.id
+			WHERE source.source_type = 'gmail'
+			  AND label.source_label_id = 'CHAT'
+			  AND m.message_type = 'email'
+		  )
+	`); err != nil {
+		return fmt.Errorf("classify legacy Gmail chat conversations: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET message_type = ?
+		WHERE message_type = 'email'
+		  AND id IN (
+			SELECT ml.message_id
+			FROM labels label
+			JOIN sources source ON source.id = label.source_id
+			JOIN message_labels ml ON ml.label_id = label.id
+			JOIN messages candidate ON candidate.id = ml.message_id
+				AND candidate.source_id = source.id
+			WHERE source.source_type = 'gmail'
+			  AND label.source_label_id = 'CHAT'
+		  )
+	`, MessageTypeGoogleChat); err != nil {
+		return fmt.Errorf("classify legacy Gmail chat messages: %w", err)
+	}
+	return nil
+}
 
 type legacyOrganizationDomainIdentifier struct {
 	id, organizationID int64

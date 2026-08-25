@@ -24,7 +24,7 @@ const (
 
 var (
 	TextMessageTypes = []string{
-		"whatsapp", "imessage", "sms", "mms", "rcs",
+		"google_chat", "whatsapp", "imessage", "sms", "mms", "rcs",
 		"google_voice_text", "teams", "discord", "beeper", "slack", "fbmessenger",
 	}
 	ChatFallbackMessageTypes = []string{"", "chat", "text"}

@@ -1403,6 +1403,22 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
 
+	// Gmail exposes archived chat transcripts as MIME messages carrying its
+	// system CHAT label. Older syncs stored every Gmail payload as email, which
+	// made the archive present these transcripts as separate email items. Run
+	// after the message and activity triggers exist so reclassified rows
+	// invalidate analytical and relationship projections like a normal update.
+	if err := s.runOnceMigration(
+		ctx, migrationGmailChatClassification, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.classifyLegacyGmailChats(ctx, tx)
+			})
+		},
+	); err != nil {
+		return err
+	}
+
 	// Initialize explicit attribution provenance for every legacy message once
 	// under the maintenance timeout escape hatch. Granola and Circleback
 	// historically derived is_from_me from confirmed organizer identities.

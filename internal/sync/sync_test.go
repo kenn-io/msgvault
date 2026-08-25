@@ -231,6 +231,40 @@ func TestFullSync(t *testing.T) {
 	assertMessageCount(t, env.Store, 3)
 }
 
+func TestFullSyncClassifiesGmailChatMessages(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "INBOX", Name: "INBOX", Type: "system"},
+		{ID: "CHAT", Name: "CHAT", Type: "system"},
+	}
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.AddMessage("chat-message", testMIME(), []string{"CHAT"})
+	env.Mock.AddMessage("email-message", testMIME(), []string{"INBOX"})
+
+	runFullSync(t, env)
+
+	for _, want := range []struct {
+		sourceMessageID  string
+		messageType      string
+		conversationType string
+	}{
+		{sourceMessageID: "chat-message", messageType: "google_chat", conversationType: "chat"},
+		{sourceMessageID: "email-message", messageType: "email", conversationType: "email_thread"},
+	} {
+		var messageType, conversationType string
+		err := env.Store.DB().QueryRow(env.Store.Rebind(`
+			SELECT m.message_type, c.conversation_type
+			FROM messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			WHERE m.source_message_id = ?
+		`), want.sourceMessageID).Scan(&messageType, &conversationType)
+		require.NoError(t, err)
+		assert.Equal(t, want.messageType, messageType)
+		assert.Equal(t, want.conversationType, conversationType)
+	}
+}
+
 func TestFullSyncProviderHookFailureWarnsOnceAfterSuccessfulCompletion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

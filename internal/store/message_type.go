@@ -1,7 +1,10 @@
 package store
 
-// MessageTypeEmail is the canonical messages.message_type value for email rows.
-const MessageTypeEmail = "email"
+// Canonical message types shared across import and migration paths.
+const (
+	MessageTypeEmail      = "email"
+	MessageTypeGoogleChat = "google_chat"
+)
 
 // IsEmailMessageType reports whether a messages.message_type value denotes an
 // email row. Rows imported before message_type existed carry a NULL/empty

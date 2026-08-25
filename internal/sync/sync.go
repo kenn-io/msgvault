@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ var ErrHistoryExpired = errors.New("history expired - run full sync")
 
 const (
 	labelTypeSystem               = "system"
+	labelIDChat                   = "CHAT"
+	conversationTypeChat          = "chat"
 	sourceTypeIMAP                = "imap"
 	invalidatedIMAPSourceIDPrefix = "msgvault-invalidated:"
 )
@@ -1126,7 +1129,16 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 	if convSubject == "" {
 		convSubject = "(no subject)"
 	}
-	conversationID, err := s.store.EnsureConversation(sourceID, threadID, convSubject)
+	messageType := store.MessageTypeEmail
+	var conversationID int64
+	if s.isGmailChat(raw.LabelIDs) {
+		messageType = store.MessageTypeGoogleChat
+		conversationID, err = s.store.EnsureConversationWithType(
+			sourceID, threadID, conversationTypeChat, convSubject,
+		)
+	} else {
+		conversationID, err = s.store.EnsureConversation(sourceID, threadID, convSubject)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ensure conversation: %w", err)
 	}
@@ -1143,7 +1155,7 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		SourceID:        sourceID,
 		SourceMessageID: raw.ID,
 		RFC822MessageID: rfc822ID,
-		MessageType:     "email",
+		MessageType:     messageType,
 		SenderID:        senderID,
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:         sql.NullString{String: snippet, Valid: snippet != ""},
@@ -1190,6 +1202,13 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		attachments:    parsed.Attachments,
 		participantMap: participantMap,
 	}, nil
+}
+
+func (s *Syncer) isGmailChat(labelIDs []string) bool {
+	if s.opts.SourceType != "" && s.opts.SourceType != "gmail" {
+		return false
+	}
+	return slices.Contains(labelIDs, labelIDChat)
 }
 
 // persistMessage stores a parsed message and all related data, returning

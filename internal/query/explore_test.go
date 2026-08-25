@@ -28,6 +28,7 @@ func TestSharedChatClassificationSQL(t *testing.T) {
 	}{
 		{name: "email thread", messageType: "email", conversationType: "email_thread", want: false},
 		{name: "known text type", messageType: "iMessage", conversationType: "email_thread", want: true},
+		{name: "Gmail chat", messageType: "google_chat", conversationType: "chat", want: true},
 		{name: "fallback chat type", messageType: "", conversationType: "group_chat", want: true},
 		{name: "fallback outside chat", messageType: "text", conversationType: "email_thread", want: false},
 		{name: "unknown type in chat", messageType: "unknown", conversationType: "direct_chat", want: false},

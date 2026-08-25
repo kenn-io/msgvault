@@ -158,6 +158,7 @@ func IsTextMessageType(mt string) bool {
 // values instead of silently returning no results.
 var KnownMessageTypes = []string{
 	messageTypeEmail,
+	"google_chat",
 	messageTypeCalendar,
 	messageTypeMeetingTranscript,
 	messageTypeSMS,
