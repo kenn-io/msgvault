@@ -75,6 +75,34 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	assert.Equal("report.pdf", message.Attachments[0].Filename)
 }
 
+func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "nullable-attribution-thread", "Nullable attribution")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "nullable-attribution-message",
+		MessageType:     "email",
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
+	require.NoError(err)
+
+	message, err := st.GetMessage(messageID)
+	require.NoError(err)
+	assert.False(t, message.IsFromMe)
+
+	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
+	require.NoError(err)
+	require.Len(window.Messages, 1)
+	assert.False(t, window.Messages[0].IsFromMe)
+}
+
 func TestConversationWindowIncludesSourceDeletedArchiveEntries(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

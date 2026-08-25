@@ -165,7 +165,7 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(m.snippet, ''),
 			m.has_attachments,
 			COALESCE(m.size_estimate, 0),
-			m.is_from_me,
+			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
 			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
 			selected.position,

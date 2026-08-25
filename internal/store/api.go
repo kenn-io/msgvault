@@ -189,7 +189,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
 			m.size_estimate,
-			m.is_from_me,
+			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
