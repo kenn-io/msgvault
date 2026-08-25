@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal } from '@kenn-io/kit-ui';
+  import { Button, Card, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -224,24 +224,26 @@
 
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
-  <form class="create" onsubmit={(event) => { event.preventDefault(); void createView(); }}>
-    <label>Name<input bind:value={name} autocomplete="off" /></label>
-    <label>Description<input bind:value={description} autocomplete="off" /></label>
-    <Button type="submit" tone="workflow" surface="solid" label="Save current view" disabled={saving || !name.trim()} />
-  </form>
+  <Card padding="sm">
+    <form class="create" onsubmit={(event) => { event.preventDefault(); void createView(); }}>
+      <label>Name<TextInput bind:value={name} autocomplete="off" /></label>
+      <label>Description<TextInput bind:value={description} autocomplete="off" /></label>
+      <Button type="submit" tone="workflow" surface="solid" label="Save current view" disabled={saving || !name.trim()} />
+    </form>
+  </Card>
 
   {#if loading}
     <p role="status">Loading Saved Views…</p>
   {:else if views.length === 0}
-    <p class="empty">No Saved Views yet.</p>
+    <EmptyState title="No Saved Views yet" description="Save the current archive context to reuse it later." />
   {:else}
     <section class="view-list" aria-label="Saved View library">
       {#each views as view (view.id)}
         {@const incompatibility = incompatibilityFor(view)}
         <article>
           {#if editing?.id === view.id}
-            <label>Edit name<input aria-label="Edit name" bind:value={editName} /></label>
-            <label>Edit description<input aria-label="Edit description" bind:value={editDescription} /></label>
+            <label>Edit name<TextInput ariaLabel="Edit name" bind:value={editName} /></label>
+            <label>Edit description<TextInput ariaLabel="Edit description" bind:value={editDescription} /></label>
             <div class="actions">
               <Button size="sm" tone="info" surface="solid" label="Save changes" onclick={() => void saveEdit()} disabled={saving} />
               <Button size="sm" surface="soft" label="Cancel edit" onclick={() => { editing = undefined; }} />
@@ -283,14 +285,13 @@
   header { justify-content: space-between; }
   header p, h1, h2, article p { margin: 0; }
   header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  header span, article p, .empty { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .create { padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); background: var(--bg-surface); }
+  header span, article p { color: var(--text-muted); font-size: var(--font-size-xs); }
+  .create { display: flex; align-items: center; gap: var(--space-3); }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  input { min-width: 12rem; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
   .view-list { display: grid; gap: var(--space-2); }
   article { justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
   .view-copy { display: grid; min-width: 12rem; gap: var(--space-1); }
-  .notice { padding: var(--space-2) var(--space-3); border-left: 3px solid var(--accent-amber); background: var(--bg-subtle); }
+  .notice { padding: var(--space-2) var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); background: var(--bg-subtle); }
   .notice--error { border-color: var(--accent-red); color: var(--text-danger); }
-  @media (max-width: 760px) { .create, article { align-items: stretch; flex-direction: column; } input { min-width: 0; width: 100%; } }
+  @media (max-width: 760px) { .create, article { align-items: stretch; flex-direction: column; } }
 </style>

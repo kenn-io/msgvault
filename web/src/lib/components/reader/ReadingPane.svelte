@@ -22,7 +22,7 @@
 </script>
 
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, EmptyState } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -30,7 +30,6 @@
   import { filtersForGroup } from '../../explore/group-context';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
   import { isEmailMessageType } from '../../explore/models';
-  import EmptyState from '../common/EmptyState.svelte';
   import IdentityBadge from '../explore/IdentityBadge.svelte';
   import TaskLinks from '../tasks/TaskLinks.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
@@ -271,12 +270,12 @@
             {unavailable.message} Rebuild the cache with <code>{unavailable.recovery_action}</code>.
           </p>
         {:else}
-          <EmptyState
-            glyph="envelope"
-            label="Nothing to read here"
-            hint={statusMessage || 'The selected result is no longer available in this context.'}
-            role="alert"
-          />
+          <div role={status === 'error' || status === 'missing' ? 'alert' : undefined}>
+            <EmptyState
+              title="Nothing to read here"
+              description={statusMessage || 'The selected result is no longer available in this context.'}
+            />
+          </div>
         {/if}
       </section>
     {:else if selection.kind === 'entry'}

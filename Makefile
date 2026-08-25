@@ -240,6 +240,7 @@ web-check: web-generate
 		exit 1; \
 	fi
 	cd web && bun run check
+	cd web && bun run check:kit-ui
 
 web-test:
 	cd web && bun run test

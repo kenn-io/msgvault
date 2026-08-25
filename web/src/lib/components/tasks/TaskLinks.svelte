@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, TextInput } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { components } from '../../api/generated/schema';
@@ -190,7 +190,7 @@
     {:else if complete}<p>No linked tasks.</p>{/if}
     {#if mutationReady}
       <form onsubmit={(event) => { event.preventDefault(); void search(); }}>
-        <label>Search tasks<input aria-label="Search tasks" bind:value={searchQuery} autocomplete="off" /></label>
+        <label>Search tasks<TextInput ariaLabel="Search tasks" bind:value={searchQuery} autocomplete="off" block /></label>
         <Button type="submit" size="sm" surface="soft" label="Search" disabled={searching || !searchQuery.trim()} />
       </form>
       {#if searchResults.length > 0}
@@ -218,6 +218,5 @@
   .degraded { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   ul { display: grid; gap: var(--space-2); padding: 0; list-style: none; }
   label { display: grid; flex: 1; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  input { min-width: 0; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
   [role='alert'] { color: var(--text-muted); font-size: var(--font-size-xs); }
 </style>

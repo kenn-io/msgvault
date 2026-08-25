@@ -52,7 +52,7 @@ describe('SavedViewsWorkspace', () => {
       selection: { mode: 'all_matching', operationToken: 'session-secret' }
     });
 
-    await screen.findByText('No Saved Views yet.');
+    await screen.findByText('No Saved Views yet');
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save current view' }));
@@ -153,7 +153,7 @@ describe('SavedViewsWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
     await waitFor(() => expect(requests).toHaveLength(3));
     expect(requests[2]!.headers.get('If-Match')).toBe('"saved-view-7-r4"');
-    expect(await screen.findByText('No Saved Views yet.')).toBeDefined();
+    expect(await screen.findByText('No Saved Views yet')).toBeDefined();
   });
 
   it('keeps incompatible schema records visible and offers confirmed removal, not migration', async () => {

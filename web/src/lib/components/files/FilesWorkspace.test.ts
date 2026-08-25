@@ -250,7 +250,7 @@ describe('FilesWorkspace', () => {
       directions: ['from_person'],
       mime_families: ['pdf', 'audio', 'text', 'document', 'archive', 'other']
     });
-    expect(screen.getByRole('button', { name: 'Files view' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'Files' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByText('From them · Group conversation')).toBeDefined();
   });
 
@@ -281,7 +281,7 @@ describe('FilesWorkspace', () => {
 
     await view.rerender({ identityScope: { kind: 'domain', domain: 'example.com' } });
     await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'To them' })).toBeNull());
-    expect(screen.queryByRole('button', { name: 'Files view' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Files' })).toBeNull();
   });
 
   it('switches a person to bounded image/video media cards and reuses the file viewer', async () => {
@@ -311,7 +311,7 @@ describe('FilesWorkspace', () => {
     });
     await screen.findByText('fixture.pdf');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Media view' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Media' }));
     expect(await screen.findByRole('button', { name: 'Open photo.png' })).toBeDefined();
     await expect(searchRequests[1]!.clone().json()).resolves.toMatchObject({
       directions: ['from_person'], mime_families: ['image', 'video']
@@ -361,7 +361,7 @@ describe('FilesWorkspace', () => {
     expect(records[0]!.observed).toEqual([initialGrid, initialHeader]);
 
     await view.rerender({ personPresentation: 'media' });
-    await screen.findByRole('button', { name: 'Media view' });
+    await screen.findByRole('radio', { name: 'Media' });
     expect(screen.queryByRole('grid', { name: 'Files results' })).toBeNull();
     expect(records[0]!.disconnected).toBe(true);
 

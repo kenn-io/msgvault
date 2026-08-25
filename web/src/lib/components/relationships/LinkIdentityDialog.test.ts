@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
+import { openTypeahead } from '../../../test/kit-ui';
 import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
 const when = '2026-07-19T10:00:00Z';
@@ -60,7 +61,7 @@ describe('LinkIdentityDialog', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests } = renderDialog();
-      const input = screen.getByRole('searchbox', { name: 'Search people to link' });
+      const input = await openTypeahead('Search people to link');
 
       await fireEvent.input(input, { target: { value: 'B' } });
       await fireEvent.input(input, { target: { value: 'Bo' } });
@@ -85,7 +86,7 @@ describe('LinkIdentityDialog', () => {
       })
     });
     render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, personLabel: 'Alice Example', onConfirm: vi.fn(), onClose: vi.fn() });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'e' } });
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'e' } });
 
     expect(await screen.findByText('Bob')).toBeDefined();
     expect(screen.queryByText('Self')).toBeNull();
@@ -93,11 +94,11 @@ describe('LinkIdentityDialog', () => {
 
   it('selects a result by click or Enter, then confirms with that participant ID', async () => {
     const { onConfirm } = renderDialog();
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
     const bobOption = await screen.findByRole('option', { name: /Bob/ });
 
-    await fireEvent.click(bobOption);
-    expect(bobOption.getAttribute('aria-selected')).toBe('true');
+    await fireEvent.mouseDown(bobOption);
+    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
 
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
@@ -105,11 +106,13 @@ describe('LinkIdentityDialog', () => {
 
   it('selects a result via Enter without requiring a click', async () => {
     const { onConfirm } = renderDialog();
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'C' } });
-    const caraOption = await screen.findByRole('option', { name: /Cara/ });
+    const input = await openTypeahead('Search people to link');
+    await fireEvent.input(input, { target: { value: 'C' } });
+    await screen.findByRole('option', { name: /Cara/ });
 
-    await fireEvent.keyDown(caraOption, { key: 'Enter' });
-    expect(caraOption.getAttribute('aria-selected')).toBe('true');
+    await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
 
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(3));
@@ -124,8 +127,8 @@ describe('LinkIdentityDialog', () => {
     const onClose = vi.fn();
     const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -136,8 +139,8 @@ describe('LinkIdentityDialog', () => {
     const onClose = vi.fn();
     const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'stale' }));
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -147,8 +150,8 @@ describe('LinkIdentityDialog', () => {
     const onClose = vi.fn();
     const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'nope' }));
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
@@ -159,8 +162,8 @@ describe('LinkIdentityDialog', () => {
     const onClose = vi.fn();
     const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
@@ -188,8 +191,8 @@ describe('LinkIdentityDialog', () => {
     const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
     const onClose = vi.fn();
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
 
@@ -209,8 +212,8 @@ describe('LinkIdentityDialog', () => {
     const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
     const onClose = vi.fn();
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
 
@@ -226,7 +229,7 @@ describe('LinkIdentityDialog', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests, unmount } = renderDialog();
-      const input = screen.getByRole('searchbox', { name: 'Search people to link' });
+      const input = await openTypeahead('Search people to link');
 
       await fireEvent.input(input, { target: { value: 'Bob' } });
       expect(requests, 'debounce has not fired yet').toHaveLength(0);
@@ -251,7 +254,7 @@ describe('LinkIdentityDialog', () => {
           });
         }
       });
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'Bob' } });
+      await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
       await vi.advanceTimersByTimeAsync(250);
       // the debounced search must have started the request before unmount
       expect(capturedSignal).toBeDefined();

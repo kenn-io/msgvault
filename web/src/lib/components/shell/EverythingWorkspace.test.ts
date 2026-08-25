@@ -2099,7 +2099,7 @@ describe('EverythingWorkspace', () => {
     expect(document.querySelector('.kit-detail-drawer-overlay')).toBeNull();
 
     // Keyboard resize on the split handle persists the size locally (not in the URL).
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize reading pane' }), { key: 'ArrowUp' });
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize reading pane' }), { key: 'ArrowUp' });
     const persisted = window.localStorage.getItem('msgvault.reading-pane.size');
     expect(persisted).not.toBeNull();
     expect(parseExploreURLState(window.location.search)).not.toHaveProperty('inspectorWidth');

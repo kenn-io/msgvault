@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { ExploreFilter } from '../../explore/models';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import IdentityFilter from './IdentityFilter.svelte';
 
 function catalog(identities: string[] = ['primary@example.test', 'shop@example.test']) {
@@ -43,13 +44,14 @@ describe('IdentityFilter', () => {
       onChange: vi.fn()
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
+    const identity = await screen.findByRole('combobox', { name: /^Identity:/ });
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(new URL((fetchFn.mock.calls[0]![0] as Request).url).pathname)
       .toBe('/api/v1/sources/14/identities');
-    await waitFor(() => expect(within(identity).getAllByRole('option')).toHaveLength(3));
-    expect(within(identity).queryByRole('option', { name: 'Fastmail — primary@example.test' })).toBeNull();
-    expect(within(identity).getAllByRole('option').map((option) => option.textContent)).toEqual([
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    await fireEvent.click(identity);
+    expect(screen.queryByRole('option', { name: 'Fastmail — primary@example.test' })).toBeNull();
+    expect(screen.getAllByRole('option').map((option) => option.textContent?.trim())).toEqual([
       'Any confirmed identity',
       'primary@example.test',
       'shop@example.test'
@@ -69,11 +71,9 @@ describe('IdentityFilter', () => {
       onChange
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
-    await waitFor(() => expect(within(identity).getAllByRole('option')).toHaveLength(3));
-    await fireEvent.change(identity, {
-      target: { value: 'shop@example.test' }
-    });
+    const identity = await screen.findByRole('combobox', { name: /^Identity:/ });
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    await chooseSelectOption(identity, 'shop@example.test');
 
     expect(onChange).toHaveBeenLastCalledWith([
       { dimension: 'source', values: ['14'] },
@@ -94,15 +94,13 @@ describe('IdentityFilter', () => {
       onChange
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
-    await waitFor(() => expect(within(identity).getAllByRole('option')).toHaveLength(3));
-    expect((identity as HTMLSelectElement).value).toBe('shop@example.test');
-    const direction = screen.getByRole('combobox', { name: 'Identity direction' });
-    expect(within(direction).getAllByRole('option').map((option) => option.textContent))
+    const identity = await screen.findByRole('combobox', { name: /^Identity: shop@example\.test/ });
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    const direction = screen.getByRole('combobox', { name: 'Identity direction: Received via' });
+    await fireEvent.click(direction);
+    expect(screen.getAllByRole('option').map((option) => option.textContent?.trim()))
       .toEqual(['Any', 'Sent via', 'Received via']);
-    expect((direction as HTMLSelectElement).value).toBe('recipient');
-
-    await fireEvent.change(direction, { target: { value: 'sender' } });
+    await fireEvent.click(screen.getByRole('option', { name: 'Sent via' }));
     expect(onChange).toHaveBeenLastCalledWith([
       { dimension: 'source', values: ['14'] },
       { dimension: 'identity', values: ['14', 'shop@example.test', 'sender'] }
@@ -120,7 +118,7 @@ describe('IdentityFilter', () => {
       ],
       onChange
     });
-    await screen.findByRole('combobox', { name: 'Identity' });
+    await screen.findByRole('combobox', { name: /^Identity:/ });
 
     await rendered.rerender({
       client,
@@ -201,7 +199,10 @@ describe('IdentityFilter', () => {
       filters: [{ dimension: 'source', values: ['15'] }],
       onChange: vi.fn()
     });
-    expect(await screen.findByRole('option', { name: 'new-source@example.test' })).toBeDefined();
+    const identity = await screen.findByRole('combobox', { name: /^Identity:/ });
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    await fireEvent.click(identity);
+    expect(screen.getByRole('option', { name: 'new-source@example.test' })).toBeDefined();
 
     resolveFirst(Response.json(catalog(['stale-source@example.test'])));
     await Promise.resolve();
@@ -223,11 +224,11 @@ describe('IdentityFilter', () => {
       onChange
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
+    const identity = await screen.findByRole('combobox', { name: /^Identity:/ });
     await screen.findByRole('alert');
-    expect((identity as HTMLSelectElement).disabled).toBe(false);
+    expect(identity).toHaveProperty('disabled', false);
 
-    await fireEvent.change(identity, { target: { value: '' } });
+    await chooseSelectOption(identity, 'Any confirmed identity');
     expect(onChange).toHaveBeenLastCalledWith([
       { dimension: 'source', values: ['14'] }
     ]);
@@ -245,13 +246,13 @@ describe('IdentityFilter', () => {
       onChange
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
-    await waitFor(() => expect(within(identity).getAllByRole('option')).toHaveLength(4));
-    const unavailable = within(identity).getByRole('option', { name: 'gone@example.test (unavailable)' });
-    expect((unavailable as HTMLOptionElement).value).toBe('gone@example.test');
-    expect((identity as HTMLSelectElement).value).toBe('gone@example.test');
+    const identity = await screen.findByRole('combobox', { name: 'Identity: gone@example.test (unavailable)' });
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    await fireEvent.click(identity);
+    const unavailable = screen.getByRole('option', { name: 'gone@example.test (unavailable)' });
+    expect(unavailable.getAttribute('aria-selected')).toBe('true');
 
-    await fireEvent.change(identity, { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('option', { name: 'Any confirmed identity' }));
     expect(onChange).toHaveBeenLastCalledWith([
       { dimension: 'source', values: ['14'] }
     ]);
@@ -268,8 +269,8 @@ describe('IdentityFilter', () => {
       onChange: vi.fn()
     });
 
-    const identity = await screen.findByRole('combobox', { name: 'Identity' });
+    const identity = await screen.findByRole('combobox', { name: /^Identity:/ });
     await screen.findByRole('status');
-    expect(within(identity).queryByRole('option', { name: 'gone@example.test (unavailable)' })).toBeNull();
+    expect(identity.getAttribute('aria-label')).not.toContain('gone@example.test');
   });
 });

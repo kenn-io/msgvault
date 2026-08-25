@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal } from '@kenn-io/kit-ui';
+  import { Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -22,6 +22,13 @@
   let browserRequestID = globalThis.crypto.randomUUID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
+  const priorityOptions = [
+    { value: '', label: 'Default' },
+    { value: 'low', label: 'Low' },
+    { value: 'normal', label: 'Normal' },
+    { value: 'high', label: 'High' },
+    { value: 'urgent', label: 'Urgent' }
+  ];
   const payloadFingerprint = $derived(JSON.stringify(currentPayload()));
 
   $effect(() => {
@@ -95,13 +102,10 @@
 <Modal title="Create task" onclose={requestClose}>
   <form aria-busy={pending} onsubmit={(event) => { event.preventDefault(); void create(); }}>
     <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <label>Task title<input aria-label="Task title" bind:value={title} autocomplete="off" /></label>
+    <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
-    <label>Priority<select aria-label="Priority" bind:value={priority}>
-      <option value="">Default</option><option value="low">Low</option><option value="normal">Normal</option>
-      <option value="high">High</option><option value="urgent">Urgent</option>
-    </select></label>
-    <label>Labels<input aria-label="Labels" bind:value={labels} placeholder="mail, follow-up" autocomplete="off" /></label>
+    <label>Priority<SelectDropdown title="Priority" value={priority} options={priorityOptions} onchange={(value) => { priority = value; }} /></label>
+    <label>Labels<TextInput ariaLabel="Labels" bind:value={labels} placeholder="mail, follow-up" autocomplete="off" block /></label>
     <details>
       <summary>Metadata leaving the archive</summary>
       <dl>
@@ -129,8 +133,7 @@
 <style>
   form { display: grid; gap: var(--space-4); min-width: min(28rem, 80vw); }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  input, textarea, select { padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
-  textarea { min-height: 6rem; resize: vertical; }
+  textarea { min-height: 6rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
   .project { display: flex; justify-content: space-between; margin: 0; }
   .project span, details { color: var(--text-muted); font-size: var(--font-size-xs); }
   dl { display: grid; gap: var(--space-1); }

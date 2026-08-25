@@ -1,7 +1,5 @@
 @import '@kenn-io/kit-ui/theme.css';
 @import './styles/tokens.css';
-@import './styles/theme-light.css';
-@import './styles/theme-dark.css';
 @import './styles/density.css';
 
 * {
@@ -25,8 +23,4 @@ input,
 select,
 textarea {
   font: inherit;
-}
-
-.kit-command-palette__option.highlighted {
-  box-shadow: inset 2px 0 0 var(--accent-blue);
 }

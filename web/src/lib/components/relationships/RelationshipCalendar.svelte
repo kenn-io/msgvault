@@ -1,4 +1,8 @@
 <script lang="ts">
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import { Button, Card, IconButton } from '@kenn-io/kit-ui';
+
   import type {
     RelationshipCalendar as RelationshipCalendarModel,
     RelationshipCalendarDay
@@ -128,23 +132,22 @@
   </div>
 {/snippet}
 
+<Card padding="sm">
 <section class="relationship-calendar" aria-label="Relationship activity calendar">
   <div class="calendar-heading">
     <h2>Relationship</h2>
     <div class="year-navigation">
-      <button
-        type="button"
-        aria-label="Previous relationship year"
+      <IconButton
+        ariaLabel="Previous relationship year"
         disabled={selectedYear <= firstYear || loading}
         onclick={() => onYearChange(selectedYear - 1)}
-      >←</button>
+      ><ChevronLeftIcon size="14" aria-hidden="true" /></IconButton>
       <span class="year">{selectedYear}</span>
-      <button
-        type="button"
-        aria-label="Next relationship year"
+      <IconButton
+        ariaLabel="Next relationship year"
         disabled={selectedYear >= currentYear || loading}
         onclick={() => onYearChange(selectedYear + 1)}
-      >→</button>
+      ><ChevronRightIcon size="14" aria-hidden="true" /></IconButton>
     </div>
   </div>
 
@@ -153,7 +156,7 @@
   {:else if error}
     <div class="calendar-state error" role="alert">
       <p>{error}</p>
-      <button type="button" onclick={() => onYearChange(selectedYear)}>Retry</button>
+      <Button label="Retry" onclick={() => onYearChange(selectedYear)} />
     </div>
   {:else if calendar}
     <div class="calendar-graphs">
@@ -180,6 +183,7 @@
     <p class="calendar-state">Relationship activity has not loaded.</p>
   {/if}
 </section>
+</Card>
 
 <style>
   .relationship-calendar {
@@ -187,10 +191,6 @@
     --relationship-cell-gap: 3px;
     container-type: inline-size;
     flex: none;
-    padding: var(--space-4);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
   }
 
   .calendar-heading,
@@ -300,11 +300,11 @@
     outline-offset: 1px;
   }
 
-  .level-none { background: #30363d; }
-  .level-first-quartile { background: #6b4b16; }
-  .level-second-quartile { background: #9a6818; }
-  .level-third-quartile { background: #d18a18; }
-  .level-fourth-quartile { background: #ffb000; }
+  .level-none { background: var(--bg-inset); }
+  .level-first-quartile { background: color-mix(in srgb, var(--accent-amber) 22%, var(--bg-inset)); }
+  .level-second-quartile { background: color-mix(in srgb, var(--accent-amber) 42%, var(--bg-inset)); }
+  .level-third-quartile { background: color-mix(in srgb, var(--accent-amber) 68%, var(--bg-inset)); }
+  .level-fourth-quartile { background: var(--accent-amber); }
 
   .split-panels {
     display: none;

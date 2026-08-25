@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { Button, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
 
   import type { RelationshipTimelineRow } from '../../relationships/models';
   import { RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
-  import EmptyState from '../common/EmptyState.svelte';
   import { monthGroupKey, monthGroupLabel, timelineRowTitle } from './timeline-support';
 
   interface Props {
@@ -198,7 +197,7 @@
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Loading activity…</p></div></div>
       {:else if rows.length === 0}
         <div role="row"><div role="gridcell">
-          <EmptyState glyph="pulse" label="No activity yet" hint="Interactions will appear here as they land in the archive." />
+          <EmptyState title="No activity yet" description="Interactions will appear here as they land in the archive." />
         </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Preparing timeline layout…</p></div></div>

@@ -1,15 +1,27 @@
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
-  --focus-ring: 2px solid var(--focus-color);
-  --transition-fast: 0.12s;
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
+  --bg-canvas: var(--bg-surface);
+  --bg-subtle: var(--bg-inset);
+  --surface-raised: var(--bg-surface);
+  --border-strong: var(--border-default);
+  --hairline-sheen: var(--border-muted);
+  --control-bg: var(--bg-surface);
+  --control-border: var(--border-default);
+  --text-danger: var(--accent-red);
+  --active-ink: var(--accent-blue);
+  --link-ink: var(--accent-blue);
+  --focus-color: var(--accent-blue);
+  --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
+  --selected-border: var(--accent-blue);
+  --artifact-ink: var(--accent-purple);
+  --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
+  --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
+  --status-warning-bg: color-mix(in srgb, var(--accent-amber) 10%, var(--bg-surface));
+  --status-warning-ink: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
+  --status-error-bg: color-mix(in srgb, var(--accent-red) 10%, var(--bg-surface));
+  --status-error-ink: color-mix(in srgb, var(--accent-red) 72%, var(--text-primary));
+  --status-destructive-bg: var(--status-error-bg);
+  --status-destructive-ink: var(--status-error-ink);
 }
 
 :where(body, button, input, select, textarea) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, KbdBadge, Modal, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, Card, KbdBadge, Modal, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -217,6 +217,7 @@
   <header><div><p>Archive workspace</p><h1>Deletions</h1></div><span>Staged manifest lifecycle</span></header>
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
+  <Card padding="sm">
   <section class="staging" aria-labelledby="deletion-staging-title">
     <div><h2 id="deletion-staging-title">Reviewed staging</h2><p>Preflight the current session selection before creating a manifest.</p></div>
     <div class="actions">
@@ -241,6 +242,7 @@
     {/if}
     {#if preview}<p class="preview" role="status">{preview}</p>{/if}
   </section>
+  </Card>
 
   {#if loading}<p role="status">Loading deletion manifests…</p>
   {:else if manifests.length === 0}<p class="notice" role="status">No deletion manifests yet.</p>
@@ -263,15 +265,17 @@
   {/if}
 
   {#if detail}
-    <aside aria-label={`Deletion manifest ${detail.id}`}>
-      <h2>{detail.id}</h2><strong>{detail.status}</strong>
-      <span>{detail.account || 'Account unavailable'}</span>
-      <span>{detail.message_count.toLocaleString()} items · {detail.description}</span>
-      {#if detail.execution}
-        <span>{detail.execution.succeeded} succeeded · {detail.execution.failed} failed</span>
-        {#each detail.execution.failed_ids ?? [] as id}<code>{id}</code>{/each}
-      {/if}
-    </aside>
+    <Card padding="sm" ariaLabel={`Deletion manifest ${detail.id}`}>
+      <aside>
+        <h2>{detail.id}</h2><strong>{detail.status}</strong>
+        <span>{detail.account || 'Account unavailable'}</span>
+        <span>{detail.message_count.toLocaleString()} items · {detail.description}</span>
+        {#if detail.execution}
+          <span>{detail.execution.succeeded} succeeded · {detail.execution.failed} failed</span>
+          {#each detail.execution.failed_ids ?? [] as id}<code>{id}</code>{/each}
+        {/if}
+      </aside>
+    </Card>
   {/if}
 </main>
 
@@ -302,14 +306,13 @@
   header p, h1, h2, .staging p { margin: 0; }
   header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   header span, article span, .staging p, .actions span, aside span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .staging { flex-wrap: wrap; justify-content: space-between; padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); background: var(--bg-surface); }
+  .staging { flex-wrap: wrap; justify-content: space-between; }
   .review { display: grid; gap: var(--space-1); }
   .reason, .notice--error { color: var(--text-danger); }
   .manifest-list { display: grid; border-top: 1px solid var(--border-muted); }
   article { justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
   article > div:first-child, aside { display: grid; gap: var(--space-1); }
-  .notice, .preview { padding: var(--space-3); border-left: 3px solid var(--accent-amber); background: var(--bg-subtle); }
+  .notice, .preview { padding: var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); background: var(--bg-subtle); }
   .notice--error { border-color: var(--accent-red); }
-  aside { padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); background: var(--bg-surface); }
   @media (max-width: 760px) { article, .staging { align-items: stretch; flex-direction: column; } }
 </style>

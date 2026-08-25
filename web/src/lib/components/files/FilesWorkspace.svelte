@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SearchInput, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, SearchInput, SegmentedControl, Toggle, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -30,6 +30,10 @@
   ];
   const PERSON_MEDIA_FAMILIES: FileMIMEFamily[] = ['image', 'video'];
   const PERSON_FILE_FAMILIES: FileMIMEFamily[] = ['pdf', 'audio', 'text', 'document', 'archive', 'other'];
+  const PERSON_PRESENTATIONS = [
+    { value: 'media', label: 'Media' },
+    { value: 'files', label: 'Files' }
+  ];
 
   interface Props {
     client: APIClient;
@@ -660,45 +664,16 @@
 
   <div class="file-controls" aria-label="File filters">
     {#if personScoped}
-      <div class="presentation-controls" aria-label="Attachment presentation">
-        <button
-          type="button"
-          aria-label="Media view"
-          aria-pressed={personPresentation === 'media'}
-          onclick={() => choosePersonPresentation('media')}
-        >Media</button>
-        <button
-          type="button"
-          aria-label="Files view"
-          aria-pressed={personPresentation === 'files'}
-          onclick={() => choosePersonPresentation('files')}
-        >Files</button>
-      </div>
+      <SegmentedControl
+        options={PERSON_PRESENTATIONS}
+        value={personPresentation}
+        ariaLabel="Attachment presentation"
+        onchange={(value) => choosePersonPresentation(value as 'media' | 'files')}
+      />
       <div class="direction-controls" aria-label="Relationship directions">
-        <label>
-          <input
-            type="checkbox"
-            checked={personDirections.includes('from_person')}
-            onchange={() => togglePersonDirection('from_person')}
-          />
-          From them
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={personDirections.includes('to_person')}
-            onchange={() => togglePersonDirection('to_person')}
-          />
-          To them
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={personDirections.includes('group')}
-            onchange={() => togglePersonDirection('group')}
-          />
-          Group conversations
-        </label>
+        <Checkbox checked={personDirections.includes('from_person')} label="From them" onchange={() => togglePersonDirection('from_person')} />
+        <Checkbox checked={personDirections.includes('to_person')} label="To them" onchange={() => togglePersonDirection('to_person')} />
+        <Checkbox checked={personDirections.includes('group')} label="Group conversations" onchange={() => togglePersonDirection('group')} />
       </div>
     {/if}
     <label>
@@ -710,10 +685,7 @@
         oninput={(value) => onFilenameQueryChange?.(value)}
       />
     </label>
-		<label>
-			<input type="checkbox" bind:checked={hostedVisualSearch} />
-			Hosted visual search
-		</label>
+		<Toggle bind:checked={hostedVisualSearch} label="Hosted visual search" />
 		{#if hostedVisualSearch}
 			<label>
 				Visual query
@@ -736,14 +708,11 @@
 		{/if}
     <div class="mime-controls" aria-label="MIME families">
       {#each visibleMIMEFamilies as family}
-        <label>
-          <input
-            type="checkbox"
-            checked={effectiveMIMEFamilies.includes(family)}
-            onchange={() => toggleMIME(family)}
-          />
-          {family}
-        </label>
+        <Checkbox
+          checked={effectiveMIMEFamilies.includes(family)}
+          label={family}
+          onchange={() => toggleMIME(family)}
+        />
       {/each}
     </div>
   </div>
@@ -919,12 +888,9 @@
   .workspace-header { display: flex; align-items: baseline; justify-content: space-between; }
   h1 { margin: 0; font-family: var(--font-sans); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.2; }
   .workspace-header span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .file-controls, .mime-controls, .direction-controls, .presentation-controls { display: flex; align-items: center; gap: var(--space-3); }
+  .file-controls, .mime-controls, .direction-controls { display: flex; align-items: center; gap: var(--space-3); }
   .file-controls { flex-wrap: wrap; }
   .file-controls label { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
-  .presentation-controls { padding: 2px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .presentation-controls button { padding: var(--space-1) var(--space-2); border: 0; border-radius: calc(var(--radius-sm) - 2px); background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--font-size-xs); }
-  .presentation-controls button[aria-pressed='true'] { background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-primary); }
   .hosted-disclosure { color: var(--text-muted); font-size: var(--font-size-2xs); }
   .data-row small { display: block; color: var(--text-muted); font-size: var(--font-size-2xs); }
   .files-table { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }

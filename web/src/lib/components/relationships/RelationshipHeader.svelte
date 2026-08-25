@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { Button, IconButton } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
@@ -280,14 +281,15 @@
                   <Button label="Cancel" surface="soft" size="sm" disabled={unlinking} onclick={cancelUnlink} />
                 </span>
               {:else}
-                <button
-                  type="button"
+                <IconButton
                   class="chip-unlink"
-                  aria-label={`Unlink ${chipName}`}
+                  size="sm"
+                  tone="danger"
+                  ariaLabel={`Unlink ${chipName}`}
                   onclick={() => startUnlink(identifier.participant_id)}
                 >
-                  ×
-                </button>
+                  <XIcon size="12" aria-hidden="true" />
+                </IconButton>
               {/if}
             {/if}
           </span>
@@ -310,14 +312,15 @@
                 <Button label="Cancel" surface="soft" size="sm" disabled={unlinking} onclick={cancelUnlink} />
               </span>
             {:else}
-              <button
-                type="button"
+              <IconButton
                 class="chip-unlink"
-                aria-label={`Unlink profile ${memberID}`}
+                size="sm"
+                tone="danger"
+                ariaLabel={`Unlink profile ${memberID}`}
                 onclick={() => startUnlink(memberID)}
               >
-                ×
-              </button>
+                <XIcon size="12" aria-hidden="true" />
+              </IconButton>
             {/if}
           </span>
         {/each}
@@ -436,21 +439,10 @@
     font-size: var(--font-size-2xs);
   }
 
-  .chip-unlink {
+  :global(.chip-unlink) {
     position: absolute;
     top: var(--space-1);
     right: var(--space-1);
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    line-height: 1;
-    cursor: pointer;
-    padding: 2px 4px;
-  }
-
-  .chip-unlink:hover {
-    color: var(--text-danger);
   }
 
   .chip-confirm {

@@ -63,7 +63,7 @@ describe('SplitPane', () => {
       const primary = container!.querySelector('[data-pane="primary"]') as HTMLElement;
       expect(primary.style.flexBasis).toBe('360px');
 
-      await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize result list' }), {
+      await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize result list' }), {
         key: 'ArrowRight'
       });
       expect(primary.style.flexBasis).toBe('384px');
@@ -82,7 +82,7 @@ describe('SplitPane', () => {
     const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
 
     expect(primary.style.flexBasis).toBe('480px');
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize result list' }), {
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize result list' }), {
       key: 'ArrowRight'
     });
 
@@ -101,7 +101,7 @@ describe('SplitPane', () => {
     reportWidth(host, 700);
     await waitFor(() => expect(primary.style.flexBasis).toBe('376px'));
 
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize result list' }), {
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize result list' }), {
       key: 'ArrowRight'
     });
     expect(primary.style.flexBasis).toBe('376px');
@@ -128,7 +128,7 @@ describe('SplitPane', () => {
     reportWidth(host, 1600);
     await waitFor(() => expect(primary.style.flexBasis).toBe('440px'));
 
-    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    const handle = screen.getByRole('separator', { name: 'Resize relationship list' });
     await fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(primary.style.flexBasis).toBe('440px');
 
@@ -153,7 +153,7 @@ describe('SplitPane', () => {
     reportWidth(host, 1200);
     await waitFor(() => expect(primary.style.flexBasis).toBe('300px'));
 
-    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    const handle = screen.getByRole('separator', { name: 'Resize relationship list' });
     await fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(primary.style.flexBasis).toBe('324px');
     expect(localStorage.getItem('archive:test-split')).toBe('324');
@@ -180,7 +180,7 @@ describe('SplitPane', () => {
     reportSize(host, { height: 800 });
     await waitFor(() => expect(secondary.style.flexBasis).toBe('600px'));
 
-    await fireEvent.dblClick(screen.getByRole('button', { name: 'Resize reading pane' }));
+    await fireEvent.dblClick(screen.getByRole('separator', { name: 'Resize reading pane' }));
     expect(secondary.style.flexBasis).toBe('440px');
     expect(localStorage.getItem('archive:reading-pane')).toBeNull();
   });
@@ -226,13 +226,13 @@ describe('SplitPane', () => {
     reportSize(host, { height: 800 });
     await waitFor(() => expect(secondary.style.flexBasis).toBe('440px'));
 
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize reading pane' }), {
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize reading pane' }), {
       key: 'ArrowUp'
     });
     expect(secondary.style.flexBasis).toBe('464px');
     expect(localStorage.getItem('archive:reading-pane')).toBe('464');
 
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize reading pane' }), {
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize reading pane' }), {
       key: 'ArrowDown'
     });
     expect(secondary.style.flexBasis).toBe('440px');
@@ -266,11 +266,16 @@ describe('SplitPane', () => {
     const secondary = container.querySelector('[data-pane="secondary"]') as HTMLElement;
     reportSize(host, { height: 800 });
 
-    const handle = screen.getByRole('button', { name: 'Resize reading pane' });
-    await fireEvent.mouseDown(handle, { clientY: 500 });
-    await fireEvent.mouseMove(window, { clientY: 420 });
+    const handle = screen.getByRole('separator', { name: 'Resize reading pane' });
+    Object.assign(handle, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => false),
+      releasePointerCapture: vi.fn()
+    });
+    await fireEvent.pointerDown(handle, { clientY: 500, pointerId: 1, button: 0 });
+    await fireEvent.pointerMove(handle, { clientY: 420, pointerId: 1 });
     expect(secondary.style.flexBasis).toBe('380px');
-    await fireEvent.mouseUp(window, { clientY: 420 });
+    await fireEvent.pointerUp(handle, { clientY: 420, pointerId: 1 });
     expect(localStorage.getItem('archive:reading-pane')).toBe('380');
   });
 
@@ -303,12 +308,12 @@ describe('SplitPane', () => {
     const secondary = container.querySelector('[data-pane="secondary"]') as HTMLElement;
     reportSize(host, { height: 800 });
 
-    const handle = screen.getByRole('button', { name: 'Resize reading pane' });
+    const handle = screen.getByRole('separator', { name: 'Resize reading pane' });
     for (let step = 0; step < 30; step += 1) {
       await fireEvent.keyDown(handle, { key: 'ArrowUp' });
     }
-    // 800 - 120 (list minimum) - 5 (handle) = 675.
-    expect(secondary.style.flexBasis).toBe('675px');
+    // 800 - 120 (list minimum) - 4 (Kit handle) = 676.
+    expect(secondary.style.flexBasis).toBe('676px');
 
     for (let step = 0; step < 30; step += 1) {
       await fireEvent.keyDown(handle, { key: 'ArrowDown' });

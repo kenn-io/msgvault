@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
+import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipHeader from './RelationshipHeader.svelte';
 
 const when = '2026-07-19T10:00:00Z';
@@ -104,8 +105,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
  * covered directly in LinkIdentityDialog.test.ts. */
 async function linkToSearchResult(): Promise<void> {
   await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
-  await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'Bob' } });
-  await fireEvent.click(await screen.findByRole('option', { name: /Bob Example/ }));
+  await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
   await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 }
 
@@ -344,8 +345,8 @@ describe('RelationshipHeader', () => {
     const { rerender } = render(RelationshipHeader, baseProps({ onLinkParticipants }));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'Bob' } });
-    await fireEvent.click(await screen.findByRole('option', { name: /Bob Example/ }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onLinkParticipants).toHaveBeenCalledWith(12, 99));
 

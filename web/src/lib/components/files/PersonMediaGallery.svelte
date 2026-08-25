@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button } from '@kenn-io/kit-ui';
+
   import type { APIClient } from '../../api/client';
   import type { PersonFileSearchRow } from '../../explore/models';
   import MediaThumbnail from './MediaThumbnail.svelte';
@@ -53,17 +55,15 @@
   {#if error && rows.length > 0}
     <div class="page-error" role="alert">
       <span>{error}</span>
-      <button type="button" onclick={() => onReload?.()}>Reload media</button>
+      <Button size="sm" label="Reload media" onclick={() => onReload?.()} />
     </div>
   {:else if pageError}
     <div class="page-error" role="alert">
       <span>{pageError}</span>
-      <button type="button" disabled={loadingMore} onclick={() => onLoadMore?.()}>Retry loading more media</button>
+      <Button size="sm" label="Retry loading more media" disabled={loadingMore} onclick={() => onLoadMore?.()} />
     </div>
   {:else if hasMore}
-    <button type="button" class="load-more" disabled={loadingMore} onclick={() => onLoadMore?.()}>
-      {loadingMore ? 'Loading more…' : 'Load more media'}
-    </button>
+    <Button class="load-more" label={loadingMore ? 'Loading more…' : 'Load more media'} disabled={loadingMore} onclick={() => onLoadMore?.()} />
   {/if}
 </section>
 
@@ -101,5 +101,5 @@
   .notice { display: grid; min-height: 220px; place-items: center; color: var(--text-secondary); }
   .error, .page-error { color: var(--text-danger); }
   .page-error { display: flex; align-items: center; justify-content: center; gap: var(--space-3); }
-  .load-more, .page-error button { align-self: center; padding: var(--space-2) var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; font: inherit; }
+  :global(.load-more) { align-self: center; }
 </style>

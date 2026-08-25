@@ -1,6 +1,8 @@
 <script lang="ts">
   import {
     CommandPalette,
+    SelectDropdown,
+    StatusDot,
     TopBar,
     appShortcuts,
     initShortcuts,
@@ -47,7 +49,7 @@
   import KeyboardHelp from './KeyboardHelp.svelte';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
-  import { debounce } from '../../util/debounce';
+  import { bufferedCallback } from '../../util/buffered-callback';
 
   interface Props {
     client: APIClient;
@@ -73,7 +75,7 @@
   const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Everything order.';
 
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
-  const debouncedSearchPatch = debounce(
+  const debouncedSearchPatch = bufferedCallback(
     (patch: Partial<ExploreURLState>) => {
       // Typing a search query is itself a user-initiated interaction, even
       // though it only ever writes committed *draft* state (never a
@@ -173,6 +175,17 @@
     { id: 'sources', label: 'Sources' },
     { id: 'deletions', label: 'Deletions' },
     { id: 'settings', label: 'Settings' }
+  ];
+  const themeOptions = [
+    { value: 'daemon', label: 'Theme: Auto' },
+    { value: 'system', label: 'Theme: System' },
+    { value: 'light', label: 'Theme: Light' },
+    { value: 'dark', label: 'Theme: Dark' }
+  ];
+  const densityOptions = [
+    { value: 'daemon', label: 'Density: Auto' },
+    { value: 'compact', label: 'Density: Compact' },
+    { value: 'comfortable', label: 'Density: Comfortable' }
   ];
   // A default landing (no `explore` param at all — the very first visit,
   // not a URL that named a workspace) starts on the Relationships hub. If
@@ -836,34 +849,26 @@
     {/snippet}
     {#snippet right()}
       <div class="appearance-controls" aria-label="Temporary appearance override">
-        <label>
-          <span class="kit-sr-only">Temporary theme</span>
-          <select
-            aria-label="Temporary theme"
-            value={appearance.temporary.theme ?? 'daemon'}
-            onchange={(event) => applyTemporaryTheme(event.currentTarget.value)}
-          >
-            <option value="daemon">Theme: Auto</option>
-            <option value="system">Theme: System</option>
-            <option value="light">Theme: Light</option>
-            <option value="dark">Theme: Dark</option>
-          </select>
-        </label>
-        <label>
-          <span class="kit-sr-only">Temporary density</span>
-          <select
-            aria-label="Temporary density"
-            value={appearance.temporary.density ?? 'daemon'}
-            onchange={(event) => applyTemporaryDensity(event.currentTarget.value)}
-          >
-            <option value="daemon">Density: Auto</option>
-            <option value="compact">Density: Compact</option>
-            <option value="comfortable">Density: Comfortable</option>
-          </select>
-        </label>
+        <SelectDropdown
+          title="Temporary theme"
+          value={appearance.temporary.theme ?? 'daemon'}
+          options={themeOptions}
+          align="end"
+          onchange={applyTemporaryTheme}
+        />
+        <SelectDropdown
+          title="Temporary density"
+          value={appearance.temporary.density ?? 'daemon'}
+          options={densityOptions}
+          align="end"
+          onchange={applyTemporaryDensity}
+        />
       </div>
       <span class="archive-state" class:archive-state--error={Boolean(loader.error || loader.unavailable)}>
-        <span aria-hidden="true">●</span>
+        <StatusDot
+          status={loader.loading ? 'working' : loader.error || loader.unavailable ? 'unclean' : 'idle'}
+          label={loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Archive needs attention' : 'Local archive ready'}
+        />
         {loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}
       </span>
     {/snippet}
@@ -1117,35 +1122,9 @@
     white-space: nowrap;
   }
 
-  .archive-state span {
-    color: var(--accent-green);
-    /* Sizes the "●" status-dot glyph, not text content — intentionally outside the --font-size-* type scale. */
-    font-size: 7px;
-  }
-
-  .archive-state--error span {
-    color: var(--status-warning-ink);
-  }
-
   .appearance-controls {
     display: inline-flex;
     gap: var(--space-2);
-  }
-
-  .appearance-controls select {
-    height: 26px;
-    padding: 0 var(--space-2);
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
-  }
-
-  .appearance-controls select:hover {
-    border-color: var(--control-border);
-    background: var(--bg-surface-hover);
-    color: var(--text-primary);
   }
 
   .files-shell {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Modal, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, Modal, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -243,22 +243,15 @@
 </script>
 
 <Modal
+  title={displayFilename}
   ariaLabel={`View ${displayFilename}`}
-  closable={false}
   closeOnOverlayClick={false}
   width="min(960px, 94vw)"
   maxWidth="min(960px, 94vw)"
+  closeLabel="Close file viewer"
   onclose={() => { void close(); }}
 >
   <div class="file-viewer">
-    <div class="viewer-header">
-      <div>
-        <p class="eyebrow">File preview</p>
-        <h2>{displayFilename}</h2>
-      </div>
-      <button type="button" aria-label="Close file viewer" onclick={() => { void close(); }}>×</button>
-    </div>
-
     <div class="preview">
       {#if loading}
         <p role="status">Loading file metadata…</p>
@@ -278,33 +271,27 @@
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </div>
 
-    <footer>
+  </div>
+  {#snippet footer()}
+    <div class="viewer-footer">
       <div class="metadata">
         <span>{metadata?.mime_type || file.mime_type || 'Unknown type'}</span>
         <span>{formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0)}</span>
       </div>
       <div class="actions">
-        <button type="button" disabled={!metadata && !file.entry_key} onclick={openItem}>Open containing item</button>
-        <button type="button" disabled={!metadata && !file.entry_key} onclick={openConversation}>Open containing conversation</button>
+        <Button size="sm" label="Open containing item" disabled={!metadata && !file.entry_key} onclick={openItem} />
+        <Button size="sm" label="Open containing conversation" disabled={!metadata && !file.entry_key} onclick={openConversation} />
         {#if metadata?.content_state === 'local_content'}
-          <button type="button" aria-label={`Download ${displayFilename}`} onclick={download}>Download</button>
+          <Button size="sm" tone="info" surface="solid" label="Download" ariaLabel={`Download ${displayFilename}`} onclick={download} />
         {/if}
       </div>
-    </footer>
-  </div>
+    </div>
+  {/snippet}
 </Modal>
 
 <style>
-  .file-viewer { display: flex; width: 100%; height: min(720px, calc(100vh - 96px)); flex-direction: column; overflow: hidden; background: var(--bg-surface); }
-  .viewer-header, footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-5); border-color: var(--border-default); }
-  .viewer-header { border-bottom: 1px solid; }
-  footer { border-top: 1px solid; }
-  h2, p { margin: 0; }
-  h2 { overflow: hidden; font-size: var(--font-size-lg); text-overflow: ellipsis; white-space: nowrap; }
-  .eyebrow { color: var(--artifact-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  button { min-height: 32px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-primary); cursor: pointer; }
-  /* Sizes the "×" glyph, not text content — intentionally outside the --font-size-* type scale. */
-  .viewer-header button { width: 34px; font-size: 22px; }
+  .file-viewer { display: flex; width: 100%; height: min(640px, calc(100vh - 160px)); flex-direction: column; overflow: hidden; background: var(--bg-surface); }
+  p { margin: 0; }
   .preview { min-height: 0; flex: 1; overflow: auto; padding: var(--space-5); background: var(--bg-inset); }
   .preview img { display: block; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
   .pdf-preview { display: grid; justify-items: center; gap: var(--space-5); }
@@ -313,10 +300,10 @@
   .pdf-preview :global(.pdf-text) { max-width: 70ch; padding-top: var(--space-3); font-size: var(--font-size-xs); line-height: 1.5; }
   .state-message, .error { padding: var(--space-5); border: 1px solid var(--border-muted); border-radius: var(--radius-md); color: var(--text-secondary); }
   .error { margin-top: var(--space-3); color: var(--accent-red); }
-  .metadata, .actions { display: flex; align-items: center; gap: var(--space-3); }
+  .viewer-footer, .metadata, .actions { display: flex; align-items: center; gap: var(--space-3); }
+  .viewer-footer { width: 100%; justify-content: space-between; }
   .metadata { color: var(--text-muted); font-size: var(--font-size-xs); }
   .actions { justify-content: flex-end; }
-  .actions button { padding: 0 var(--space-3); }
 </style>
 
 <script lang="ts" module>

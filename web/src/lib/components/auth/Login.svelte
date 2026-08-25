@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button, TextInput } from '@kenn-io/kit-ui';
+
   import type { SessionController } from '../../api/session.svelte';
 
   let { session }: { session: SessionController } = $props();
@@ -17,21 +19,26 @@
     <p>Enter the API key configured for this daemon.</p>
 
     <label for="api-key">API key</label>
-    <input
+    <TextInput
       id="api-key"
       name="api-key"
       type="password"
       autocomplete="current-password"
       bind:value={apiKey}
       required
+      block
     />
 
     {#if session.error}
       <p role="alert">{session.error}</p>
     {/if}
 
-    <button type="submit" disabled={session.loading}>
-      {session.loading ? 'Logging in…' : 'Log in'}
-    </button>
+    <Button
+      type="submit"
+      tone="info"
+      surface="solid"
+      disabled={session.loading}
+      label={session.loading ? 'Logging in…' : 'Log in'}
+    />
   </form>
 </main>

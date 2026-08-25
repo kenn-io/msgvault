@@ -1,16 +1,20 @@
-export interface Debounced<T extends unknown[]> {
+export interface BufferedCallback<T extends unknown[]> {
   (...args: T): void;
   cancel(): void;
   flush(): void;
 }
 
-export function debounce<T extends unknown[]>(
+/**
+ * Buffers a callback until input settles while still allowing navigation to
+ * commit the pending value synchronously.
+ */
+export function bufferedCallback<T extends unknown[]>(
   fn: (...args: T) => void,
   delayMs: number
-): Debounced<T> {
+): BufferedCallback<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pendingArgs: T | undefined;
-  const debounced = (...args: T): void => {
+  const buffered = (...args: T): void => {
     if (timer !== undefined) clearTimeout(timer);
     pendingArgs = args;
     timer = setTimeout(() => {
@@ -20,12 +24,12 @@ export function debounce<T extends unknown[]>(
       if (args) fn(...args);
     }, delayMs);
   };
-  debounced.cancel = (): void => {
+  buffered.cancel = (): void => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     pendingArgs = undefined;
   };
-  debounced.flush = (): void => {
+  buffered.flush = (): void => {
     if (timer === undefined) return;
     clearTimeout(timer);
     timer = undefined;
@@ -33,5 +37,5 @@ export function debounce<T extends unknown[]>(
     pendingArgs = undefined;
     if (args) fn(...args);
   };
-  return debounced;
+  return buffered;
 }

@@ -179,7 +179,7 @@ describe('FileViewer', () => {
       file: file({ filename: '', content_state: 'missing_blob', content_available: false })
     });
 
-    expect(await screen.findByRole('heading', { name: 'attachment 7' })).toBeDefined();
+    expect(await screen.findByRole('dialog', { name: 'View attachment 7' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Close file viewer' })).toBeDefined();
   });
 
@@ -190,7 +190,7 @@ describe('FileViewer', () => {
     });
     render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: '' }) });
 
-    expect(await screen.findByRole('heading', { name: 'attachment 7' })).toBeDefined();
+    expect(await screen.findByRole('dialog', { name: 'View attachment 7' })).toBeDefined();
     expect(await screen.findByRole('img', { name: 'Preview attachment 7' })).toBeDefined();
     const downloadButton = screen.getByRole('button', { name: 'Download attachment 7' });
 

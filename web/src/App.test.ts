@@ -5,6 +5,7 @@ import App from './App.svelte';
 import { createAPIClient } from './lib/api/client';
 import { createSessionController } from './lib/api/session.svelte';
 import { SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
+import { chooseSelectOption } from './test/kit-ui';
 
 describe('application foundation', () => {
   it('mounts the Relationships landmark once bootstrap succeeds', async () => {
@@ -121,7 +122,7 @@ describe('application foundation', () => {
 
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
-    await fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } });
+    await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
@@ -150,7 +151,7 @@ describe('application foundation', () => {
 
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
-    await fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } });
+    await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
@@ -194,7 +195,7 @@ describe('application foundation', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
-    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
     expect(settingsRequests).toBe(1);
     await new Promise((resolve) => setTimeout(resolve));
     expect(settingsRequests).toBe(1);

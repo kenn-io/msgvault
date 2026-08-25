@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
+  import { onMount, untrack, type Snippet } from 'svelte';
 
   interface Props {
     ariaLabel: string;
@@ -48,7 +48,7 @@
 
   const keyboardStep = 24;
   const vertical = untrack(() => orientation) === 'vertical';
-  const handleThickness = vertical ? 5 : 4;
+  const handleThickness = 4;
   const minSized = $derived(vertical ? minSecondary ?? 160 : minPrimary);
   const minOther = $derived(vertical ? minPrimary : minSecondary ?? 320);
 
@@ -81,7 +81,6 @@
   let userSized = storedSize !== undefined;
   let available = $state(0);
   let resizeStartSize = 0;
-  let dragCleanup: (() => void) | undefined;
 
   const maximum = $derived.by(() => {
     const byAvailable = available > 0
@@ -127,34 +126,7 @@
   }
 
   function resize(event: SplitResizeEvent): void {
-    setSize(resizeStartSize + event.deltaX);
-  }
-
-  function startVerticalDrag(event: MouseEvent): void {
-    event.preventDefault();
-    dragCleanup?.();
-    const startY = event.clientY;
-    resizeStartSize = sizedSize;
-    const onMove = (moveEvent: MouseEvent): void => {
-      // The sized pane is below the handle: dragging up grows it.
-      setSize(resizeStartSize - (moveEvent.clientY - startY));
-    };
-    const onUp = (): void => {
-      dragCleanup?.();
-      dragCleanup = undefined;
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    dragCleanup = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }
-
-  function handleVerticalKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    setSize(sizedSize + (event.key === 'ArrowUp' ? keyboardStep : -keyboardStep));
+    setSize(resizeStartSize + (vertical ? -event.delta : event.delta));
   }
 
   function measure(entry: ResizeObserverEntry): number | undefined {
@@ -176,8 +148,6 @@
     observer.observe(host);
     return () => observer.disconnect();
   });
-
-  onDestroy(() => dragCleanup?.());
 </script>
 
 <div class="split-pane" class:split-pane--vertical={vertical} data-split-pane bind:this={host}>
@@ -189,29 +159,28 @@
     {#if primary}{@render primary()}{/if}
   </section>
   {#if !collapsed}
-    {#if vertical}
-      <button
-        class="vertical-handle"
-        type="button"
-        aria-label={ariaLabel}
-        onkeydown={handleVerticalKeydown}
-        onmousedown={startVerticalDrag}
-        ondblclick={resetSize}
-      ></button>
-      <section class="pane secondary" data-pane="secondary" style:flex-basis={`${sizedSize}px`}>
-        {#if secondary}{@render secondary()}{/if}
-      </section>
-    {:else}
-      <!-- svelte-ignore a11y_no_static_element_interactions -- dblclick-to-reset
-           convenience wrapper around the kit handle button; keyboard users
-           reach the same default via the handle's own arrow-key steps. -->
-      <span class="handle-reset" ondblclick={resetSize}>
-        <SplitResizeHandle {ariaLabel} onResizeStart={startResize} onResize={resize} />
-      </span>
-      <section class="pane secondary" data-pane="secondary">
-        {#if secondary}{@render secondary()}{/if}
-      </section>
-    {/if}
+    <!-- svelte-ignore a11y_no_static_element_interactions -- dblclick-to-reset
+         convenience wrapper around the kit handle button; keyboard users
+         can resize through the handle's arrow-key support. -->
+    <span class="handle-reset" ondblclick={resetSize}>
+      <SplitResizeHandle
+        {ariaLabel}
+        {orientation}
+        {keyboardStep}
+        ariaValueMin={minimum}
+        ariaValueMax={maximum}
+        ariaValueNow={sizedSize}
+        onResizeStart={startResize}
+        onResize={resize}
+      />
+    </span>
+    <section
+      class="pane secondary"
+      data-pane="secondary"
+      style:flex-basis={vertical ? `${sizedSize}px` : undefined}
+    >
+      {#if secondary}{@render secondary()}{/if}
+    </section>
   {/if}
 </div>
 
@@ -259,22 +228,7 @@
     flex: none;
   }
 
-  .handle-reset :global(.kit-split-resize-handle) {
+  .handle-reset :global(.kit-split-resize-handle--horizontal) {
     height: 100%;
-  }
-
-  .vertical-handle {
-    height: 5px;
-    flex: none;
-    padding: 0;
-    border: 0;
-    appearance: none;
-    background: var(--border-muted);
-    cursor: row-resize;
-  }
-
-  .vertical-handle:hover,
-  .vertical-handle:focus-visible {
-    background: var(--accent-blue);
   }
 </style>

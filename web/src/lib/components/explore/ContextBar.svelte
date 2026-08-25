@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, SelectDropdown } from '@kenn-io/kit-ui';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { Button, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
@@ -43,6 +44,11 @@
   let filtersOpen = $state(false);
   const options = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
   const firstRequestable = $derived(options.find((option) => !option.disabled)?.value ?? '');
+  const presentationOptions = [
+    { value: 'table', label: 'Table' },
+    { value: 'timeline', label: 'Timeline' },
+    { value: 'files', label: 'Files' }
+  ];
 
   function selectGrouping(value: string): void {
     if (isGroupingDimension(value)) onAddGroup(value);
@@ -59,20 +65,12 @@
       ariaExpanded={filtersOpen}
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
-    <label class="show-as">
-      <span>Show as</span>
-      <select
-        aria-label="Show as"
-        value={presentation}
-        onchange={(event) => onPresentationChange?.(
-          event.currentTarget.value as ExploreURLState['presentation']
-        )}
-      >
-        <option value="table">Table</option>
-        <option value="timeline">Timeline</option>
-        <option value="files">Files</option>
-      </select>
-    </label>
+    <SelectDropdown
+      title="Show as"
+      value={presentation}
+      options={presentationOptions}
+      onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
+    />
     <div class="group-picker" data-group-picker>
       <SelectDropdown
         value={firstRequestable}
@@ -101,7 +99,11 @@
     {#each groupingChain as dimension, index (`${dimension}:${index}`)}
       <span class="crumb crumb--group">
         Group {groupingDimensionLabel(dimension)}
-        <button type="button" aria-label={`Remove ${groupingDimensionLabel(dimension)} grouping`} onclick={() => onRemoveGroup(index)}>×</button>
+        <IconButton
+          size="sm"
+          ariaLabel={`Remove ${groupingDimensionLabel(dimension)} grouping`}
+          onclick={() => onRemoveGroup(index)}
+        ><XIcon size="12" aria-hidden="true" /></IconButton>
       </span>
     {/each}
     {#if !query && filters.length === 0 && groupingChain.length === 0}
@@ -158,21 +160,6 @@
     width: 172px;
   }
 
-  .show-as {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    white-space: nowrap;
-  }
-
-  .show-as select {
-    min-height: var(--control-height);
-    border: 1px solid var(--control-border);
-    border-radius: var(--radius-sm);
-    background: var(--control-bg);
-    color: var(--text-primary);
-  }
-
   .crumb {
     display: inline-flex;
     flex: none;
@@ -186,19 +173,13 @@
   }
 
   .crumb--filter {
-    border-left: 2px solid var(--accent-amber);
+    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted));
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
   }
 
   .crumb--group {
-    border-left: 2px solid var(--accent-teal);
-  }
-
-  .crumb button {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--accent-teal) 35%, var(--border-muted));
+    background: color-mix(in srgb, var(--accent-teal) 8%, var(--bg-surface));
   }
 
   .empty-context,

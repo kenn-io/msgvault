@@ -555,7 +555,7 @@ describe('RelationshipsWorkspace resizable rail (wide layout)', () => {
     const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
     expect(primary.style.flexBasis).toBe('300px');
 
-    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    const handle = screen.getByRole('separator', { name: 'Resize relationship list' });
     await fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(primary.style.flexBasis).toBe('324px');
     expect(localStorage.getItem('msgvault.relationships.list-pane.size')).toBe('324');
@@ -581,19 +581,21 @@ describe('RelationshipsWorkspace resizable rail (wide layout)', () => {
 });
 
 describe('RelationshipsWorkspace drawer (narrow layout)', () => {
-  it('is inert while closed; opening focuses the search input and traps Tab; Esc returns focus to the toggle', async () => {
+  it('is absent while closed; opening focuses the search input and traps Tab; Esc returns focus to the toggle', async () => {
     const restoreContainer = forceNarrowContainer();
     try {
       const { fetchFn } = fetchHandler();
-      render(RelationshipsWorkspace, { props: baseProps(fetchFn) });
-      await screen.findByText('Alice Example');
+      const props = baseProps(fetchFn);
+      render(RelationshipsWorkspace, { props });
+      await waitFor(() => expect(props.controller.listRows).toHaveLength(1));
 
-      const listPane = document.querySelector<HTMLElement & { inert: boolean }>('.pane-list')!;
-      expect(listPane.inert).toBe(true);
+      expect(screen.queryByRole('dialog', { name: 'Relationship search and results' })).toBeNull();
 
       const toggle = screen.getByRole('button', { name: 'Show relationship list' });
+      toggle.focus();
       await fireEvent.click(toggle);
-      expect(listPane.inert).toBe(false);
+      const drawer = screen.getByRole('dialog', { name: 'Relationship search and results' });
+      expect(await screen.findByText('Alice Example')).toBeDefined();
 
       const searchInput = screen.getByRole('searchbox', { name: 'Search people and domains' });
       await waitFor(() => expect(document.activeElement).toBe(searchInput));
@@ -601,14 +603,16 @@ describe('RelationshipsWorkspace drawer (narrow layout)', () => {
       const resultsGrid = screen.getByRole('grid', { name: 'Relationship results' });
       resultsGrid.focus();
       await fireEvent.keyDown(resultsGrid, { key: 'Tab' });
-      expect(document.activeElement).toBe(searchInput);
+      expect(drawer.contains(document.activeElement)).toBe(true);
 
-      await fireEvent.keyDown(searchInput, { key: 'Tab', shiftKey: true });
-      expect(document.activeElement).toBe(resultsGrid);
+      await fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
+      expect(drawer.contains(document.activeElement)).toBe(true);
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-      expect(listPane.inert).toBe(true);
-      expect(document.activeElement).toBe(toggle);
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Relationship search and results' })).toBeNull();
+        expect(document.activeElement).toBe(toggle);
+      });
     } finally {
       restoreContainer();
     }
@@ -628,11 +632,9 @@ describe('RelationshipsWorkspace drawer (narrow layout)', () => {
       await props.controller.openTarget('cluster:1', props.predicate);
       await screen.findByRole('heading', { name: 'Alice Example' });
 
-      // The drawer starts closed (selecting a row closes it), so the list
-      // pane is inert; without the fix, Esc would call .focus() on it and
-      // land nowhere real.
-      const listPane = document.querySelector<HTMLElement & { inert: boolean }>('.pane-list')!;
-      expect(listPane.inert).toBe(true);
+      // The drawer starts closed, so Kit has unmounted the list pane. Escape
+      // must restore focus to the control that can mount it again.
+      expect(screen.queryByRole('dialog', { name: 'Relationship search and results' })).toBeNull();
 
       await fireEvent.keyDown(screen.getByRole('grid', { name: 'Relationship activity' }), { key: 'Escape' });
       expect(props.onTargetChange).toHaveBeenCalledWith(null);

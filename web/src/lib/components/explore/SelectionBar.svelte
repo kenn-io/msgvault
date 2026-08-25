@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, KbdBadge } from '@kenn-io/kit-ui';
+  import { Button, Card, KbdBadge } from '@kenn-io/kit-ui';
 
   import type { components } from '../../api/generated/schema';
   import type { AllMatchingExploreSelection } from '../../explore/models';
@@ -38,7 +38,8 @@
   });
 </script>
 
-<div class="selection-bar" class:selection-bar--active={selection.mode === 'all_matching' || selection.count > 0}>
+<Card padding="none" selected={selection.mode === 'all_matching' || selection.count > 0}>
+<div class="selection-bar">
   <span role="status" aria-live="polite">{message}</span>
   <span class="shortcut"><KbdBadge keys={['Space']} /> toggle</span>
   <span class="shortcut"><KbdBadge keys={['A']} /> visible</span>
@@ -69,6 +70,7 @@
     onclick={() => selection.clear()}
   />
 </div>
+</Card>
 
 <style>
   .selection-bar {
@@ -77,17 +79,8 @@
     align-items: center;
     gap: var(--space-5);
     padding: 0 var(--space-4);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-
-  .selection-bar--active {
-    border-color: color-mix(in srgb, var(--accent-teal) 45%, var(--border-default));
-    background: color-mix(in srgb, var(--accent-teal) 8%, var(--bg-surface));
-    color: var(--text-primary);
   }
 
   [role='status'] {

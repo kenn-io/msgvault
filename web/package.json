@@ -8,17 +8,21 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check:kit-ui": "kit-ui-check src",
     "generate": "bun ../scripts/generate-web-client.mjs",
     "test": "vitest run",
     "test:browser": "playwright test",
     "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/1e9dc7d45525a471040b72b894432c4956542c38.tar.gz",
+    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/b4227114b3f6cc5edaa9a7ebf6cab7dbec2f527e.tar.gz",
+    "@lucide/svelte": "1.26.0",
     "@tanstack/svelte-virtual": "3.13.32",
     "dompurify": "3.4.11",
     "openapi-fetch": "0.17.0",
-    "pdfjs-dist": "5.4.296"
+    "pdfjs-dist": "5.4.296",
+    "marked": "18.0.7",
+    "shiki": "4.3.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.10.2",

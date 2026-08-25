@@ -9,17 +9,16 @@ import {
 describe('appearance preferences', () => {
   afterEach(() => {
     document.documentElement.className = '';
-    document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-density');
     vi.unstubAllGlobals();
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   it('applies daemon settings as authoritative defaults', () => {
     const preferences = createAppearancePreferences({ theme: 'dark', density: 'comfortable' });
 
     expect(preferences.current).toEqual({ theme: 'dark', density: 'comfortable', overridden: false });
-    expect(document.documentElement.dataset.theme).toBe('dark');
     expect(document.documentElement.dataset.density).toBe('comfortable');
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
@@ -88,7 +87,7 @@ describe('appearance preferences', () => {
 
     preferences.setTemporary({ theme: 'light', density: 'compact' });
     expect(preferences.current).toEqual({ theme: 'light', density: 'compact', overridden: true });
-    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
 
     preferences.clearTemporary('theme');
     expect(preferences.current).toEqual({ theme: 'dark', density: 'compact', overridden: true });

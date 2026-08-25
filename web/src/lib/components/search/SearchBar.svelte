@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SearchInput } from '@kenn-io/kit-ui';
+  import { Button, SearchInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
   import type { ArchiveSearchMode } from '../../archive/types';
@@ -44,7 +44,7 @@
       mode = next === 'full_text' ? 'fts' : next === 'semantic' ? 'vector' : 'hybrid';
     }}
   />
-  <button type="submit">Search</button>
+  <Button type="submit" tone="info" surface="solid" label="Search" />
 </form>
 
 <style>
@@ -60,12 +60,4 @@
     flex: 1;
   }
 
-  button[type='submit'] {
-    padding: 5px 12px;
-    border: 1px solid var(--border-default);
-    border-radius: 4px;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    cursor: pointer;
-  }
 </style>

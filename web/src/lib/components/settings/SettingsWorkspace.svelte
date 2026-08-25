@@ -1,4 +1,14 @@
 <script lang="ts">
+  import {
+    Button,
+    Checkbox,
+    SelectDropdown,
+    SettingsLayout,
+    SettingsSection,
+    TextInput,
+    Toggle,
+    type SettingsCategory
+  } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -34,6 +44,20 @@
   let saving = $state(false);
   let error = $state('');
   let confirmAPIKeyRestart = $state(false);
+  let activeCategory = $state('browser');
+  const settingsGroups = $derived(groupSettings(settings));
+  const categories: SettingsCategory[] = $derived([
+    ...settingsGroups.map((group) => ({
+      id: group.id,
+      label: group.label,
+      summary: `${group.settings.length} ${group.settings.length === 1 ? 'setting' : 'settings'}`
+    })),
+    {
+      id: 'carddav',
+      label: 'CardDAV account',
+      summary: 'Address-book connection'
+    }
+  ]);
 
   onMount(() => {
     void loadSettings(false);
@@ -175,149 +199,171 @@
 </script>
 
 <main class="settings" aria-label="Settings">
-  <header>
-    <p class="eyebrow">msgvault</p>
-    <h1>Settings</h1>
-    <p>Changes are written to config.toml and use optimistic concurrency.</p>
-  </header>
-
-  {#if plainHTTPWarning}
-    <p class="warning" role="alert">
-      This browser session uses plain HTTP, so its cookie cannot use the Secure flag. Prefer HTTPS for remote access.
-    </p>
-  {/if}
-
-  {#if error}
-    <p class="error" role="alert">{error}</p>
-  {/if}
-
-  {#if pendingRestart}
-    <p class="pending" role="status">Changes are pending restart.</p>
-  {/if}
-
   {#if loading}
-    <p role="status">Loading settings…</p>
+    <p class="state" role="status">Loading settings…</p>
   {:else}
-    <form onsubmit={(event) => { event.preventDefault(); void saveSettings(); }}>
-      {#each groupSettings(settings) as group (group.id)}
-        <section aria-labelledby={`settings-${group.id}`}>
-          <h2 id={`settings-${group.id}`}>{group.label}</h2>
-          {#each group.settings as setting (setting.key)}
-            {@const catalog = settingsCatalog[setting.key]}
-            <div class="field">
-              <div class="field-copy">
-                <strong>{catalog.label}</strong>
-                <span>{catalog.description}</span>
-                {#if setting.restart_required}<small>Restart required</small>{/if}
-              </div>
+    <SettingsLayout {categories} bind:active={activeCategory} title="Settings">
+      {#snippet panel(activeId)}
+        <div class="notices">
+          {#if plainHTTPWarning}
+            <p class="warning" role="alert">
+              This browser session uses plain HTTP, so its cookie cannot use the Secure flag. Prefer HTTPS for remote access.
+            </p>
+          {/if}
+          {#if error}<p class="error" role="alert">{error}</p>{/if}
+          {#if pendingRestart}<p class="pending" role="status">Changes are pending restart.</p>{/if}
+        </div>
 
-              {#if setting.read_only}
-                <div class="readonly-control">
-                  <span>{stringValue(setting) || 'Not set'}</span>
-                  <small>Set via config.toml on the daemon host.</small>
+        {#each settingsGroups as group (group.id)}
+          <div class="settings-panel" hidden={group.id !== activeId}>
+            <SettingsSection
+              title={group.label}
+              description="Changes are written to config.toml and use optimistic concurrency."
+            >
+              {#each group.settings as setting (setting.key)}
+                {@const catalog = settingsCatalog[setting.key]}
+                <div class="field">
+                  <div class="field-copy">
+                    <strong>{catalog.label}</strong>
+                    <span>{catalog.description}</span>
+                    {#if setting.restart_required}<small>Restart required</small>{/if}
+                  </div>
+
+                  <div class="field-control">
+                    {#if setting.read_only}
+                      <div class="readonly-control">
+                        <span>{stringValue(setting) || 'Not set'}</span>
+                        <small>Set via config.toml on the daemon host.</small>
+                      </div>
+                    {:else if setting.kind === 'secret'}
+                      <div class="secret-control">
+                        <span>{setting.secret?.configured ? 'Set' : 'Not set'}</span>
+                        <label>
+                          New {sentenceLabel(catalog.label)}
+                          <TextInput
+                            type="password"
+                            autocomplete="new-password"
+                            value={secretValues[setting.key] ?? ''}
+                            oninput={(value) => setSecret(setting.key, value)}
+                            block
+                          />
+                        </label>
+                        <Button label={`Clear ${sentenceLabel(catalog.label)}`} onclick={() => clearSecret(setting.key)} />
+                      </div>
+                    {:else if optionValues(setting).length > 0}
+                      <label class="control-label">
+                        <span class="kit-sr-only">{catalog.label}</span>
+                        <SelectDropdown
+                          value={stringValue(setting)}
+                          title={catalog.label}
+                          options={optionValues(setting).map((option) => ({ value: option, label: optionLabel(option) }))}
+                          onchange={(value) => setDraft(setting.key, value)}
+                        />
+                      </label>
+                    {:else if setting.kind === 'boolean'}
+                      <Toggle
+                        ariaLabel={catalog.label}
+                        checked={Boolean(currentValue(setting))}
+                        onchange={(checked) => setDraft(setting.key, checked)}
+                      />
+                    {:else if setting.kind === 'integer' || setting.kind === 'number'}
+                      <label class="control-label">
+                        <span class="kit-sr-only">{catalog.label}</span>
+                        <input
+                          type="number"
+                          value={stringValue(setting)}
+                          step={setting.kind === 'integer' ? '1' : 'any'}
+                          oninput={(event) => setDraft(setting.key, Number(event.currentTarget.value))}
+                        />
+                      </label>
+                    {:else}
+                      <label class="control-label">
+                        <span class="kit-sr-only">{catalog.label}</span>
+                        <TextInput
+                          value={stringValue(setting)}
+                          block
+                          oninput={(value) =>
+                            setDraft(
+                              setting.key,
+                              setting.kind === 'string_array'
+                                ? value.split(',').map((item) => item.trim()).filter(Boolean)
+                                : value
+                            )}
+                        />
+                      </label>
+                    {/if}
+
+                    {#if onTestConnection && (setting.testable || catalog.testable)}
+                      <Button
+                        ariaLabel={`Test ${sentenceLabel(catalog.label)} connection`}
+                        label="Test connection"
+                        onclick={() => void onTestConnection(setting.key)}
+                      />
+                    {/if}
+                  </div>
                 </div>
-              {:else if setting.kind === 'secret'}
-                <div class="secret-control">
-                  <span>{setting.secret?.configured ? 'Set' : 'Not set'}</span>
-                  <label>
-                    New {sentenceLabel(catalog.label)}
-                    <input
-                      type="password"
-                      autocomplete="new-password"
-                      value={secretValues[setting.key] ?? ''}
-                      oninput={(event) => setSecret(setting.key, event.currentTarget.value)}
-                    />
-                  </label>
-                  <button type="button" onclick={() => clearSecret(setting.key)}>
-                    Clear {sentenceLabel(catalog.label)}
-                  </button>
-                </div>
-              {:else if optionValues(setting).length > 0}
-                <label>
-                  <span class="sr-only">{catalog.label}</span>
-                  <select
-                    value={stringValue(setting)}
-                    onchange={(event) => setDraft(setting.key, event.currentTarget.value)}
-                  >
-                    {#each optionValues(setting) as option}
-                      <option value={option}>{option}</option>
-                    {/each}
-                  </select>
-                </label>
-              {:else if setting.kind === 'boolean'}
-                <label>
-                  <span class="sr-only">{catalog.label}</span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(currentValue(setting))}
-                    onchange={(event) => setDraft(setting.key, event.currentTarget.checked)}
-                  />
-                </label>
-              {:else if setting.kind === 'integer' || setting.kind === 'number'}
-                <label>
-                  <span class="sr-only">{catalog.label}</span>
-                  <input
-                    type="number"
-                    value={stringValue(setting)}
-                    step={setting.kind === 'integer' ? '1' : 'any'}
-                    oninput={(event) => setDraft(setting.key, Number(event.currentTarget.value))}
-                  />
-                </label>
-              {:else}
-                <label>
-                  <span class="sr-only">{catalog.label}</span>
-                  <input
-                    type="text"
-                    value={stringValue(setting)}
-                    oninput={(event) =>
-                      setDraft(
-                        setting.key,
-                        setting.kind === 'string_array'
-                          ? event.currentTarget.value.split(',').map((item) => item.trim()).filter(Boolean)
-                          : event.currentTarget.value
-                      )}
-                  />
-                </label>
-              {/if}
+              {/each}
+            </SettingsSection>
+          </div>
+        {/each}
 
-              {#if onTestConnection && (setting.testable || catalog.testable)}
-                <button
-                  type="button"
-                  aria-label={`Test ${sentenceLabel(catalog.label)} connection`}
-                  onclick={() => void onTestConnection(setting.key)}
-                >Test connection</button>
-              {/if}
-            </div>
-          {/each}
-        </section>
-      {/each}
+        <div class="settings-panel" hidden={activeId !== 'carddav'}>
+          <CardDAVAccountSettings {client} {settings} />
+        </div>
+      {/snippet}
 
-      {#if Object.hasOwn(secretUpdates, 'server.api_key')}
-        <label class="confirmation">
-          <input type="checkbox" bind:checked={confirmAPIKeyRestart} />
-          I understand the API key changes after restart
-        </label>
-      {/if}
-
-      <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button>
-    </form>
-
-    <CardDAVAccountSettings {client} {settings} />
+      {#snippet footer()}
+        {#if activeCategory !== 'carddav'}
+          {#if Object.hasOwn(secretUpdates, 'server.api_key')}
+            <Checkbox
+              class="confirmation"
+              bind:checked={confirmAPIKeyRestart}
+              label="I understand the API key changes after restart"
+            />
+          {/if}
+          <Button
+            disabled={saving}
+            tone="success"
+            surface="solid"
+            label={saving ? 'Saving…' : 'Save settings'}
+            onclick={() => void saveSettings()}
+          />
+        {/if}
+      {/snippet}
+    </SettingsLayout>
   {/if}
 </main>
 
 <style>
-  .settings { max-width: 72rem; margin: 0 auto; }
-  section { margin-block: 2rem; }
-  .field { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr) auto; gap: 1rem; align-items: center; padding: 1rem 0; border-top: 1px solid var(--border-default); }
+  .settings { display: flex; flex: 1; min-height: 0; width: 100%; }
+  .state { padding: var(--space-6); color: var(--text-muted); }
+  .settings-panel[hidden] { display: none; }
+  .field { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(14rem, 20rem); gap: var(--space-6); align-items: center; padding-block: var(--space-3); }
+  .field + .field { border-top: 1px solid var(--border-muted); }
   .field-copy { display: grid; gap: 0.25rem; }
   .field-copy span, small { color: var(--text-muted); }
-  input:not([type='checkbox']), select { width: 100%; min-height: 2.25rem; }
+  .field-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); min-width: 0; }
+  .control-label, .secret-control, .readonly-control { width: 100%; min-width: 0; }
+  input[type='number'] { width: 100%; min-height: 2.25rem; }
   .secret-control { display: grid; gap: 0.5rem; }
   .readonly-control { display: grid; gap: 0.25rem; }
   .readonly-control small { color: var(--text-muted); }
-  .warning, .pending { padding: 0.75rem 1rem; border-left: 0.25rem solid var(--status-warning-ink); background: var(--status-warning-bg); color: var(--status-warning-ink); }
-  .error { padding: 0.75rem 1rem; border-left: 0.25rem solid var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  .confirmation { display: block; margin-block: 1rem; }
+  .notices:empty { display: none; }
+  .notices { display: grid; gap: var(--space-3); }
+  .notices p { margin: 0; }
+  .warning, .pending { padding: 0.75rem 1rem; border: 1px solid var(--status-warning-ink); border-radius: var(--radius-md); background: var(--status-warning-bg); color: var(--status-warning-ink); }
+  .error { padding: 0.75rem 1rem; border: 1px solid var(--status-error-ink); border-radius: var(--radius-md); background: var(--status-error-bg); color: var(--status-error-ink); }
+  :global(.confirmation) { margin-right: auto; }
+
+  @media (max-width: 640px) {
+    .field { grid-template-columns: 1fr; gap: var(--space-3); }
+    .field-control { justify-content: flex-start; flex-wrap: wrap; }
+  }
 </style>
+
+<script lang="ts" module>
+  function optionLabel(value: string): string {
+    const words = value.replaceAll('_', ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+</script>

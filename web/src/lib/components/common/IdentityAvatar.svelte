@@ -54,7 +54,7 @@
     border-radius: 12%;
   }
 
-  :global([data-theme='dark']) .identity-avatar {
+  :global(.dark) .identity-avatar {
     background: hsl(var(--avatar-hue, 210) 55% 65% / 0.14);
     color: hsl(var(--avatar-hue, 210) 45% 74%);
   }
