@@ -350,6 +350,21 @@ func backupRestoreTargetCoordinator(
 		}
 		return nil, false, nil
 	}
+	if overwrite && configuredVectorPath != "" {
+		restoredDatabasePath := filepath.Join(target, backupapp.New(Version).DBFileName())
+		matchesDatabase, err := restorePathsMayBeEquivalent(configuredVectorPath, restoredDatabasePath)
+		if err != nil {
+			return nil, false, fmt.Errorf(
+				"backup restore: compare vector database with restored archive database: %w",
+				err,
+			)
+		}
+		if matchesDatabase {
+			return nil, false, errors.New(
+				"backup restore: vector database path resolves to the restored archive database",
+			)
+		}
+	}
 	return coordinator, true, nil
 }
 
@@ -601,6 +616,17 @@ func (l *daemonRestoreTargetLease) removePublishedVectorBackends(root *os.Root) 
 	}
 	if l.databaseExisted && os.SameFile(l.databaseInfo, currentInfo) {
 		return nil
+	}
+	if l.configuredVectorPath != "" {
+		configuredInfo, statErr := os.Stat(l.configuredVectorPath)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect configured vector database before restore cleanup: %w", statErr)
+		}
+		if statErr == nil && os.SameFile(configuredInfo, currentInfo) {
+			return errors.New(
+				"backup restore: vector database path resolves to the restored archive database",
+			)
+		}
 	}
 	cleanupErr := removeSQLiteVectorBackend(root, "vectors.db")
 	if l.configuredVectorPath != "" {

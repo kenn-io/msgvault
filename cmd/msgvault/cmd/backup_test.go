@@ -80,6 +80,21 @@ func TestBackupRestoreTargetCoordinatorMatchesConfiguredDatabasePath(t *testing.
 		"separate database target must not receive the write lock artifact")
 }
 
+func TestBackupRestoreTargetCoordinatorRejectsPrimaryDatabaseAsVectorBackend(t *testing.T) {
+	require := require.New(t)
+	target := t.TempDir()
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = filepath.Join(target, "msgvault.db")
+
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.ErrorContains(err, "vector database path resolves to the restored archive database")
+	require.Nil(coordinator)
+	require.False(coordinated)
+}
+
 func TestBackupRestoreTargetCoordinatorDefersMissingCaseVariantMatch(t *testing.T) {
 	require := require.New(t)
 	parent := t.TempDir()
@@ -498,6 +513,37 @@ func TestDaemonRestoreTargetCoordinatorPreservesVectorsWithoutPublication(t *tes
 
 	assert.FileExists(customVectorPath,
 		"a failed restore must preserve the vector backend for the unchanged database")
+}
+
+func TestDaemonRestoreTargetLeaseRefusesToRemovePublishedDatabase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	target := t.TempDir()
+	databasePath := filepath.Join(target, "msgvault.db")
+	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
+		"seed current database")
+	databaseInfo, err := os.Stat(databasePath)
+	require.NoError(err, "inspect current database")
+
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
+	lease := &daemonRestoreTargetLease{
+		targetRoot:           root,
+		databaseFileName:     "msgvault.db",
+		databaseInfo:         databaseInfo,
+		databaseExisted:      true,
+		resetTargetVector:    true,
+		configuredVectorPath: databasePath,
+	}
+	replacementPath := filepath.Join(target, "replacement.db")
+	require.NoError(os.WriteFile(replacementPath, []byte("restored database"), 0o600),
+		"write replacement database")
+	require.NoError(os.Rename(replacementPath, databasePath), "publish replacement database")
+
+	err = lease.Release()
+	require.ErrorContains(err, "vector database path resolves to the restored archive database")
+	assert.FileExists(databasePath, "vector cleanup must not remove the published archive database")
 }
 
 func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *testing.T) {

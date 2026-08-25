@@ -9,9 +9,10 @@ import (
 const documentVectorOperationLockSQL = `hashtextextended(
 	current_database() || ':' || current_schema() || ':msgvault.document_vectors', 0)`
 
-// WithDocumentVectorOperationLock serializes document-vector writers. SQLite
-// uses a process-local lock because the archive ownership lock only excludes
-// other processes. PostgreSQL uses a schema-scoped advisory lock.
+// WithDocumentVectorOperationLock serializes document-vector writers.
+// PostgreSQL uses a schema-scoped advisory lock. SQLite uses a Store-local
+// lock; the daemon operation gate separately serializes scheduled work with
+// every supported routed CLI child process.
 func (s *Store) WithDocumentVectorOperationLock(ctx context.Context, operation func() error) (retErr error) {
 	if operation == nil {
 		return errors.New("document vector operation is required")
