@@ -592,9 +592,10 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 					return fmt.Errorf("delete message: %w", delErr)
 				case resultFailed:
 					if errors.Is(delErr, errLocalTombstone) {
-						remaining := slices.Concat(failedIDs, batch[j:])
-						remaining = append(remaining, manifest.GmailIDs[end:]...)
-						e.saveCheckpoint(manifest, manifestID, len(manifest.GmailIDs), succeeded, len(remaining), remaining)
+						// The remote delete succeeded for this ID, so only it needs
+						// a tombstone retry. IDs after it have not been attempted.
+						remaining := append(slices.Clone(failedIDs), gmailID)
+						e.saveCheckpoint(manifest, manifestID, i+j+1, succeeded, len(remaining), remaining)
 						return fmt.Errorf("delete message: %w", delErr)
 					}
 					failed++
@@ -606,9 +607,10 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 			// Mark all as deleted in DB using batch update
 			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(sourceID, batch); markErr != nil {
 				e.logger.Warn("failed to mark batch as deleted in DB", "count", len(batch), "error", markErr)
+				// The remote batch is complete, so retry only its tombstones;
+				// later IDs must remain on the normal batch path.
 				remaining := append(slices.Clone(failedIDs), batch...)
-				remaining = append(remaining, manifest.GmailIDs[end:]...)
-				e.saveCheckpoint(manifest, manifestID, len(manifest.GmailIDs), succeeded, len(remaining), remaining)
+				e.saveCheckpoint(manifest, manifestID, end, succeeded, len(remaining), remaining)
 				return fmt.Errorf("mark batch deleted in DB: %w", markErr)
 			}
 			succeeded += len(batch)
