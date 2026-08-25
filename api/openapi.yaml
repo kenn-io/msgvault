@@ -4840,6 +4840,8 @@ components:
         id:
           format: int64
           type: integer
+        is_from_me:
+          type: boolean
         labels:
           items:
             type: string

@@ -4190,6 +4190,7 @@ type MessageDetail struct {
 	FromPhone       *string          `json:"from_phone,omitempty"`
 	HasAttachments  bool             `json:"has_attachments"`
 	ID              int64            `json:"id"`
+	IsFromMe        *bool            `json:"is_from_me,omitempty"`
 	Labels          []string         `json:"labels,omitempty" validate:"required"`
 	MessageType     *string          `json:"message_type,omitempty"`
 	SentAt          string           `json:"sent_at" validate:"required"`

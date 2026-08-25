@@ -41,6 +41,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 		Subject:         sql.NullString{String: "Portable details", Valid: true},
 		Snippet:         sql.NullString{String: "Complete portable fixture", Valid: true},
 		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+		IsFromMe:        true,
 		SizeEstimate:    128,
 	})
 	require.NoError(err)
@@ -62,6 +63,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(err)
 	require.Len(window.Messages, 1)
 	message := window.Messages[0]
+	assert.True(message.IsFromMe)
 	assert.Equal("Alice <alice@example.com>", message.From)
 	assert.Equal([]string{"Bob <bob@example.com>"}, message.To)
 	assert.Equal([]string{"Carol <carol@example.com>"}, message.Cc)

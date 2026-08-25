@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, KbdBadge, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, KbdBadge, Notice, SearchInput } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -481,10 +481,10 @@
       <h1>Everything</h1>
     </div>
     <p class="result-count" aria-live="polite" data-mono>
-      {#if loader.result?.totalCount !== undefined}
+      {#if loader.result?.candidatePoolSaturated}
+        Results limited
+      {:else if loader.result?.totalCount !== undefined}
         {loader.result.totalCount.toLocaleString()} items
-      {:else if loader.result?.candidatePoolSaturated}
-        Candidate pool capped
       {:else}
         Modality-neutral archive
       {/if}
@@ -514,6 +514,14 @@
     />
     <Button type="submit" label="Search" tone="info" surface="solid" />
   </form>
+
+  {#if loader.result?.candidatePoolSaturated}
+    <Notice
+      tone="warning"
+      title="Some matches are hidden"
+      message="Add a sender, date, source, or label filter, then search again. Filters narrow the archive before semantic ranking."
+    />
+  {/if}
 
   {#if session.coverage}
     <SearchCoverage

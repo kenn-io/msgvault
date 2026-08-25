@@ -41,6 +41,27 @@ describe('EverythingWorkspace', () => {
     };
   }
 
+  it('explains how to refine a semantic search when the candidate pool is capped', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/coverage')) return Response.json({
+        status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
+        cache_revision: 'cache-1', actions: []
+      });
+      return Response.json(exploreResponse({ candidate_pool_saturated: true }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'vacation plans', searchMode: 'semantic' });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByText('Some matches are hidden')).toBeDefined();
+    expect(screen.getByText(/Add a sender, date, source, or label filter/)).toBeDefined();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
   it('keeps requested Semantic mode selected while showing incomplete coverage and a search error', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

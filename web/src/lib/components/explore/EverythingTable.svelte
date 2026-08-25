@@ -237,7 +237,9 @@
   }
 
   function people(row: EntryRow): string {
-    const labels = row.participant_labels ?? [];
+    const labels = (row.participant_labels ?? [])
+      .map((label) => label.trim())
+      .filter((label) => label !== '');
     return labels.length > 0 ? labels.join(', ') : row.source_identifier;
   }
 
