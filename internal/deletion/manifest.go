@@ -91,6 +91,7 @@ type Execution struct {
 	Succeeded          int        `json:"succeeded"`
 	Failed             int        `json:"failed"`
 	FailedIDs          []string   `json:"failed_ids,omitempty"`
+	TombstoneIDs       []string   `json:"tombstone_ids,omitempty"`
 	LastProcessedIndex int        `json:"last_processed_index"` // For resumability
 }
 

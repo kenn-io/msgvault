@@ -616,7 +616,8 @@ func TestExecutor_Execute_LocalTombstoneFailureLeavesManifestInProgress(t *testi
 	inProgress, listErr := tc.Mgr.ListInProgress()
 	require.NoError(listErr)
 	if assert.Len(inProgress, 1) {
-		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.TombstoneIDs)
+		assert.Empty(inProgress[0].Execution.FailedIDs)
 	}
 }
 
@@ -641,8 +642,29 @@ func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInP
 	inProgress, listErr := tc.Mgr.ListInProgress()
 	require.NoError(listErr)
 	if assert.Len(inProgress, 1) {
-		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.FailedIDs)
+		assert.Equal([]string{"msg-1"}, inProgress[0].Execution.TombstoneIDs)
+		assert.Empty(inProgress[0].Execution.FailedIDs)
 	}
+}
+
+func TestExecutor_ExecuteBatch_ResumeTombstoneRetriesWithoutRemoteDelete(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("resume tombstone only", []string{"msg0"})
+	tc.SeedMessages([]string{"msg0"})
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodDelete,
+		TombstoneIDs:       []string{"msg0"},
+		LastProcessedIndex: 1,
+	}
+	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest")
+
+	require.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
+	tc.AssertDeleteCalls(0)
+	assert.Empty(t, tc.MockAPI.BatchDeleteCalls)
+	assert.Equal(t, 1, tc.CountDeleted(), "local tombstone was persisted")
+	tc.AssertCompletedCount(1)
 }
 
 // TestExecutor_Execute_ResumeRetriesFailedIDs verifies that resuming a trash
