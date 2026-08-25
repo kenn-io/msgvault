@@ -189,7 +189,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
 			m.size_estimate,
-			COALESCE(m.is_from_me, FALSE),
+			m.is_from_me,
 			m.deleted_from_source_at
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -208,6 +208,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	// TIMESTAMP column but routing it through the same scanner
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
+	var isFromMe sql.NullBool
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID,
 		&m.SourceID,
@@ -224,7 +225,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.Snippet,
 		&m.HasAttachments,
 		&m.SizeEstimate,
-		&m.IsFromMe,
+		&isFromMe,
 		&deletedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -233,6 +234,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	if err != nil {
 		return nil, err
 	}
+	m.IsFromMe = isFromMe.Bool
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time
 	}

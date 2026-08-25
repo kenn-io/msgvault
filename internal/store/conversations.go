@@ -165,7 +165,7 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(m.snippet, ''),
 			m.has_attachments,
 			COALESCE(m.size_estimate, 0),
-			COALESCE(m.is_from_me, FALSE),
+			m.is_from_me,
 			m.deleted_from_source_at,
 			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
 			selected.position,
@@ -201,6 +201,7 @@ func (s *Store) GetConversationWindowContext(
 	for rows.Next() {
 		var message APIMessage
 		var sentAt, deletedAt nullableTimestamp
+		var isFromMe sql.NullBool
 		var position, bodySize int64
 		if err := rows.Scan(
 			&message.ID,
@@ -218,7 +219,7 @@ func (s *Store) GetConversationWindowContext(
 			&message.Snippet,
 			&message.HasAttachments,
 			&message.SizeEstimate,
-			&message.IsFromMe,
+			&isFromMe,
 			&deletedAt,
 			&bodySize,
 			&position,
@@ -227,6 +228,7 @@ func (s *Store) GetConversationWindowContext(
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
 		}
+		message.IsFromMe = isFromMe.Bool
 		if sentAt.Valid {
 			message.SentAt = sentAt.Time
 		}
