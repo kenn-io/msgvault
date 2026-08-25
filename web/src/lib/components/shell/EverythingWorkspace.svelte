@@ -518,8 +518,10 @@
   {#if loader.result?.candidatePoolSaturated}
     <Notice
       tone="warning"
-      title="Some matches are hidden"
-      message="Add a sender, date, source, or label filter, then search again. Filters narrow the archive before semantic ranking."
+      title="More matches may exist"
+      message="Narrow the search with an operator such as from:alice@example.com, after:2025-01-01, or label:important."
+      actionLabel="Refine search"
+      onaction={() => searchInput?.focus()}
     />
   {/if}
 
