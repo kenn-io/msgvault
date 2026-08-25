@@ -270,23 +270,26 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
-	if backupRestoreOverwrite {
-		if err := removeRestoredSQLiteVectorBackend(backupRestoreTarget); err != nil {
-			return err
-		}
-	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 }
 
-func removeRestoredSQLiteVectorBackend(target string) error {
-	root, err := os.OpenRoot(target)
+func removeSQLiteVectorBackendPath(path string) error {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("backup restore: open restored target for vector reset: %w", err)
+		return fmt.Errorf("backup restore: open vector backend directory for reset: %w", err)
 	}
 	defer func() { _ = root.Close() }()
-	for _, name := range []string{"vectors.db", "vectors.db-wal", "vectors.db-shm", "vectors.db-journal"} {
-		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("backup restore: remove excluded vector backend %s: %w", name, err)
+	return removeSQLiteVectorBackend(root, filepath.Base(path))
+}
+
+func removeSQLiteVectorBackend(root *os.Root, name string) error {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		fileName := name + suffix
+		if err := root.Remove(fileName); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("backup restore: remove excluded vector backend %s: %w", fileName, err)
 		}
 	}
 	return nil
@@ -311,12 +314,24 @@ func backupRestoreTargetCoordinator(
 		return nil, false, nil
 	}
 	databasePath := ""
+	configuredVectorPath := ""
 	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
 		var err error
 		databasePath, err = cfg.DatabasePath()
 		if err != nil {
 			return nil, false, fmt.Errorf("backup restore: resolving configured database: %w", err)
 		}
+		configuredVectorPath = cfg.Vector.DBPath
+		if configuredVectorPath == "" {
+			configuredVectorPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+		}
+	}
+	coordinator := &daemonRestoreTargetCoordinator{
+		dataDir:              cfg.Data.DataDir,
+		databasePath:         databasePath,
+		configuredVectorPath: configuredVectorPath,
+		target:               target,
+		overwrite:            overwrite,
 	}
 	mayNeedCoordination, err := restorePathsMayBeEquivalent(target, cfg.Data.DataDir)
 	if err != nil {
@@ -330,30 +345,20 @@ func backupRestoreTargetCoordinator(
 		}
 	}
 	if !mayNeedCoordination {
+		if overwrite {
+			return coordinator, false, nil
+		}
 		return nil, false, nil
 	}
-	return &daemonRestoreTargetCoordinator{
-		dataDir:      cfg.Data.DataDir,
-		databasePath: databasePath,
-		target:       target,
-		overwrite:    overwrite,
-	}, true, nil
+	return coordinator, true, nil
 }
 
 type daemonRestoreTargetCoordinator struct {
-	dataDir      string
-	databasePath string
-	target       string
-	overwrite    bool
-}
-
-func newDaemonRestoreTargetCoordinator(dataDir string, overwrite bool) *daemonRestoreTargetCoordinator {
-	return &daemonRestoreTargetCoordinator{
-		dataDir:      dataDir,
-		databasePath: filepath.Join(dataDir, backupapp.New(Version).DBFileName()),
-		target:       dataDir,
-		overwrite:    overwrite,
-	}
+	dataDir              string
+	databasePath         string
+	configuredVectorPath string
+	target               string
+	overwrite            bool
 }
 
 type pinnedRestoreTargetKind uint8
@@ -375,11 +380,15 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 	if err != nil {
 		return nil, err
 	}
+	lease, err := c.newRestoreTargetLease(root, targetKind)
+	if err != nil {
+		return nil, err
+	}
 	if targetKind == pinnedRestoreTargetUnrelated {
 		if err := c.validateRestoreTargetContents(root, false); err != nil {
 			return nil, err
 		}
-		return &daemonRestoreTargetLease{}, nil
+		return lease, nil
 	}
 
 	lockRoot := root
@@ -408,7 +417,6 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 			return nil, fmt.Errorf("close restore exclusion lock file %s: %w", name, err)
 		}
 	}
-	lease := &daemonRestoreTargetLease{}
 	// Match daemon startup's global lock order so restore cannot deadlock
 	// against another process that needs both ownership protocols.
 	lease.daemonOwner, err = tryAcquireDaemonOwnerLock(c.dataDir)
@@ -458,6 +466,29 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 		return nil, err
 	}
 	success = true
+	return lease, nil
+}
+
+func (c *daemonRestoreTargetCoordinator) newRestoreTargetLease(
+	root *os.Root,
+	targetKind pinnedRestoreTargetKind,
+) (*daemonRestoreTargetLease, error) {
+	databaseFileName := backupapp.New(Version).DBFileName()
+	databaseInfo, err := root.Stat(databaseFileName)
+	databaseExisted := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect database before restore publication: %w", err)
+	}
+	lease := &daemonRestoreTargetLease{
+		targetRoot:        root,
+		databaseFileName:  databaseFileName,
+		databaseInfo:      databaseInfo,
+		databaseExisted:   databaseExisted,
+		resetTargetVector: c.overwrite,
+	}
+	if c.overwrite && targetKind != pinnedRestoreTargetUnrelated {
+		lease.configuredVectorPath = c.configuredVectorPath
+	}
 	return lease, nil
 }
 
@@ -531,8 +562,14 @@ func (c *daemonRestoreTargetCoordinator) validateRestoreTargetContents(
 }
 
 type daemonRestoreTargetLease struct {
-	daemonOwner *daemonOwnerLock
-	writeOwner  *writeOwnerLock
+	daemonOwner          *daemonOwnerLock
+	writeOwner           *writeOwnerLock
+	targetRoot           *os.Root
+	databaseFileName     string
+	databaseInfo         fs.FileInfo
+	databaseExisted      bool
+	resetTargetVector    bool
+	configuredVectorPath string
 }
 
 func (l *daemonRestoreTargetLease) Release() error {
@@ -541,11 +578,35 @@ func (l *daemonRestoreTargetLease) Release() error {
 	}
 	writeOwner := l.writeOwner
 	daemonOwner := l.daemonOwner
+	targetRoot := l.targetRoot
 	l.writeOwner = nil
 	l.daemonOwner = nil
+	l.targetRoot = nil
+	cleanupErr := l.removePublishedVectorBackends(targetRoot)
 	writeErr := writeOwner.Close()
 	daemonErr := daemonOwner.Close()
-	return errors.Join(writeErr, daemonErr)
+	return errors.Join(cleanupErr, writeErr, daemonErr)
+}
+
+func (l *daemonRestoreTargetLease) removePublishedVectorBackends(root *os.Root) error {
+	if root == nil || !l.resetTargetVector {
+		return nil
+	}
+	currentInfo, err := root.Stat(l.databaseFileName)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect database after restore publication: %w", err)
+	}
+	if l.databaseExisted && os.SameFile(l.databaseInfo, currentInfo) {
+		return nil
+	}
+	cleanupErr := removeSQLiteVectorBackend(root, "vectors.db")
+	if l.configuredVectorPath != "" {
+		cleanupErr = errors.Join(cleanupErr, removeSQLiteVectorBackendPath(l.configuredVectorPath))
+	}
+	return cleanupErr
 }
 
 func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreResult, looseOnly bool) error {

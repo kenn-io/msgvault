@@ -392,6 +392,7 @@ func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
 
 func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestore(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
@@ -410,7 +411,24 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 	require.NoError(err, "create source snapshot")
 
 	target := t.TempDir()
-	coordinator := newDaemonRestoreTargetCoordinator(target, true)
+	customVectorPath := filepath.Join(t.TempDir(), "custom-vectors.db")
+	for _, path := range []string{
+		customVectorPath,
+		customVectorPath + "-wal",
+		customVectorPath + "-shm",
+		customVectorPath + "-journal",
+	} {
+		require.NoError(os.WriteFile(path, []byte("stale vector backend"), 0o600),
+			"seed excluded custom vector backend")
+	}
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = customVectorPath
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.NoError(err, "select configured restore coordination")
+	require.True(coordinated, "configured archive restore requires ownership coordination")
+	require.NotNil(coordinator, "configured archive restore receives a coordinator")
 	checkedDuringRestore := false
 	_, err = backup.Restore(ctx, repo, backupapp.New("test"), backup.RestoreOptions{
 		TargetDir:         target,
@@ -439,12 +457,47 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 	})
 	require.NoError(err, "restore with daemon target coordination")
 	require.True(checkedDuringRestore, "ownership was checked during restore")
+	assert.NoFileExists(customVectorPath,
+		"restore lease removes the configured vector backend before releasing ownership")
+	assert.NoFileExists(customVectorPath+"-wal", "restore lease removes the vector WAL")
+	assert.NoFileExists(customVectorPath+"-shm", "restore lease removes the vector shared-memory file")
+	assert.NoFileExists(customVectorPath+"-journal", "restore lease removes the vector journal")
 	owner, err := tryAcquireDaemonOwnerLock(target)
 	require.NoError(err, "target coordination releases after restore")
 	require.NoError(owner.Close(), "release post-restore ownership")
 	writer, err := tryAcquireWriteOwnerLock(target)
 	require.NoError(err, "target coordination releases direct-writer exclusion after restore")
 	require.NoError(writer.Close(), "release post-restore direct-writer ownership")
+}
+
+func TestDaemonRestoreTargetCoordinatorPreservesVectorsWithoutPublication(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	target := t.TempDir()
+	databasePath := filepath.Join(target, "msgvault.db")
+	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
+		"seed current database")
+	customVectorPath := filepath.Join(t.TempDir(), "custom-vectors.db")
+	require.NoError(os.WriteFile(customVectorPath, []byte("current vectors"), 0o600),
+		"seed current vector backend")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = customVectorPath
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.NoError(err, "select configured restore coordination")
+	require.True(coordinated, "configured archive restore requires ownership coordination")
+
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
+	lease, err := coordinator.AcquireRestoreTarget(t.Context(), root)
+	require.NoError(err, "acquire restore coordination")
+	require.NoError(lease.Release(), "release without publishing a restored database")
+
+	assert.FileExists(customVectorPath,
+		"a failed restore must preserve the vector backend for the unchanged database")
 }
 
 func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *testing.T) {
