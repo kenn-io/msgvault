@@ -474,7 +474,7 @@ type documentVectorJobRegistrar interface {
 }
 
 func registerDocumentVectorJob(sched documentVectorJobRegistrar, vf *vectorFeatures, st *store.Store) error {
-	if vf == nil || vf.DocumentBackend == nil {
+	if cfg == nil || !cfg.Attachments.Documents.Index.Embeddings.Enabled || vf == nil || vf.DocumentBackend == nil {
 		return nil
 	}
 	limit := vf.Cfg.Embeddings.BatchSize

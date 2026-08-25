@@ -287,7 +287,7 @@ func (startupDocumentBackend) SearchPage(context.Context, vectordocument.Generat
 	return vectordocument.HitPage{Exhausted: true}, nil
 }
 
-func TestRegisterDocumentVectorJobRequiresBackend(t *testing.T) {
+func TestRegisterDocumentVectorJobRequiresDocumentEmbeddingsAndBackend(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	c := config.NewDefaultConfig()
@@ -296,6 +296,11 @@ func TestRegisterDocumentVectorJobRequiresBackend(t *testing.T) {
 	withTestConfig(t, c)
 	available := &vectorFeatures{DocumentBackend: startupDocumentBackend{}, Cfg: c.Vector}
 
+	disabled := &registeredDocumentVectorJobCapture{}
+	requirements.NoError(registerDocumentVectorJob(disabled, available, nil))
+	assertions.Zero(disabled.calls)
+
+	c.Attachments.Documents.Index.Embeddings.Enabled = true
 	capture := &registeredDocumentVectorJobCapture{}
 	requirements.NoError(registerDocumentVectorJob(capture, available, nil))
 	assertions.Equal(1, capture.calls)
