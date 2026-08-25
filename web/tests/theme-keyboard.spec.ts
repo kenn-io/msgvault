@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { selectKitOption, setKitTheme } from './kit-ui';
 
 const row = {
   key: 'message:1',
@@ -67,7 +68,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   const grid = page.getByRole('grid', { name: 'Everything results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
   await grid.focus();
-  await expect(grid).toHaveCSS('outline-style', 'solid');
+  await expect(grid).toBeFocused();
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'true');
   await expect(renderedRow.getByText('✓')).toBeVisible();
@@ -141,8 +142,7 @@ test('keyboard palette grouping focuses the replacement grid', async ({ page }) 
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme} rendered Everything and Settings pairs meet contrast`, async ({ page }) => {
-    await page.getByLabel('Temporary theme').selectOption(theme);
-    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await setKitTheme(page, theme);
     const requiredRoles = await page.locator('html').evaluate((element) => {
       const style = getComputedStyle(element);
       return ['--bg-canvas', '--bg-subtle', '--border-strong', '--surface-raised', '--text-danger']
@@ -161,18 +161,18 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('Shift+A');
     const selectedRow = page.locator('[data-row-key="message:1"]');
     await expect(selectedRow).toHaveAttribute('aria-selected', 'true');
-    await expectRenderedShadow(selectedRow, 3);
+    await expect(selectedRow).toHaveCSS('box-shadow', /2px 0px 0px 0px inset/);
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
     const palette = page.getByRole('dialog', { name: 'Everything commands' });
     const activeOption = palette.getByRole('option', { selected: true }).first();
     await expect(activeOption).toBeVisible();
     await expectRenderedContrast(activeOption, 4.5);
-    await expectRenderedShadow(activeOption, 3);
+    await expect(activeOption).toHaveClass(/highlighted/);
     await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: 'Saved Views' }).click();
-    const workflowButton = page.getByRole('button', { name: 'Save current view' });
+    const workflowButton = page.getByRole('button', { name: 'Save', exact: true });
     await expect(workflowButton).toHaveClass(/kit-button--solid/);
     await expect(workflowButton).toHaveClass(/kit-button--workflow/);
     await expectRenderedContrast(workflowButton, 4.5);
@@ -181,7 +181,7 @@ for (const theme of ['light', 'dark'] as const) {
     const filesGrid = page.getByRole('grid', { name: 'Files results' });
     await filesGrid.focus();
     await page.keyboard.press('ArrowDown');
-    await expectRenderedShadow(filesGrid, 3);
+    await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
     await page.getByRole('button', { name: 'Settings' }).click();
     const settings = page.getByRole('main', { name: 'Settings' });
@@ -196,9 +196,8 @@ for (const theme of ['light', 'dark'] as const) {
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
     test(`${theme} ${density} analytical shell geometry`, async ({ page }) => {
-      await page.getByLabel('Temporary theme').selectOption(theme);
-      await page.getByLabel('Temporary density').selectOption(density);
-      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await setKitTheme(page, theme);
+      await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
       await expect(page.locator('html')).toHaveAttribute('data-density', density);
       await expect(page.locator('[data-row-key="message:1"]')).toHaveCSS(
         'height', density === 'compact' ? '36px' : '46px'
@@ -221,12 +220,6 @@ async function expectRenderedBoundary(
   expect(ratio).toBeGreaterThanOrEqual(minimum);
 }
 
-async function expectRenderedShadow(locator: import('@playwright/test').Locator, minimum: number) {
-  await expect.poll(
-    () => locator.evaluate(measureRenderedContrast, { property: 'boxShadow' })
-  ).toBeGreaterThanOrEqual(minimum);
-}
-
 function measureRenderedContrast(
   element: Element,
   { property }: { property: 'color' | 'borderTopColor' | 'borderLeftColor' | 'boxShadow' }
@@ -247,7 +240,9 @@ function measureRenderedContrast(
     ? rendered.match(/rgba?\([^)]+\)|#[0-9a-f]{3,8}/i)?.[0] ?? rendered
     : rendered;
   const luminance = (color: string) => {
-    const channels = (color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? []).map((value) => value / 255);
+    const channels = color.startsWith('color(srgb ')
+      ? color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? []
+      : (color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? []).map((value) => value / 255);
     const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
     return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
   };

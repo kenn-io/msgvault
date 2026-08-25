@@ -202,7 +202,7 @@ test('person attachment gallery preserves directions and Media state across sour
   await expect.poll(() => personFileBodies.length).toBe(2);
   expect(personFileBodies[1]).toMatchObject({ directions: ['from_person', 'group'] });
 
-  await page.getByRole('button', { name: 'Media view' }).click();
+  await page.getByRole('radio', { name: 'Media' }).click();
   const card = page.getByRole('button', { name: 'Open photo.png' });
   await expect(card).toBeVisible();
   expect(personFileBodies[2]).toMatchObject({
@@ -216,7 +216,7 @@ test('person attachment gallery preserves directions and Media state across sour
   await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
 
   await page.goBack();
-  await expect(page.getByRole('button', { name: 'Media view' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('radio', { name: 'Media' })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('checkbox', { name: 'Group conversations' })).toBeChecked();
   await expect(page.getByRole('button', { name: 'Open photo.png' })).toBeVisible();
   const restored = JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}') as Record<string, unknown>;

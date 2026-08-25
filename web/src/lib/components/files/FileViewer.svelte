@@ -252,7 +252,8 @@
   onclose={() => { void close(); }}
 >
   <div class="file-viewer">
-    <div class="preview">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
+    <div class="preview" role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
       {#if loading}
         <p role="status">Loading file metadata…</p>
       {:else if metadata}

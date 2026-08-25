@@ -304,7 +304,7 @@
   header, article, .actions, .staging { display: flex; align-items: center; gap: var(--space-3); }
   header { justify-content: space-between; }
   header p, h1, h2, .staging p { margin: 0; }
-  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   header span, article span, .staging p, .actions span, aside span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .staging { flex-wrap: wrap; justify-content: space-between; }
   .review { display: grid; gap: var(--space-1); }

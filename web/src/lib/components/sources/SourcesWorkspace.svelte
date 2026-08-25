@@ -337,7 +337,7 @@
   .sources { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
   header p, h1 { margin: 0; }
-  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   header span, td span, td time { color: var(--text-muted); font-size: var(--font-size-xs); }
   :global(.source-table) { overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
   :global(.source-table .kit-table) { min-width: 980px; }

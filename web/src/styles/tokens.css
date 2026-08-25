@@ -1,4 +1,8 @@
 :root {
+  /* Kit's default muted ink is below AA contrast on the archive's dense,
+   * small metadata labels. Keep the quiet hierarchy while making those
+   * labels readable on app surfaces in both themes. */
+  --text-muted: color-mix(in srgb, var(--text-primary) 66%, var(--bg-surface));
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -68,6 +72,13 @@
 
 :where(a, [data-link]) {
   color: var(--link-ink);
+}
+
+/* Kit darkens expanded info buttons against black. On the dark app surface,
+ * retain slightly more of the blue so the label clears AA contrast. */
+:root.dark .kit-button--solid.kit-button--info[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--accent-blue) 80%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--accent-blue) 80%, var(--bg-primary));
 }
 
 :where([data-artifact]) {

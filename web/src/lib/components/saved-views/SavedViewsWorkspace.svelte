@@ -283,7 +283,7 @@
   .saved-views { display: flex; width: 100%; max-width: 1080px; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); margin-inline: auto; padding: var(--space-5) var(--space-6); }
   header, article, .actions { display: flex; align-items: center; gap: var(--space-3); }
   header p, h1, h2, article p { margin: 0; }
-  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   article p { color: var(--text-muted); font-size: var(--font-size-xs); }
   .create { display: grid; grid-template-columns: minmax(11rem, .8fr) minmax(15rem, 1.2fr) auto; align-items: center; gap: var(--space-2); }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }

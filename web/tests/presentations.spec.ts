@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { selectKitOption } from './kit-ui';
 
 const rows = [1, 2].map((id) => ({
   key: `message:${id}`, kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -60,14 +61,13 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   await page.getByRole('searchbox', { name: 'Search everything' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
 
-  const showAs = page.getByRole('combobox', { name: 'Show as' });
-  await showAs.selectOption('timeline');
+  await selectKitOption(page, 'Show as', 'Timeline');
   const timeline = page.getByRole('region', { name: 'Canonical activity timeline' });
   await expect(timeline).toBeVisible();
   await expect(timeline.getByText('Presentation message 1')).toBeVisible();
   expect(new URL(page.url()).search).toContain('timeline');
 
-  await showAs.selectOption('files');
+  await selectKitOption(page, 'Show as', 'Files');
   const files = page.getByRole('grid', { name: 'Files in current context' });
   await expect(files).toBeVisible();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
@@ -115,7 +115,7 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
 
   await page.getByRole('button', { name: 'Saved Views', exact: true }).click();
   await page.getByLabel('Name').fill('Pasta files');
-  await page.getByRole('button', { name: 'Save current view' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   expect((savedViews[0]!.canonical_state as Record<string, unknown>).presentation).toBe('files');
   await page.getByRole('button', { name: 'Open Pasta files' }).click();
   await expect(files).toBeVisible();

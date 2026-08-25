@@ -199,6 +199,7 @@
 </script>
 
 <main class="settings" aria-label="Settings">
+  <h1 class="kit-sr-only">Settings</h1>
   {#if loading}
     <p class="state" role="status">Loading settings…</p>
   {:else}
@@ -336,6 +337,7 @@
 
 <style>
   .settings { display: flex; flex: 1; min-height: 0; width: 100%; }
+  .settings :global(.kit-settings__nav-item--active), .settings :global(.kit-settings__nav-item--active:hover) { color: color-mix(in srgb, var(--accent-blue) 92%, var(--text-primary)); }
   .state { padding: var(--space-6); color: var(--text-muted); }
   .settings-panel[hidden] { display: none; }
   .field { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(14rem, 20rem); gap: var(--space-6); align-items: center; padding-block: var(--space-3); }

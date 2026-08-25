@@ -856,10 +856,12 @@
         />
       </div>
       <span class="archive-state" class:archive-state--error={Boolean(loader.error || loader.unavailable)}>
-        <StatusDot
-          status={loader.loading ? 'working' : loader.error || loader.unavailable ? 'unclean' : 'idle'}
-          label={loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Archive needs attention' : 'Local archive ready'}
-        />
+        <span aria-hidden="true">
+          <StatusDot
+            status={loader.loading ? 'working' : loader.error || loader.unavailable ? 'unclean' : 'idle'}
+            label={loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Archive needs attention' : 'Local archive ready'}
+          />
+        </span>
         {loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}
       </span>
     {/snippet}
