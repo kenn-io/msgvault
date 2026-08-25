@@ -137,7 +137,7 @@ func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string
 		}
 		if markErr := e.store.MarkMessageDeletedBySourceMessageID(sourceID, method == MethodDelete, gmailID); markErr != nil {
 			e.logger.Warn("failed to mark deleted in DB", "gmail_id", gmailID, "error", markErr)
-			return resultFailed, fmt.Errorf("%w: %v", errLocalTombstone, markErr)
+			return resultFailed, fmt.Errorf("%w: %w", errLocalTombstone, markErr)
 		}
 		return resultSuccess, nil
 	}

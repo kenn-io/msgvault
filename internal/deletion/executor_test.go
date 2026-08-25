@@ -599,7 +599,7 @@ func TestExecutor_DeleteOne_LocalTombstoneFailureIsRetryable(t *testing.T) {
 	result, err := tc.Exec.deleteOne(context.Background(), 1, "msg-1", MethodDelete)
 
 	assert.Equal(resultFailed, result)
-	assert.Error(err)
+	require.Error(err)
 	assert.Len(tc.MockAPI.DeleteCalls, 1)
 }
 
@@ -612,7 +612,7 @@ func TestExecutor_Execute_LocalTombstoneFailureLeavesManifestInProgress(t *testi
 
 	err := tc.ExecuteWithOpts(manifest.ID, &ExecuteOptions{Method: MethodDelete, BatchSize: 1, Resume: true})
 
-	assert.Error(err)
+	require.Error(err)
 	inProgress, listErr := tc.Mgr.ListInProgress()
 	require.NoError(listErr)
 	if assert.Len(inProgress, 1) {
@@ -637,7 +637,7 @@ func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInP
 
 	err := tc.ExecuteBatch(manifest.ID)
 
-	assert.Error(err)
+	require.Error(err)
 	inProgress, listErr := tc.Mgr.ListInProgress()
 	require.NoError(listErr)
 	if assert.Len(inProgress, 1) {
