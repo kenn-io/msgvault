@@ -827,6 +827,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Attachments.Documents.Validate(); err != nil {
 		return nil, err
 	}
+	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
+		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
+	}
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return nil, fmt.Errorf("vector config: %w", err)

@@ -15,6 +15,14 @@ func TestLoadDocumentAttachmentConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	content := []byte(`
+[vector]
+enabled = true
+
+[vector.embeddings]
+endpoint = "http://127.0.0.1:8080/v1"
+model = "test-embedding-model"
+dimension = 768
+
 [attachments.documents]
 enabled = true
 provider = "mistral"
@@ -79,12 +87,32 @@ profile = "other.embeddings"
 	assert.ErrorContains(t, err, "profile must be \"vector.embeddings\"")
 }
 
+func TestLoadRejectsDocumentEmbeddingsWithoutVectorLane(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[attachments.documents.index.embeddings]
+enabled = true
+`), 0o600))
+
+	_, err := Load(path, "")
+	assert.ErrorContains(t, err, "requires [vector] enabled = true")
+}
+
 func TestLoadDefaultsOmittedEnabledDocumentEmbeddingProfile(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	requirements.NoError(os.WriteFile(path, []byte(`
+[vector]
+enabled = true
+
+[vector.embeddings]
+endpoint = "http://127.0.0.1:8080/v1"
+model = "test-embedding-model"
+dimension = 768
+
 [attachments.documents.index.embeddings]
 enabled = true
 `), 0o600))
