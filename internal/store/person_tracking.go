@@ -38,6 +38,10 @@ func (s *Store) SetPersonTrackingContext(
 ) (*PersonTracking, error) {
 	var state *PersonTracking
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockProfileIdentityKeyTxContext(
+			ctx, tx, "person-fact-generation", personID); err != nil {
+			return err
+		}
 		var exists int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM persons WHERE id = ?`, personID).Scan(&exists); err != nil {

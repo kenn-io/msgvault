@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -213,6 +214,24 @@ func TestNormalizeOrganizationNameAndDomain(t *testing.T) {
 	}
 	for _, test := range domainTests {
 		assert.Equal(test.want, store.NormalizeDomain(test.raw), "raw %q", test.raw)
+	}
+}
+
+func TestNormalizeDomainMatchesStoreNormalization(t *testing.T) {
+	for _, raw := range []string{
+		"Example.COM", "https://www.bücher.example/jobs", "person@BÜCHER.example",
+		"https://www.Example.com/search?q=user@other.example",
+		"https://user:secret@www.Example.com/path",
+		"", "localhost", "example.com/path", "https://",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			shared, err := personfacts.NormalizeDomain(raw)
+			if err != nil {
+				assert.Empty(t, store.NormalizeDomain(raw))
+				return
+			}
+			assert.Equal(t, shared, store.NormalizeDomain(raw))
+		})
 	}
 }
 

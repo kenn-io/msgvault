@@ -1257,6 +1257,23 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 	}
 }
 
+type SetPersonFactPinPathKind string
+
+const (
+	Attribute                          SetPersonFactPinPathKind = "attribute"
+	SetPersonFactPinPathKindEmployment SetPersonFactPinPathKind = "employment"
+)
+
+// Validate checks if the SetPersonFactPinPathKind value is valid
+func (s SetPersonFactPinPathKind) Validate() error {
+	switch s {
+	case Attribute, SetPersonFactPinPathKindEmployment:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SetPersonFactPinPathKind value, got: %v", s))
+	}
+}
+
 type ListPersonRelationshipReviewsQueryStatus string
 
 const (

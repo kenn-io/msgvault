@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 // PersonAttributeValue is one typed value and its history metadata.
@@ -162,78 +164,29 @@ func (s *Store) setPersonAttributeValueOnce(
 
 	write := &PersonAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		transactionTime := time.Now().UTC()
+		if err := s.lockPersonFactAttributeTx(
+			ctx, tx, input.PersonID, input.DefinitionSlug); err != nil {
+			return err
+		}
 		loaded, err := s.getAttributeDefinitionBySlugTx(
 			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
 		if err != nil {
 			return err
 		}
 		definition := *loaded
-		if err := writableAttributeDefinition(definition); err != nil {
-			return err
-		}
-		value, err := normalizeAttributeValue(definition, input.Value)
+		write, err = s.setPersonAttributeValueTx(
+			ctx, tx, definition, input, activeFrom, transactionTime)
 		if err != nil {
 			return err
 		}
-		input.Value = value
-		if definition.Cardinality == AttributeCardinalitySingle &&
-			input.Ordinal != nil && *input.Ordinal != 0 {
-			return fmt.Errorf(
-				"%w: ordinal %d is not allowed on %s, which declares cardinality single",
-				ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
-		}
-		if input.Value.Type == AttributeValueRecordReference {
-			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		write.DryRun = input.DryRun
+		if input.Source.IsDeclared() {
+			if err := s.appendManualPersonFactAttributePinTx(
+				ctx, tx, definition, input.PersonID, personAttributeActor(input.Actor, input.Source)); err != nil {
 				return err
 			}
 		}
-		var personExists int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM persons WHERE id = ?`, input.PersonID,
-		).Scan(&personExists); err != nil {
-			return fmt.Errorf("verify person %d: %w", input.PersonID, err)
-		}
-		if personExists == 0 {
-			return ErrPersonNotFound
-		}
-		if err := s.verifyAttributeRecordTargetTx(ctx, tx, input.Value); err != nil {
-			return err
-		}
-		ordinal, err := s.resolveAttributeOrdinalTx(ctx, tx, definition, input)
-		if err != nil {
-			return err
-		}
-		current, hasCurrent, err := s.currentPersonAttributeValueTx(
-			ctx, tx, input.PersonID, definition.ID, ordinal)
-		if err != nil {
-			return err
-		}
-		if input.ExpectedValueID != nil &&
-			(!hasCurrent || current.ID != *input.ExpectedValueID) {
-			conflict := &AttributeValueConflictError{}
-			if hasCurrent {
-				conflict.CurrentValue = current
-			}
-			return conflict
-		}
-		if hasCurrent {
-			if activeFrom.Before(current.ActiveFrom) {
-				return fmt.Errorf("%w: active_from precedes the current value",
-					ErrAttributeValueInvalid)
-			}
-			closed, err := s.closePersonAttributeValueTx(
-				ctx, tx, current.ID, activeFrom, time.Now().UTC())
-			if err != nil {
-				return err
-			}
-			write.Superseded = closed
-		}
-		inserted, err := s.insertPersonAttributeValueTx(
-			ctx, tx, definition, input, ordinal, activeFrom)
-		if err != nil {
-			return err
-		}
-		write.Value = inserted
 		if err := s.bumpPersonVCardProjectionsTx(
 			ctx, tx, input.PersonID,
 		); err != nil {
@@ -241,9 +194,6 @@ func (s *Store) setPersonAttributeValueOnce(
 		}
 		if input.DryRun {
 			write.Value.ID = 0
-			if write.Superseded != nil {
-				write.Superseded.ID = current.ID
-			}
 			return errAttributeDryRun
 		}
 		return nil
@@ -252,6 +202,86 @@ func (s *Store) setPersonAttributeValueOnce(
 		return nil, err
 	}
 	return write, nil
+}
+
+func (s *Store) setPersonAttributeValueTx(
+	ctx context.Context, tx *loggedTx, definition AttributeDefinition,
+	input PersonAttributeValueInput, activeFrom time.Time, transactionTime time.Time,
+) (*PersonAttributeWrite, error) {
+	if err := writableAttributeDefinition(definition); err != nil {
+		return nil, err
+	}
+	value, err := normalizeAttributeValue(definition, input.Value)
+	if err != nil {
+		return nil, err
+	}
+	input.Value = value
+	if definition.Cardinality == AttributeCardinalitySingle &&
+		input.Ordinal != nil && *input.Ordinal != 0 {
+		return nil, fmt.Errorf(
+			"%w: ordinal %d is not allowed on %s, which declares cardinality single",
+			ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
+	}
+	if input.Value.Type == AttributeValueRecordReference {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
+	var personExists int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM persons WHERE id = ?`, input.PersonID,
+	).Scan(&personExists); err != nil {
+		return nil, fmt.Errorf("verify person %d: %w", input.PersonID, err)
+	}
+	if personExists == 0 {
+		return nil, ErrPersonNotFound
+	}
+	if err := s.verifyAttributeRecordTargetTx(ctx, tx, input.Value); err != nil {
+		return nil, err
+	}
+	ordinal, err := s.resolveAttributeOrdinalTx(ctx, tx, definition, input)
+	if err != nil {
+		return nil, err
+	}
+	current, hasCurrent, err := s.currentPersonAttributeValueTx(
+		ctx, tx, input.PersonID, definition.ID, ordinal)
+	if err != nil {
+		return nil, err
+	}
+	if input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID) {
+		conflict := &AttributeValueConflictError{}
+		if hasCurrent {
+			conflict.CurrentValue = current
+		}
+		return nil, conflict
+	}
+	write := &PersonAttributeWrite{DryRun: input.DryRun}
+	if hasCurrent {
+		if activeFrom.Before(current.ActiveFrom) {
+			return nil, fmt.Errorf("%w: active_from precedes the current value",
+				ErrAttributeValueInvalid)
+		}
+		closed, err := s.closePersonAttributeValueTx(
+			ctx, tx, current.ID, activeFrom, transactionTime)
+		if err != nil {
+			return nil, err
+		}
+		write.Superseded = closed
+	}
+	inserted, err := s.insertPersonAttributeValueTx(
+		ctx, tx, definition, input, ordinal, activeFrom, transactionTime)
+	if err != nil {
+		return nil, err
+	}
+	write.Value = inserted
+	return write, nil
+}
+
+func personAttributeActor(actor *string, source Provenance) string {
+	if actor != nil && strings.TrimSpace(*actor) != "" {
+		return strings.TrimSpace(*actor)
+	}
+	return string(source)
 }
 
 func (s *Store) resolveAttributeOrdinalTx(
@@ -356,6 +386,7 @@ func (s *Store) closePersonAttributeValueTx(
 func (s *Store) insertPersonAttributeValueTx(
 	ctx context.Context, tx *loggedTx, definition AttributeDefinition,
 	input PersonAttributeValueInput, ordinal int64, activeFrom time.Time,
+	transactionTime time.Time,
 ) (*PersonAttributeValue, error) {
 	var jsonValue any
 	if len(input.Value.JSON) > 0 {
@@ -372,15 +403,15 @@ func (s *Store) insertPersonAttributeValueTx(
 		    value_text, value_integer, value_real, value_boolean,
 		    value_date, value_timestamp, value_json,
 		    value_record_type, value_record_id,
-		    active_from, active_until, source, source_ref, confidence, actor
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?)
+		    active_from, active_until, created_at, source, source_ref, confidence, actor
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`, s.dialect.JSONBindExpr()),
 		input.PersonID, definition.ID, ordinal,
 		input.Value.Text, input.Value.Integer, input.Value.Real, input.Value.Boolean,
 		input.Value.Date, input.Value.Timestamp, jsonValue,
 		input.Value.RecordType, input.Value.RecordID,
-		activeFrom, activeUntil, string(input.Source), input.SourceRef,
+		activeFrom, activeUntil, transactionTime, string(input.Source), input.SourceRef,
 		input.Confidence, input.Actor,
 	).Scan(&insertedID); err != nil {
 		return nil, fmt.Errorf("insert attribute value for %s: %w", definition.Slug, err)
@@ -422,6 +453,11 @@ func (s *Store) supersedePersonAttributeValueOnce(
 ) (*PersonAttributeWrite, error) {
 	write := &PersonAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		transactionTime := time.Now().UTC()
+		if err := s.lockPersonFactAttributeTx(
+			ctx, tx, input.PersonID, input.DefinitionSlug); err != nil {
+			return err
+		}
 		definition, err := s.getAttributeDefinitionBySlugTx(
 			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
 		if err != nil {
@@ -460,11 +496,15 @@ func (s *Store) supersedePersonAttributeValueOnce(
 				ErrAttributeValueInvalid)
 		}
 		closed, err := s.closePersonAttributeValueTx(
-			ctx, tx, current.ID, at, time.Now().UTC())
+			ctx, tx, current.ID, at, transactionTime)
 		if err != nil {
 			return err
 		}
 		write.Superseded = closed
+		if err := s.appendManualPersonFactAttributePinTx(
+			ctx, tx, *definition, input.PersonID, personAttributeActor(input.Actor, ProvenanceUser)); err != nil {
+			return err
+		}
 		if err := s.bumpPersonVCardProjectionsTx(
 			ctx, tx, input.PersonID,
 		); err != nil {
@@ -479,6 +519,42 @@ func (s *Store) supersedePersonAttributeValueOnce(
 		return nil, err
 	}
 	return write, nil
+}
+
+// lockPersonFactAttributeTx joins attribute writes to the same
+// generation-then-target lock order used by automatic fact resolution. The
+// initial definition lookup is intentionally unlocked: taking its row lock
+// before these advisory locks would invert the automatic resolver's order.
+func (s *Store) lockPersonFactAttributeTx(
+	ctx context.Context, tx *loggedTx, personID int64, definitionSlug string,
+) error {
+	if err := s.lockProfileIdentityKeyTxContext(
+		ctx, tx, "person-fact-generation", personID); err != nil {
+		return err
+	}
+	var targetKey string
+	err := tx.QueryRowContext(ctx, `
+		SELECT universal_id FROM attribute_definitions
+		WHERE object_type = ? AND slug = ?
+	`, string(AttributeObjectPerson), definitionSlug).Scan(&targetKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAttributeDefinitionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("resolve person fact target for attribute %s: %w", definitionSlug, err)
+	}
+	return s.lockProfileIdentityKeyTxContext(
+		ctx, tx, "person-fact-target", personID, personfacts.TargetAttribute, targetKey)
+}
+
+func personFactAttributeTargetRef(definition AttributeDefinition) (personfacts.TargetRef, error) {
+	descriptor, err := personFactAttributeDescriptor(definition)
+	if err != nil {
+		return personfacts.TargetRef{}, err
+	}
+	return personfacts.TargetRef{
+		Kind: descriptor.Kind, Key: descriptor.Key, Revision: descriptor.Revision,
+	}, nil
 }
 
 func scanPersonAttributeValue(row scanner) (*PersonAttributeValue, error) {

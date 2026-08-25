@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 // PersonNoteAppendInput appends one fragment to a person's standard Notes value.
@@ -38,6 +40,15 @@ func (s *Store) appendPersonNoteOnce(
 ) (*PersonAttributeWrite, error) {
 	write := &PersonAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockProfileIdentityKeyTxContext(
+			ctx, tx, "person-fact-generation", input.PersonID); err != nil {
+			return err
+		}
+		if err := s.lockProfileIdentityKeyTxContext(
+			ctx, tx, "person-fact-target", input.PersonID,
+			personfacts.TargetAttribute, AttributeUniversalIDNotes); err != nil {
+			return err
+		}
 		definition, err := s.getAttributeDefinitionByUniversalIDTx(
 			ctx, tx, AttributeUniversalIDNotes,
 		)
@@ -110,12 +121,19 @@ func (s *Store) appendPersonNoteOnce(
 				PersonID: input.PersonID, DefinitionSlug: definition.Slug,
 				Ordinal: &ordinal, Value: value, Source: input.Source,
 				SourceRef: input.SourceRef, Confidence: input.Confidence, Actor: input.Actor,
-			}, ordinal, activeFrom,
+			}, ordinal, activeFrom, now,
 		)
 		if err != nil {
 			return err
 		}
 		write.Value = inserted
+		if input.Source.IsDeclared() {
+			if err := s.appendManualPersonFactAttributePinTx(
+				ctx, tx, *definition, input.PersonID,
+				personAttributeActor(input.Actor, input.Source)); err != nil {
+				return err
+			}
+		}
 		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
 			return err
 		}

@@ -376,6 +376,58 @@ func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *te
 	})
 }
 
+func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	const payload = `{
+		"id":1,"evidence_key":"public:1","source_class":"public_web",
+		"directness":"direct","authority":"first_party","source_ref":"",
+		"source_url":"https://example.test/profile","subject_ref":"",
+		"excerpt":"","content_sha256":"","source_version":"",
+		"event_time":"2026-08-24T12:00:00Z","recorded_time":"2026-08-24T12:00:00Z",
+		"identity_score":10,"supported":true,"created_at":"2026-08-24T12:00:00Z",
+		"latest_status":{"id":2,"generation_id":3,"evidence_key":"public:1",
+			"source_version":"","supported":true,"reason":"observed",
+			"created_at":"2026-08-24T12:00:00Z"}
+	}`
+	var public generated.PersonFactEvidence
+	requirements.NoError(json.Unmarshal([]byte(payload), &public))
+	requirements.NotNil(public.SourceRef)
+	requirements.NotNil(public.ContentSha256)
+	requirements.NotNil(public.SourceVersion)
+	requirements.NotNil(public.SubjectRef)
+	requirements.NotNil(public.Excerpt)
+	requirements.NotNil(public.LatestStatus)
+	requirements.NotNil(public.LatestStatus.SourceVersion)
+	assertions.Empty(*public.SourceRef)
+	assertions.Empty(*public.ContentSha256)
+	assertions.Empty(*public.SourceVersion)
+	assertions.Empty(*public.LatestStatus.SourceVersion)
+	assertions.Empty(*public.SubjectRef)
+	assertions.Empty(*public.Excerpt)
+	requirements.NoError(public.Validate())
+	requirements.NoError(public.LatestStatus.Validate())
+
+	archive := public
+	archive.SourceClass = "archive"
+	empty := ""
+	archive.SourceURL = &empty
+	requirements.NoError(archive.Validate(), "archive evidence may omit a source URL value")
+
+	missing := public
+	missing.SourceRef = nil
+	requirements.Error(missing.Validate(), "required source_ref must still be present")
+	missing = public
+	missing.SubjectRef = nil
+	requirements.Error(missing.Validate(), "required subject_ref must still be present")
+	missing = public
+	missing.Excerpt = nil
+	requirements.Error(missing.Validate(), "required excerpt must still be present")
+	missingStatus := *public.LatestStatus
+	missingStatus.SourceVersion = nil
+	requirements.Error(missingStatus.Validate(), "required status source_version must still be present")
+}
+
 // TestGeneratedChangesResponseAcceptsTheFeedsOrdinaryPages holds the
 // content-change feed to the same "required means present, not non-empty"
 // distinction the file-metadata models above are held to.

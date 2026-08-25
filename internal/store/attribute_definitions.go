@@ -366,15 +366,23 @@ func validateAttributeDefinitionInput(
 		input.UIEditable = false
 		input.DerivedSource = &derived
 	}
-	if input.Description != nil {
-		description := strings.TrimSpace(*input.Description)
-		if description == "" {
-			input.Description = nil
-		} else {
-			input.Description = &description
-		}
+	description, present := normalizeAttributeDescription(input.Description)
+	input.Description = nil
+	if present {
+		input.Description = &description
 	}
 	return input, nil
+}
+
+func normalizeAttributeDescription(value *string) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return "", false
+	}
+	return normalized, true
 }
 
 func validateAttributeWidget(input AttributeDefinitionInput) error {
@@ -787,17 +795,13 @@ func (s *Store) UpdateAttributeDefinitionContext(
 		args = append(args, label)
 	}
 	if update.Description != nil {
-		description := *update.Description
-		if description != nil {
-			trimmed := strings.TrimSpace(*description)
-			if trimmed == "" {
-				description = nil
-			} else {
-				description = &trimmed
-			}
-		}
+		description, present := normalizeAttributeDescription(*update.Description)
 		assignments = append(assignments, "description = ?")
-		args = append(args, description)
+		if present {
+			args = append(args, description)
+		} else {
+			args = append(args, nil)
+		}
 	}
 	if update.DisplayOrder != nil {
 		if *update.DisplayOrder < 0 {

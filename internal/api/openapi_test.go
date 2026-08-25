@@ -34,11 +34,90 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
+func TestOpenAPISchemaVersionPersonFactsIs2110(t *testing.T) {
+	assert.Equal(t, "2.11.0", APISchemaVersion)
+}
+
+func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
+	want := map[string]map[string]string{
+		"/api/v1/person-fact-targets": {
+			http.MethodGet: "listPersonFactTargets",
+		},
+		"/api/v1/people/{id}/fact-evidence": {
+			http.MethodGet: "listPersonFactEvidence",
+		},
+		"/api/v1/people/{id}/fact-evidence-status-events": {
+			http.MethodGet: "listPersonFactEvidenceStatusEvents",
+		},
+		"/api/v1/people/{id}/fact-claims": {
+			http.MethodGet: "listPersonFactClaims",
+		},
+		"/api/v1/people/{id}/fact-decisions": {
+			http.MethodGet: "listPersonFactDecisions",
+		},
+		"/api/v1/people/{id}/fact-pins": {
+			http.MethodGet: "listPersonFactPins",
+		},
+		"/api/v1/people/{id}/fact-pins/{kind}/{key}": {
+			http.MethodPut: "setPersonFactPin",
+		},
+	}
+	got := make(map[string]map[string]string)
+	for path, item := range OpenAPIDocument().Paths {
+		if path != "/api/v1/person-fact-targets" &&
+			!strings.HasPrefix(path, "/api/v1/people/{id}/fact-") {
+			continue
+		}
+		operations := make(map[string]string)
+		for method, operation := range map[string]*huma.Operation{
+			http.MethodGet: item.Get, http.MethodPut: item.Put, http.MethodPost: item.Post,
+			http.MethodDelete: item.Delete, http.MethodOptions: item.Options,
+			http.MethodHead: item.Head, http.MethodPatch: item.Patch, http.MethodTrace: item.Trace,
+		} {
+			if operation != nil {
+				operations[method] = operation.OperationID
+			}
+		}
+		got[path] = operations
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestPersonFactOpenAPIHistoryCollectionsAreNonNullable(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		for schemaName, propertyName := range map[string]string{
+			"PersonFactEvidenceResponse":             "evidence",
+			"PersonFactEvidenceStatusEventsResponse": "events",
+			"PersonFactClaimsResponse":               "claims",
+			"PersonFactDecisionsResponse":            "decisions",
+		} {
+			schema := document.Components.Schemas.Map()[schemaName]
+			requirements.NotNil(schema, schemaName)
+			property := schema.Properties[propertyName]
+			requirements.NotNil(property, schemaName+"."+propertyName)
+			assertions.False(property.Nullable, schemaName+"."+propertyName)
+		}
+	}
+}
+
+func TestPersonFactPinsOpenAPIDeclaresBadPersonIDResponse(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		path := document.Paths["/api/v1/people/{id}/fact-pins"]
+		requirements.NotNil(path)
+		requirements.NotNil(path.Get)
+		assertions.Contains(path.Get.Responses, "400")
+	}
+}
+
 func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.10.0", APISchemaVersion)
+	assert.Equal("2.11.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -60,11 +139,11 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.10.0", APISchemaVersion)
+	assert.Equal(t, "2.11.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.10.0", APISchemaVersion)
+	assert.Equal(t, "2.11.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -88,7 +167,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.10.0", APISchemaVersion,
+	assert.Equal(t, "2.11.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -399,7 +478,7 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	assert.Equal("2.10.0", APISchemaVersion,
+	assert.Equal("2.11.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -513,7 +592,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.10.0", APISchemaVersion,
+	assertions.Equal("2.11.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -533,7 +612,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.10.0", APISchemaVersion,
+	assert.Equal("2.11.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -561,7 +640,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.10.0", APISchemaVersion,
+	assertions.Equal("2.11.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -607,8 +686,8 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
 	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, CardDAV routes
 	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
-	// calendars in 2.10.0 did not touch it.
-	assert.Equal("2.10.0", APISchemaVersion, "meeting import is an additive schema release")
+	// calendars in 2.10.0 and person fact diagnostics in 2.11.0 did not touch it.
+	assert.Equal("2.11.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

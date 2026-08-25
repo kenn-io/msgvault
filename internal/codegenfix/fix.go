@@ -13,6 +13,12 @@ var requiredPointerValidators = [][3]string{
 	{"FileSearchRow", "MimeType", "f"},
 	{"PersonFileSearchRow", "Filename", "p"},
 	{"PersonFileSearchRow", "MimeType", "p"},
+	{"PersonFactEvidence", "SourceRef", "p"},
+	{"PersonFactEvidence", "SourceURL", "p"},
+	{"PersonFactEvidence", "ContentSha256", "p"},
+	{"PersonFactEvidence", "SourceVersion", "p"},
+	{"PersonFactEvidence", "SubjectRef", "p"},
+	{"PersonFactEvidence", "Excerpt", "p"},
 }
 
 // RewriteGeneratedValidators preserves required-but-empty string fields as

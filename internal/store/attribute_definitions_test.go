@@ -29,6 +29,60 @@ func personTextDefinition(slug string) store.AttributeDefinitionInput {
 	}
 }
 
+func TestAttributeDescriptionAcceptsExactly280UnicodeRunes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := strings.Repeat("🙂", 280)
+	input := personTextDefinition("maximum_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	require.NotNil(t, created.Description)
+	assert.Equal(t, description, *created.Description)
+}
+
+func TestAttributeDescriptionCreateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := strings.Repeat("🙂", 281)
+	input := personTextDefinition("too_long_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	require.NotNil(t, created.Description)
+	assert.Equal(t, description, *created.Description)
+}
+
+func TestAttributeDescriptionUpdateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	created, err := st.CreateAttributeDefinitionContext(
+		t.Context(), personTextDefinition("update_description"))
+	require.NoError(err)
+
+	description := strings.Repeat("🙂", 281)
+	descriptionUpdate := &description
+	updated, err := st.UpdateAttributeDefinitionContext(t.Context(), created.ID, created.Revision,
+		store.AttributeDefinitionUpdate{Description: &descriptionUpdate})
+	require.NoError(err)
+	require.NotNil(updated.Description)
+	assert.Equal(description, *updated.Description)
+	assert.Equal(created.Revision+1, updated.Revision)
+}
+
+func TestAttributeDescriptionBlankNormalizesToNil(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := " \n\t "
+	input := personTextDefinition("blank_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	assert.Nil(t, created.Description)
+}
+
 func onlyTestDefinitions(
 	definitions []store.AttributeDefinition, slugs ...string,
 ) []store.AttributeDefinition {

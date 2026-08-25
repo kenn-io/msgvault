@@ -1921,6 +1921,56 @@ type ListPersonEmploymentsErrorResponseJSON = ErrorResponse
 
 type ListPersonEmploymentsErrorResponseJSON503 = ErrorResponse
 
+type ListPersonFactClaimsResponse = PersonFactClaimsResponse
+
+type ListPersonFactClaimsErrorResponse = ErrorResponse
+
+type ListPersonFactClaimsErrorResponseJSON = ErrorResponse
+
+type ListPersonFactClaimsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactDecisionsResponse = PersonFactDecisionsResponse
+
+type ListPersonFactDecisionsErrorResponse = ErrorResponse
+
+type ListPersonFactDecisionsErrorResponseJSON = ErrorResponse
+
+type ListPersonFactDecisionsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactEvidenceResponse = PersonFactEvidenceResponse
+
+type ListPersonFactEvidenceErrorResponse = ErrorResponse
+
+type ListPersonFactEvidenceErrorResponseJSON = ErrorResponse
+
+type ListPersonFactEvidenceErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactEvidenceStatusEventsResponse = PersonFactEvidenceStatusEventsResponse
+
+type ListPersonFactEvidenceStatusEventsErrorResponse = ErrorResponse
+
+type ListPersonFactEvidenceStatusEventsErrorResponseJSON = ErrorResponse
+
+type ListPersonFactEvidenceStatusEventsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactPinsResponse = PersonFactPinsResponse
+
+type ListPersonFactPinsErrorResponse = ErrorResponse
+
+type ListPersonFactPinsErrorResponseJSON = ErrorResponse
+
+type ListPersonFactPinsErrorResponseJSON503 = ErrorResponse
+
+type SetPersonFactPinResponse = PersonFactPinWrite
+
+type SetPersonFactPinErrorResponse = ErrorResponse
+
+type SetPersonFactPinErrorResponseJSON = ErrorResponse
+
+type SetPersonFactPinErrorResponseJSON409 = ErrorResponse
+
+type SetPersonFactPinErrorResponseJSON503 = ErrorResponse
+
 type SearchPersonFilesResponse = PersonFileSearchHTTPResponse
 
 type SearchPersonFilesErrorResponse = ErrorResponse
@@ -2076,6 +2126,12 @@ type SetPersonTrackingErrorResponse = ErrorResponse
 type SetPersonTrackingErrorResponseJSON = ErrorResponse
 
 type SetPersonTrackingErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactTargetsResponse = Catalog
+
+type ListPersonFactTargetsErrorResponse = ErrorResponse
+
+type ListPersonFactTargetsErrorResponseJSON = ErrorResponse
 
 type DecidePersonMergeCandidateResponse = PersonMergeReviewCandidate
 
@@ -4136,6 +4192,67 @@ type ListPersonEmploymentsResp struct {
 	JSON503      *ListPersonEmploymentsErrorResponseJSON503
 }
 
+type ListPersonFactClaimsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactClaimsResponse
+	JSON400      *ListPersonFactClaimsErrorResponse
+	JSON404      *ListPersonFactClaimsErrorResponseJSON
+	JSON503      *ListPersonFactClaimsErrorResponseJSON503
+}
+
+type ListPersonFactDecisionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactDecisionsResponse
+	JSON400      *ListPersonFactDecisionsErrorResponse
+	JSON404      *ListPersonFactDecisionsErrorResponseJSON
+	JSON503      *ListPersonFactDecisionsErrorResponseJSON503
+}
+
+type ListPersonFactEvidenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactEvidenceResponse
+	JSON400      *ListPersonFactEvidenceErrorResponse
+	JSON404      *ListPersonFactEvidenceErrorResponseJSON
+	JSON503      *ListPersonFactEvidenceErrorResponseJSON503
+}
+
+type ListPersonFactEvidenceStatusEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactEvidenceStatusEventsResponse
+	JSON400      *ListPersonFactEvidenceStatusEventsErrorResponse
+	JSON404      *ListPersonFactEvidenceStatusEventsErrorResponseJSON
+	JSON503      *ListPersonFactEvidenceStatusEventsErrorResponseJSON503
+}
+
+type ListPersonFactPinsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactPinsResponse
+	JSON400      *ListPersonFactPinsErrorResponse
+	JSON404      *ListPersonFactPinsErrorResponseJSON
+	JSON503      *ListPersonFactPinsErrorResponseJSON503
+}
+
+type SetPersonFactPinResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetPersonFactPinResponse
+	JSON400      *SetPersonFactPinErrorResponse
+	JSON404      *SetPersonFactPinErrorResponseJSON
+	JSON409      *SetPersonFactPinErrorResponseJSON409
+	JSON503      *SetPersonFactPinErrorResponseJSON503
+}
+
 type SearchPersonFilesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4286,6 +4403,15 @@ type SetPersonTrackingResp struct {
 	JSON400      *SetPersonTrackingErrorResponse
 	JSON404      *SetPersonTrackingErrorResponseJSON
 	JSON503      *SetPersonTrackingErrorResponseJSON503
+}
+
+type ListPersonFactTargetsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactTargetsResponse
+	JSON400      *ListPersonFactTargetsErrorResponse
+	JSON503      *ListPersonFactTargetsErrorResponseJSON
 }
 
 type DecidePersonMergeCandidateResp200Headers struct {

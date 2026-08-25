@@ -1183,6 +1183,22 @@ components:
         full:
           type: boolean
       type: object
+    Catalog:
+      properties:
+        fingerprint:
+          type: string
+        targets:
+          items:
+            $ref: "#/components/schemas/TargetDescriptor"
+          nullable: true
+          type: array
+        version:
+          type: string
+      required:
+        - version
+        - fingerprint
+        - targets
+      type: object
     ChangedMessageJSON:
       properties:
         attachment_count:
@@ -1266,6 +1282,16 @@ components:
         - next_cursor
         - server_time
         - complete_through
+      type: object
+    ChoiceDescriptor:
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+      required:
+        - value
+        - label
       type: object
     CliAccountResponse:
       properties:
@@ -1736,6 +1762,14 @@ components:
           type: array
       required:
         - services
+      type: object
+    ConfidenceInputs:
+      properties:
+        reported_score:
+          format: int64
+          type: integer
+      required:
+        - reported_score
       type: object
     ContactState:
       properties:
@@ -3533,6 +3567,22 @@ components:
       required:
         - action
         - reason
+      type: object
+    FieldDescriptor:
+      properties:
+        cardinality:
+          type: string
+        name:
+          type: string
+        required:
+          type: boolean
+        value_type:
+          type: string
+      required:
+        - name
+        - value_type
+        - cardinality
+        - required
       type: object
     FileGroupsHTTPRequest:
       additionalProperties: false
@@ -6393,6 +6443,341 @@ components:
         - days
         - total_count
       type: object
+    PersonFactClaim:
+      properties:
+        claim_key:
+          type: string
+        confidence:
+          $ref: "#/components/schemas/ConfidenceInputs"
+        created_at:
+          format: date-time
+          type: string
+        evidence_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+        generation_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        normalized_value:
+          nullable: true
+          type: string
+        origin:
+          type: string
+        program_fingerprint:
+          type: string
+        program_id:
+          type: string
+        program_version:
+          type: string
+        relation:
+          type: string
+        submitted_value:
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        valid_from:
+          format: date-time
+          nullable: true
+          type: string
+        valid_until:
+          format: date-time
+          nullable: true
+          type: string
+        value_fingerprint:
+          nullable: true
+          type: string
+      required:
+        - id
+        - generation_id
+        - claim_key
+        - program_id
+        - program_version
+        - program_fingerprint
+        - target
+        - relation
+        - submitted_value
+        - evidence_ids
+        - origin
+        - confidence
+        - created_at
+      type: object
+    PersonFactClaimsResponse:
+      properties:
+        claims:
+          items:
+            $ref: "#/components/schemas/PersonFactClaim"
+          type: array
+      required:
+        - claims
+      type: object
+    PersonFactDecision:
+      properties:
+        action:
+          type: string
+        claim_key:
+          type: string
+        competing_claim_key:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        decision_key:
+          type: string
+        id:
+          format: int64
+          type: integer
+        projection:
+          $ref: "#/components/schemas/ProjectionRef"
+        reason:
+          type: string
+        resolution_id:
+          format: int64
+          type: integer
+        score:
+          $ref: "#/components/schemas/PersonFactScoreBreakdown"
+      required:
+        - id
+        - resolution_id
+        - decision_key
+        - claim_key
+        - action
+        - reason
+        - score
+        - created_at
+      type: object
+    PersonFactDecisionsResponse:
+      properties:
+        decisions:
+          items:
+            $ref: "#/components/schemas/PersonFactDecision"
+          type: array
+      required:
+        - decisions
+      type: object
+    PersonFactEvidence:
+      properties:
+        authority:
+          type: string
+        content_sha256:
+          nullable: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        directness:
+          type: string
+        event_time:
+          format: date-time
+          type: string
+        evidence_key:
+          type: string
+        excerpt:
+          nullable: true
+          type: string
+        id:
+          format: int64
+          type: integer
+        identity_score:
+          format: int64
+          type: integer
+        latest_status:
+          $ref: "#/components/schemas/PersonFactEvidenceStatusEvent"
+        recorded_time:
+          format: date-time
+          type: string
+        source_class:
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        source_url:
+          nullable: true
+          type: string
+        source_version:
+          nullable: true
+          type: string
+        span_end:
+          format: int64
+          nullable: true
+          type: integer
+        span_start:
+          format: int64
+          nullable: true
+          type: integer
+        subject_person_id:
+          format: int64
+          nullable: true
+          type: integer
+        subject_ref:
+          nullable: true
+          type: string
+        supported:
+          type: boolean
+      required:
+        - id
+        - evidence_key
+        - source_class
+        - directness
+        - authority
+        - source_ref
+        - source_url
+        - subject_ref
+        - excerpt
+        - content_sha256
+        - source_version
+        - event_time
+        - recorded_time
+        - identity_score
+        - supported
+        - created_at
+      type: object
+    PersonFactEvidenceResponse:
+      properties:
+        evidence:
+          items:
+            $ref: "#/components/schemas/PersonFactEvidence"
+          type: array
+      required:
+        - evidence
+      type: object
+    PersonFactEvidenceStatusEvent:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        evidence_key:
+          type: string
+        generation_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        source_version:
+          nullable: true
+          type: string
+        supported:
+          type: boolean
+      required:
+        - id
+        - generation_id
+        - evidence_key
+        - source_version
+        - supported
+        - reason
+        - created_at
+      type: object
+    PersonFactEvidenceStatusEventsResponse:
+      properties:
+        events:
+          items:
+            $ref: "#/components/schemas/PersonFactEvidenceStatusEvent"
+          type: array
+      required:
+        - events
+      type: object
+    PersonFactPinWrite:
+      properties:
+        projections:
+          items:
+            $ref: "#/components/schemas/ProjectionRef"
+          nullable: true
+          type: array
+        resolutions:
+          items:
+            $ref: "#/components/schemas/PersonFactResolutionResult"
+          nullable: true
+          type: array
+        state:
+          $ref: "#/components/schemas/PinState"
+      required:
+        - state
+        - resolutions
+        - projections
+      type: object
+    PersonFactPinsResponse:
+      properties:
+        pins:
+          items:
+            $ref: "#/components/schemas/PinState"
+          nullable: true
+          type: array
+      required:
+        - pins
+      type: object
+    PersonFactResolutionResult:
+      properties:
+        decisions:
+          items:
+            $ref: "#/components/schemas/PersonFactDecision"
+          nullable: true
+          type: array
+        id:
+          format: int64
+          type: integer
+        input_fingerprint:
+          type: string
+        projections:
+          items:
+            $ref: "#/components/schemas/ProjectionRef"
+          nullable: true
+          type: array
+        resolved_at:
+          format: date-time
+          type: string
+        resolver_version:
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetRef"
+      required:
+        - id
+        - target
+        - resolver_version
+        - input_fingerprint
+        - resolved_at
+        - decisions
+        - projections
+      type: object
+    PersonFactScoreBreakdown:
+      properties:
+        authority:
+          format: int64
+          type: integer
+        confidence:
+          format: int64
+          type: integer
+        corroboration:
+          format: int64
+          type: integer
+        directness:
+          format: int64
+          type: integer
+        freshness:
+          format: int64
+          type: integer
+        source_class:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - source_class
+        - directness
+        - authority
+        - confidence
+        - freshness
+        - corroboration
+        - total
+      type: object
     PersonFileProvenance:
       properties:
         directions:
@@ -7521,6 +7906,21 @@ components:
         - tracked
         - tracked_at
       type: object
+    PinState:
+      properties:
+        actor:
+          type: string
+        event_id:
+          format: int64
+          type: integer
+        pinned:
+          type: boolean
+        target:
+          $ref: "#/components/schemas/TargetRef"
+      required:
+        - target
+        - pinned
+      type: object
     PingInfo:
       properties:
         ok:
@@ -7546,6 +7946,17 @@ components:
       required:
         - done
         - total
+      type: object
+    ProjectionRef:
+      properties:
+        kind:
+          type: string
+        row_id:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - row_id
       type: object
     Provenance:
       properties:
@@ -8501,6 +8912,14 @@ components:
       required:
         - value
       type: object
+    SetPersonFactPinRequest:
+      additionalProperties: false
+      properties:
+        pinned:
+          type: boolean
+      required:
+        - pinned
+      type: object
     Setting:
       properties:
         group:
@@ -9209,6 +9628,67 @@ components:
         - cursor_before
         - cursor_after
       type: object
+    TargetDescriptor:
+      properties:
+        cardinality:
+          type: string
+        choices:
+          items:
+            $ref: "#/components/schemas/ChoiceDescriptor"
+          nullable: true
+          type: array
+        description:
+          type: string
+        fields:
+          items:
+            $ref: "#/components/schemas/FieldDescriptor"
+          nullable: true
+          type: array
+        key:
+          type: string
+        kind:
+          type: string
+        max_length:
+          format: int64
+          type: integer
+        record_target:
+          type: string
+        revision:
+          type: string
+        sensitive:
+          type: boolean
+        slug:
+          type: string
+        universal_id:
+          type: string
+        value_type:
+          type: string
+      required:
+        - kind
+        - key
+        - revision
+        - universal_id
+        - slug
+        - description
+        - value_type
+        - cardinality
+        - choices
+        - fields
+        - sensitive
+      type: object
+    TargetRef:
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+        revision:
+          type: string
+      required:
+        - kind
+        - key
+        - revision
+      type: object
     TaskIntegrationStatusResponse:
       properties:
         message:
@@ -9893,7 +10373,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.10.0
+  version: 2.11.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -17640,6 +18120,388 @@ paths:
       summary: List a person's employment history
       tags:
         - API
+  /api/v1/people/{id}/fact-claims:
+    get:
+      operationId: listPersonFactClaims
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactClaimsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact claims
+      tags:
+        - API
+  /api/v1/people/{id}/fact-decisions:
+    get:
+      operationId: listPersonFactDecisions
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactDecisionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact decisions
+      tags:
+        - API
+  /api/v1/people/{id}/fact-evidence:
+    get:
+      operationId: listPersonFactEvidence
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactEvidenceResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact evidence
+      tags:
+        - API
+  /api/v1/people/{id}/fact-evidence-status-events:
+    get:
+      operationId: listPersonFactEvidenceStatusEvents
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Restrict to one immutable evidence key
+          in: query
+          name: evidence_key
+          schema:
+            type: string
+        - description: Restrict to supported or unsupported events
+          in: query
+          name: supported
+          schema:
+            type: boolean
+        - description: Maximum events to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based event offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactEvidenceStatusEventsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List person fact evidence status history
+      tags:
+        - API
+  /api/v1/people/{id}/fact-pins:
+    get:
+      operationId: listPersonFactPins
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactPinsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List effective person fact pins
+      tags:
+        - API
+  /api/v1/people/{id}/fact-pins/{kind}/{key}:
+    put:
+      operationId: setPersonFactPin
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Closed person fact target kind
+          in: path
+          name: kind
+          required: true
+          schema:
+            enum:
+              - attribute
+              - employment
+            type: string
+        - description: Exact person fact target key
+          in: path
+          name: key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPersonFactPinRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactPinWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace an effective person fact pin
+      tags:
+        - API
   /api/v1/people/{id}/files/search:
     post:
       operationId: searchPersonFiles
@@ -18402,6 +19264,45 @@ paths:
       security:
         - apiKey: []
       summary: Replace a person's tracking state
+      tags:
+        - API
+  /api/v1/person-fact-targets:
+    get:
+      operationId: listPersonFactTargets
+      parameters:
+        - description: Include sensitive targets
+          in: query
+          name: include_sensitive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Catalog"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List eligible automatic person fact targets
       tags:
         - API
   /api/v1/person-merge-candidates/{candidate_id}/decision:

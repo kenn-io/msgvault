@@ -174,7 +174,7 @@ func (s *Store) ResumeAcceptedIdentityMatchCandidateContext(
 		}
 		return candidate, revision, false, nil
 	}
-	decidedBy := "system"
+	decidedBy := string(AttributeOwnershipSystem)
 	if candidate.DecidedBy != nil {
 		decidedBy = *candidate.DecidedBy
 	}
@@ -313,7 +313,7 @@ func (s *Store) ApplyAcceptedIdentityMatchesContext(ctx context.Context, limit i
 	applied := 0
 	for i := range candidates {
 		candidate := &candidates[i]
-		decidedBy := "system"
+		decidedBy := string(AttributeOwnershipSystem)
 		if candidate.DecidedBy != nil {
 			decidedBy = *candidate.DecidedBy
 		}

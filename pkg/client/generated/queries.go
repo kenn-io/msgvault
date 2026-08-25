@@ -676,6 +676,53 @@ type ListPersonEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonFactClaimsQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactDecisionsQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactEvidenceQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactEvidenceStatusEventsQuery struct {
+	// EvidenceKey Restrict to one immutable evidence key
+	EvidenceKey *string `json:"evidence_key,omitempty"`
+
+	// Supported Restrict to supported or unsupported events
+	Supported *bool `json:"supported,omitempty"`
+
+	// Limit Maximum events to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based event offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type ListPersonMergesQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`
@@ -691,6 +738,11 @@ type AppendPersonNoteQuery struct {
 
 type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
+}
+
+type ListPersonFactTargetsQuery struct {
+	// IncludeSensitive Include sensitive targets
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
 }
 
 type ListPersonRelationshipReviewsQuery struct {

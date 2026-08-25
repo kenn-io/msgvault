@@ -132,6 +132,8 @@ type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
+type SetPersonFactPinBody = SetPersonFactPinRequest
+
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
 
 type MergePersonsBody = MergePersonRequest

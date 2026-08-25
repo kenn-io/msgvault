@@ -147,6 +147,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	// Ensure directory exists (skip for in-memory databases)
 	if dbPath != ":memory:" && !strings.Contains(dbPath, ":memory:") {
 		dir := filepath.Dir(dbPath)
+		// #nosec G703 -- dbPath is the caller-selected database location; creating its parent is intentional.
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("create db directory: %w", err)
 		}
@@ -1225,6 +1226,19 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
+	}
+	// Organization domains written before IDNA normalization may still contain
+	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
+	// references with persisted roots and identifiers.
+	if err := s.runOnceMigration(
+		ctx, migrationOrganizationDomainIDNA, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.canonicalizeLegacyOrganizationDomains(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("canonicalize organization domains: %w", err)
 	}
 	// Recovery reads only acceptances whose link transaction may not have
 	// committed. Create this after the legacy-column loop: schema.sql is

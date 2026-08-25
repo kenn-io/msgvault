@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 )
 
 // One-time data migrations run by InitSchema and gated on the
@@ -48,6 +49,7 @@ const (
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	migrationIdentityMatchSourceSupport     = "identity_match_source_support_v1"
 	migrationVCardSourceResourceIdentity    = "vcard_source_resource_identity_v1"
+	migrationOrganizationDomainIDNA         = "organization_domain_idna_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.
@@ -56,6 +58,177 @@ const (
 	// FTS bookkeeping sweeps no longer requeue the archive.
 	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
 )
+
+type legacyOrganizationDomainIdentifier struct {
+	id, organizationID int64
+	stored, canonical  string
+	active             bool
+}
+
+func (s *Store) canonicalizeLegacyOrganizationDomains(
+	ctx context.Context, tx *loggedTx,
+) error {
+	affectedOrganizations := make(map[int64]struct{})
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, primary_domain
+		FROM organizations
+		WHERE primary_domain IS NOT NULL
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("list legacy organization primary domains: %w", err)
+	}
+	type primaryDomainUpdate struct {
+		id        int64
+		canonical string
+	}
+	var primaryUpdates []primaryDomainUpdate
+	for rows.Next() {
+		var id int64
+		var stored string
+		if err := rows.Scan(&id, &stored); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan legacy organization primary domain: %w", err)
+		}
+		canonical := NormalizeDomain(stored)
+		if canonical != "" && canonical != stored {
+			primaryUpdates = append(primaryUpdates, primaryDomainUpdate{id, canonical})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate legacy organization primary domains: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close legacy organization primary domains: %w", err)
+	}
+
+	for _, update := range primaryUpdates {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE organizations
+			SET primary_domain = ?
+			WHERE id = ?
+		`, update.canonical, update.id); err != nil {
+			return fmt.Errorf("canonicalize organization %d primary domain: %w", update.id, err)
+		}
+		affectedOrganizations[update.id] = struct{}{}
+	}
+
+	rows, err = tx.QueryContext(ctx, `
+		SELECT id, organization_id, normalized_value,
+		       active_until IS NULL AND superseded_at IS NULL AS active
+		FROM organization_identifiers
+		WHERE identifier_kind = 'domain'
+		ORDER BY organization_id, id
+	`)
+	if err != nil {
+		return fmt.Errorf("list legacy organization domain identifiers: %w", err)
+	}
+	var identifiers []legacyOrganizationDomainIdentifier
+	for rows.Next() {
+		var identifier legacyOrganizationDomainIdentifier
+		if err := rows.Scan(
+			&identifier.id, &identifier.organizationID, &identifier.stored,
+			&identifier.active,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan legacy organization domain identifier: %w", err)
+		}
+		identifier.canonical = NormalizeDomain(identifier.stored)
+		if identifier.canonical == "" {
+			continue
+		}
+		identifiers = append(identifiers, identifier)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate legacy organization domain identifiers: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close legacy organization domain identifiers: %w", err)
+	}
+
+	type collisionKey struct {
+		organizationID int64
+		canonical      string
+	}
+	winners := make(map[collisionKey]int)
+	var losers []int
+	for index, identifier := range identifiers {
+		if !identifier.active {
+			continue
+		}
+		key := collisionKey{identifier.organizationID, identifier.canonical}
+		winnerIndex, found := winners[key]
+		if !found {
+			winners[key] = index
+			continue
+		}
+		winner := identifiers[winnerIndex]
+		if identifier.stored == identifier.canonical && winner.stored != winner.canonical {
+			losers = append(losers, winnerIndex)
+			winners[key] = index
+			continue
+		}
+		losers = append(losers, index)
+	}
+
+	now := time.Now().UTC()
+	for _, index := range losers {
+		identifier := identifiers[index]
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE organization_identifiers
+			SET active_until = CASE
+			      WHEN active_from IS NULL OR active_from <= ? THEN ?
+			      ELSE active_until
+			    END,
+			    superseded_at = ?,
+			    updated_at = `+s.dialect.Now()+`
+			WHERE id = ?
+			  AND active_until IS NULL AND superseded_at IS NULL
+		`, now, now, now, identifier.id); err != nil {
+			return fmt.Errorf("retire colliding organization domain identifier %d: %w",
+				identifier.id, err)
+		}
+		affectedOrganizations[identifier.organizationID] = struct{}{}
+	}
+
+	for _, identifier := range identifiers {
+		if identifier.canonical == identifier.stored {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE organization_identifiers
+			SET normalized_value = ?
+			WHERE id = ?
+		`, identifier.canonical, identifier.id); err != nil {
+			return fmt.Errorf("canonicalize organization domain identifier %d: %w",
+				identifier.id, err)
+		}
+		if identifier.active {
+			affectedOrganizations[identifier.organizationID] = struct{}{}
+		}
+	}
+	organizationIDs := make([]int64, 0, len(affectedOrganizations))
+	for organizationID := range affectedOrganizations {
+		organizationIDs = append(organizationIDs, organizationID)
+	}
+	organizationPlaceholders, args := sortedIDPlaceholders(organizationIDs)
+	if organizationPlaceholders == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE organizations
+		SET revision = revision + 1, updated_at = `+s.dialect.Now()+`
+		WHERE id IN (`+organizationPlaceholders+`)
+	`, args...); err != nil {
+		return fmt.Errorf("bump canonicalized organization revisions: %w", err)
+	}
+	if err := s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, organizationIDs...); err != nil {
+		return err
+	}
+	return nil
+}
 
 // backfillLegacyIdentityMatchSourceSupport gives pre-support-table generated
 // candidates and evidence a conservative source marker. Their exact source is

@@ -2242,6 +2242,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{id}/fact-claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact claims */
+        get: operations["listPersonFactClaims"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact decisions */
+        get: operations["listPersonFactDecisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact evidence */
+        get: operations["listPersonFactEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-evidence-status-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List person fact evidence status history */
+        get: operations["listPersonFactEvidenceStatusEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-pins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List effective person fact pins */
+        get: operations["listPersonFactPins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-pins/{kind}/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace an effective person fact pin */
+        put: operations["setPersonFactPin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}/files/search": {
         parameters: {
             query?: never;
@@ -2419,6 +2521,23 @@ export interface paths {
         get: operations["getPersonTracking"];
         /** Replace a person's tracking state */
         put: operations["setPersonTracking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-fact-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List eligible automatic person fact targets */
+        get: operations["listPersonFactTargets"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3600,6 +3719,13 @@ export interface components {
         CardDAVSyncRequest: {
             full?: boolean;
         };
+        Catalog: {
+            fingerprint: string;
+            targets: components["schemas"]["TargetDescriptor"][] | null;
+            version: string;
+        } & {
+            [key: string]: unknown;
+        };
         ChangedMessageJSON: {
             /** Format: int64 */
             attachment_count: number;
@@ -3645,6 +3771,12 @@ export interface components {
             next_cursor: string;
             /** Format: date-time */
             server_time: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ChoiceDescriptor: {
+            label: string;
+            value: string;
         } & {
             [key: string]: unknown;
         };
@@ -3868,6 +4000,12 @@ export interface components {
         };
         CommunicationServicesResponse: {
             services: components["schemas"]["CommunicationService"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ConfidenceInputs: {
+            /** Format: int64 */
+            reported_score: number;
         } & {
             [key: string]: unknown;
         };
@@ -4640,6 +4778,14 @@ export interface components {
         ExploreUnavailableAction: {
             action: string;
             reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        FieldDescriptor: {
+            cardinality: string;
+            name: string;
+            required: boolean;
+            value_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -5875,6 +6021,158 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonFactClaim: {
+            claim_key: string;
+            confidence: components["schemas"]["ConfidenceInputs"];
+            /** Format: date-time */
+            created_at: string;
+            evidence_ids: number[] | null;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            id: number;
+            normalized_value?: string | null;
+            origin: string;
+            program_fingerprint: string;
+            program_id: string;
+            program_version: string;
+            relation: string;
+            submitted_value: string;
+            target: components["schemas"]["TargetRef"];
+            /** Format: date-time */
+            valid_from?: string | null;
+            /** Format: date-time */
+            valid_until?: string | null;
+            value_fingerprint?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactClaimsResponse: {
+            claims: components["schemas"]["PersonFactClaim"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactDecision: {
+            action: string;
+            claim_key: string;
+            competing_claim_key?: string;
+            /** Format: date-time */
+            created_at: string;
+            decision_key: string;
+            /** Format: int64 */
+            id: number;
+            projection?: components["schemas"]["ProjectionRef"];
+            reason: string;
+            /** Format: int64 */
+            resolution_id: number;
+            score: components["schemas"]["PersonFactScoreBreakdown"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactDecisionsResponse: {
+            decisions: components["schemas"]["PersonFactDecision"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidence: {
+            authority: string;
+            content_sha256: string | null;
+            /** Format: date-time */
+            created_at: string;
+            directness: string;
+            /** Format: date-time */
+            event_time: string;
+            evidence_key: string;
+            excerpt: string | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            identity_score: number;
+            latest_status?: components["schemas"]["PersonFactEvidenceStatusEvent"];
+            /** Format: date-time */
+            recorded_time: string;
+            source_class: string;
+            source_ref: string | null;
+            source_url: string | null;
+            source_version: string | null;
+            /** Format: int64 */
+            span_end?: number | null;
+            /** Format: int64 */
+            span_start?: number | null;
+            /** Format: int64 */
+            subject_person_id?: number | null;
+            subject_ref: string | null;
+            supported: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceResponse: {
+            evidence: components["schemas"]["PersonFactEvidence"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceStatusEvent: {
+            /** Format: date-time */
+            created_at: string;
+            evidence_key: string;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            id: number;
+            reason: string;
+            source_version: string | null;
+            supported: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceStatusEventsResponse: {
+            events: components["schemas"]["PersonFactEvidenceStatusEvent"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactPinWrite: {
+            projections: components["schemas"]["ProjectionRef"][] | null;
+            resolutions: components["schemas"]["PersonFactResolutionResult"][] | null;
+            state: components["schemas"]["PinState"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactPinsResponse: {
+            pins: components["schemas"]["PinState"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactResolutionResult: {
+            decisions: components["schemas"]["PersonFactDecision"][] | null;
+            /** Format: int64 */
+            id: number;
+            input_fingerprint: string;
+            projections: components["schemas"]["ProjectionRef"][] | null;
+            /** Format: date-time */
+            resolved_at: string;
+            resolver_version: string;
+            target: components["schemas"]["TargetRef"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactScoreBreakdown: {
+            /** Format: int64 */
+            authority: number;
+            /** Format: int64 */
+            confidence: number;
+            /** Format: int64 */
+            corroboration: number;
+            /** Format: int64 */
+            directness: number;
+            /** Format: int64 */
+            freshness: number;
+            /** Format: int64 */
+            source_class: number;
+            /** Format: int64 */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
         PersonFileProvenance: {
             directions: ("from_person" | "to_person" | "group")[] | null;
             participant_ids: number[] | null;
@@ -6380,6 +6678,15 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PinState: {
+            actor?: string;
+            /** Format: int64 */
+            event_id?: number;
+            pinned: boolean;
+            target: components["schemas"]["TargetRef"];
+        } & {
+            [key: string]: unknown;
+        };
         PingInfo: {
             ok: boolean;
             /** Format: int64 */
@@ -6394,6 +6701,13 @@ export interface components {
             done: number;
             /** Format: int64 */
             total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        ProjectionRef: {
+            kind: string;
+            /** Format: int64 */
+            row_id: number;
         } & {
             [key: string]: unknown;
         };
@@ -6823,6 +7137,9 @@ export interface components {
             source_ref?: string;
             value: components["schemas"]["AttributeValue"];
         };
+        SetPersonFactPinRequest: {
+            pinned: boolean;
+        };
         Setting: {
             /** @enum {string} */
             group: "browser" | "server" | "archive" | "search" | "sources" | "integrations";
@@ -7120,6 +7437,31 @@ export interface components {
             source_id: number;
             started_at: string;
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        TargetDescriptor: {
+            cardinality: string;
+            choices: components["schemas"]["ChoiceDescriptor"][] | null;
+            description: string;
+            fields: components["schemas"]["FieldDescriptor"][] | null;
+            key: string;
+            kind: string;
+            /** Format: int64 */
+            max_length?: number;
+            record_target?: string;
+            revision: string;
+            sensitive: boolean;
+            slug: string;
+            universal_id: string;
+            value_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        TargetRef: {
+            key: string;
+            kind: string;
+            revision: string;
         } & {
             [key: string]: unknown;
         };
@@ -16257,6 +16599,407 @@ export interface operations {
             };
         };
     };
+    listPersonFactClaims: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactClaimsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactDecisions: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactDecisionsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactEvidence: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactEvidenceResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactEvidenceStatusEvents: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one immutable evidence key */
+                evidence_key?: string;
+                /** @description Restrict to supported or unsupported events */
+                supported?: boolean;
+                /** @description Maximum events to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based event offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactEvidenceStatusEventsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactPins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactPinsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setPersonFactPin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+                /** @description Closed person fact target kind */
+                kind: "attribute" | "employment";
+                /** @description Exact person fact target key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPersonFactPinRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactPinWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     searchPersonFiles: {
         parameters: {
             query?: never;
@@ -17105,6 +17848,56 @@ export interface operations {
             };
             /** @description Error */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactTargets: {
+        parameters: {
+            query?: {
+                /** @description Include sensitive targets */
+                include_sensitive?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description Error */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

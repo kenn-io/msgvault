@@ -741,7 +741,20 @@ func (s *Store) restorePersonSplitRowsTx(
 	// Recreate deleted and removed deduplicated parent rows first. Existing dependent
 	// rows may need their merge-time foreign-key remaps reversed afterward.
 	slices.SortStableFunc(move, func(left, right personSplitJournalRow) int {
-		return personSplitRestorePriority(left.tableName) - personSplitRestorePriority(right.tableName)
+		priority := personSplitRestorePriority(left.tableName) -
+			personSplitRestorePriority(right.tableName)
+		if priority != 0 || left.tableName != "person_fact_pin_events" ||
+			right.tableName != "person_fact_pin_events" ||
+			!left.originalRowID.Valid || !right.originalRowID.Valid {
+			return priority
+		}
+		if left.originalRowID.Int64 < right.originalRowID.Int64 {
+			return -1
+		}
+		if left.originalRowID.Int64 > right.originalRowID.Int64 {
+			return 1
+		}
+		return 0
 	})
 	for _, row := range move {
 		if row.provenance == personMergeProvenanceDerived || row.action == "recomputed" {
@@ -1667,6 +1680,9 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 	columns := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns))
 	for _, column := range row.Columns {
+		if row.TableName == "person_fact_pin_events" && column.Name == "id" {
+			continue
+		}
 		if personSplitRevisionedTable(row.TableName) && column.Name == "updated_at" {
 			continue
 		}
@@ -1701,7 +1717,7 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 	}
 	table := personSplitIdentifier(row.TableName)
 	insert := `INSERT INTO ` + table
-	if s.IsPostgreSQL() {
+	if s.IsPostgreSQL() && row.TableName != "person_fact_pin_events" {
 		insert += ` (` + strings.Join(columns, ", ") + `) OVERRIDING SYSTEM VALUE`
 	} else {
 		insert += ` (` + strings.Join(columns, ", ") + `)`
@@ -1995,6 +2011,24 @@ func (s *Store) personSplitRestoredRowLocatorTx(
 	sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64,
 	sourceUID, newUID string,
 ) (sql.NullInt64, sql.NullString, bool, error) {
+	if spec.TableName == "person_fact_pin_events" {
+		var restoredID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM person_fact_pin_events
+			WHERE person_id = ? ORDER BY id DESC LIMIT 1`, newPersonID).Scan(&restoredID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return sql.NullInt64{}, sql.NullString{}, false, nil
+		}
+		if err != nil {
+			return sql.NullInt64{}, sql.NullString{}, false,
+				fmt.Errorf("locate restored person fact pin event: %w", err)
+		}
+		encoded, err := personMergeIntegerRowKey(spec.keyColumns(), restoredID)
+		if err != nil {
+			return sql.NullInt64{}, sql.NullString{}, false, err
+		}
+		return sql.NullInt64{Int64: restoredID, Valid: true},
+			sql.NullString{String: encoded, Valid: true}, true, nil
+	}
 	columnsByName := make(map[string]personMergeSnapshotColumn, len(row.Columns))
 	for _, column := range row.Columns {
 		columnsByName[column.Name] = column

@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -1125,6 +1126,7 @@ type storeAPIAdapter struct {
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
+var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -2093,6 +2095,49 @@ func (a *storeAPIAdapter) SetPersonTrackingContext(
 	ctx context.Context, id int64, tracked bool,
 ) (*store.PersonTracking, error) {
 	return a.store.SetPersonTrackingContext(ctx, id, tracked)
+}
+
+func (a *storeAPIAdapter) BuildPersonFactCatalogContext(
+	ctx context.Context, includeSensitive bool,
+) (personfacts.Catalog, error) {
+	return a.store.BuildPersonFactCatalogContext(ctx, includeSensitive)
+}
+
+func (a *storeAPIAdapter) ListPersonFactEvidenceContext(
+	ctx context.Context, personID int64, filter personfacts.EvidenceFilter,
+) ([]personfacts.Evidence, error) {
+	return a.store.ListPersonFactEvidenceContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactEvidenceStatusEventsContext(
+	ctx context.Context, personID int64, filter personfacts.EvidenceStatusFilter,
+) ([]personfacts.EvidenceStatusEvent, error) {
+	return a.store.ListPersonFactEvidenceStatusEventsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactClaimsContext(
+	ctx context.Context, personID int64, filter personfacts.ClaimFilter,
+) ([]personfacts.Claim, error) {
+	return a.store.ListPersonFactClaimsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
+	ctx context.Context, personID int64, filter personfacts.DecisionFilter,
+) ([]personfacts.Decision, error) {
+	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactPinsContext(
+	ctx context.Context, personID int64,
+) ([]personfacts.PinState, error) {
+	return a.store.ListPersonFactPinsContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) SetPersonFactPinContext(
+	ctx context.Context, personID int64, target personfacts.TargetRef,
+	pinned bool, actor string,
+) (*personfacts.PinWrite, error) {
+	return a.store.SetPersonFactPinContext(ctx, personID, target, pinned, actor)
 }
 
 func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Person, error) {

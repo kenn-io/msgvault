@@ -660,3 +660,69 @@ func TestUpdateEmploymentPreservesHistoricalStateWhenFlagsOmitted(t *testing.T) 
 		"an update that omits is_current and end_date must not resurrect a historical employment")
 	assert.False(updated.IsPrimary)
 }
+
+func TestEmploymentManualWritesRepinTarget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	person := mustPromotedPerson(t, st, "manual-pin@example.com", "manual-pin")
+	firstOrganization := mustOrganization(t, st, "Manual Pin One")
+	secondOrganization := mustOrganization(t, st, "Manual Pin Two")
+
+	first, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: firstOrganization.ID,
+		Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(false),
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), employmentPinEventCount(t, st, person.ID))
+
+	first, err = st.UpdateEmploymentContext(ctx, first.ID, first.Revision, store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: firstOrganization.ID,
+		Title: new("Senior Engineer"), Source: store.ProvenanceExtraction,
+		Confidence: new(0.9), IsPrimary: new(false),
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), employmentPinEventCount(t, st, person.ID))
+
+	first, err = st.UpdateEmploymentContext(ctx, first.ID, first.Revision, store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: firstOrganization.ID,
+		Title: new("Principal Engineer"), Source: store.ProvenanceUser,
+		IsPrimary: new(false),
+	})
+	require.NoError(err)
+	assert.Equal(int64(2), employmentPinEventCount(t, st, person.ID))
+
+	second, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: secondOrganization.ID,
+		Title: new("Advisor"), Source: store.ProvenanceEnrichment,
+		Confidence: new(0.8), IsPrimary: new(false),
+	})
+	require.NoError(err)
+	assert.Equal(int64(2), employmentPinEventCount(t, st, person.ID))
+
+	second, err = st.SetPrimaryEmploymentContext(ctx, second.ID, second.Revision)
+	require.NoError(err)
+	assert.Equal(int64(3), employmentPinEventCount(t, st, person.ID))
+
+	second, err = st.EndEmploymentContext(ctx, second.ID, second.Revision,
+		*mustPartialDate(t, "2026-01-15"))
+	require.NoError(err)
+	assert.Equal(int64(4), employmentPinEventCount(t, st, person.ID))
+
+	require.NoError(st.DeleteEmploymentContext(ctx, second.ID, second.Revision))
+	assert.Equal(int64(5), employmentPinEventCount(t, st, person.ID))
+	require.NoError(st.DeleteEmploymentContext(ctx, first.ID, first.Revision))
+	assert.Equal(int64(6), employmentPinEventCount(t, st, person.ID))
+}
+
+func employmentPinEventCount(t *testing.T, st *store.Store, personID int64) int64 {
+	t.Helper()
+	var count int64
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM person_fact_pin_events
+		WHERE person_id = ? AND target_kind = ? AND target_key = ?
+	`), personID, "employment", "system:employment").Scan(&count)
+	require.NoError(t, err)
+	return count
+}

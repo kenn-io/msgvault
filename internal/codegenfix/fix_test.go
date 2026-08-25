@@ -16,6 +16,12 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), "if f.MimeType != nil")
 	assertions.NotContains(string(got), "if p.Filename != nil")
 	assertions.NotContains(string(got), "if p.MimeType != nil")
+	assertions.NotContains(string(got), "if p.SourceRef != nil")
+	assertions.NotContains(string(got), "if p.SourceURL != nil")
+	assertions.NotContains(string(got), "if p.ContentSha256 != nil")
+	assertions.NotContains(string(got), "if p.SourceVersion != nil")
+	assertions.NotContains(string(got), "if p.SubjectRef != nil")
+	assertions.NotContains(string(got), "if p.Excerpt != nil")
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
@@ -100,7 +106,9 @@ func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
-		pointerValidatorFixture("PersonFileSearchRow", "p") + `
+		pointerValidatorFixture("PersonFileSearchRow", "p") +
+		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
+			"SourceRef", "SourceURL", "ContentSha256", "SourceVersion", "SubjectRef", "Excerpt") + `
 func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
@@ -148,4 +156,30 @@ func pointerValidatorFixture(typeName, receiver string) string {
 	}
 }
 `
+}
+
+func requiredStringPointerValidatorFixture(
+	typeName, receiver string, fields ...string,
+) string {
+	var result strings.Builder
+	result.WriteString("func (")
+	result.WriteString(receiver)
+	result.WriteString(" ")
+	result.WriteString(typeName)
+	result.WriteString(") Validate() error {\n\tvar errors runtime.ValidationErrors\n")
+	for _, field := range fields {
+		result.WriteString("\tif ")
+		result.WriteString(receiver)
+		result.WriteString(".")
+		result.WriteString(field)
+		result.WriteString(" != nil {\n\t\tif err := typesValidator.Var(")
+		result.WriteString(receiver)
+		result.WriteString(".")
+		result.WriteString(field)
+		result.WriteString(", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"")
+		result.WriteString(field)
+		result.WriteString("\", err)\n\t\t}\n\t}\n")
+	}
+	result.WriteString("}\n")
+	return result.String()
 }

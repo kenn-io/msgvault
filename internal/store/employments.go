@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 var (
@@ -79,16 +81,16 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 			if err := s.claimEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
 				return err
 			}
-			if err := s.verifyEmploymentReferencesTx(ctx, tx, input); err != nil {
-				return err
-			}
-			current := employmentCurrent(input)
-			primary, err := s.resolveEmploymentPrimaryTx(ctx, tx, input, current, 0)
+			var err error
+			employment, err = s.addEmploymentTx(ctx, tx, input)
 			if err != nil {
 				return err
 			}
-			employment, err = s.insertEmploymentTx(ctx, tx, input, current, primary)
-			return err
+			if input.Source.IsDeclared() {
+				return s.appendManualPersonFactEmploymentPinTx(
+					ctx, tx, input.PersonID, string(input.Source))
+			}
+			return nil
 		})
 		if err != nil {
 			return nil, err
@@ -127,55 +129,23 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 				ctx, tx, snapshot.PersonID, input.PersonID); err != nil {
 				return err
 			}
-			if err := s.verifyEmploymentReferencesTx(ctx, tx, input); err != nil {
-				return err
-			}
-			currentEmployment, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
+			projection := personfacts.ProjectionRef{Kind: personFactProjectionKindEmployment, RowID: id}
+			ownedBefore, err := ownsPersonFactProjectionTx(
+				ctx, tx, snapshot.PersonID, projection)
 			if err != nil {
 				return err
 			}
-			if currentEmployment.Revision != expectedRevision {
-				return ErrEmploymentRevisionConflict
-			}
-			current := employmentCurrent(input)
-			if input.IsCurrent == nil && input.EndDate == nil {
-				// Preserve the stored state: an update that mentions neither
-				// is_current nor an end date must not resurrect a historical
-				// employment.
-				current = currentEmployment.IsCurrent
-			}
-			var primary bool
-			if input.IsPrimary == nil {
-				// Preserve the stored flag: an update that omits is_primary must
-				// not promote as a side effect. Demote when it stops being
-				// current, matching EndEmploymentContext.
-				primary = currentEmployment.IsPrimary && current
-			} else {
-				primary, err = s.resolveEmploymentPrimaryTx(ctx, tx, input, current, id)
-				if err != nil {
-					return err
-				}
-			}
-			args := employmentWriteArgs(input, current, primary)
-			args = append(args, id, expectedRevision)
-			employment, err = s.employmentWriteWithConflictSavepointTx(
-				ctx, tx, input, current, id, func() (*Employment, error) {
-					return scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`
-						UPDATE employments SET person_id = ?, organization_id = ?, title = ?, title_normalized = ?,
-						role = ?, department = ?, location = ?, address_id = ?, description = ?,
-						start_year = ?, start_month = ?, start_day = ?, end_year = ?, end_month = ?, end_day = ?,
-						is_current = ?, is_primary = ?, source = ?, source_ref = ?, confidence = ?,
-						revision = revision + 1, updated_at = %s
-						WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), args...))
-				})
-			if errors.Is(err, sql.ErrNoRows) {
-				return s.employmentCASMissTx(ctx, tx, id)
-			}
+			employment, err = s.reviseEmploymentTx(ctx, tx, id, expectedRevision, input)
 			if err != nil {
-				if errors.Is(err, ErrEmploymentDuplicateActive) || errors.Is(err, ErrEmploymentPrimaryConflict) {
-					return err
+				return err
+			}
+			if input.Source.IsDeclared() || ownedBefore {
+				for _, personID := range sortedUniqueInt64s(snapshot.PersonID, input.PersonID) {
+					if err := s.appendManualPersonFactEmploymentPinTx(
+						ctx, tx, personID, string(input.Source)); err != nil {
+						return err
+					}
 				}
-				return fmt.Errorf("update employment %d: %w", id, err)
 			}
 			return nil
 		})
@@ -203,27 +173,12 @@ func (s *Store) EndEmploymentContext(ctx context.Context, id, expectedRevision i
 			if err := s.claimEmploymentPeopleTx(ctx, tx, snapshot.PersonID); err != nil {
 				return err
 			}
-			current, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
+			employment, err = s.endEmploymentTx(ctx, tx, id, expectedRevision, endDate)
 			if err != nil {
 				return err
 			}
-			if current.Revision != expectedRevision {
-				return ErrEmploymentRevisionConflict
-			}
-			if current.StartDate != nil && CompareAtSharedPrecision(endDate, *current.StartDate) < 0 {
-				return fmt.Errorf("%w: end date must not precede start date", ErrEmploymentInvalid)
-			}
-			args := append(PartialDateArgs(endDate), false, false, id, expectedRevision)
-			employment, err = scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`
-				UPDATE employments SET end_year = ?, end_month = ?, end_day = ?, is_current = ?, is_primary = ?,
-				revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), args...))
-			if errors.Is(err, sql.ErrNoRows) {
-				return s.employmentCASMissTx(ctx, tx, id)
-			}
-			if err != nil {
-				return fmt.Errorf("end employment %d: %w", id, err)
-			}
-			return nil
+			return s.appendManualPersonFactEmploymentPinTx(
+				ctx, tx, snapshot.PersonID, string(ProvenanceUser))
 		})
 		if err != nil {
 			return nil, err
@@ -271,7 +226,8 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if err != nil {
 			return fmt.Errorf("promote employment %d: %w", id, err)
 		}
-		return nil
+		return s.appendManualPersonFactEmploymentPinTx(
+			ctx, tx, current.PersonID, string(ProvenanceUser))
 	})
 	if err != nil {
 		return nil, err
@@ -307,7 +263,8 @@ func (s *Store) deleteEmploymentOnce(ctx context.Context, id, expectedRevision i
 		if err != nil {
 			return fmt.Errorf("delete employment %d: %w", id, err)
 		}
-		return nil
+		return s.appendManualPersonFactEmploymentPinTx(
+			ctx, tx, snapshot.PersonID, string(ProvenanceUser))
 	})
 }
 
@@ -461,6 +418,143 @@ func employmentCurrent(input EmploymentInput) bool {
 	return input.IsCurrent == nil && input.EndDate == nil || input.IsCurrent != nil && *input.IsCurrent
 }
 
+func (s *Store) addEmploymentTx(
+	ctx context.Context, tx *loggedTx, input EmploymentInput,
+) (*Employment, error) {
+	input, err := validateEmploymentInput(input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.verifyEmploymentReferencesTx(ctx, tx, input); err != nil {
+		return nil, err
+	}
+	current := employmentCurrent(input)
+	primary, err := s.resolveEmploymentPrimaryTx(ctx, tx, input, current, 0)
+	if err != nil {
+		return nil, err
+	}
+	return s.insertEmploymentTx(ctx, tx, input, current, primary)
+}
+
+func (s *Store) reviseEmploymentTx(
+	ctx context.Context, tx *loggedTx, id, expectedRevision int64, input EmploymentInput,
+) (*Employment, error) {
+	input, err := validateEmploymentInput(input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.verifyEmploymentReferencesTx(ctx, tx, input); err != nil {
+		return nil, err
+	}
+	currentEmployment, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
+	if err != nil {
+		return nil, err
+	}
+	if currentEmployment.Revision != expectedRevision {
+		return nil, ErrEmploymentRevisionConflict
+	}
+	current := employmentCurrent(input)
+	if input.IsCurrent == nil && input.EndDate == nil {
+		// Preserve the stored state: an update that mentions neither
+		// is_current nor an end date must not resurrect a historical row.
+		current = currentEmployment.IsCurrent
+	}
+	var primary bool
+	if input.IsPrimary == nil {
+		// Preserve the stored flag and demote only when the row stops being
+		// current, matching endEmploymentTx.
+		primary = currentEmployment.IsPrimary && current
+	} else {
+		primary, err = s.resolveEmploymentPrimaryTx(ctx, tx, input, current, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args := employmentWriteArgs(input, current, primary)
+	args = append(args, id, expectedRevision)
+	employment, err := s.employmentWriteWithConflictSavepointTx(
+		ctx, tx, input, current, id, func() (*Employment, error) {
+			return scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`
+				UPDATE employments SET person_id = ?, organization_id = ?, title = ?, title_normalized = ?,
+				role = ?, department = ?, location = ?, address_id = ?, description = ?,
+				start_year = ?, start_month = ?, start_day = ?, end_year = ?, end_month = ?, end_day = ?,
+				is_current = ?, is_primary = ?, source = ?, source_ref = ?, confidence = ?,
+				revision = revision + 1, updated_at = %s
+				WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), args...))
+		})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, s.employmentCASMissTx(ctx, tx, id)
+	}
+	if err != nil {
+		if errors.Is(err, ErrEmploymentDuplicateActive) || errors.Is(err, ErrEmploymentPrimaryConflict) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("update employment %d: %w", id, err)
+	}
+	return employment, nil
+}
+
+func (s *Store) endEmploymentTx(
+	ctx context.Context, tx *loggedTx, id, expectedRevision int64, endDate PartialDate,
+) (*Employment, error) {
+	if err := validateEmploymentDate(endDate, "end"); err != nil {
+		return nil, err
+	}
+	current, err := getEmploymentForUpdateTx(ctx, tx, s.dialect, id)
+	if err != nil {
+		return nil, err
+	}
+	if current.Revision != expectedRevision {
+		return nil, ErrEmploymentRevisionConflict
+	}
+	return s.endEmploymentLockedTx(ctx, tx, current, endDate, nil)
+}
+
+type employmentProjectionEnd struct {
+	Source     Provenance
+	SourceRef  string
+	Confidence float64
+}
+
+func (s *Store) endEmploymentProjectionTx(
+	ctx context.Context, tx *loggedTx, current *Employment, endDate PartialDate,
+	source Provenance, sourceRef string, confidence float64,
+) (*Employment, error) {
+	if err := validateEmploymentDate(endDate, "end"); err != nil {
+		return nil, err
+	}
+	return s.endEmploymentLockedTx(ctx, tx, current, endDate, &employmentProjectionEnd{
+		Source: source, SourceRef: sourceRef, Confidence: confidence,
+	})
+}
+
+func (s *Store) endEmploymentLockedTx(
+	ctx context.Context, tx *loggedTx, current *Employment, endDate PartialDate,
+	projection *employmentProjectionEnd,
+) (*Employment, error) {
+	if current.StartDate != nil && CompareAtSharedPrecision(endDate, *current.StartDate) < 0 {
+		return nil, fmt.Errorf("%w: end date must not precede start date", ErrEmploymentInvalid)
+	}
+	args := append(PartialDateArgs(endDate), false, false)
+	setProjection := ""
+	if projection != nil {
+		setProjection = ", source = ?, source_ref = ?, confidence = ?"
+		args = append(args, projection.Source, projection.SourceRef, projection.Confidence)
+	}
+	args = append(args, current.ID, current.Revision)
+	employment, err := scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`
+		UPDATE employments SET end_year = ?, end_month = ?, end_day = ?, is_current = ?, is_primary = ?%s,
+		revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ? RETURNING %s`,
+		setProjection, s.dialect.Now(), employmentColumns), args...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, s.employmentCASMissTx(ctx, tx, current.ID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("end employment %d: %w", current.ID, err)
+	}
+	return employment, nil
+}
+
 func (s *Store) verifyEmploymentReferencesTx(ctx context.Context, tx *loggedTx, input EmploymentInput) error {
 	var exists bool
 	organization, err := getOrganizationForUpdateTx(
@@ -483,15 +577,23 @@ func (s *Store) verifyEmploymentReferencesTx(ctx context.Context, tx *loggedTx, 
 	return nil
 }
 
-// claimEmploymentPeopleTx is the single gate every employment mutation passes
-// through before touching a row. It locks each affected person in ascending ID
-// order so two writes over the same pair cannot deadlock, and bumps their
-// vCard projection revision: a person's snapshot carries their employments and
-// each employer's full profile, so any employment write changes their
-// projection and must be visible to a concurrent envelope commit. Doing both
-// here rather than at the five call sites means a sixth employment mutation
-// cannot acquire the lock and forget the bump.
+// claimEmploymentPeopleTx is the gate for public employment mutations. It
+// locks each affected person in ascending ID order so two writes over the same
+// pair cannot deadlock, and bumps their vCard projection revision: a person's
+// snapshot carries their employments and each employer's full profile, so any
+// employment write changes their projection. Automatic fact projection uses
+// lockEmploymentPeopleTx directly because the outer fact transaction owns its
+// single vCard bump.
 func (s *Store) claimEmploymentPeopleTx(
+	ctx context.Context, tx *loggedTx, personIDs ...int64,
+) error {
+	if err := s.lockEmploymentPeopleTx(ctx, tx, personIDs...); err != nil {
+		return err
+	}
+	return s.bumpPersonVCardProjectionsTx(ctx, tx, personIDs...)
+}
+
+func (s *Store) lockEmploymentPeopleTx(
 	ctx context.Context, tx *loggedTx, personIDs ...int64,
 ) error {
 	ids := append([]int64(nil), personIDs...)
@@ -513,7 +615,39 @@ func (s *Store) claimEmploymentPeopleTx(
 		}
 		previous = personID
 	}
-	return s.bumpPersonVCardProjectionsTx(ctx, tx, ids...)
+	return nil
+}
+
+func sortedUniqueInt64s(values ...int64) []int64 {
+	result := append([]int64(nil), values...)
+	slices.Sort(result)
+	return slices.Compact(result)
+}
+
+func (s *Store) appendManualPersonFactEmploymentPinTx(
+	ctx context.Context, tx *loggedTx, personID int64, actor string,
+) error {
+	target, err := personFactEmploymentTargetRef()
+	if err != nil {
+		return err
+	}
+	_, err = s.appendPersonFactPinEventTx(ctx, tx, personID, target, true, actor)
+	return err
+}
+
+func personFactEmploymentTargetRef() (personfacts.TargetRef, error) {
+	catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
+	if err != nil {
+		return personfacts.TargetRef{}, err
+	}
+	for _, target := range catalog.Targets {
+		if target.Kind == personfacts.TargetEmployment {
+			return personfacts.TargetRef{
+				Kind: target.Kind, Key: target.Key, Revision: target.Revision,
+			}, nil
+		}
+	}
+	return personfacts.TargetRef{}, errors.New("employment fact target is unavailable")
 }
 
 func (s *Store) resolveEmploymentPrimaryTx(ctx context.Context, tx *loggedTx, input EmploymentInput, current bool, excludeID int64) (bool, error) {

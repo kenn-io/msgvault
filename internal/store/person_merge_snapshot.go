@@ -213,6 +213,37 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: personMergeReviewCandidatesTableName, KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("survivor_person_id")},
 	},
+	// Fact-ledger history remains scoped to the person whose identity produced
+	// it, so an absorbed person's ledger cascades with that root. Explicit pin
+	// events are profile state, however, and must survive an exact split.
+	"person_fact_generations": {
+		TableName: "person_fact_generations", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_evidence": {
+		TableName: "person_fact_evidence", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_claims": {
+		TableName: "person_fact_claims", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_evidence_status_events": {
+		TableName: "person_fact_evidence_status_events", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_resolutions": {
+		TableName: "person_fact_resolutions", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_decisions": {
+		TableName: "person_fact_decisions", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"person_fact_pin_events": {
+		TableName: "person_fact_pin_events", KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
 	"person_names": {
 		TableName: "person_names", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
