@@ -202,10 +202,30 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
 
     await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
-    const theme = screen.getByRole('combobox', { name: /^Temporary theme:/ });
+    const theme = screen.getByRole('button', { name: 'Change theme (current: System)' });
     theme.focus();
     await Promise.resolve();
     expect(document.activeElement).toBe(theme);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('keeps the Kit theme toggle in sync with the session appearance override', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false,
+      appearanceDefaults: { theme: 'system', density: 'compact' }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Change theme (current: System)' }));
+
+    expect(screen.getByRole('button', { name: 'Change theme (current: Light)' })).toBeDefined();
+    expect(JSON.parse(sessionStorage.getItem('msgvault.appearance.override') ?? '{}')).toEqual({
+      theme: 'light'
+    });
 
     rendered.unmount();
     state.destroy();

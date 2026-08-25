@@ -1,8 +1,10 @@
 <script lang="ts">
   import {
     CommandPalette,
+    getThemeMode,
     SelectDropdown,
     StatusDot,
+    ThemeToggle,
     TopBar,
     appShortcuts,
     initShortcuts,
@@ -176,12 +178,6 @@
     { id: 'deletions', label: 'Deletions' },
     { id: 'settings', label: 'Settings' }
   ];
-  const themeOptions = [
-    { value: 'daemon', label: 'Theme: Auto' },
-    { value: 'system', label: 'Theme: System' },
-    { value: 'light', label: 'Theme: Light' },
-    { value: 'dark', label: 'Theme: Dark' }
-  ];
   const densityOptions = [
     { value: 'daemon', label: 'Density: Auto' },
     { value: 'compact', label: 'Density: Compact' },
@@ -241,6 +237,12 @@
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
+  });
+
+  $effect(() => {
+    const mode = getThemeMode();
+    if (mode === appearance.current.theme) return;
+    untrack(() => appearance.setTemporary({ theme: mode as ThemePreference }));
   });
 
   $effect(() => {
@@ -659,11 +661,6 @@
     commandRegistry.find(({ id }) => id === command.id)?.run();
   }
 
-  function applyTemporaryTheme(value: string): void {
-    if (value === 'daemon') appearance.clearTemporary('theme');
-    else appearance.setTemporary({ theme: value as ThemePreference });
-  }
-
   function applyTemporaryDensity(value: string): void {
     if (value === 'daemon') appearance.clearTemporary('density');
     else appearance.setTemporary({ density: value as DensityPreference });
@@ -848,14 +845,8 @@
       <div class="brand" aria-label="msgvault home"><span aria-hidden="true">◇</span> msgvault</div>
     {/snippet}
     {#snippet right()}
-      <div class="appearance-controls" aria-label="Temporary appearance override">
-        <SelectDropdown
-          title="Temporary theme"
-          value={appearance.temporary.theme ?? 'daemon'}
-          options={themeOptions}
-          align="end"
-          onchange={applyTemporaryTheme}
-        />
+      <div class="appearance-controls" aria-label="Appearance controls">
+        <ThemeToggle />
         <SelectDropdown
           title="Temporary density"
           value={appearance.temporary.density ?? 'daemon'}
