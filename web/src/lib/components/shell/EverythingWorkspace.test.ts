@@ -55,7 +55,8 @@ describe('EverythingWorkspace', () => {
     state.replaceTransient({ query: 'vacation plans', searchMode: 'semantic' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByText('More matches may exist')).toBeDefined();
+    expect(await screen.findByText(/Results limited\./)).toBeDefined();
+    expect(screen.queryByText('Warning')).toBeNull();
     expect(screen.getByText(/from:alice@example\.com/)).toBeDefined();
     expect(screen.getByText(/after:2025-01-01/)).toBeDefined();
     expect(screen.getByText(/label:important/)).toBeDefined();

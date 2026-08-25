@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, KbdBadge, Notice, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, KbdBadge, SearchInput } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -516,13 +516,18 @@
   </form>
 
   {#if loader.result?.candidatePoolSaturated}
-    <Notice
-      tone="warning"
-      title="More matches may exist"
-      message="Narrow the search with an operator such as from:alice@example.com, after:2025-01-01, or label:important."
-      actionLabel="Refine search"
-      onaction={() => searchInput?.focus()}
-    />
+    <div class="search-limit" role="status">
+      <p>
+        <span class="search-limit__title">Results limited.</span>
+        Narrow with from:alice@example.com, after:2025-01-01, or label:important.
+      </p>
+      <Button
+        label="Refine search"
+        size="sm"
+        surface="soft"
+        onclick={() => searchInput?.focus()}
+      />
+    </div>
   {/if}
 
   {#if session.coverage}
@@ -766,6 +771,33 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+
+  .search-limit {
+    display: flex;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-inset);
+    border: var(--border-width) solid var(--border-muted);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+
+  .search-limit p {
+    min-width: 0;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .search-limit__title {
+    margin-right: var(--space-1);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
   }
 
   .results-split {
