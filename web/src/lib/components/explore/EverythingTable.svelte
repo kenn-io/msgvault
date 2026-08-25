@@ -672,8 +672,7 @@
   }
 
   .table-grid:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: -2px;
+    outline: none;
   }
 
   /* Column headers speak the small-caps label voice; the sheen under the
@@ -748,6 +747,10 @@
 
   .data-row--active {
     box-shadow: inset 2px 0 0 var(--accent-blue);
+  }
+
+  .table-grid:focus-visible .data-row--active:not(.data-row--selected):not(.data-row--inspected) {
+    background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
   .data-row--selected {
