@@ -55,7 +55,7 @@ describe('SavedViewsWorkspace', () => {
     await screen.findByText('No Saved Views yet');
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save current view' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await screen.findByRole('heading', { name: 'Invoices' });
     const body = await requests[1]!.clone().json();

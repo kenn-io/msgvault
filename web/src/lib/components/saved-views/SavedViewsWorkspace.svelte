@@ -220,15 +220,15 @@
 </script>
 
 <main class="saved-views" aria-label="Saved Views">
-  <header><div><p>Archive workspace</p><h1>Saved Views</h1></div><span>Shared daemon state</span></header>
+  <header><div><p>Archive workspace</p><h1>Saved Views</h1></div></header>
 
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
-  <Card padding="sm">
+  <Card padding="sm" title="Save this view" meta="Shared across sessions">
     <form class="create" onsubmit={(event) => { event.preventDefault(); void createView(); }}>
-      <label>Name<TextInput bind:value={name} autocomplete="off" /></label>
-      <label>Description<TextInput bind:value={description} autocomplete="off" /></label>
-      <Button type="submit" tone="workflow" surface="solid" label="Save current view" disabled={saving || !name.trim()} />
+      <TextInput ariaLabel="Name" placeholder="View name" bind:value={name} autocomplete="off" block />
+      <TextInput ariaLabel="Description" placeholder="Description (optional)" bind:value={description} autocomplete="off" block />
+      <Button type="submit" tone="workflow" surface="solid" label="Save" disabled={saving || !name.trim()} />
     </form>
   </Card>
 
@@ -280,18 +280,20 @@
 {/if}
 
 <style>
-  .saved-views { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
-  header, .create, article, .actions { display: flex; align-items: center; gap: var(--space-3); }
-  header { justify-content: space-between; }
+  .saved-views { display: flex; width: 100%; max-width: 1080px; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); margin-inline: auto; padding: var(--space-5) var(--space-6); }
+  header, article, .actions { display: flex; align-items: center; gap: var(--space-3); }
   header p, h1, h2, article p { margin: 0; }
   header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  header span, article p { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .create { display: flex; align-items: center; gap: var(--space-3); }
+  article p { color: var(--text-muted); font-size: var(--font-size-xs); }
+  .create { display: grid; grid-template-columns: minmax(11rem, .8fr) minmax(15rem, 1.2fr) auto; align-items: center; gap: var(--space-2); }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
   .view-list { display: grid; gap: var(--space-2); }
   article { justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
   .view-copy { display: grid; min-width: 12rem; gap: var(--space-1); }
   .notice { padding: var(--space-2) var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); background: var(--bg-subtle); }
   .notice--error { border-color: var(--accent-red); color: var(--text-danger); }
-  @media (max-width: 760px) { .create, article { align-items: stretch; flex-direction: column; } }
+  @media (max-width: 760px) {
+    .create { grid-template-columns: 1fr; }
+    article { align-items: stretch; flex-direction: column; }
+  }
 </style>
