@@ -5,12 +5,16 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 func nextDocumentVectorWorkerOwner() string {
@@ -47,6 +51,21 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 	if limit < 1 || limit > 1000 {
 		return vectordocument.ReconcileResult{}, errors.New("document vector operation limit must be between 1 and 1000")
 	}
+	generation, err := st.GetDocumentVectorGeneration(ctx, generationID)
+	if err != nil {
+		return vectordocument.ReconcileResult{}, err
+	}
+	if generation.State == store.DocumentVectorGenerationRetired {
+		backend, closeBackend, err := openDocumentVectorCleanupBackend(ctx, st, cfg.DatabaseDSN())
+		if err != nil {
+			return vectordocument.ReconcileResult{}, err
+		}
+		defer func() { _ = closeBackend() }()
+		reconciler := vectordocument.NewReconciler(vectordocument.ReconcilerDeps{
+			Ledger: st, Backend: backend, Now: func() time.Time { return time.Now().UTC() },
+		})
+		return reconciler.Run(ctx, vectordocument.GenerationID(generationID), limit)
+	}
 	vf, err := setupVectorFeatures(ctx, st, cfg.DatabaseDSN(), false)
 	if err != nil {
 		return vectordocument.ReconcileResult{}, err
@@ -56,6 +75,25 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 	}
 	defer func() { _ = vf.Close() }()
 	return runDocumentVectorWithFeatures(ctx, st, vf, generationID, limit)
+}
+
+func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, mainPath string) (vectordocument.Backend, func() error, error) {
+	if store.IsPostgresURL(mainPath) {
+		backend, err := pgvector.DocumentBackendForDB(st.DB())
+		if err != nil {
+			return nil, nil, fmt.Errorf("open pgvector document cleanup backend: %w", err)
+		}
+		return backend, func() error { return nil }, nil
+	}
+	vectorPath := cfg.Vector.DBPath
+	if vectorPath == "" {
+		vectorPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+	}
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: vectorPath})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open document cleanup backend: %w", err)
+	}
+	return backend.DocumentBackend(), backend.Close, nil
 }
 
 func runDocumentVectorWithFeatures(ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int) (vectordocument.ReconcileResult, error) {

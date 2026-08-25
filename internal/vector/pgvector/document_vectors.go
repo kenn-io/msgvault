@@ -33,6 +33,16 @@ func (b *Backend) DocumentBackend() *DocumentBackend {
 	return &DocumentBackend{db: b.db}
 }
 
+// DocumentBackendForDB returns a non-owning document-vector backend for an
+// already initialized PostgreSQL database. It is used by cleanup operations
+// that must not initialize an embedding provider or rerun backend migrations.
+func DocumentBackendForDB(db *sql.DB) (*DocumentBackend, error) {
+	if db == nil {
+		return nil, errors.New("pgvector document backend database is required")
+	}
+	return &DocumentBackend{db: db}, nil
+}
+
 func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID document.GenerationID, dimension int, embeddings []document.Embedding) error {
 	if err := validatePGDocumentPut(generationID, dimension, embeddings); err != nil {
 		return err

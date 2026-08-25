@@ -28,10 +28,11 @@ func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.
 	require.NoError(err)
 	normalized, err := docbankdocument.NormalizeDocument(docbankdocument.SourceDocument{
 		Family: "pdf", UnitKind: "page", Units: []docbankdocument.SourceUnit{{
-			Index: 0, Markdown: "# Evidence\n\nStored identity",
+			Index: 0, Markdown: "# Evidence\n\n" + strings.Repeat("stored identity evidence ", 300),
 		}},
 	}, policy)
 	require.NoError(err)
+	require.Greater(len(normalized.Chunks), 1)
 	publication := publicationFor(t, claim, normalized.Chunks[0].Text, normalized.Chunks[0].Checksum)
 	publication.ManifestChecksum = normalized.Checksum
 	publication.NormalizationVersion = normalized.PolicyVersion
@@ -46,20 +47,28 @@ func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.
 		CharCount: normalized.Units[0].CharCount, Truncated: normalized.Units[0].Truncated,
 		HeadingMarks: normalized.Units[0].HeadingMarks,
 	}
-	publication.Chunks[0].Key = normalized.Chunks[0].Key
-	publication.Chunks[0].HeadingPath = normalized.Chunks[0].HeadingPath
-	publication.Chunks[0].Truncated = normalized.Chunks[0].Truncated
-	publication.Chunks[0].Spans[0] = store.DocumentPublishedSpan{
-		UnitIndex: normalized.Chunks[0].Spans[0].UnitIndex,
-		CharStart: normalized.Chunks[0].Spans[0].CharStart,
-		CharEnd:   normalized.Chunks[0].Spans[0].CharEnd,
+	publication.Chunks = make([]store.DocumentPublishedChunk, len(normalized.Chunks))
+	for index, chunk := range normalized.Chunks {
+		publication.Chunks[index] = store.DocumentPublishedChunk{
+			Key: chunk.Key, Ordinal: chunk.Ordinal, Text: chunk.Text,
+			HeadingPath: chunk.HeadingPath, Checksum: chunk.Checksum,
+			CharCount: chunk.CharCount, Truncated: chunk.Truncated,
+			Spans: []store.DocumentPublishedSpan{{
+				UnitIndex: chunk.Spans[0].UnitIndex,
+				CharStart: chunk.Spans[0].CharStart,
+				CharEnd:   chunk.Spans[0].CharEnd,
+			}},
+		}
 	}
 	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publication))
 
+	logs := captureAttachmentQueryLogs(t)
 	loaded, err := f.Store.LoadNormalizedDocument(t.Context(), claim.ExtractionID)
 
 	require.NoError(err)
 	assert.Equal(normalized, loaded)
+	assert.Equal(1, strings.Count(logs.String(), "FROM document_chunk_spans"),
+		"normalized document loading must fetch every chunk span in one query")
 }
 
 func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T) {

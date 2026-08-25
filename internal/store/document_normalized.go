@@ -130,30 +130,37 @@ func (s *Store) LoadNormalizedDocument(ctx context.Context, extractionID string)
 	if err := chunkRows.Close(); err != nil {
 		return document.NormalizedDocument{}, fmt.Errorf("close normalized document chunks: %w", err)
 	}
+	chunkIndexes := make(map[string]int, len(normalized.Chunks))
 	for index := range normalized.Chunks {
-		chunk := &normalized.Chunks[index]
-		spanRows, err := s.db.QueryContext(ctx, s.Rebind(`
-			SELECT unit_index, start_char, end_char
-			FROM document_chunk_spans
-			WHERE extraction_id = ? AND chunk_key = ? ORDER BY span_ordinal`), extractionID, chunk.Key)
-		if err != nil {
-			return document.NormalizedDocument{}, fmt.Errorf("read normalized document chunk spans: %w", err)
-		}
-		for spanRows.Next() {
-			var span document.ChunkSpan
-			if err := spanRows.Scan(&span.UnitIndex, &span.CharStart, &span.CharEnd); err != nil {
-				_ = spanRows.Close()
-				return document.NormalizedDocument{}, fmt.Errorf("scan normalized document chunk span: %w", err)
-			}
-			chunk.Spans = append(chunk.Spans, span)
-		}
-		if err := spanRows.Err(); err != nil {
+		chunkIndexes[normalized.Chunks[index].Key] = index
+	}
+	spanRows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT chunk_key, unit_index, start_char, end_char
+		FROM document_chunk_spans
+		WHERE extraction_id = ? ORDER BY chunk_key, span_ordinal`), extractionID)
+	if err != nil {
+		return document.NormalizedDocument{}, fmt.Errorf("read normalized document chunk spans: %w", err)
+	}
+	for spanRows.Next() {
+		var chunkKey string
+		var span document.ChunkSpan
+		if err := spanRows.Scan(&chunkKey, &span.UnitIndex, &span.CharStart, &span.CharEnd); err != nil {
 			_ = spanRows.Close()
-			return document.NormalizedDocument{}, fmt.Errorf("iterate normalized document chunk spans: %w", err)
+			return document.NormalizedDocument{}, fmt.Errorf("scan normalized document chunk span: %w", err)
 		}
-		if err := spanRows.Close(); err != nil {
-			return document.NormalizedDocument{}, fmt.Errorf("close normalized document chunk spans: %w", err)
+		index, ok := chunkIndexes[chunkKey]
+		if !ok {
+			_ = spanRows.Close()
+			return document.NormalizedDocument{}, fmt.Errorf("normalized document chunk span references unknown chunk %q", chunkKey)
 		}
+		normalized.Chunks[index].Spans = append(normalized.Chunks[index].Spans, span)
+	}
+	if err := spanRows.Err(); err != nil {
+		_ = spanRows.Close()
+		return document.NormalizedDocument{}, fmt.Errorf("iterate normalized document chunk spans: %w", err)
+	}
+	if err := spanRows.Close(); err != nil {
+		return document.NormalizedDocument{}, fmt.Errorf("close normalized document chunk spans: %w", err)
 	}
 	if err := document.ValidateNormalizedDocument(normalized); err != nil {
 		return document.NormalizedDocument{}, fmt.Errorf("validate stored normalized document: %w", err)

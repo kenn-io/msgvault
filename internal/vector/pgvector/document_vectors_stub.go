@@ -4,6 +4,7 @@ package pgvector
 
 import (
 	"context"
+	"database/sql"
 
 	"go.kenn.io/msgvault/internal/vector/document"
 )
@@ -14,6 +15,8 @@ type DocumentBackend struct{}
 var _ document.Backend = (*DocumentBackend)(nil)
 
 func (b *Backend) DocumentBackend() *DocumentBackend { return &DocumentBackend{} }
+
+func DocumentBackendForDB(*sql.DB) (*DocumentBackend, error) { return nil, ErrNotBuilt }
 
 func (b *DocumentBackend) PutUnpublished(context.Context, document.GenerationID, int, []document.Embedding) error {
 	return ErrNotBuilt

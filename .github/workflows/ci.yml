@@ -506,6 +506,7 @@ jobs:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test
           POSTGRES_DB: msgvault_test
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
         ports:
           - 5432:5432
         options: >-
