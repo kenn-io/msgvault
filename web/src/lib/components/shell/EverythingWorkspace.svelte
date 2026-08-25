@@ -482,7 +482,7 @@
     </div>
     <p class="result-count" aria-live="polite" data-mono>
       {#if loader.result?.candidatePoolSaturated}
-        Results limited
+        {loader.rows.length.toLocaleString()} {loader.rows.length === 1 ? 'result' : 'results'} shown
       {:else if loader.result?.totalCount !== undefined}
         {loader.result.totalCount.toLocaleString()} items
       {:else}
@@ -518,7 +518,7 @@
   {#if loader.result?.candidatePoolSaturated}
     <div class="search-limit" role="status">
       <p>
-        <span class="search-limit__title">Results limited.</span>
+        <span class="search-limit__title">More results may match.</span>
         Narrow with from:alice@example.com, after:2025-01-01, or label:important.
       </p>
       <Button

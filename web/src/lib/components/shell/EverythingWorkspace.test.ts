@@ -49,13 +49,17 @@ describe('EverythingWorkspace', () => {
         status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
         cache_revision: 'cache-1', actions: []
       });
-      return Response.json(exploreResponse({ candidate_pool_saturated: true }));
+      return Response.json(exploreResponse({
+        rows: [entry(1), entry(2)],
+        candidate_pool_saturated: true
+      }));
     });
     const state = new ExploreState(window);
     state.replaceTransient({ query: 'vacation plans', searchMode: 'semantic' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByText(/Results limited\./)).toBeDefined();
+    expect(await screen.findByText('2 results shown')).toBeDefined();
+    expect(screen.getByText(/More results may match\./)).toBeDefined();
     expect(screen.queryByText('Warning')).toBeNull();
     expect(screen.getByText(/from:alice@example\.com/)).toBeDefined();
     expect(screen.getByText(/after:2025-01-01/)).toBeDefined();
