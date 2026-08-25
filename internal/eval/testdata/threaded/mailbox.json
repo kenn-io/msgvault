@@ -1,0 +1,129 @@
+{
+  "description": "A tiny msgvault-shaped mailbox: real In-Reply-To/References chains, quoted replies, varied dates and multiple participants. Deliberately unlike the flat, one-message-per-document TREC legal collection, so it exercises the threading behaviour that corpus cannot reach.",
+  "messages": [
+    {
+      "message_id": "<t1-a@example.com>",
+      "conversation_id": "thread-renewal",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-12T09:14:00Z",
+      "from": "dana@northwind.example",
+      "to": ["priya@contoso.example"],
+      "cc": [],
+      "subject": "Warehouse lease renewal - terms for 2027",
+      "body": "Priya,\n\nThe Dock Street warehouse lease expires in March 2027. The landlord has proposed a 9% uplift and a five-year term with no break clause.\n\nCan we discuss before the board pack goes out?\n\nDana"
+    },
+    {
+      "message_id": "<t1-b@example.com>",
+      "conversation_id": "thread-renewal",
+      "in_reply_to": "<t1-a@example.com>",
+      "references": ["<t1-a@example.com>"],
+      "date": "2026-01-12T11:02:00Z",
+      "from": "priya@contoso.example",
+      "to": ["dana@northwind.example"],
+      "cc": ["marcus@contoso.example"],
+      "subject": "Re: Warehouse lease renewal - terms for 2027",
+      "body": "A 9% uplift is above the index. I would counter at 4% and insist on a break at year three.\n\nAdding Marcus for the finance view.\n\nPriya\n\nOn 12 Jan 2026, Dana wrote:\n> The Dock Street warehouse lease expires in March 2027. The landlord has\n> proposed a 9% uplift and a five-year term with no break clause.\n> Can we discuss before the board pack goes out?"
+    },
+    {
+      "message_id": "<t1-c@example.com>",
+      "conversation_id": "thread-renewal",
+      "in_reply_to": "<t1-b@example.com>",
+      "references": ["<t1-a@example.com>", "<t1-b@example.com>"],
+      "date": "2026-01-13T08:40:00Z",
+      "from": "marcus@contoso.example",
+      "to": ["priya@contoso.example", "dana@northwind.example"],
+      "cc": [],
+      "subject": "Re: Warehouse lease renewal - terms for 2027",
+      "body": "Finance can support 4%. Anything above 6% breaches the facilities budget envelope.\n\nMarcus\n\n> A 9% uplift is above the index. I would counter at 4% and insist on a\n> break at year three.\n>> The Dock Street warehouse lease expires in March 2027. The landlord has\n>> proposed a 9% uplift and a five-year term with no break clause."
+    },
+    {
+      "message_id": "<t1-d@example.com>",
+      "conversation_id": "thread-renewal",
+      "in_reply_to": "<t1-c@example.com>",
+      "references": ["<t1-a@example.com>", "<t1-b@example.com>", "<t1-c@example.com>"],
+      "date": "2026-01-19T16:25:00Z",
+      "from": "dana@northwind.example",
+      "to": ["priya@contoso.example", "marcus@contoso.example"],
+      "cc": [],
+      "subject": "Re: Warehouse lease renewal - terms for 2027",
+      "body": "Landlord accepted 4.5% with a break at year three. Signing Friday.\n\nDana\n\n> Finance can support 4%. Anything above 6% breaches the facilities budget\n> envelope.\n>> A 9% uplift is above the index. I would counter at 4% and insist on a\n>> break at year three."
+    },
+
+    {
+      "message_id": "<t2-a@example.com>",
+      "conversation_id": "thread-forklift",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-02-03T07:55:00Z",
+      "from": "ops@northwind.example",
+      "to": ["dana@northwind.example"],
+      "cc": [],
+      "subject": "Forklift servicing schedule",
+      "body": "Annual servicing for the three counterbalance forklifts is booked for 18 February. The Dock Street warehouse floor will be partly closed that morning."
+    },
+    {
+      "message_id": "<t2-b@example.com>",
+      "conversation_id": "thread-forklift",
+      "in_reply_to": "<t2-a@example.com>",
+      "references": ["<t2-a@example.com>"],
+      "date": "2026-02-03T09:31:00Z",
+      "from": "dana@northwind.example",
+      "to": ["ops@northwind.example"],
+      "cc": [],
+      "subject": "Re: Forklift servicing schedule",
+      "body": "Fine. Please avoid the week the lease renewal signing happens.\n\n> Annual servicing for the three counterbalance forklifts is booked for\n> 18 February. The Dock Street warehouse floor will be partly closed."
+    },
+
+    {
+      "message_id": "<t3-a@example.com>",
+      "conversation_id": "thread-insurance",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-03-06T13:10:00Z",
+      "from": "broker@sureline.example",
+      "to": ["marcus@contoso.example"],
+      "cc": [],
+      "subject": "Property insurance renewal quotation",
+      "body": "Attached is the property insurance quotation covering the Dock Street warehouse for the 2027 policy year. Premium is up 3% year on year."
+    },
+    {
+      "message_id": "<t3-b@example.com>",
+      "conversation_id": "thread-insurance",
+      "in_reply_to": "<t3-a@example.com>",
+      "references": ["<t3-a@example.com>"],
+      "date": "2026-03-09T10:05:00Z",
+      "from": "marcus@contoso.example",
+      "to": ["broker@sureline.example"],
+      "cc": ["priya@contoso.example"],
+      "subject": "Re: Property insurance renewal quotation",
+      "body": "Noted, 3% is acceptable. Please confirm the sum insured reflects the new racking.\n\n> Attached is the property insurance quotation covering the Dock Street\n> warehouse for the 2027 policy year. Premium is up 3% year on year."
+    },
+
+    {
+      "message_id": "<t4-a@example.com>",
+      "conversation_id": "thread-offsite",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-04-21T18:47:00Z",
+      "from": "priya@contoso.example",
+      "to": ["marcus@contoso.example", "dana@northwind.example"],
+      "cc": [],
+      "subject": "Team offsite - venue options",
+      "body": "Three venue options for the June offsite. None of them are warehouses. Please rank by Friday."
+    },
+
+    {
+      "message_id": "<t5-a@example.com>",
+      "conversation_id": "thread-newsletter",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-05-02T06:00:00Z",
+      "from": "news@logisticsweekly.example",
+      "to": ["dana@northwind.example"],
+      "cc": [],
+      "subject": "Logistics Weekly: warehouse lease rates hit five-year high",
+      "body": "This week: warehouse lease rates hit a five-year high, forklift safety recalls, and an interview on break clauses. Unsubscribe at any time."
+    }
+  ]
+}
