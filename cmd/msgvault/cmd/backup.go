@@ -489,10 +489,24 @@ func (c *daemonRestoreTargetCoordinator) newRestoreTargetLease(
 	targetKind pinnedRestoreTargetKind,
 ) (*daemonRestoreTargetLease, error) {
 	databaseFileName := backupapp.New(Version).DBFileName()
-	databaseInfo, err := root.Stat(databaseFileName)
+	databaseFile, err := root.Open(databaseFileName)
 	databaseExisted := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("inspect database before restore publication: %w", err)
+	}
+	var databaseInfo fs.FileInfo
+	if databaseExisted {
+		databaseInfo, err = databaseFile.Stat()
+		closeErr := databaseFile.Close()
+		if err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("inspect database before restore publication: %w", err),
+				closeErr,
+			)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close database after restore inspection: %w", closeErr)
+		}
 	}
 	lease := &daemonRestoreTargetLease{
 		targetRoot:        root,

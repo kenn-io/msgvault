@@ -522,20 +522,16 @@ func TestDaemonRestoreTargetLeaseRefusesToRemovePublishedDatabase(t *testing.T) 
 	databasePath := filepath.Join(target, "msgvault.db")
 	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
 		"seed current database")
-	databaseInfo, err := os.Stat(databasePath)
-	require.NoError(err, "inspect current database")
 
 	root, err := os.OpenRoot(target)
 	require.NoError(err, "pin restore target")
 	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
-	lease := &daemonRestoreTargetLease{
-		targetRoot:           root,
-		databaseFileName:     "msgvault.db",
-		databaseInfo:         databaseInfo,
-		databaseExisted:      true,
-		resetTargetVector:    true,
+	coordinator := &daemonRestoreTargetCoordinator{
+		overwrite:            true,
 		configuredVectorPath: databasePath,
 	}
+	lease, err := coordinator.newRestoreTargetLease(root, pinnedRestoreTargetDataDir)
+	require.NoError(err, "capture pre-restore database identity")
 	replacementPath := filepath.Join(target, "replacement.db")
 	require.NoError(os.WriteFile(replacementPath, []byte("restored database"), 0o600),
 		"write replacement database")
