@@ -3092,6 +3092,12 @@ components:
         succeeded:
           format: int64
           type: integer
+        tombstone_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
       required:
         - started_at
         - method

@@ -2935,6 +2935,11 @@ components:
         succeeded:
           format: int64
           type: integer
+        tombstone_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
       required:
         - started_at
         - method
