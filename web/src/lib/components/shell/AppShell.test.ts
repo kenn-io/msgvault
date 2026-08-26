@@ -232,6 +232,26 @@ describe('AppShell', () => {
   });
 
 
+  it('restores the daemon theme after a temporary Kit theme selection', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false,
+      appearanceDefaults: { theme: 'dark', density: 'compact' }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Change theme (current: Dark)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use daemon theme' }));
+
+    expect(screen.getByRole('button', { name: 'Change theme (current: Dark)' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Use daemon theme' })).toBeNull();
+    expect(sessionStorage.getItem('msgvault.appearance.override')).toBeNull();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+
   it('renders every archive management destination from primary navigation', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

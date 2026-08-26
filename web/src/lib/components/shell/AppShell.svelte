@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    Button,
     CommandPalette,
     getThemeMode,
     SelectDropdown,
@@ -847,6 +848,14 @@
     {#snippet right()}
       <div class="appearance-controls" aria-label="Appearance controls">
         <ThemeToggle />
+        {#if appearance.temporary.theme !== undefined}
+          <Button
+            size="sm"
+            surface="soft"
+            label="Use daemon theme"
+            onclick={() => appearance.clearTemporary('theme')}
+          />
+        {/if}
         <SelectDropdown
           title="Temporary density"
           value={appearance.temporary.density ?? 'daemon'}

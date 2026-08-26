@@ -118,6 +118,20 @@ describe('LinkIdentityDialog', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(3));
   });
 
+  it('clears a prior selection when the editable Typeahead field is empty', async () => {
+    const { onConfirm } = renderDialog();
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
+    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
+
+    const input = await openTypeahead('Search people to link');
+
+    expect(input.value).toBe('');
+    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it('disables the confirm action until a result is selected', async () => {
     renderDialog();
     expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', true);
