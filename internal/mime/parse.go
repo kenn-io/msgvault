@@ -14,6 +14,12 @@ import (
 	"github.com/jhillyerd/enmime"
 )
 
+const fallbackContentType = "application/octet-stream"
+
+var envelopeParser = enmime.NewParser(
+	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
+)
+
 // Message represents a parsed email message.
 type Message struct {
 	Subject string
@@ -59,7 +65,7 @@ type Attachment struct {
 
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
-	env, err := enmime.ReadEnvelope(bytes.NewReader(raw))
+	env, err := envelopeParser.ReadEnvelope(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: %w", err)
 	}
@@ -106,6 +112,40 @@ func Parse(raw []byte) (*Message, error) {
 	}
 
 	return msg, nil
+}
+
+func parseMediaTypeLenient(value string) (
+	mediaType string,
+	params map[string]string,
+	invalidParams []string,
+	err error,
+) {
+	//nolint:staticcheck // SetCustomParseMediaType requires enmime's tolerant four-result parser.
+	mediaType, params, invalidParams, err = enmime.ParseMediaType(value)
+	if err == nil {
+		return mediaType, params, invalidParams, nil
+	}
+
+	params = salvageMediaTypeParams(value)
+	if params["boundary"] != "" {
+		return "", nil, nil, fmt.Errorf("parse media type: %w", err)
+	}
+
+	return fallbackContentType, params, nil, nil
+}
+
+func salvageMediaTypeParams(value string) map[string]string {
+	separator := strings.IndexByte(value, ';')
+	if separator < 0 {
+		return nil
+	}
+
+	//nolint:staticcheck // SetCustomParseMediaType requires enmime's tolerant four-result parser.
+	_, params, _, err := enmime.ParseMediaType(fallbackContentType + value[separator:])
+	if err != nil {
+		return nil
+	}
+	return params
 }
 
 // parseAddressList parses an address header using enmime's AddressList method.

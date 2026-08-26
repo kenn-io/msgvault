@@ -1869,6 +1869,43 @@ func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
 	assert.Equal("application/pdf", mimeType, "attachment mime_type")
 }
 
+func TestFullSync_InvalidPartContentType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	raw := testemail.NewMessage().
+		Subject("Statement ready").
+		Body("Attached is a synthetic statement.").
+		WithAttachment(
+			"statement.pdf",
+			"cannot open (No such file or directory)",
+			[]byte("synthetic pdf bytes"),
+		).
+		CRLF().
+		Bytes()
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.AddMessage("msg-invalid-content-type", raw, []string{"INBOX"})
+	withAttachmentsDir(t, env)
+
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
+	assertBodyContains(t, env.Store, "msg-invalid-content-type", "Attached is a synthetic statement.")
+	assertAttachmentCount(t, env.Store, 1)
+
+	results, total, err := env.Store.SearchMessages("Statement ready", 0, 10)
+	require.NoError(err)
+	require.Equal(int64(1), total)
+	require.Len(results, 1)
+	assert.Equal("Statement ready", results[0].Subject)
+
+	filename, mimeType, err := env.Store.InspectAttachment("msg-invalid-content-type")
+	require.NoError(err)
+	assert.Equal("statement.pdf", filename)
+	assert.Equal("application/octet-stream", mimeType)
+}
+
 func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
