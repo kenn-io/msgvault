@@ -1892,15 +1892,19 @@ func TestWorkerAsyncPollCommitRechecksConsentAndReturnedSuppression(t *testing.T
 				},
 			}
 			sink := &recordingSink{inner: f.store}
+			workerNow := time.Now().UTC()
+			options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
+			options.Clock = func() time.Time { return workerNow }
 			worker, err := personenrichment.NewWorker(
 				f.store, sink, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 				map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
 					return provider, nil
-				}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}))
+				}}, options)
 			requirements.NoError(err)
 			processed, err := worker.RunOnce(t.Context(), f.run.ID)
 			requirements.NoError(err)
 			requirements.True(processed)
+			workerNow = time.Now().UTC().Add(time.Minute)
 			done := make(chan error, 1)
 			go func() {
 				processed, runErr := worker.RunOnce(t.Context(), f.run.ID)
