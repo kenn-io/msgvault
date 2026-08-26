@@ -876,7 +876,11 @@ func finishCodexProcess(
 		}
 	}
 	if !stderrJoined && client != nil {
-		stderrErr = client.finalStderrError()
+		var joined bool
+		joined, stderrErr = client.waitForStderr(context.Background(), codexProcessExitGrace)
+		if !joined {
+			stderrErr = errors.New("codex app-server stderr drain did not finish")
+		}
 	}
 	if killSucceeded && errors.Is(stderrErr, errCodexStderrRead) {
 		stderrErr = nil
@@ -951,6 +955,16 @@ func (execCommandStarter) Start(
 	command := exec.Command(executable.verifiedPath, args...) //nolint:gosec // The gate owns this absolute private snapshot.
 	command.Env = slices.Clone(env)
 	command.Dir = dir
+	processTree, err := newCodexAppServerProcessTree(command)
+	if err != nil {
+		return nil, err
+	}
+	processTreeOwned := true
+	defer func() {
+		if processTreeOwned {
+			_ = processTree.close()
+		}
+	}()
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return nil, errors.New("create codex app-server stdin")
@@ -966,28 +980,53 @@ func (execCommandStarter) Start(
 	if err := command.Start(); err != nil {
 		return nil, errors.New("start codex app-server executable")
 	}
-	return &execRPCProcess{command: command, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+	if err := processTree.attach(command); err != nil {
+		_ = processTree.terminate(command)
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return nil, err
+	}
+	processTreeOwned = false
+	return &execRPCProcess{
+		command: command, stdin: stdin, stdout: stdout, stderr: stderr, processTree: processTree,
+	}, nil
 }
 
 type execRPCProcess struct {
-	command  *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   io.ReadCloser
-	stderr   io.ReadCloser
-	waitOnce sync.Once
-	waitErr  error
+	command     *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	stderr      io.ReadCloser
+	processTree *codexAppServerProcessTree
+	waitOnce    sync.Once
+	waitErr     error
 }
 
 func (p *execRPCProcess) Stdin() io.WriteCloser { return p.stdin }
 func (p *execRPCProcess) Stdout() io.ReadCloser { return p.stdout }
 func (p *execRPCProcess) Stderr() io.ReadCloser { return p.stderr }
 func (p *execRPCProcess) Wait() error {
-	p.waitOnce.Do(func() { p.waitErr = p.command.Wait() })
+	p.waitOnce.Do(func() {
+		p.waitErr = p.command.Wait()
+		if p.processTree != nil {
+			terminateErr := p.processTree.terminate(p.command)
+			closeErr := p.processTree.close()
+			if p.waitErr == nil && terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
+				p.waitErr = terminateErr
+			}
+			if p.waitErr == nil && closeErr != nil {
+				p.waitErr = closeErr
+			}
+		}
+	})
 	return p.waitErr
 }
 func (p *execRPCProcess) Kill() error {
 	if p.command.Process == nil {
 		return nil
+	}
+	if p.processTree != nil {
+		return p.processTree.terminate(p.command)
 	}
 	return p.command.Process.Kill()
 }

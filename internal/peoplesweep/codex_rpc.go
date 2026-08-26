@@ -386,14 +386,6 @@ func (c *CodexRPCClient) checkStderr() error {
 	return c.stderrErr
 }
 
-func (c *CodexRPCClient) finalStderrError() error {
-	if c.stderrDone == nil {
-		return nil
-	}
-	<-c.stderrDone
-	return c.checkStderr()
-}
-
 func (c *CodexRPCClient) waitForStderr(ctx context.Context, grace time.Duration) (bool, error) {
 	if c == nil || c.stderrDone == nil {
 		return true, nil

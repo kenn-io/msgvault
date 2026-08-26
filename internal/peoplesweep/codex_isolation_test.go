@@ -338,6 +338,41 @@ func TestCodexVersionTimeoutClosesDescendantStdout(t *testing.T) {
 	checks.NoFileExists(lateMarker, "stdout-holding descendant must be terminated")
 }
 
+// TestCodexAppServerCleanupTerminatesDescendantProcess catches app-server
+// cleanup killing only the parent while a descendant retains the stderr pipe.
+func TestCodexAppServerCleanupTerminatesDescendantProcess(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	lateMarker := filepath.Join(t.TempDir(), "late-app-server-descendant-marker")
+	executable, _ := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
+		version: codexIsolationFixtureVersion, mode: "app-server-descendant", marker: lateMarker,
+	})
+	process, err := NewCodexCommandStarter().Start(
+		t.Context(), CodexExecutable{sourcePath: executable, verifiedPath: executable},
+		[]string{"app-server"}, scrubCodexEnvironment(os.Environ()), t.TempDir(),
+	)
+	must.NoError(err)
+	client := &CodexRPCClient{Process: process}
+	must.NoError(client.initialize())
+
+	readyMarker := lateMarker + ".ready"
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, statErr := os.Stat(readyMarker); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			must.FailNow("app-server fixture did not start its descendant")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	started := time.Now()
+	must.NoError(finishCodexProcess(t.Context(), process, client, true))
+	checks.Less(time.Since(started), 900*time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
+	checks.NoFileExists(lateMarker, "app-server cleanup must terminate stderr-holding descendants")
+}
+
 // TestCodexReleasedFixtureRequiresExactVersion catches a matching digest being
 // accepted after its --version output drifts from the registry-owned value.
 func TestCodexReleasedFixtureRequiresExactVersion(t *testing.T) {

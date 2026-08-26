@@ -6,11 +6,62 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+type codexAppServerProcessTree struct {
+	mu     sync.Mutex
+	handle windows.Handle
+	closed bool
+}
+
+func newCodexAppServerProcessTree(command *exec.Cmd) (*codexAppServerProcessTree, error) {
+	job, err := newWindowsCodexVersionJob()
+	if err != nil {
+		return nil, fmt.Errorf("create Codex app-server process tree: %w", err)
+	}
+	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
+	return &codexAppServerProcessTree{handle: job.handle}, nil
+}
+
+func (tree *codexAppServerProcessTree) attach(command *exec.Cmd) error {
+	if err := assignWindowsCodexVersionJob(tree.handle, command.Process); err != nil {
+		return fmt.Errorf("assign Codex app-server process tree: %w", err)
+	}
+	if err := resumeWindowsCodexVersionProcess(uint32(command.Process.Pid)); err != nil {
+		return fmt.Errorf("resume Codex app-server process: %w", err)
+	}
+	return nil
+}
+
+func (tree *codexAppServerProcessTree) terminate(*exec.Cmd) error {
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+	if tree.closed {
+		return os.ErrProcessDone
+	}
+	if err := windows.TerminateJobObject(tree.handle, 1); err != nil {
+		return fmt.Errorf("terminate Codex app-server process tree: %w", err)
+	}
+	return nil
+}
+
+func (tree *codexAppServerProcessTree) close() error {
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+	if tree.closed {
+		return nil
+	}
+	tree.closed = true
+	if err := windows.CloseHandle(tree.handle); err != nil {
+		return fmt.Errorf("close Codex app-server process tree: %w", err)
+	}
+	return nil
+}
 
 type windowsCodexVersionJob struct {
 	handle windows.Handle

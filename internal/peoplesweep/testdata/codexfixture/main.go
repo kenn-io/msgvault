@@ -27,6 +27,16 @@ func main() {
 		runVersion(marker)
 		return
 	}
+	if mode == "app-server-descendant" {
+		command := exec.Command(os.Args[0], "fixture-descendant")
+		command.Stderr = os.Stderr
+		if err := command.Start(); err != nil {
+			os.Exit(1)
+		}
+		_ = os.WriteFile(string(marker)+".ready", []byte("ready"), 0o600)
+		time.Sleep(10 * time.Second)
+		return
+	}
 	if len(marker) > 0 {
 		_ = os.WriteFile(string(marker), []byte("app-server"), 0o600)
 	}
