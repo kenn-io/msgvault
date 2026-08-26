@@ -42,6 +42,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
+	scoped := *s
+	scoped.store = s.store.ScopedToSync(source.ID, syncID)
+	s = &scoped
 	summary.SyncRunID = syncID
 
 	// Defer failure handling — recover from panics and return as error

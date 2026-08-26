@@ -243,6 +243,90 @@ CREATE TABLE IF NOT EXISTS person_tracking (
     tracked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Immutable, commit-ordered discovery for tracked-person archive changes.
+-- The locked singleton row makes allocation order equal transaction commit
+-- order and rolls allocation back with an aborted source mutation.
+CREATE TABLE IF NOT EXISTS person_sweep_change_clock (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    sequence BIGINT NOT NULL CHECK (sequence >= 0),
+    enabled BOOLEAN NOT NULL
+);
+
+INSERT INTO person_sweep_change_clock (singleton, sequence, enabled)
+VALUES (TRUE, 0, TRUE)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS person_sweep_changes (
+    sequence BIGINT PRIMARY KEY CHECK (sequence > 0),
+    person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    source_lane TEXT NOT NULL CHECK (source_lane IN (
+        'conversation_text', 'meeting_text', 'attachment_caption',
+        'attachment_ocr', 'document_text'
+    )),
+    change_kind TEXT NOT NULL CHECK (change_kind IN (
+        'upsert', 'delete', 'scope', 'tracking', 'publication'
+    )),
+    evidence_effect TEXT NOT NULL DEFAULT '' CHECK (evidence_effect IN (
+        '', 'source-deleted', 'source-edited', 'scope-unlinked',
+        'identity-reassigned', 'source-reimported', 'scope-relinked'
+    )),
+    source_id BIGINT,
+    message_id BIGINT,
+    attachment_id BIGINT,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    recorded_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_changes_person_sequence
+    ON person_sweep_changes(person_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_changes_source_sequence
+    ON person_sweep_changes(source_id, sequence);
+
+CREATE TABLE IF NOT EXISTS person_sweep_work (
+    person_id                 BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    dirty_through_sequence    BIGINT NOT NULL CHECK (dirty_through_sequence >= 0),
+    available_at              TIMESTAMPTZ NOT NULL,
+    attempt_count             INTEGER NOT NULL CHECK (attempt_count >= 0),
+    last_failure_class        TEXT NOT NULL DEFAULT '',
+    lease_owner               TEXT NOT NULL DEFAULT '',
+    lease_until               TIMESTAMPTZ,
+    lease_fence               BIGINT NOT NULL CHECK (lease_fence >= 0),
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_work_available
+    ON person_sweep_work(available_at, person_id);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_work_lease
+    ON person_sweep_work(lease_until, person_id);
+
+CREATE TABLE IF NOT EXISTS person_sweep_cursors (
+    person_id                   BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    source_lane                 TEXT NOT NULL CHECK (source_lane IN (
+        'conversation_text', 'meeting_text', 'attachment_caption',
+        'attachment_ocr', 'document_text'
+    )),
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    optimistic_sequence         BIGINT NOT NULL CHECK (optimistic_sequence >= 0),
+    optimistic_document_key     TEXT NOT NULL DEFAULT '',
+    reconcile_upper_key         TEXT NOT NULL,
+    reconcile_after_key         TEXT NOT NULL,
+    reconcile_document_key      TEXT NOT NULL DEFAULT '',
+    reconciliation_complete     BOOLEAN NOT NULL,
+    backstop_upper_key           TEXT NOT NULL DEFAULT '',
+    backstop_after_key           TEXT NOT NULL DEFAULT '',
+    backstop_document_key        TEXT NOT NULL DEFAULT '',
+    last_backstop_at            TIMESTAMPTZ,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (person_id, source_lane, program_fingerprint, catalog_fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_cursors_incomplete
+    ON person_sweep_cursors(person_id)
+    WHERE reconciliation_complete = FALSE;
+
 CREATE TABLE IF NOT EXISTS person_inference_profiles (
     fingerprint          TEXT PRIMARY KEY,
     provider_kind        TEXT NOT NULL,
@@ -350,6 +434,108 @@ CREATE TABLE IF NOT EXISTS person_fact_generations (
     resolved_at                 TIMESTAMPTZ NOT NULL,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, generation_key)
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_runs (
+    id                          TEXT PRIMARY KEY,
+    kind                        TEXT NOT NULL CHECK (kind IN ('scheduled', 'manual')),
+    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop')),
+    status                      TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    provider_fingerprint        TEXT NOT NULL,
+    attempt_count               INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    success_count               INTEGER NOT NULL DEFAULT 0 CHECK (success_count >= 0),
+    failure_count               INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    projected_write_count       INTEGER NOT NULL DEFAULT 0 CHECK (projected_write_count >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         BIGINT NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        BIGINT NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       BIGINT NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    started_at                  TIMESTAMPTZ NOT NULL,
+    completed_at                TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_attempts (
+    id                          TEXT PRIMARY KEY,
+    run_id                      TEXT NOT NULL REFERENCES person_sweep_runs(id) ON DELETE CASCADE,
+    person_id                   BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    lease_fence                 BIGINT NOT NULL CHECK (lease_fence >= 0),
+    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop')),
+    status                      TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'cancelled')),
+    failure_class               TEXT NOT NULL DEFAULT '' CHECK (failure_class IN (
+        '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
+        'provider_http', 'invalid_output', 'archive_gap', 'internal'
+    )),
+    cursor_envelope_json        TEXT NOT NULL,
+    envelope_hash               TEXT NOT NULL,
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    provider_fingerprint        TEXT NOT NULL,
+    generation_id               BIGINT REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    generation_key              TEXT NOT NULL DEFAULT '',
+    seed_count                   INTEGER NOT NULL DEFAULT 0 CHECK (seed_count >= 0),
+    context_count                INTEGER NOT NULL DEFAULT 0 CHECK (context_count >= 0),
+    claim_count                  INTEGER NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
+    decision_count               INTEGER NOT NULL DEFAULT 0 CHECK (decision_count >= 0),
+    projected_write_count       INTEGER NOT NULL DEFAULT 0 CHECK (projected_write_count >= 0),
+    request_count                INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    provider_request_id         TEXT NOT NULL DEFAULT '',
+    input_tokens                BIGINT NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+    output_tokens               BIGINT NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+    estimated_cost_micro_usd    BIGINT NOT NULL DEFAULT 0 CHECK (estimated_cost_micro_usd >= 0),
+    latency_milliseconds        BIGINT NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
+    retry_at                    TIMESTAMPTZ,
+    started_at                  TIMESTAMPTZ NOT NULL,
+    completed_at                TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_person_started
+    ON person_sweep_attempts(person_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_run
+    ON person_sweep_attempts(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_generation
+    ON person_sweep_attempts(generation_id);
+
+CREATE TABLE IF NOT EXISTS person_sweep_batches (
+    attempt_id                  TEXT NOT NULL REFERENCES person_sweep_attempts(id) ON DELETE CASCADE,
+    batch_ordinal               INTEGER NOT NULL CHECK (batch_ordinal >= 0),
+    utc_day                     TEXT NOT NULL,
+    reservation_id              TEXT NOT NULL,
+    budget_fingerprint          TEXT NOT NULL,
+    input_hash                  TEXT NOT NULL,
+    item_count                  INTEGER NOT NULL CHECK (item_count >= 0),
+    status                      TEXT NOT NULL CHECK (status IN ('reserved', 'running', 'succeeded', 'failed', 'cancelled')),
+    provider_request_id         TEXT NOT NULL DEFAULT '',
+    reserved_requests           INTEGER NOT NULL CHECK (reserved_requests >= 0),
+    reserved_input_tokens       BIGINT NOT NULL CHECK (reserved_input_tokens >= 0),
+    reserved_output_tokens      BIGINT NOT NULL CHECK (reserved_output_tokens >= 0),
+    reserved_cost_micro_usd     BIGINT NOT NULL CHECK (reserved_cost_micro_usd >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         BIGINT NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        BIGINT NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       BIGINT NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    latency_milliseconds        BIGINT NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
+    failure_class               TEXT NOT NULL DEFAULT '' CHECK (failure_class IN (
+        '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
+        'provider_http', 'invalid_output', 'archive_gap', 'internal'
+    )),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at                TIMESTAMPTZ,
+    PRIMARY KEY (attempt_id, batch_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_daily_usage (
+    utc_day                     TEXT PRIMARY KEY,
+    reserved_requests           INTEGER NOT NULL DEFAULT 0 CHECK (reserved_requests >= 0),
+    reserved_input_tokens       BIGINT NOT NULL DEFAULT 0 CHECK (reserved_input_tokens >= 0),
+    reserved_output_tokens      BIGINT NOT NULL DEFAULT 0 CHECK (reserved_output_tokens >= 0),
+    reserved_cost_micro_usd     BIGINT NOT NULL DEFAULT 0 CHECK (reserved_cost_micro_usd >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         BIGINT NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        BIGINT NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       BIGINT NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS person_fact_claims (
@@ -973,6 +1159,19 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_before TEXT,
     cursor_after TEXT
 );
+
+CREATE TABLE IF NOT EXISTS person_sweep_sync_publications (
+    sync_run_id BIGINT PRIMARY KEY REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    lower_sequence BIGINT NOT NULL CHECK (lower_sequence >= 0),
+    upper_sequence BIGINT CHECK (
+        upper_sequence IS NULL OR upper_sequence >= lower_sequence
+    ),
+    published_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_sync_publications_source
+    ON person_sweep_sync_publications(source_id, sync_run_id);
 
 CREATE TABLE IF NOT EXISTS sync_run_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

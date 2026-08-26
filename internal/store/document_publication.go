@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 var (
@@ -397,6 +398,21 @@ func (s *Store) PublishDocumentExtraction(
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.lockDocumentPublicationHashTx(
+			ctx, tx, publication.CanonicalBlobHash,
+		); err != nil {
+			return err
+		}
+		var replacesHead bool
+		if err := q.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM document_extraction_heads
+				WHERE profile_id = ? AND canonical_blob_hash = ?
+				  AND extraction_input_key = ?
+			)`, publication.ProfileID, publication.CanonicalBlobHash,
+			publication.ExtractionInputKey).Scan(&replacesHead); err != nil {
+			return fmt.Errorf("check document extraction replacement head: %w", err)
+		}
 		claimQuery := `
 			SELECT EXISTS (
 				SELECT 1 FROM document_extraction_claims
@@ -556,7 +572,15 @@ func (s *Store) PublishDocumentExtraction(
 		if err != nil || deleted != 1 {
 			return ErrDocumentExtractionFenceLost
 		}
-		return bumpDocumentIndexRevision(q)
+		if err := bumpDocumentIndexRevision(q); err != nil {
+			return err
+		}
+		effect := peoplesweep.EvidenceEffectNone
+		if replacesHead {
+			effect = peoplesweep.EvidenceEffectSourceEdited
+		}
+		return s.publishDocumentPersonSweepChangesTx(
+			ctx, tx, publication.CanonicalBlobHash, effect)
 	})
 }
 

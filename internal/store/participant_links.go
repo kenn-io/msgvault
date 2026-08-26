@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -435,6 +437,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		revision, err = s.bumpIdentityRevisionContext(ctx, tx)
 		if err == nil {
 			linked = true
+			if personID != 0 {
+				err = s.publishPersonIdentityScopeChangesTx(
+					ctx, tx, []int64{personID},
+					peoplesweep.EvidenceEffectIdentityReassigned)
+			}
 		}
 		return err
 	})
@@ -614,6 +621,12 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			revision, err = s.currentIdentityRevisionTx(tx)
 			return err
 		}
+		affectedMembers := sortedComponentMembers(lo, edges)
+		affectedPeople, err := s.trackedPersonIDsForParticipantsTx(
+			context.Background(), tx, affectedMembers)
+		if err != nil {
+			return err
+		}
 		res, err := tx.Exec(
 			`DELETE FROM participant_links WHERE participant_a = ? AND participant_b = ?`,
 			lo, hi)
@@ -634,7 +647,12 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			return err
 		}
 		revision, err = s.bumpIdentityRevision(tx)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.publishPersonIdentityScopeChangesTx(
+			context.Background(), tx, affectedPeople,
+			peoplesweep.EvidenceEffectIdentityReassigned)
 	})
 	return revision, err
 }

@@ -1,0 +1,66 @@
+{
+  "name": "explicit contradictions",
+  "allow_sensitive": false,
+  "description_overrides": {},
+  "max_requests": 3,
+  "steps": [
+    {
+      "name": "supported preference",
+      "excerpt": "Ask me about gardening. Chat is my preferred channel.",
+      "subject": "scoped",
+      "event_time": "2020-03-01T09:00:00Z",
+      "resolved_at": "2020-03-01T10:00:00Z",
+      "expected_span": [0, 53],
+	  "provider_claims": [
+		{"target_slug":"ask_me_about","relation":"support","value":"gardening","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":980},
+		{"target_slug":"primary_channel","relation":"support","value":"chat","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":980}
+	  ],
+	  "expected_claims": [
+		{"target_slug":"ask_me_about","relation":"support","value":"gardening","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":980},
+		{"target_slug":"primary_channel","relation":"support","value":"chat","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":980}
+	  ],
+	  "expected_current": {"ask_me_about":["gardening"],"primary_channel":["chat"]},
+	  "retained_values": {"ask_me_about":["gardening"],"primary_channel":["chat"]},
+      "stale_resolution": false
+    },
+    {
+      "name": "equal competing evidence retains current",
+	  "excerpt": "Email and phone are equally acceptable channels.",
+      "subject": "scoped",
+      "event_time": "2025-03-02T09:00:00Z",
+      "resolved_at": "2025-03-02T10:00:00Z",
+	  "expected_span": [0, 48],
+	  "provider_claims": [
+		{"target_slug":"primary_channel","relation":"support","value":"email","evidence_steps":[1],"valid_from":null,"valid_until":null,"confidence_basis_points":990},
+		{"target_slug":"primary_channel","relation":"support","value":"phone","evidence_steps":[1],"valid_from":null,"valid_until":null,"confidence_basis_points":990}
+	  ],
+	  "expected_claims": [
+		{"target_slug":"primary_channel","relation":"support","value":"email","evidence_steps":[1],"valid_from":null,"valid_until":null,"confidence_basis_points":990},
+		{"target_slug":"primary_channel","relation":"support","value":"phone","evidence_steps":[1],"valid_from":null,"valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_decisions": [
+        {"action":"ambiguous-retained","reason":"competing-tie","count":2}
+      ],
+	  "expected_current": {"ask_me_about":["gardening"],"primary_channel":["chat"]},
+	  "retained_values": {"ask_me_about":["gardening"],"primary_channel":["chat"]},
+      "stale_resolution": false
+    },
+    {
+      "name": "contradicted preference",
+      "excerpt": "I no longer want to discuss gardening.",
+      "subject": "scoped",
+      "event_time": "2026-03-02T09:00:00Z",
+      "resolved_at": "2026-03-02T10:00:00Z",
+      "expected_span": [0, 38],
+      "provider_claims": [
+        {"target_slug":"ask_me_about","relation":"contradict","value":"gardening","evidence_steps":[2],"valid_from":"2026-03-02T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_claims": [
+        {"target_slug":"ask_me_about","relation":"contradict","value":"gardening","evidence_steps":[2],"valid_from":"2026-03-02T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+	  "expected_current": {"primary_channel":["chat"]},
+	  "retained_values": {"primary_channel":["chat"]},
+      "stale_resolution": false
+    }
+  ]
+}

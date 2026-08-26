@@ -1,0 +1,23 @@
+{
+  "name": "sensitive targets are policy filtered",
+  "allow_sensitive": false,
+	"sensitive_target_slug": "religion",
+	"sensitive_allowed_value": "Exampleism",
+  "description_overrides": {},
+  "max_requests": 1,
+  "steps": [
+    {
+      "name": "explicit sensitive statements",
+      "excerpt": "My religion is Exampleism and my politics are Example Party.",
+      "subject": "scoped",
+      "event_time": "2026-05-01T09:00:00Z",
+      "resolved_at": "2026-05-01T10:00:00Z",
+      "expected_span": [0, 60],
+      "provider_claims": [],
+      "expected_claims": [],
+      "expected_current": {},
+      "retained_values": {},
+      "stale_resolution": false
+    }
+  ]
+}

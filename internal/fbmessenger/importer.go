@@ -198,6 +198,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	if err != nil {
 		return nil, fmt.Errorf("fbmessenger: start sync: %w", err)
 	}
+	st = st.ScopedToSync(source.ID, syncID)
 	var syncErr error
 	defer func() {
 		if syncErr != nil {
@@ -710,10 +711,10 @@ func writeThreadToStore(
 				if err != nil {
 					logger.Warn("fbmessenger: check stored attachment", "err", err)
 				} else if stored {
-					if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+					if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
 						logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
 					}
-					if err := deleteSyntheticPlaceholderAttachment(st, messageID, syntheticHash); err != nil {
+					if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
 						logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
 					}
 					continue
@@ -721,7 +722,7 @@ func writeThreadToStore(
 			}
 			if !storedContent {
 				hash = syntheticHash
-			} else if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
+			} else if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
 				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
 			role := store.AttachmentRoleStandalone
@@ -739,18 +740,18 @@ func writeThreadToStore(
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
 				continue
 			}
-			if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+			if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
 				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
 			}
 			if storedContent {
-				if err := deleteSyntheticPlaceholderAttachment(st, messageID, syntheticHash); err != nil {
+				if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
 					logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
 				}
 			} else if contentHash != "" {
-				if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
+				if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
 					logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 				}
-			} else if err := deleteFailedStoredAttachmentByMetadata(st, messageID, att.Filename, att.MimeType); err != nil {
+			} else if err := deleteFailedStoredAttachmentByMetadata(ctx, st, messageID, att.Filename, att.MimeType); err != nil {
 				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
 		}
@@ -885,47 +886,26 @@ func hashAttachmentSource(att Attachment) string {
 
 const fbSyntheticAttachmentKeyPrefix = "fbmessenger:attachment:"
 
-func deleteLegacyHashlessAttachment(st *store.Store, messageID int64) error {
-	_, err := st.DB().Exec(st.Rebind(`
-		DELETE FROM attachments
-		WHERE message_id = ?
-		  AND (content_hash IS NULL OR content_hash = '')
-		  AND storage_path = ''
-	`), messageID)
-	return err
+func deleteLegacyHashlessAttachment(ctx context.Context, st *store.Store, messageID int64) error {
+	return st.DeleteLegacyHashlessAttachmentsContext(ctx, messageID)
 }
 
-func deleteSyntheticPlaceholderAttachment(st *store.Store, messageID int64, contentHash string) error {
-	_, err := st.DB().Exec(st.Rebind(`
-		DELETE FROM attachments
-		WHERE message_id = ?
-		  AND content_hash = ?
-		  AND storage_path = ''
-	`), messageID, contentHash)
-	return err
+func deleteSyntheticPlaceholderAttachment(
+	ctx context.Context, st *store.Store, messageID int64, contentHash string,
+) error {
+	return st.DeleteUnstoredAttachmentByHashContext(ctx, messageID, contentHash)
 }
 
-func deleteFailedStoredAttachment(st *store.Store, messageID int64, contentHash string) error {
-	_, err := st.DB().Exec(st.Rebind(`
-		DELETE FROM attachments
-		WHERE message_id = ?
-		  AND content_hash = ?
-		  AND storage_path = ''
-	`), messageID, contentHash)
-	return err
+func deleteFailedStoredAttachment(
+	ctx context.Context, st *store.Store, messageID int64, contentHash string,
+) error {
+	return st.DeleteUnstoredAttachmentByHashContext(ctx, messageID, contentHash)
 }
 
-func deleteFailedStoredAttachmentByMetadata(st *store.Store, messageID int64, filename, mimeType string) error {
-	_, err := st.DB().Exec(st.Rebind(`
-		DELETE FROM attachments
-		WHERE message_id = ?
-		  AND filename = ?
-		  AND mime_type = ?
-		  AND storage_path = ''
-		  AND content_hash <> ''
-		  AND LENGTH(content_hash) = 64
-	`), messageID, filename, mimeType)
-	return err
+func deleteFailedStoredAttachmentByMetadata(
+	ctx context.Context, st *store.Store, messageID int64, filename, mimeType string,
+) error {
+	return st.DeleteUnstoredAttachmentByMetadataContext(ctx, messageID, filename, mimeType)
 }
 
 func hasStoredAttachment(st *store.Store, messageID int64, contentHash string) (bool, error) {

@@ -268,6 +268,26 @@ func (s *Store) HasActivePersonInferenceConsent(
 	return active, nil
 }
 
+func (s *Store) hasActivePersonInferenceConsentTx(
+	ctx context.Context, tx *loggedTx, fingerprint string,
+) (bool, error) {
+	if !validLowerSHA256(fingerprint) {
+		return false, errors.New("people inference consent requires a lowercase SHA-256 fingerprint")
+	}
+	var id int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id FROM person_inference_consents
+		WHERE profile_fingerprint = ? AND revoked_at IS NULL
+		ORDER BY id DESC LIMIT 1`+s.dialect.SelectForUpdate(), fingerprint).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check active people inference consent in transaction: %w", err)
+	}
+	return id > 0, nil
+}
+
 // GetPersonInferenceConsentStatus reports exact current and historical state.
 func (s *Store) GetPersonInferenceConsentStatus(
 	ctx context.Context,
@@ -361,14 +381,24 @@ func scanPersonInferenceProfile(row scanner) (peoplesweep.ProviderProfile, error
 	if err := json.Unmarshal([]byte(allowedSources), &profile.AllowedSources); err != nil {
 		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode allowed sources: %w", err)
 	}
-	canonical, err := (peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
+	var codexPolicy struct {
+		ReasoningEffort   string `json:"reasoning_effort"`
+		ExecutionBoundary string `json:"execution_boundary"`
+	}
+	if err := json.Unmarshal([]byte(policyJSON), &codexPolicy); err != nil {
+		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode people inference policy: %w", err)
+	}
+	profileConfig := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
 		Kind: profile.Kind, Endpoint: profile.Endpoint, Model: profile.Model,
 		APIKeyEnv: profile.APIKeyEnv, AllowAnonymous: profile.AllowAnonymous,
 		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
 		AllowedSources: profile.AllowedSources, SourceSince: profile.SourceSince,
 		SourceUntil: profile.SourceUntil, AllowSensitive: profile.AllowSensitive,
+		ReasoningEffort: codexPolicy.ReasoningEffort, ExecutionBoundary: codexPolicy.ExecutionBoundary,
 		RequestTimeout: time.Second,
-	}}).Profile()
+	}}
+	profileConfig.ApplyDefaults()
+	canonical, err := profileConfig.Profile()
 	if err != nil {
 		return peoplesweep.ProviderProfile{}, err
 	}
@@ -377,7 +407,7 @@ func scanPersonInferenceProfile(row scanner) (peoplesweep.ProviderProfile, error
 		return peoplesweep.ProviderProfile{}, errors.New(
 			"stored people inference profile does not match its immutable policy")
 	}
-	profile.PolicyJSON = append(json.RawMessage(nil), canonical.PolicyJSON...)
+	profile = canonical
 	if err := profile.Validate(); err != nil {
 		return peoplesweep.ProviderProfile{}, err
 	}

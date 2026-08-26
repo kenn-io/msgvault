@@ -237,6 +237,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 			return nil, fmt.Errorf("start sync: %w", err)
 		}
 	}
+	st = st.ScopedToSync(src.ID, syncID)
 
 	failSync := func(msg string) {
 		if fsErr := st.FailSync(syncID, msg); fsErr != nil {

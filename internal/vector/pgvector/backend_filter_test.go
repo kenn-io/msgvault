@@ -12,6 +12,42 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
+func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
+	f := seedThree(t)
+	pure, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10,
+		vector.Filter{MessageIDs: []int64{2}})
+	require.NoError(t, err)
+	require.Len(t, pure, 1)
+	assert.Equal(t, int64(2), pure[0].MessageID)
+
+	fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		FTSTerms: []string{"quantum"}, QueryVec: unitVec(4, 0), Generation: f.gen,
+		KPerSignal: 10, Limit: 10, RRFK: 60, Filter: vector.Filter{MessageIDs: []int64{2}},
+	})
+	require.NoError(t, err)
+	require.Len(t, fused, 1)
+	assert.Equal(t, int64(2), fused[0].MessageID)
+
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	clauses := buildPGFilterClauses(vector.Filter{MessageIDs: []int64{7, 11}}, bind)
+	require.Len(t, clauses, 1)
+	assert.Equal(t, "m.id = ANY($1::bigint[])", clauses[0])
+	assert.Equal(t, []any{`{7,11}`}, args)
+
+	tooMany := make([]int64, vector.MaxFilterMessageIDs+1)
+	_, err = f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, vector.Filter{MessageIDs: tooMany})
+	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
+	_, _, err = f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		FTSTerms: []string{"quantum"}, Generation: f.gen, KPerSignal: 10, Limit: 10,
+		Filter: vector.Filter{MessageIDs: tooMany},
+	})
+	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
+}
+
 func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 	var args []any
 	bind := func(v any) string {

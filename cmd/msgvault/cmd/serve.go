@@ -424,6 +424,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
 	}
+	if cfg.People.Sweep.Enabled {
+		if err := cfg.People.Sweep.Validate(); err != nil {
+			return fmt.Errorf("validate people sweep: %w", err)
+		}
+	}
+	if err := addPeopleSweepJob(
+		sched, cfg.People.Sweep, newPeopleSweepScheduledRun(cfg.People.Sweep, s),
+	); err != nil {
+		return fmt.Errorf("schedule people sweep: %w", err)
+	}
 
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
 		logger.Warn("beeper is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",

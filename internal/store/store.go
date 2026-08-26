@@ -51,9 +51,16 @@ type Store struct {
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
 
+	// syncGeneration is immutable metadata on a per-run Store view.
+	// Mutating transactions on that view fence the exact running source
+	// generation before touching archive rows. The shared Store remains
+	// unscoped so unrelated maintenance and concurrent source syncs do not
+	// share mutable run state.
+	syncGeneration *syncGeneration
+	syncBase       *Store
+
 	sqliteOptimizeMu          sync.Mutex
 	documentVectorOperationMu sync.Mutex
-
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the
 	// Store rather than the package because more than one Store can be
@@ -665,6 +672,12 @@ func (s *Store) withTxOptionsContext(
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
+		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			slog.Warn("sql tx rollback failed",
@@ -1270,6 +1283,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Relax message_recipients uniqueness to include the normalized envelope
+	// address before installing triggers that read the table. SQLite rebuilds a
+	// legacy table-level UNIQUE away; installing the triggers first lets SQLite
+	// rewrite their definitions during that swap and leaves them pointing at a
+	// temporary table after it is dropped. The migration itself restores any
+	// pre-existing sweep definitions transactionally, while this ordering keeps
+	// fresh and normally upgraded archives on the simple repair-before-install
+	// path. PostgreSQL does not rebuild the table but shares the ordering.
+	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
+		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
+	}
+
 	// Create the message watermark, contextual embedding journal, and attachment
 	// change journal triggers. This must run after the migration loop above,
 	// which adds the legacy columns referenced by those triggers.
@@ -1350,6 +1375,22 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
 	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepChangeTriggers, false,
+		func(ctx context.Context) error {
+			// Fresh archives installed the current definitions with the watermark
+			// triggers above. Existing archives and explicit repair runs need a
+			// second pass because EnsureTriggers owns the shared mutation tables.
+			if !watermarkTriggersAlreadyApplied {
+				return nil
+			}
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
@@ -1403,15 +1444,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return err
-	}
-
-	// Relax message_recipients uniqueness to include the normalized envelope
-	// address, so alias snapshots of one participant can coexist per message.
-	// Must run after the legacy ADD COLUMN loop above (the unique index
-	// expression reads email_address) and before any participant merge under
-	// the new email-aware collision rules can run.
-	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
-		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
 	}
 
 	// Identity discovery scans one source in message-ID order. On SQLite the

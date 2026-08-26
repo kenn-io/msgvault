@@ -44,6 +44,33 @@ func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
 	assert.Equal(1, result.Rank)
 }
 
+func TestSearchDocumentsRestrictsOwningMessageCandidates(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "candidate nebula evidence", "search-candidate")
+	first, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "nebula"})
+	requirements.NoError(err)
+	requirements.Len(first.Results, 1)
+
+	secondMessageID := f.CreateMessage("document-search-selected-candidate")
+	secondAttachmentID := addSearchAttachment(
+		t, f, secondMessageID, hash, "selected.pdf", "provider:selected-candidate",
+	)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), secondAttachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", MessageIDs: []int64{secondMessageID},
+	})
+	requirements.NoError(err)
+	requirements.Len(response.Results, 1)
+	checks.Equal(secondMessageID, response.Results[0].MessageID)
+	checks.NotEqual(first.Results[0].MessageID, response.Results[0].MessageID)
+}
+
 func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

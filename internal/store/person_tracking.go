@@ -16,6 +16,39 @@ type PersonTracking struct {
 	TrackedAt *time.Time `json:"tracked_at"`
 }
 
+const maxTrackedPeopleList = 1_000
+
+// ListTrackedPeopleContext returns a bounded ascending page of durable people
+// that are currently enrolled in profile maintenance.
+func (s *Store) ListTrackedPeopleContext(
+	ctx context.Context, afterID int64, limit int,
+) ([]int64, error) {
+	if limit < 1 || limit > maxTrackedPeopleList {
+		return nil, fmt.Errorf("list tracked people: limit must be between 1 and %d", maxTrackedPeopleList)
+	}
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT person_id FROM person_tracking
+		WHERE person_id > ?
+		ORDER BY person_id
+		LIMIT ?`), afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list tracked people: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	people := make([]int64, 0, limit)
+	for rows.Next() {
+		var personID int64
+		if err := rows.Scan(&personID); err != nil {
+			return nil, fmt.Errorf("scan tracked person: %w", err)
+		}
+		people = append(people, personID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tracked people: %w", err)
+	}
+	return people, nil
+}
+
 // GetPersonTrackingContext reads the explicit tracking state for a person.
 func (s *Store) GetPersonTrackingContext(
 	ctx context.Context, personID int64,
@@ -53,14 +86,43 @@ func (s *Store) SetPersonTrackingContext(
 
 		var err error
 		if tracked {
-			_, err = tx.ExecContext(ctx, `
+			var result sql.Result
+			result, err = tx.ExecContext(ctx, `
 				INSERT INTO person_tracking (person_id, tracked_at)
 				VALUES (?, ?)
 				ON CONFLICT (person_id) DO NOTHING
 			`, personID, time.Now().UTC())
+			var inserted int64
+			if err == nil {
+				inserted, err = result.RowsAffected()
+			}
+			if err == nil && inserted == 1 {
+				_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
+					SET reconcile_upper_key = '', reconcile_after_key = '',
+					    optimistic_document_key = '', reconcile_document_key = '',
+					    backstop_upper_key = '', backstop_after_key = '', backstop_document_key = '',
+					    reconciliation_complete = FALSE, last_backstop_at = NULL,
+					    updated_at = ?
+					WHERE person_id = ?`, time.Now().UTC(), personID)
+			}
+			if err == nil && inserted == 1 {
+				var highWater int64
+				err = tx.QueryRowContext(ctx, `
+					SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`,
+				).Scan(&highWater)
+				if err == nil {
+					err = s.upsertPersonSweepWorkTx(ctx, tx, personID, highWater)
+				}
+			}
 		} else {
-			_, err = tx.ExecContext(ctx,
-				`DELETE FROM person_tracking WHERE person_id = ?`, personID)
+			// Delete enrollment first. PostgreSQL publishers hold a key-share
+			// lock on this row through their work upsert, so tracking-off waits
+			// for that publication and then removes any row it committed.
+			if _, err = tx.ExecContext(ctx,
+				`DELETE FROM person_tracking WHERE person_id = ?`, personID); err == nil {
+				_, err = tx.ExecContext(ctx,
+					`DELETE FROM person_sweep_work WHERE person_id = ?`, personID)
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("set person %d tracking to %t: %w", personID, tracked, err)

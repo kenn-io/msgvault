@@ -45,6 +45,7 @@ var (
 type DocumentSearchRequest struct {
 	Query          string                  `json:"query"`
 	SourceIDs      []int64                 `json:"source_ids,omitempty"`
+	MessageIDs     []int64                 `json:"message_ids,omitempty"`
 	MessageTypes   []string                `json:"message_types,omitempty"`
 	AttachmentID   int64                   `json:"attachment_id,omitempty"`
 	MessageID      int64                   `json:"message_id,omitempty"`
@@ -131,6 +132,7 @@ type documentSearchCursor struct {
 type documentSearchHashPayload struct {
 	Query        string             `json:"query"`
 	SourceIDs    []int64            `json:"source_ids"`
+	MessageIDs   []int64            `json:"message_ids"`
 	MessageTypes []string           `json:"message_types"`
 	AttachmentID int64              `json:"attachment_id"`
 	MessageID    int64              `json:"message_id"`
@@ -225,7 +227,11 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 		return []DocumentSearchResult{}, false, nil
 	}
 	var err error
-	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs)
+	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs, "source IDs")
+	if err != nil {
+		return nil, false, err
+	}
+	request.MessageIDs, err = sortedUniquePositive(request.MessageIDs, "message IDs")
 	if err != nil {
 		return nil, false, err
 	}
@@ -388,7 +394,11 @@ func (s *Store) prepareDocumentSearch(
 	}
 	var err error
 	request.Query = strings.ToLower(strings.Join(terms, " "))
-	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs)
+	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs, "source IDs")
+	if err != nil {
+		return request, nil, "", 0, 0, 0, err
+	}
+	request.MessageIDs, err = sortedUniquePositive(request.MessageIDs, "message IDs")
 	if err != nil {
 		return request, nil, "", 0, 0, 0, err
 	}
@@ -587,13 +597,17 @@ const documentSearchOuterColumns = `
 		profile_id, extraction_id, provider, model, truncated`
 
 func documentSearchValidity() string {
-	const profile, consent, head, attachment, message, state = "p", "c", "h", "a", "m", "ds"
+	return documentSearchValidityForConsent("c")
+}
+
+func documentSearchValidityForConsent(consentName string) string {
+	const profile, head, attachment, message, state = "p", "h", "a", "m", "ds"
 
 	return profile + `.enabled = TRUE
 		AND ` + profile + `.retired_at IS NULL
-		AND ` + consent + `.profile_fingerprint = ` + profile + `.fingerprint
-		AND ` + consent + `.retention_posture = ` + profile + `.retention_posture
-		AND ` + consent + `.training_posture = ` + profile + `.training_posture
+		AND ` + consentName + `.profile_fingerprint = ` + profile + `.fingerprint
+		AND ` + consentName + `.retention_posture = ` + profile + `.retention_posture
+		AND ` + consentName + `.training_posture = ` + profile + `.training_posture
 		AND o.attachment_role = 'standalone'
 		AND ` + attachment + `.attachment_role = 'standalone'
 		AND o.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
@@ -643,9 +657,9 @@ func documentSearchValidity() string {
 		              AND fallback_consent.retention_posture = fallback_profile.retention_posture
 		              AND fallback_consent.training_posture = fallback_profile.training_posture
 		              AND (
-		                  fallback_consent.consented_at > ` + consent + `.consented_at
-		                  OR (fallback_consent.consented_at = ` + consent + `.consented_at
-		                      AND fallback_profile.id > ` + profile + `.id)
+			          fallback_consent.consented_at > ` + consentName + `.consented_at
+			          OR (fallback_consent.consented_at = ` + consentName + `.consented_at
+					  AND fallback_profile.id > p.id)
 		              )
 		        )
 		    )
@@ -669,6 +683,14 @@ func documentSearchScope(request DocumentSearchRequest, message, attachment, con
 		conditions.WriteByte(')')
 		for _, messageType := range request.MessageTypes {
 			args = append(args, messageType)
+		}
+	}
+	if len(request.MessageIDs) > 0 {
+		conditions.WriteString(` AND ` + message + `.id IN (`)
+		conditions.WriteString(documentPlaceholders(len(request.MessageIDs)))
+		conditions.WriteByte(')')
+		for _, id := range request.MessageIDs {
+			args = append(args, id)
 		}
 	}
 	if request.AttachmentID > 0 {
@@ -896,7 +918,8 @@ func documentSearchExcerpt(text string, terms []string) (string, int, int) {
 
 func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {
 	payload := documentSearchHashPayload{
-		Query: request.Query, SourceIDs: request.SourceIDs, MessageTypes: request.MessageTypes,
+		Query: request.Query, SourceIDs: request.SourceIDs, MessageIDs: request.MessageIDs,
+		MessageTypes: request.MessageTypes,
 		AttachmentID: request.AttachmentID, MessageID: request.MessageID, PageSize: request.PageSize,
 		After: request.After, Before: request.Before, Person: request.Person,
 	}
@@ -936,13 +959,13 @@ func decodeDocumentSearchCursor(value string) (documentSearchCursor, error) {
 	return cursor, nil
 }
 
-func sortedUniquePositive(values []int64) ([]int64, error) {
+func sortedUniquePositive(values []int64, field string) ([]int64, error) {
 	result := slices.Clone(values)
 	slices.Sort(result)
 	result = slices.Compact(result)
 	for _, value := range result {
 		if value <= 0 {
-			return nil, fmt.Errorf("%w: source IDs must be positive", ErrDocumentSearchInvalidRequest)
+			return nil, fmt.Errorf("%w: %s must be positive", ErrDocumentSearchInvalidRequest, field)
 		}
 	}
 	return result, nil

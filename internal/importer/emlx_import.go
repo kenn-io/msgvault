@@ -223,6 +223,7 @@ func ImportEmlxDir(
 			return nil, fmt.Errorf("start sync: %w", err)
 		}
 	}
+	st = st.ScopedToSync(src.ID, syncID)
 
 	hardErrors := false
 

@@ -778,6 +778,20 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		// explicitly configured key remains visible to validation and is rejected.
 		cfg.People.Sweep.Provider.APIKeyEnv = ""
 	}
+	if cfg.People.Sweep.Provider.Kind == peoplesweep.ProviderCodexAppServer {
+		if !metadata.IsDefined("people", "sweep", "provider", "endpoint") {
+			cfg.People.Sweep.Provider.Endpoint = ""
+		}
+		if !metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
+			cfg.People.Sweep.Provider.APIKeyEnv = ""
+		}
+		if !metadata.IsDefined("people", "sweep", "provider", "executable") {
+			cfg.People.Sweep.Provider.Executable = "codex"
+		}
+		if !metadata.IsDefined("people", "sweep", "provider", "execution_boundary") {
+			cfg.People.Sweep.Provider.ExecutionBoundary = peoplesweep.CodexExecutionBoundaryV1
+		}
+	}
 	for _, key := range metadata.Undecoded() {
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")

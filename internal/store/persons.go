@@ -122,6 +122,11 @@ func (s *Store) CreatePersonFromParticipantContext(
 				return err
 			}
 		}
+		if bindingsChanged {
+			if err := s.coalescePersonSweepPeopleTx(ctx, tx, []int64{personID}); err != nil {
+				return err
+			}
+		}
 		person, err = s.getPersonTx(ctx, tx, personID)
 		return err
 	})

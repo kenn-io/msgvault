@@ -150,6 +150,8 @@ func polymorphicPersonReference(idColumn, kindColumn string) personMergeReferenc
 	}
 }
 
+const personMergePersonIDColumn = "person_id"
+
 // personMergeTableRegistry is the closed allowlist for every table that can
 // point at a person. Operation tables are classified but not recursively
 // snapshotted; their targeted lineage updates are journaled separately.
@@ -212,6 +214,25 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	personMergeReviewCandidatesTableName: {
 		TableName: personMergeReviewCandidatesTableName, KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("survivor_person_id")},
+	},
+	// Sweep rows are derived scheduling, cursor, and attempt history. They stay
+	// scoped to the person that produced them and cascade with an absorbed root
+	// instead of becoming survivor profile state.
+	"person_sweep_changes": {
+		TableName: "person_sweep_changes", KeyColumn: "sequence", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_sweep_work": {
+		TableName: "person_sweep_work", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_sweep_cursors": {
+		TableName: "person_sweep_cursors", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_sweep_attempts": {
+		TableName: "person_sweep_attempts", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	// Fact-ledger history remains scoped to the person whose identity produced
 	// it, so an absorbed person's ledger cascades with that root. Explicit pin

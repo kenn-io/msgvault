@@ -1,12 +1,15 @@
 package peoplesweep
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +25,7 @@ const (
 var (
 	programComponentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	schemaNamePattern       = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	providerMetadataPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
 )
 
 var syntheticCheckSchema = json.RawMessage(`{
@@ -78,25 +82,81 @@ func (r *Runner) RunStructured(
 	ctx context.Context,
 	request StructuredRequest,
 ) (StructuredResponse, error) {
-	return r.run(ctx, request, false)
+	prepared, err := r.PrepareStructured(ctx, request)
+	if err != nil {
+		return StructuredResponse{}, err
+	}
+	return r.RunPreparedStructured(ctx, prepared)
 }
 
 // Check exercises the real provider boundary with package-owned synthetic
 // input. It cannot accept archive text or source selectors.
 func (r *Runner) Check(ctx context.Context) (StructuredResponse, error) {
-	return r.run(ctx, StructuredRequest{
+	prepared, err := r.prepare(ctx, StructuredRequest{
 		ProgramID: "provider-check", ProgramVersion: "1",
 		InputText:  "Return an object with ok set to true.",
 		SchemaName: "provider_check", JSONSchema: slices.Clone(syntheticCheckSchema),
 		MaxOutputTokens: 16,
 	}, true)
+	if err != nil {
+		return StructuredResponse{}, err
+	}
+	return r.runPrepared(ctx, prepared, true)
 }
 
-func (r *Runner) run(
+// PrepareStructured validates an ordinary request and deterministically creates
+// the exact provider-input bytes without resolving credentials or launching I/O.
+func (r *Runner) PrepareStructured(
 	ctx context.Context,
 	request StructuredRequest,
+) (PreparedStructuredRequest, error) {
+	return r.prepare(ctx, request, false)
+}
+
+func (r *Runner) prepare(
+	_ context.Context,
+	request StructuredRequest,
+	synthetic bool,
+) (PreparedStructuredRequest, error) {
+	resolvedSchema, err := validateStructuredRequest(request, synthetic)
+	if err != nil {
+		return PreparedStructuredRequest{}, err
+	}
+	_ = resolvedSchema
+	profile, err := r.config.Profile()
+	if err != nil {
+		return PreparedStructuredRequest{}, err
+	}
+	if err := validateRequestPolicy(request, profile, synthetic); err != nil {
+		return PreparedStructuredRequest{}, err
+	}
+	prepared, err := r.transport.PrepareJSON(profile, request)
+	if err != nil {
+		return PreparedStructuredRequest{}, fmt.Errorf("prepare structured inference: %w", err)
+	}
+	prepared.synthetic = synthetic
+	prepared.preparedBy = r
+	return prepared, nil
+}
+
+// RunPreparedStructured rechecks consent, resolves the credential, and sends
+// only the opaque prepared packet.
+func (r *Runner) RunPreparedStructured(
+	ctx context.Context,
+	prepared PreparedStructuredRequest,
+) (StructuredResponse, error) {
+	return r.runPrepared(ctx, prepared, prepared.preparedBy == r && prepared.synthetic)
+}
+
+func (r *Runner) runPrepared(
+	ctx context.Context,
+	prepared PreparedStructuredRequest,
 	synthetic bool,
 ) (StructuredResponse, error) {
+	if err := prepared.validateWireHash(); err != nil {
+		return StructuredResponse{}, err
+	}
+	request := prepared.Request()
 	resolvedSchema, err := validateStructuredRequest(request, synthetic)
 	if err != nil {
 		return StructuredResponse{}, err
@@ -105,12 +165,23 @@ func (r *Runner) run(
 	if err != nil {
 		return StructuredResponse{}, err
 	}
+	expected, err := r.transport.PrepareJSON(profile, request)
+	if err != nil {
+		return StructuredResponse{}, fmt.Errorf("re-encode prepared structured inference: %w", err)
+	}
+	if err := expected.validateWireHash(); err != nil {
+		return StructuredResponse{}, errors.New("prepared structured request deterministic provider encoding is invalid")
+	}
+	if !bytes.Equal(prepared.WireRequest(), expected.WireRequest()) {
+		return StructuredResponse{}, errors.New("prepared structured request does not match deterministic provider encoding")
+	}
 	active, err := r.consent.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
 	if err != nil {
 		return StructuredResponse{}, fmt.Errorf("check exact people inference consent: %w", err)
 	}
 	if !active {
-		return StructuredResponse{}, errors.New("people inference requires active exact consent")
+		return StructuredResponse{}, fmt.Errorf("%w: people inference requires active exact consent",
+			ErrPersonSweepConsentRevoked)
 	}
 	if err := validateRequestPolicy(request, profile, synthetic); err != nil {
 		return StructuredResponse{}, err
@@ -129,18 +200,78 @@ func (r *Runner) run(
 
 	requestCtx, cancel := context.WithTimeout(ctx, r.config.Provider.RequestTimeout)
 	defer cancel()
-	response, err := r.transport.GenerateJSON(requestCtx, profile, credential, request)
+	response, err := r.transport.GeneratePreparedJSON(requestCtx, profile, credential, prepared)
 	if err != nil {
+		if errors.Is(err, ErrInvalidStructuredOutput) {
+			return response, fmt.Errorf("generate structured inference: %w", err)
+		}
 		return StructuredResponse{}, fmt.Errorf("generate structured inference: %w", err)
 	}
+	if !safeProviderMetadata(response.ProviderVersion) || !safeProviderMetadata(response.ModelVersion) {
+		return response, fmt.Errorf("%w: missing authoritative version metadata", ErrInvalidStructuredOutput)
+	}
 	var output any
-	if err := decodeSingleJSONUseNumber(response.Output, &output); err != nil {
-		return StructuredResponse{}, errors.New("inference provider returned invalid structured JSON")
+	if err := decodeJSONSchemaInstance(response.Output, &output); err != nil {
+		return response, fmt.Errorf("%w: invalid structured JSON", ErrInvalidStructuredOutput)
 	}
 	if err := resolvedSchema.Validate(output); err != nil {
-		return StructuredResponse{}, errors.New("inference provider output does not match requested schema")
+		return response, fmt.Errorf("%w: output does not match requested schema", ErrInvalidStructuredOutput)
 	}
 	return response, nil
+}
+
+func decodeJSONSchemaInstance(data []byte, destination *any) error {
+	var decoded any
+	if err := decodeSingleJSONUseNumber(data, &decoded); err != nil {
+		return err
+	}
+	normalized, err := normalizeJSONSchemaNumbers(decoded)
+	if err != nil {
+		return err
+	}
+	*destination = normalized
+	return nil
+}
+
+func normalizeJSONSchemaNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		if !strings.ContainsAny(string(typed), ".eE") {
+			integer, err := strconv.ParseInt(string(typed), 10, 64)
+			if err == nil {
+				return integer, nil
+			}
+		}
+		number, err := strconv.ParseFloat(string(typed), 64)
+		if err != nil {
+			return nil, errors.New("JSON number is outside the supported schema range")
+		}
+		return number, nil
+	case []any:
+		for index := range typed {
+			normalized, err := normalizeJSONSchemaNumbers(typed[index])
+			if err != nil {
+				return nil, err
+			}
+			typed[index] = normalized
+		}
+		return typed, nil
+	case map[string]any:
+		for key, item := range typed {
+			normalized, err := normalizeJSONSchemaNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = normalized
+		}
+		return typed, nil
+	default:
+		return value, nil
+	}
+}
+
+func safeProviderMetadata(value string) bool {
+	return len(value) <= 128 && providerMetadataPattern.MatchString(value)
 }
 
 func validateStructuredRequest(

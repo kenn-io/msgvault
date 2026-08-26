@@ -211,6 +211,7 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 	if err != nil {
 		return summary, fmt.Errorf("start sync: %w", err)
 	}
+	st = st.ScopedToSync(source.ID, syncID)
 	completed := false
 	defer func() {
 		if !completed && retErr != nil {

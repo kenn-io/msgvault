@@ -49,6 +49,65 @@ func TestFull_LimitDoesNotAdvanceCursor(t *testing.T) {
 	assert.Equal("TOKEN1", src.SyncCursor.String, "complete run advances the cursor")
 }
 
+func TestFull_CompletionFailureDoesNotPublishCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject the completion failure")
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	m.FullSyncToken["primary"] = "T1"
+	s, st := newSyncer(t, m, Options{})
+	_, err := st.DB().Exec(`
+		CREATE TRIGGER fail_calendar_sync_completion
+		BEFORE UPDATE OF status ON sync_runs
+		FOR EACH ROW WHEN NEW.status = 'completed'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced calendar completion failure');
+		END
+	`)
+	requirements.NoError(err)
+
+	_, err = s.Full(t.Context())
+	requirements.ErrorContains(err, "forced calendar completion failure")
+
+	src := primarySource(t, st)
+	assertions.Empty(src.SyncCursor.String,
+		"a failed completion must roll back the full-sync token")
+}
+
+func TestIncremental_CompletionFailureDoesNotPublishCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject the completion failure")
+
+	m := gcal.NewMockAPI()
+	m.IncNextToken["T1"] = "T2"
+	s, st := newSyncer(t, m, Options{})
+	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(src.ID,
+		`{"account_email":"alice@example.com","calendar_id":"primary"}`))
+	requirements.NoError(st.UpdateSourceSyncCursor(src.ID, "T1"))
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER fail_calendar_sync_completion
+		BEFORE UPDATE OF status ON sync_runs
+		FOR EACH ROW WHEN NEW.status = 'completed'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced calendar completion failure');
+		END
+	`)
+	requirements.NoError(err)
+
+	_, err = s.Incremental(t.Context())
+	requirements.ErrorContains(err, "forced calendar completion failure")
+
+	src, err = st.GetSourceByID(src.ID)
+	requirements.NoError(err)
+	assertions.Equal("T1", src.SyncCursor.String,
+		"a failed completion must roll back the incremental token")
+}
+
 // TestReingest_ClearsStaleRecipients is the regression for stale 'from'/'to'
 // rows surviving when an event loses its organizer or all attendees on re-sync.
 func TestReingest_ClearsStaleRecipients(t *testing.T) {
@@ -496,6 +555,57 @@ func TestFull_ResumeSupersedesAndSeedsCounters(t *testing.T) {
 		"SELECT messages_processed FROM sync_runs WHERE source_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1"),
 		src.ID).Scan(&processed))
 	assert.Equal(int64(3), processed, "resumed run seeds prior counters (2) + new (1)")
+}
+
+func TestIncremental_ExpiredCursorCannotEraseNewerGeneration(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(src.ID,
+		`{"account_email":"alice@example.com","calendar_id":"primary","access_role":"owner"}`))
+	requirements.NoError(st.UpdateSourceSyncCursor(src.ID, "expired-token"))
+	api := &supersedingExpiredTokenAPI{
+		MockAPI: gcal.NewMockAPI(), store: st, sourceID: src.ID,
+	}
+	syncer := New(api, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
+
+	_, err = syncer.Incremental(t.Context())
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+	src, err = st.GetSourceByID(src.ID)
+	requirements.NoError(err)
+	checks.Equal("newer-token", src.SyncCursor.String)
+	checks.False(api.fullSyncAttempted)
+}
+
+type supersedingExpiredTokenAPI struct {
+	*gcal.MockAPI
+
+	store             *store.Store
+	sourceID          int64
+	superseded        bool
+	fullSyncAttempted bool
+}
+
+func (a *supersedingExpiredTokenAPI) ListEvents(
+	ctx context.Context, calendarID string, params gcal.EventsListParams,
+) (*gcal.EventsPage, error) {
+	if params.SyncToken != "" && !a.superseded {
+		a.superseded = true
+		runID, err := a.store.StartSync(a.sourceID, "newer-calendar-sync")
+		if err != nil {
+			return nil, err
+		}
+		if err := a.store.CompleteSyncAndUpdateSourceCursorContext(
+			ctx, runID, a.sourceID, "newer-token",
+		); err != nil {
+			return nil, err
+		}
+		return nil, &gcal.GoneError{Path: calendarID}
+	}
+	a.fullSyncAttempted = true
+	return nil, errors.New("forced full resync failure")
 }
 
 type listEventsRecorder struct {

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	docbankdocument "go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -282,6 +284,240 @@ func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.
 	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 		claim, "hashless alias evidence", strings.Repeat("a", 64),
 	)))
+}
+
+func TestDocumentPublicationQueuesPersonSweep(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+
+	firstParticipant := f.EnsureParticipant(
+		"document-first@example.test", "First", "example.test")
+	firstPerson, _, err := f.Store.CreatePersonFromParticipant(firstParticipant)
+	requirements.NoError(err)
+	var firstMessageID int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT message_id FROM document_occurrences
+		WHERE canonical_blob_hash = ? ORDER BY occurrence_key LIMIT 1`),
+		hash).Scan(&firstMessageID))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`),
+		firstParticipant, firstMessageID)
+	requirements.NoError(err)
+
+	secondParticipant := f.EnsureParticipant(
+		"document-second@example.test", "Second", "example.test")
+	secondPerson, _, err := f.Store.CreatePersonFromParticipant(secondParticipant)
+	requirements.NoError(err)
+	secondMessageID := f.CreateMessage("document-publication-second-occurrence")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`),
+		secondParticipant, secondMessageID)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), secondMessageID,
+		store.AttachmentWrite{
+			Filename: "second.pdf", MIMEType: "application/pdf", Size: 128,
+			StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+			Role:          store.AttachmentRoleStandalone,
+			RoleSource:    store.AttachmentRoleSourceMIMEDisposition,
+			SourcePartKey: "mime:second",
+		}))
+	secondAttachmentID := singleAttachmentID(t, f, secondMessageID)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(
+		t.Context(), secondAttachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), firstPerson.ID, true)
+	requirements.NoError(err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), secondPerson.ID, true)
+	requirements.NoError(err)
+	deletePersonSweepWork(t, f.Store, firstPerson.ID, secondPerson.ID)
+	before := latestPersonSweepSequence(t, f.Store)
+
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(),
+		documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+			ExtractionID: "person-sweep-document", ProfileID: profile.ID,
+			CanonicalBlobHash: hash, ExtractionInputKey: "original",
+			LeaseOwner: "document-sweep-worker",
+			LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+			LocalBytes: 128, SourceSequence: 1,
+		}))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
+		claim, "Synthetic document person evidence", strings.Repeat("7", 64))))
+
+	for _, personID := range []int64{firstPerson.ID, secondPerson.ID} {
+		changes := personSweepChangesAfter(t, f.Store, personID, before)
+		requirements.Len(changes, 1)
+		checks.Equal(peoplesweep.SourceDocumentText, changes[0].SourceLane)
+		checks.Equal(peoplesweep.ChangePublication, changes[0].Kind)
+		checks.NotZero(changes[0].SourceID)
+		checks.NotZero(changes[0].MessageID)
+		checks.NotZero(changes[0].AttachmentID)
+		checks.NotEmpty(changes[0].OccurrenceKey)
+		rows, dirtyThrough := personSweepWorkState(t, f.Store, personID)
+		checks.Equal(1, rows)
+		checks.Equal(changes[0].Sequence, dirtyThrough)
+	}
+
+	replacementBefore := latestPersonSweepSequence(t, f.Store)
+	deletePersonSweepWork(t, f.Store, firstPerson.ID, secondPerson.ID)
+	replacementClaim, err := f.Store.ClaimDocumentExtraction(t.Context(),
+		documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+			ExtractionID: "person-sweep-document-replacement", ProfileID: profile.ID,
+			CanonicalBlobHash: hash, ExtractionInputKey: "original",
+			LeaseOwner: "document-sweep-replacement-worker",
+			LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+			LocalBytes: 128, SourceSequence: 1,
+		}))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
+		replacementClaim, "Replacement document person evidence", strings.Repeat("8", 64))))
+	for _, personID := range []int64{firstPerson.ID, secondPerson.ID} {
+		changes := personSweepChangesAfter(t, f.Store, personID, replacementBefore)
+		requirements.Len(changes, 1)
+		checks.Equal(peoplesweep.EvidenceEffectSourceEdited,
+			changes[0].EvidenceEffect,
+			"a chunk replacement must invalidate the prior source version")
+		checks.Equal(peoplesweep.SourceDocumentText, changes[0].SourceLane)
+		checks.NotZero(changes[0].AttachmentID)
+		checks.NotEmpty(changes[0].OccurrenceKey)
+		rows, dirtyThrough := personSweepWorkState(t, f.Store, personID)
+		checks.Equal(1, rows)
+		checks.Equal(changes[0].Sequence, dirtyThrough)
+	}
+}
+
+func TestDocumentOccurrenceAfterCursorCapturePublishesPersonSweepChange(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash,
+		"Synthetic linked occurrence evidence", "person-sweep-linked-occurrence")
+
+	participantID := f.EnsureParticipant(
+		"linked-occurrence@example.test", "Linked Occurrence", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participantID)
+	requirements.NoError(err)
+	messageID := f.CreateMessage("document-linked-after-cursor")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, messageID)
+	requirements.NoError(err)
+	attachmentID := addSearchAttachment(
+		t, f, messageID, hash, "linked.pdf", "provider:linked-after-cursor")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE attachments SET media_type = 'document' WHERE id = ?`), attachmentID)
+	requirements.NoError(err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+	requirements.NoError(err)
+
+	key := peoplesweep.CursorKey{
+		PersonID: person.ID, SourceLane: peoplesweep.SourceDocumentText,
+		ProgramFingerprint: "program-linked-occurrence",
+		CatalogFingerprint: "catalog-linked-occurrence",
+	}
+	cursors, err := f.Store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{key})
+	requirements.NoError(err)
+	requirements.Len(cursors, 1)
+	checks.Equal(fmt.Sprintf("%020d", attachmentID), cursors[0].ReconcileUpperKey,
+		"the new occurrence is created below the captured attachment upper bound")
+	before := cursors[0].OptimisticSequence
+	deletePersonSweepWork(t, f.Store, person.ID)
+
+	occurrence, eligible, err := f.Store.ReconcileDocumentOccurrence(
+		t.Context(), attachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	changes := personSweepChangesAfter(t, f.Store, person.ID, before)
+	requirements.Len(changes, 1)
+	checks.Equal(peoplesweep.SourceDocumentText, changes[0].SourceLane)
+	checks.Equal(peoplesweep.ChangePublication, changes[0].Kind)
+	checks.Equal(peoplesweep.EvidenceEffectScopeRelinked, changes[0].EvidenceEffect)
+	checks.Equal(messageID, changes[0].MessageID)
+	checks.Equal(attachmentID, changes[0].AttachmentID)
+	checks.Equal(occurrence.OccurrenceKey, changes[0].OccurrenceKey)
+	rows, dirtyThrough := personSweepWorkState(t, f.Store, person.ID)
+	checks.Equal(1, rows)
+	checks.Equal(changes[0].Sequence, dirtyThrough)
+}
+
+func TestDocumentOccurrencePublishesExactPersonSweepLifecycle(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "Synthetic lifecycle evidence", "person-sweep-lifecycle")
+	firstParticipant := f.EnsureParticipant("lifecycle-first@example.test", "Lifecycle First", "example.test")
+	secondParticipant := f.EnsureParticipant("lifecycle-second@example.test", "Lifecycle Second", "example.test")
+	firstPerson, _, err := f.Store.CreatePersonFromParticipant(firstParticipant)
+	requirements.NoError(err)
+	secondPerson, _, err := f.Store.CreatePersonFromParticipant(secondParticipant)
+	requirements.NoError(err)
+	var sourceID, messageID, attachmentID int64
+	var occurrenceKey string
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT m.source_id,o.message_id,o.attachment_id,o.occurrence_key
+		FROM document_occurrences o JOIN messages m ON m.id=o.message_id
+		WHERE o.canonical_blob_hash=?`), hash).Scan(&sourceID, &messageID, &attachmentID, &occurrenceKey))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`), firstParticipant, messageID)
+	requirements.NoError(err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), firstPerson.ID, true)
+	requirements.NoError(err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), secondPerson.ID, true)
+	requirements.NoError(err)
+	before := latestPersonSweepSequence(t, f.Store)
+
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`), messageID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+		INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address)
+		VALUES (?,?,'to',?)`), messageID, secondParticipant, "lifecycle-second@example.test")
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`DELETE FROM message_recipients WHERE message_id=? AND participant_id=?`), messageID, secondParticipant)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+		INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address)
+		VALUES (?,?,'to',?)`), messageID, secondParticipant, "lifecycle-second@example.test")
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`), secondParticipant, messageID)
+	requirements.NoError(err)
+
+	assertDocumentChanges := func(personID int64, want []peoplesweep.EvidenceChangeEffect) {
+		t.Helper()
+		var got []peoplesweep.EvidenceChangeEffect
+		for _, change := range personSweepChangesAfter(t, f.Store, personID, before) {
+			if change.SourceLane != peoplesweep.SourceDocumentText {
+				continue
+			}
+			assert.Equal(t, sourceID, change.SourceID)
+			assert.Equal(t, messageID, change.MessageID)
+			assert.Equal(t, attachmentID, change.AttachmentID)
+			assert.Equal(t, occurrenceKey, change.OccurrenceKey)
+			got = append(got, change.EvidenceEffect)
+		}
+		assert.Equal(t, want, got)
+	}
+	assertDocumentChanges(firstPerson.ID, []peoplesweep.EvidenceChangeEffect{
+		peoplesweep.EvidenceEffectSourceDeleted,
+		peoplesweep.EvidenceEffectSourceReimported,
+		peoplesweep.EvidenceEffectIdentityReassigned,
+	})
+	assertDocumentChanges(secondPerson.ID, []peoplesweep.EvidenceChangeEffect{
+		peoplesweep.EvidenceEffectScopeRelinked,
+		peoplesweep.EvidenceEffectScopeUnlinked,
+		peoplesweep.EvidenceEffectScopeRelinked,
+		peoplesweep.EvidenceEffectIdentityReassigned,
+	})
 }
 
 func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone(t *testing.T) {

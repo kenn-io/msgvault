@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -43,19 +44,32 @@ type personProviderChecker interface {
 	Check(ctx context.Context) (peoplesweep.StructuredResponse, error)
 }
 
+type personProviderCodexClient interface {
+	StartDeviceLogin(ctx context.Context, present func(peoplesweep.DeviceLogin) error) error
+	ListModels(ctx context.Context) ([]peoplesweep.CodexModel, error)
+}
+
 type personProviderCommandDeps struct {
 	config             func() peoplesweep.Config
 	vectorConfig       func() vector.Config
 	openStore          func() (personProviderStore, func(), error)
 	newChecker         func(peoplesweep.Config, personProviderStore) (personProviderChecker, error)
+	newCodexClient     func(peoplesweep.Config) (personProviderCodexClient, error)
 	isDaemonSubprocess func() bool
 	lookupEnv          peoplesweep.CredentialLookup
 	proxy              func(*cobra.Command, []string, map[string]string) error
 }
 
 type personProviderStatusOutput struct {
-	Profile peoplesweep.ProviderProfile        `json:"profile"`
-	Consent store.PersonInferenceConsentStatus `json:"consent"`
+	Profile        peoplesweep.ProviderProfile         `json:"profile"`
+	Consent        store.PersonInferenceConsentStatus  `json:"consent"`
+	CodexIsolation *personProviderCodexIsolationStatus `json:"codex_isolation,omitempty"`
+}
+
+type personProviderCodexIsolationStatus struct {
+	Available         bool   `json:"available"`
+	ExecutionBoundary string `json:"execution_boundary"`
+	Reason            string `json:"reason,omitempty"`
 }
 
 type personProviderCheckOutput struct {
@@ -63,6 +77,10 @@ type personProviderCheckOutput struct {
 	ProviderRequestID string                 `json:"provider_request_id,omitempty"`
 	Model             string                 `json:"model"`
 	Usage             peoplesweep.TokenUsage `json:"usage"`
+}
+
+type personProviderModelsOutput struct {
+	Models []peoplesweep.CodexModel `json:"models"`
 }
 
 type personProviderStatusesOutput struct {
@@ -106,12 +124,37 @@ func defaultPersonProviderCommandDeps() personProviderCommandDeps {
 			return openWritableStoreAndInit()
 		},
 		newChecker: func(config peoplesweep.Config, st personProviderStore) (personProviderChecker, error) {
+			transport, err := peoplesweep.NewStructuredTransport(
+				config.Provider,
+				http.DefaultClient,
+				peoplesweep.NewCodexCommandStarter(),
+				peoplesweep.NewReleasedCodexIsolationGate(),
+			)
+			if err != nil {
+				return nil, err
+			}
 			return peoplesweep.NewRunner(
 				config,
 				st,
-				peoplesweep.NewOpenAICompatibleTransport(http.DefaultClient),
+				transport,
 				os.LookupEnv,
 			)
+		},
+		newCodexClient: func(config peoplesweep.Config) (personProviderCodexClient, error) {
+			transport, err := peoplesweep.NewStructuredTransport(
+				config.Provider,
+				http.DefaultClient,
+				peoplesweep.NewCodexCommandStarter(),
+				peoplesweep.NewReleasedCodexIsolationGate(),
+			)
+			if err != nil {
+				return nil, err
+			}
+			codex, ok := transport.(*peoplesweep.CodexAppServerTransport)
+			if !ok {
+				return nil, errors.New("people inference provider is not codex_app_server")
+			}
+			return codex, nil
 		},
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		lookupEnv:          os.LookupEnv,
@@ -134,6 +177,8 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 		newPersonProviderConsentCommand(deps),
 		newPersonProviderRevokeCommand(deps),
 		newPersonProviderCheckCommand(deps),
+		newPersonProviderLoginCommand(deps),
+		newPersonProviderModelsCommand(deps),
 	)
 	return provider
 }
@@ -222,6 +267,40 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 	return command
 }
 
+func newPersonProviderLoginCommand(deps personProviderCommandDeps) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "login",
+		Short: "Start Codex ChatGPT device-code login",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			if !deps.isDaemonSubprocess() {
+				return deps.proxy(command, args, nil)
+			}
+			return runPersonProviderLogin(command, deps, jsonOutput)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
+}
+
+func newPersonProviderModelsCommand(deps personProviderCommandDeps) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "models",
+		Short: "List Codex models and reasoning efforts",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			if !deps.isDaemonSubprocess() {
+				return deps.proxy(command, args, nil)
+			}
+			return runPersonProviderModels(command, deps, jsonOutput)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
+}
+
 func runPersonProviderStatus(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
@@ -231,6 +310,24 @@ func runPersonProviderStatus(
 ) error {
 	if semanticEmbeddings {
 		return runPersonSemanticProviderStatus(command, deps, all, jsonOutput)
+	}
+	var codexIsolation *personProviderCodexIsolationStatus
+	if !all && deps.config().Provider.Kind == peoplesweep.ProviderCodexAppServer {
+		boundary := deps.config().Provider.ExecutionBoundary
+		_, err := currentPersonProviderCodexClient(deps)
+		if err != nil {
+			if !errors.Is(err, peoplesweep.ErrCodexIsolationUnreleased) {
+				return err
+			}
+			codexIsolation = &personProviderCodexIsolationStatus{
+				ExecutionBoundary: boundary,
+				Reason:            peoplesweep.ErrCodexIsolationUnreleased.Error(),
+			}
+		} else {
+			codexIsolation = &personProviderCodexIsolationStatus{
+				Available: true, ExecutionBoundary: boundary,
+			}
+		}
 	}
 	if all {
 		st, cleanup, err := deps.openStore()
@@ -257,7 +354,9 @@ func runPersonProviderStatus(
 	if err != nil {
 		return err
 	}
-	return writePersonProviderStatus(command.OutOrStdout(), profile, status, jsonOutput)
+	return writePersonProviderStatusWithCodexIsolation(
+		command.OutOrStdout(), profile, status, codexIsolation, jsonOutput,
+	)
 }
 
 func runPersonProviderConsent(
@@ -534,6 +633,70 @@ func runPersonProviderCheck(
 	return nil
 }
 
+func runPersonProviderLogin(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	jsonOutput bool,
+) error {
+	client, err := currentPersonProviderCodexClient(deps)
+	if err != nil {
+		return err
+	}
+	return client.StartDeviceLogin(command.Context(), func(login peoplesweep.DeviceLogin) error {
+		if jsonOutput {
+			return json.NewEncoder(command.OutOrStdout()).Encode(login)
+		}
+		_, _ = fmt.Fprintf(command.OutOrStdout(), "Verification URL: %s\n", login.VerificationURL)
+		_, _ = fmt.Fprintf(command.OutOrStdout(), "User code: %s\n", login.UserCode)
+		_, _ = fmt.Fprintf(command.OutOrStdout(), "Expires: %s\n", login.ExpiresAt.UTC().Format(time.RFC3339))
+		return nil
+	})
+}
+
+func runPersonProviderModels(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	jsonOutput bool,
+) error {
+	client, err := currentPersonProviderCodexClient(deps)
+	if err != nil {
+		return err
+	}
+	models, err := client.ListModels(command.Context())
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderModelsOutput{Models: models})
+	}
+	for _, model := range models {
+		_, _ = fmt.Fprintf(command.OutOrStdout(),
+			"%s\t%s\tdefault=%s\tsupported=%s\n",
+			model.ID,
+			model.DisplayName,
+			model.DefaultReasoningEffort,
+			strings.Join(model.SupportedEfforts, ", "),
+		)
+	}
+	return nil
+}
+
+func currentPersonProviderCodexClient(
+	deps personProviderCommandDeps,
+) (personProviderCodexClient, error) {
+	config := deps.config()
+	if config.Provider.Kind != peoplesweep.ProviderCodexAppServer {
+		return nil, errors.New("person provider login and models require codex_app_server")
+	}
+	if _, err := config.Profile(); err != nil {
+		return nil, err
+	}
+	if deps.newCodexClient == nil {
+		return nil, errors.New("codex app-server operations are unavailable")
+	}
+	return deps.newCodexClient(config)
+}
+
 func openPersonProviderProfile(
 	deps personProviderCommandDeps,
 ) (peoplesweep.ProviderProfile, personProviderStore, func(), error) {
@@ -595,12 +758,22 @@ func writePersonProviderStatus(
 	status *store.PersonInferenceConsentStatus,
 	jsonOutput bool,
 ) error {
+	return writePersonProviderStatusWithCodexIsolation(w, profile, status, nil, jsonOutput)
+}
+
+func writePersonProviderStatusWithCodexIsolation(
+	w io.Writer,
+	profile peoplesweep.ProviderProfile,
+	status *store.PersonInferenceConsentStatus,
+	codexIsolation *personProviderCodexIsolationStatus,
+	jsonOutput bool,
+) error {
 	if status == nil {
 		return errors.New("people inference consent status is empty")
 	}
 	if jsonOutput {
 		return json.NewEncoder(w).Encode(personProviderStatusOutput{
-			Profile: profile, Consent: *status,
+			Profile: profile, Consent: *status, CodexIsolation: codexIsolation,
 		})
 	}
 	printPersonProviderDisclosure(w, profile)
@@ -611,6 +784,17 @@ func writePersonProviderStatus(
 		state = "revoked"
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
+	if codexIsolation != nil {
+		availability := "unavailable"
+		if codexIsolation.Available {
+			availability = "available"
+		}
+		_, _ = fmt.Fprintf(w, "Codex isolation: %s\n", availability)
+		_, _ = fmt.Fprintf(w, "Execution boundary: %s\n", codexIsolation.ExecutionBoundary)
+		if codexIsolation.Reason != "" {
+			_, _ = fmt.Fprintf(w, "Reason: %s\n", codexIsolation.Reason)
+		}
+	}
 	return nil
 }
 
@@ -753,6 +937,12 @@ func printPersonProviderDisclosure(w io.Writer, profile peoplesweep.ProviderProf
 	_, _ = fmt.Fprintf(w, "Allowed sources: %s\n", strings.Join(sources, ", "))
 	_, _ = fmt.Fprintf(w, "Source dates: %s\n", dateRange)
 	_, _ = fmt.Fprintf(w, "Sensitive content: %s\n", sensitive)
+	_, _ = fmt.Fprintf(w, "Packet renderer: %s\n", profile.PacketRendererPolicy)
+	_, _ = fmt.Fprintf(w, "Extraction program fingerprint: %s\n", profile.ProgramFingerprint)
+	_, _ = fmt.Fprintln(w, "Disclosed packet field classes:")
+	for _, field := range profile.DisclosedPacketFields {
+		_, _ = fmt.Fprintf(w, "- %s\n", field)
+	}
 }
 
 func printPersonSemanticProviderDisclosure(

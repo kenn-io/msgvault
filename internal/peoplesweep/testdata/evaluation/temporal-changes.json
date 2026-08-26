@@ -1,0 +1,131 @@
+{
+  "name": "temporal changes and late old imports",
+  "allow_sensitive": false,
+  "description_overrides": {},
+  "max_requests": 7,
+  "steps": [
+    {
+      "name": "old job",
+      "excerpt": "I work at OldCo as an Engineer.",
+      "subject": "scoped",
+      "event_time": "2024-01-10T09:00:00Z",
+      "resolved_at": "2024-01-10T10:00:00Z",
+      "expected_span": [0, 31],
+      "provider_claims": [
+        {"target_slug":"employment","relation":"support","value":{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"},"evidence_steps":[0],"valid_from":"2024-01-10T09:00:00Z","valid_until":null,"confidence_basis_points":980}
+      ],
+      "expected_claims": [
+        {"target_slug":"employment","relation":"support","value":{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"},"evidence_steps":[0],"valid_from":"2024-01-10T09:00:00Z","valid_until":null,"confidence_basis_points":980}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"}]},
+      "retained_values": {"employment":[{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"}]},
+      "stale_resolution": false
+    },
+    {
+      "name": "changed job",
+      "excerpt": "I left OldCo and now work at NewCo as a Director.",
+      "subject": "scoped",
+      "event_time": "2025-03-05T09:00:00Z",
+      "resolved_at": "2025-03-05T10:00:00Z",
+      "expected_span": [0, 49],
+      "provider_claims": [
+        {"target_slug":"employment","relation":"supersede","value":{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"},"evidence_steps":[1],"valid_from":"2025-03-05T09:00:00Z","valid_until":null,"confidence_basis_points":990},
+        {"target_slug":"employment","relation":"support","value":{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"},"evidence_steps":[1],"valid_from":"2025-03-05T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_claims": [
+        {"target_slug":"employment","relation":"supersede","value":{"organization":{"name":"OldCo","domain":"oldco.example"},"title":"Engineer"},"evidence_steps":[1],"valid_from":"2025-03-05T09:00:00Z","valid_until":null,"confidence_basis_points":990},
+        {"target_slug":"employment","relation":"support","value":{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"},"evidence_steps":[1],"valid_from":"2025-03-05T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "stale_resolution": false
+    },
+    {
+      "name": "initial location",
+      "excerpt": "I live in Paris.",
+      "subject": "scoped",
+      "event_time": "2020-04-01T09:00:00Z",
+      "resolved_at": "2020-04-01T10:00:00Z",
+      "expected_span": [0, 16],
+      "provider_claims": [
+        {"target_slug":"location","relation":"support","value":"Paris","evidence_steps":[2],"valid_from":null,"valid_until":null,"confidence_basis_points":970}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"support","value":"Paris","evidence_steps":[2],"valid_from":null,"valid_until":null,"confidence_basis_points":970}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Paris"]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "stale_resolution": false
+    },
+    {
+      "name": "moved location",
+      "excerpt": "I moved from Paris to Berlin.",
+      "subject": "scoped",
+      "event_time": "2025-10-01T09:00:00Z",
+      "resolved_at": "2025-10-01T10:00:00Z",
+      "expected_span": [0, 29],
+      "provider_claims": [
+        {"target_slug":"location","relation":"supersede","value":"Paris","evidence_steps":[3],"valid_from":"2025-10-01T09:00:00Z","valid_until":"2025-10-02T09:00:00Z","confidence_basis_points":990}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"supersede","value":"Paris","evidence_steps":[3],"valid_from":"2025-10-01T09:00:00Z","valid_until":"2025-10-02T09:00:00Z","confidence_basis_points":990}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "stale_resolution": false
+    },
+    {
+      "name": "new location confirmed",
+      "excerpt": "I now live in Berlin.",
+      "subject": "scoped",
+      "event_time": "2025-10-02T09:00:00Z",
+      "resolved_at": "2025-10-02T10:00:00Z",
+      "expected_span": [0, 21],
+      "provider_claims": [
+        {"target_slug":"location","relation":"support","value":"Berlin","evidence_steps":[4],"valid_from":"2025-10-02T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"support","value":"Berlin","evidence_steps":[4],"valid_from":"2025-10-02T09:00:00Z","valid_until":null,"confidence_basis_points":990}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Berlin"]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}]},
+      "stale_resolution": false
+    },
+    {
+      "name": "late old location import",
+      "excerpt": "Years ago I lived in Madrid.",
+      "subject": "scoped",
+      "event_time": "2001-06-01T09:00:00Z",
+      "resolved_at": "2026-01-01T10:00:00Z",
+      "expected_span": [0, 28],
+      "provider_claims": [
+        {"target_slug":"location","relation":"support","value":"Madrid","evidence_steps":[5],"valid_from":"2001-06-01T09:00:00Z","valid_until":"2002-01-01T00:00:00Z","confidence_basis_points":990}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"support","value":"Madrid","evidence_steps":[5],"valid_from":"2001-06-01T09:00:00Z","valid_until":"2002-01-01T00:00:00Z","confidence_basis_points":990}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Berlin"]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Berlin"]},
+      "stale_resolution": true
+    },
+    {
+      "name": "current and historical preferences",
+      "excerpt": "Now I enjoy cycling; growing up I enjoyed chess.",
+      "subject": "scoped",
+      "event_time": "2026-01-02T09:00:00Z",
+      "resolved_at": "2026-01-02T10:00:00Z",
+      "expected_span": [0, 48],
+      "provider_claims": [
+        {"target_slug":"interests_fun_now","relation":"support","value":"cycling","evidence_steps":[6],"valid_from":null,"valid_until":null,"confidence_basis_points":980},
+        {"target_slug":"interests_fun_growing_up","relation":"support","value":"chess","evidence_steps":[6],"valid_from":null,"valid_until":null,"confidence_basis_points":980}
+      ],
+      "expected_claims": [
+        {"target_slug":"interests_fun_now","relation":"support","value":"cycling","evidence_steps":[6],"valid_from":null,"valid_until":null,"confidence_basis_points":980},
+        {"target_slug":"interests_fun_growing_up","relation":"support","value":"chess","evidence_steps":[6],"valid_from":null,"valid_until":null,"confidence_basis_points":980}
+      ],
+      "expected_current": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Berlin"],"interests_fun_now":["cycling"],"interests_fun_growing_up":["chess"]},
+      "retained_values": {"employment":[{"organization":{"name":"NewCo","domain":"newco.example"},"title":"Director"}],"location":["Berlin"]},
+      "stale_resolution": false
+    }
+  ]
+}

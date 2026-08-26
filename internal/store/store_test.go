@@ -1722,6 +1722,26 @@ func TestStore_RekeyMessageSourceIDRequiresExpectedID(t *testing.T) {
 	assert.Equal("msgvault-invalidated:1", sourceMessageID)
 }
 
+func TestStore_RekeyMessageSourceIDReportsScopedWrite(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("INBOX|1")
+	syncID := f.StartSync()
+	scoped := f.Store.ScopedToSync(f.Source.ID, syncID)
+
+	changed, err := scoped.RekeyMessageSourceID(
+		messageID,
+		"INBOX|1",
+		"msgvault-invalidated:1",
+	)
+	requirements.NoError(err)
+	checks.True(changed)
+	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	requirements.NoError(err)
+	checks.Equal("msgvault-invalidated:1", sourceMessageID)
+}
+
 func TestStore_RemoveMessageLabels(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

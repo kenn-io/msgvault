@@ -140,7 +140,75 @@ func (s *Store) UpsertAttachmentRecord(
 	if err := write.validate(); err != nil {
 		return err
 	}
+	if s.syncGeneration != nil {
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return s.upsertAttachmentRecord(tx, messageID, write)
+		})
+	}
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
+}
+
+// UpdateAttachmentMediaMetadataContext records provider media dimensions on
+// attachment occurrences belonging to one message.
+func (s *Store) UpdateAttachmentMediaMetadataContext(
+	ctx context.Context,
+	messageID int64,
+	contentHash, mediaType string,
+	width, height, durationMS sql.NullInt64,
+) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`
+			UPDATE attachments SET media_type = ?, width = ?, height = ?, duration_ms = ?
+			WHERE message_id = ? AND (content_hash = ? OR content_hash IS NULL)
+		`, mediaType, width, height, durationMS, messageID, contentHash)
+		return err
+	})
+}
+
+// DeleteLegacyHashlessAttachmentsContext removes obsolete unstored rows that
+// predate stable source-part keys.
+func (s *Store) DeleteLegacyHashlessAttachmentsContext(ctx context.Context, messageID int64) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ?
+			  AND (content_hash IS NULL OR content_hash = '')
+			  AND storage_path = ''
+		`, messageID)
+		return err
+	})
+}
+
+// DeleteUnstoredAttachmentByHashContext removes an obsolete placeholder for
+// one exact content or synthetic hash.
+func (s *Store) DeleteUnstoredAttachmentByHashContext(
+	ctx context.Context, messageID int64, contentHash string,
+) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ? AND content_hash = ? AND storage_path = ''
+		`, messageID, contentHash)
+		return err
+	})
+}
+
+// DeleteUnstoredAttachmentByMetadataContext removes an obsolete hashed
+// placeholder selected by its stable display metadata.
+func (s *Store) DeleteUnstoredAttachmentByMetadataContext(
+	ctx context.Context, messageID int64, filename, mimeType string,
+) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ? AND filename = ? AND mime_type = ?
+			  AND storage_path = '' AND content_hash <> '' AND LENGTH(content_hash) = 64
+		`, messageID, filename, mimeType)
+		return err
+	})
 }
 
 func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write AttachmentWrite) error {

@@ -237,6 +237,9 @@ func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result
 	if err != nil {
 		return fmt.Errorf("start sync: %w", err)
 	}
+	scoped := *s
+	scoped.store = s.store.ScopedToSync(src.ID, syncID)
+	s = &scoped
 
 	cp := store.Checkpoint{
 		PageToken:         resumePageToken,
@@ -323,16 +326,19 @@ func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result
 	if limitHit || s.opts.TimeMin != "" || s.opts.TimeMax != "" {
 		finalToken = ""
 	}
-	if finalToken != "" {
-		if err := s.store.UpdateSourceSyncCursor(src.ID, finalToken); err != nil {
-			return fail(fmt.Errorf("update cursor: %w", err))
-		}
-	}
-	if err := s.store.CompleteSync(syncID, finalToken); err != nil {
-		return fail(fmt.Errorf("complete sync: %w", err))
-	}
 	if err := s.store.RecomputeConversationStats(src.ID); err != nil {
 		s.logger.Warn("recompute conversation stats failed", "calendar", cal.ID, "error", err)
+	}
+	var completeErr error
+	if finalToken != "" {
+		completeErr = s.store.CompleteSyncAndUpdateSourceCursorContext(
+			ctx, syncID, src.ID, finalToken,
+		)
+	} else {
+		completeErr = s.store.CompleteSyncContext(ctx, syncID, finalToken)
+	}
+	if completeErr != nil {
+		return fail(fmt.Errorf("complete sync: %w", completeErr))
 	}
 	_ = s.store.CheckpointWAL()
 	s.logger.Info("calendar full sync complete",

@@ -126,6 +126,34 @@ source_since = "2025-01-01"
 	assert.Empty(loaded.People.Sweep.Provider.APIKeyEnv)
 }
 
+func TestLoadCodexPeopleProviderUsesCodexOnlyDefaults(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	requirements.NoError(os.WriteFile(path, []byte(`
+[people.sweep]
+enabled = true
+
+[people.sweep.provider]
+kind = "codex_app_server"
+model = "gpt-test"
+reasoning_effort = "high"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+`), 0o600))
+
+	loaded, err := Load(path, "")
+	requirements.NoError(err)
+	provider := loaded.People.Sweep.Provider
+	checks.Equal(peoplesweep.ProviderCodexAppServer, provider.Kind)
+	checks.Empty(provider.Endpoint)
+	checks.Empty(provider.APIKeyEnv)
+	checks.Equal("codex", provider.Executable)
+	checks.Equal(peoplesweep.CodexExecutionBoundaryV1, provider.ExecutionBoundary)
+}
+
 func TestLoadRejectsAnonymousPeopleProviderWithExplicitKeyEnv(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

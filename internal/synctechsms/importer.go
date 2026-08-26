@@ -41,19 +41,28 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	if err != nil {
 		return ImportSummary{}, fmt.Errorf("start sync: %w", err)
 	}
+	scoped := *i
+	scoped.store = i.store.ScopedToSync(src.ID, syncID)
+	i = &scoped
 	summary, importErr := i.ImportPathIntoSource(src.ID, path)
 	if importErr != nil {
 		_ = i.store.FailSync(syncID, importErr.Error())
 		return summary, importErr
 	}
 	total := int64(summary.SMSImported + summary.MMSImported + summary.CallsImported)
-	_ = i.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+	if err := i.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		MessagesProcessed: total,
 		MessagesAdded:     total,
-	})
-	_ = i.store.CompleteSync(syncID, "")
+	}); err != nil {
+		_ = i.store.FailSync(syncID, err.Error())
+		return summary, fmt.Errorf("update sync checkpoint: %w", err)
+	}
 	if err := i.store.RecomputeConversationStats(src.ID); err != nil {
+		_ = i.store.FailSync(syncID, err.Error())
 		return summary, fmt.Errorf("recompute conversation stats: %w", err)
+	}
+	if err := i.store.CompleteSync(syncID, ""); err != nil {
+		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 	return summary, nil
 }

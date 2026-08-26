@@ -587,6 +587,11 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN IF NOT EXISTS backstop_upper_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_upper_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN IF NOT EXISTS backstop_after_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_after_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN IF NOT EXISTS optimistic_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.optimistic_document_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN IF NOT EXISTS reconcile_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.reconcile_document_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN IF NOT EXISTS backstop_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_document_key"},
 		{`ALTER TABLE carddav_address_books ADD COLUMN IF NOT EXISTS needs_full_reconcile BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_address_books.needs_full_reconcile"},
 		{`ALTER TABLE carddav_address_books ADD COLUMN IF NOT EXISTS sync_token TEXT NOT NULL DEFAULT ''`, "carddav_address_books.sync_token"},
 		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS pending_operation TEXT CHECK (pending_operation IN ('delete'))`, "carddav_conflicts.pending_operation"},
@@ -1521,12 +1526,474 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
 		     EXECUTE FUNCTION invalidate_visual_publication_message_body()`,
 	}
+	stmts = append(stmts, personSweepPostgreSQLTriggerStatements()...)
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
 			return fmt.Errorf("ensure message watermark triggers: %w", err)
 		}
 	}
 	return nil
+}
+
+func personSweepPostgreSQLTriggerStatements() []string {
+	recipientRole := personSweepRecipientRolePredicate("mr.recipient_type")
+	messageRoster := personSweepRosterPredicateValuesSQL(
+		"_message_id", "_is_from_me", "_sender_id",
+		"c.conversation_type", "pp.person_id",
+	)
+	rosterScope := personSweepRosterPredicateSQL("pp.person_id")
+	bindingRoster := personSweepRosterPredicateSQL("_person_id")
+	oldRecipientRole := personSweepRecipientRolePredicate("OLD.recipient_type")
+	newRecipientRole := personSweepRecipientRolePredicate("NEW.recipient_type")
+	recipientRoleChangeKind := personSweepRecipientRoleChangeKindSQL(
+		"OLD.recipient_type", "NEW.recipient_type")
+	recipientRoleChangeEffect := personSweepRecipientRoleChangeEffectSQL(
+		"OLD.recipient_type", "NEW.recipient_type")
+	return []string{
+		`CREATE OR REPLACE FUNCTION msgvault_append_person_sweep_change(
+		     _person_id BIGINT, _source_lane TEXT, _change_kind TEXT,
+		     _evidence_effect TEXT, _source_id BIGINT, _message_id BIGINT)
+		 RETURNS VOID AS $$
+		 DECLARE next_sequence BIGINT;
+		 BEGIN
+		     UPDATE person_sweep_change_clock
+		        SET sequence = sequence + 1
+		      WHERE singleton = TRUE AND enabled = TRUE
+		      RETURNING sequence INTO next_sequence;
+		     IF next_sequence IS NOT NULL THEN
+		         INSERT INTO person_sweep_changes
+		             (sequence, person_id, source_lane, change_kind,
+		              evidence_effect, source_id, message_id, recorded_at)
+		         VALUES (next_sequence, _person_id, _source_lane, _change_kind,
+		                 _evidence_effect, _source_id, _message_id, CURRENT_TIMESTAMP);
+		     END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION msgvault_append_person_sweep_document_changes(
+		     _person_id BIGINT, _source_id BIGINT, _message_id BIGINT,
+		     _change_kind TEXT, _evidence_effect TEXT)
+		 RETURNS VOID AS $$
+		 DECLARE occurrence RECORD;
+		 DECLARE next_sequence BIGINT;
+		 BEGIN
+		     FOR occurrence IN
+		         SELECT source_id, attachment_id, occurrence_key
+		           FROM document_occurrences
+		          WHERE message_id = _message_id
+		          ORDER BY attachment_id, occurrence_key
+		     LOOP
+		         next_sequence := NULL;
+		         UPDATE person_sweep_change_clock
+		            SET sequence = sequence + 1
+		          WHERE singleton = TRUE AND enabled = TRUE
+		          RETURNING sequence INTO next_sequence;
+		         IF next_sequence IS NOT NULL THEN
+		             INSERT INTO person_sweep_changes
+		                 (sequence, person_id, source_lane, change_kind,
+		                  evidence_effect, source_id, message_id, attachment_id,
+		                  occurrence_key, recorded_at)
+		             VALUES (next_sequence, _person_id, 'document_text', _change_kind,
+		                     _evidence_effect, occurrence.source_id, _message_id,
+		                     occurrence.attachment_id, occurrence.occurrence_key,
+		                     CURRENT_TIMESTAMP);
+		         END IF;
+		     END LOOP;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP FUNCTION IF EXISTS msgvault_person_sweep_message_scope(BIGINT, BIGINT, BIGINT, TEXT, BIGINT)`,
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION msgvault_person_sweep_message_scope(
+		     _message_id BIGINT, _conversation_id BIGINT, _sender_id BIGINT,
+		     _is_from_me BOOLEAN, _message_type TEXT, _source_id BIGINT)
+		 RETURNS TABLE(person_id BIGINT, source_lane TEXT, source_id BIGINT, message_id BIGINT)
+		 AS $$
+		     SELECT pp.person_id,
+		            CASE WHEN _message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            _source_id, _message_id
+		       FROM person_participants pp
+		       JOIN person_tracking pt ON pt.person_id = pp.person_id
+		      WHERE pp.participant_id = _sender_id
+		     UNION
+		     SELECT pp.person_id,
+		            CASE WHEN _message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            _source_id, _message_id
+		       FROM message_recipients mr
+		       JOIN person_participants pp ON pp.participant_id = mr.participant_id
+		       JOIN person_tracking pt ON pt.person_id = pp.person_id
+		      WHERE mr.message_id = _message_id AND %s
+		     UNION
+		     SELECT pp.person_id,
+		            CASE WHEN _message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            _source_id, _message_id
+		       FROM conversations c
+		       JOIN conversation_participants cp ON cp.conversation_id = c.id
+		       JOIN person_participants pp ON pp.participant_id = cp.participant_id
+		       JOIN person_tracking pt ON pt.person_id = pp.person_id
+		      WHERE c.id = _conversation_id AND %s
+		 $$ LANGUAGE sql STABLE`, recipientRole, messageRoster),
+		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_participant_message_scope(
+		     _message_id BIGINT, _participant_id BIGINT)
+		 RETURNS TABLE(person_id BIGINT, source_lane TEXT, source_id BIGINT, message_id BIGINT)
+		 AS $$
+		     SELECT pp.person_id,
+		            CASE WHEN m.message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            m.source_id, m.id
+		       FROM messages m
+		       JOIN person_participants pp ON pp.participant_id = _participant_id
+		       JOIN person_tracking pt ON pt.person_id = pp.person_id
+		      WHERE m.id = _message_id AND m.deleted_at IS NULL
+		        AND m.deleted_from_source_at IS NULL
+		 $$ LANGUAGE sql STABLE`,
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION msgvault_person_sweep_roster_scope(
+		     _conversation_id BIGINT, _participant_id BIGINT)
+		 RETURNS TABLE(person_id BIGINT, source_lane TEXT, source_id BIGINT, message_id BIGINT)
+		 AS $$
+		     SELECT pp.person_id,
+		            CASE WHEN m.message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            m.source_id, m.id
+		       FROM conversations c
+		       JOIN messages m ON m.conversation_id = c.id
+		       JOIN person_participants pp ON pp.participant_id = _participant_id
+		       JOIN person_tracking pt ON pt.person_id = pp.person_id
+		      WHERE c.id = _conversation_id AND %s
+		        AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		 $$ LANGUAGE sql STABLE`, rosterScope),
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION msgvault_person_sweep_binding_scope(
+		     _person_id BIGINT, _participant_id BIGINT)
+		 RETURNS TABLE(person_id BIGINT, source_lane TEXT, source_id BIGINT, message_id BIGINT)
+		 AS $$
+		     SELECT _person_id,
+		            CASE WHEN m.message_type = 'meeting_transcript'
+		                 THEN 'meeting_text' ELSE 'conversation_text' END,
+		            m.source_id, m.id
+		       FROM messages m
+		       JOIN person_tracking pt ON pt.person_id = _person_id
+		      WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		        AND (m.sender_id = _participant_id
+		             OR EXISTS (SELECT 1 FROM message_recipients mr
+		                         WHERE mr.message_id = m.id
+		                           AND mr.participant_id = _participant_id
+		                           AND %s)
+		             OR EXISTS (SELECT 1 FROM conversations c
+		                         JOIN conversation_participants cp
+		                           ON cp.conversation_id = c.id
+		                         WHERE c.id = m.conversation_id
+		                           AND %s
+		                           AND cp.participant_id = _participant_id))
+		 $$ LANGUAGE sql STABLE`, recipientRole, bindingRoster),
+		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_messages() RETURNS trigger AS $$
+		 DECLARE affected RECORD;
+		 DECLARE kind TEXT;
+		 DECLARE effect TEXT;
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM person_tracking) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' THEN
+		         IF NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL THEN
+		             FOR affected IN SELECT * FROM msgvault_person_sweep_message_scope(
+		                 NEW.id, NEW.conversation_id, NEW.sender_id, NEW.is_from_me,
+		                 NEW.message_type, NEW.source_id)
+		             LOOP
+		                 PERFORM msgvault_append_person_sweep_change(
+		                     affected.person_id, affected.source_lane, 'upsert', '',
+		                     affected.source_id, affected.message_id);
+		             END LOOP;
+		         END IF;
+		     ELSIF TG_OP = 'DELETE' THEN
+		         IF OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL THEN
+		             FOR affected IN SELECT * FROM msgvault_person_sweep_message_scope(
+		                 OLD.id, OLD.conversation_id, OLD.sender_id, OLD.is_from_me,
+		                 OLD.message_type, OLD.source_id)
+		             LOOP
+			         PERFORM msgvault_append_person_sweep_change(
+			             affected.person_id, affected.source_lane, 'delete', 'source-deleted',
+			             affected.source_id, affected.message_id);
+			         PERFORM msgvault_append_person_sweep_document_changes(
+			             affected.person_id, affected.source_id, affected.message_id,
+			             'delete', 'source-deleted');
+		             END LOOP;
+		         END IF;
+		     ELSE
+		         kind := CASE
+		             WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                  AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		                 THEN 'delete'
+		             WHEN OLD.sender_id IS DISTINCT FROM NEW.sender_id
+		               OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id THEN 'scope'
+		             ELSE 'upsert' END;
+		         effect := CASE
+		             WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                  AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		                 THEN 'source-deleted'
+		             WHEN (OLD.deleted_at IS NOT NULL OR OLD.deleted_from_source_at IS NOT NULL)
+		                  AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                 THEN 'source-reimported'
+		             WHEN OLD.sender_id IS DISTINCT FROM NEW.sender_id
+		               OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id THEN 'identity-reassigned'
+		             ELSE 'source-edited' END;
+		         FOR affected IN
+		             SELECT * FROM msgvault_person_sweep_message_scope(
+		                 OLD.id, OLD.conversation_id, OLD.sender_id, OLD.is_from_me,
+		                 OLD.message_type, OLD.source_id)
+		              WHERE OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		             UNION
+		             SELECT * FROM msgvault_person_sweep_message_scope(
+		                 NEW.id, NEW.conversation_id, NEW.sender_id, NEW.is_from_me,
+		                 NEW.message_type, NEW.source_id)
+		              WHERE NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		         LOOP
+			     PERFORM msgvault_append_person_sweep_change(
+			         affected.person_id, affected.source_lane, kind, effect,
+			         affected.source_id, affected.message_id);
+			     IF OLD.sender_id IS DISTINCT FROM NEW.sender_id
+			        OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+			        OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+			        OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at THEN
+			         PERFORM msgvault_append_person_sweep_document_changes(
+			             affected.person_id, affected.source_id, affected.message_id,
+			             kind, effect);
+			     END IF;
+		         END LOOP;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_bodies() RETURNS trigger AS $$
+		 DECLARE affected RECORD;
+		 DECLARE target_message_id BIGINT;
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM person_tracking) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     target_message_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.message_id ELSE NEW.message_id END;
+		     IF TG_OP <> 'UPDATE' OR OLD.body_text IS DISTINCT FROM NEW.body_text
+		                           OR OLD.body_html IS DISTINCT FROM NEW.body_html THEN
+		         FOR affected IN
+		             SELECT scope.* FROM messages m
+		             CROSS JOIN LATERAL msgvault_person_sweep_message_scope(
+		                 m.id, m.conversation_id, m.sender_id, m.is_from_me,
+		                 m.message_type, m.source_id) scope
+		             WHERE m.id = target_message_id AND m.deleted_at IS NULL
+		               AND m.deleted_from_source_at IS NULL
+		         LOOP
+		             PERFORM msgvault_append_person_sweep_change(
+		                 affected.person_id, affected.source_lane, 'upsert',
+		                 CASE WHEN TG_OP = 'INSERT' THEN '' ELSE 'source-edited' END,
+		                 affected.source_id, affected.message_id);
+		         END LOOP;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_recipients() RETURNS trigger AS $$
+		 DECLARE affected RECORD;
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM person_tracking) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' AND %s THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_participant_message_scope(
+		             NEW.message_id, NEW.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
+		         END LOOP;
+		     ELSIF TG_OP = 'DELETE' AND %s THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_participant_message_scope(
+		             OLD.message_id, OLD.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
+		         END LOOP;
+		     ELSIF TG_OP = 'UPDATE' AND (
+		        OLD.message_id IS DISTINCT FROM NEW.message_id
+		        OR OLD.participant_id IS DISTINCT FROM NEW.participant_id) THEN
+		         FOR affected IN
+		             SELECT * FROM msgvault_person_sweep_participant_message_scope(OLD.message_id, OLD.participant_id)
+		              WHERE %s
+		             UNION
+		             SELECT * FROM msgvault_person_sweep_participant_message_scope(NEW.message_id, NEW.participant_id)
+		              WHERE %s
+		         LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'identity-reassigned',
+			         affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'identity-reassigned');
+		         END LOOP;
+		     ELSIF TG_OP = 'UPDATE' AND OLD.recipient_type IS DISTINCT FROM NEW.recipient_type THEN
+		         FOR affected IN
+		             SELECT * FROM msgvault_person_sweep_participant_message_scope(OLD.message_id, OLD.participant_id)
+		              WHERE %s
+		             UNION
+		             SELECT * FROM msgvault_person_sweep_participant_message_scope(NEW.message_id, NEW.participant_id)
+		              WHERE %s
+		         LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, %s, %s, affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, %s, %s);
+		         END LOOP;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`, newRecipientRole, oldRecipientRole,
+			oldRecipientRole, newRecipientRole, oldRecipientRole, newRecipientRole,
+			recipientRoleChangeKind, recipientRoleChangeEffect,
+			recipientRoleChangeKind, recipientRoleChangeEffect),
+		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_roster() RETURNS trigger AS $$
+		 DECLARE affected RECORD;
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM person_tracking) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_roster_scope(
+		             NEW.conversation_id, NEW.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
+		         END LOOP;
+		     ELSIF TG_OP = 'DELETE' THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_roster_scope(
+		             OLD.conversation_id, OLD.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
+		         END LOOP;
+		     ELSIF OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		        OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
+		        OR OLD.role IS DISTINCT FROM NEW.role OR OLD.joined_at IS DISTINCT FROM NEW.joined_at
+		        OR OLD.left_at IS DISTINCT FROM NEW.left_at THEN
+		         FOR affected IN
+		             SELECT * FROM msgvault_person_sweep_roster_scope(OLD.conversation_id, OLD.participant_id)
+		             UNION
+		             SELECT * FROM msgvault_person_sweep_roster_scope(NEW.conversation_id, NEW.participant_id)
+		         LOOP
+		             PERFORM msgvault_append_person_sweep_change(affected.person_id,
+		                 affected.source_lane,
+		                 CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                            OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
+		                      THEN 'scope' ELSE 'upsert' END,
+		                 CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                            OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
+		                      THEN 'identity-reassigned' ELSE 'source-edited' END,
+			         affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id,
+			         CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+			                    OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
+			              THEN 'scope' ELSE 'upsert' END,
+			         CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+			                    OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
+			              THEN 'identity-reassigned' ELSE 'source-edited' END);
+		         END LOOP;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_bindings() RETURNS trigger AS $$
+		 DECLARE affected RECORD;
+		 BEGIN
+		     IF NOT EXISTS (SELECT 1 FROM person_tracking) THEN
+		         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		     END IF;
+		     IF TG_OP = 'INSERT' THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_binding_scope(
+		             NEW.person_id, NEW.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
+		         END LOOP;
+		     ELSIF TG_OP = 'DELETE' THEN
+		         FOR affected IN SELECT * FROM msgvault_person_sweep_binding_scope(
+		             OLD.person_id, OLD.participant_id) LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
+		         END LOOP;
+		     ELSIF OLD.person_id IS DISTINCT FROM NEW.person_id
+		        OR OLD.participant_id IS DISTINCT FROM NEW.participant_id THEN
+		         FOR affected IN
+		             SELECT * FROM msgvault_person_sweep_binding_scope(OLD.person_id, OLD.participant_id)
+		             UNION
+		             SELECT * FROM msgvault_person_sweep_binding_scope(NEW.person_id, NEW.participant_id)
+		         LOOP
+			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
+			         affected.source_lane, 'scope', 'identity-reassigned', affected.source_id, affected.message_id);
+			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
+			         affected.source_id, affected.message_id, 'scope', 'identity-reassigned');
+		         END LOOP;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_messages ON messages`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_message_insert ON messages`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_message_update ON messages`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_message_delete ON messages`,
+		// INSERT and UPDATE publication must fire AFTER the row operation:
+		// PostgreSQL fires row-level BEFORE INSERT triggers even when an
+		// INSERT ... ON CONFLICT DO UPDATE takes the update path, so a BEFORE
+		// trigger double-publishes (once as INSERT, once as UPDATE) for every
+		// conflict upsert. AFTER INSERT does not fire on the conflict path,
+		// which matches SQLite's conflict-update semantics exactly. DELETE
+		// stays BEFORE because the scope functions resolve the doomed row.
+		`CREATE TRIGGER trg_person_sweep_changes_message_insert
+		     AFTER INSERT ON messages FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_messages()`,
+		fmt.Sprintf(`CREATE TRIGGER trg_person_sweep_changes_message_update
+		     AFTER UPDATE OF %s ON messages FOR EACH ROW
+		     WHEN (%s)
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_messages()`,
+			contentChangedTriggerColumnList(), contentChangedValueGuard("IS DISTINCT FROM")),
+		`CREATE TRIGGER trg_person_sweep_changes_message_delete
+		     BEFORE DELETE ON messages FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_messages()`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_bodies ON message_bodies`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_bodies_delete ON message_bodies`,
+		`CREATE TRIGGER trg_person_sweep_changes_bodies
+		     AFTER INSERT OR UPDATE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_bodies()`,
+		`CREATE TRIGGER trg_person_sweep_changes_bodies_delete
+		     BEFORE DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_bodies()`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients ON message_recipients`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients_delete ON message_recipients`,
+		`CREATE TRIGGER trg_person_sweep_changes_recipients
+		     AFTER INSERT OR UPDATE ON message_recipients FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_recipients()`,
+		`CREATE TRIGGER trg_person_sweep_changes_recipients_delete
+		     BEFORE DELETE ON message_recipients FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_recipients()`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_roster ON conversation_participants`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_roster_delete ON conversation_participants`,
+		`CREATE TRIGGER trg_person_sweep_changes_roster
+		     AFTER INSERT OR UPDATE ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_roster()`,
+		`CREATE TRIGGER trg_person_sweep_changes_roster_delete
+		     BEFORE DELETE ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_roster()`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_bindings ON person_participants`,
+		`DROP TRIGGER IF EXISTS trg_person_sweep_changes_bindings_delete ON person_participants`,
+		`CREATE TRIGGER trg_person_sweep_changes_bindings
+		     AFTER INSERT OR UPDATE ON person_participants FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_bindings()`,
+		`CREATE TRIGGER trg_person_sweep_changes_bindings_delete
+		     BEFORE DELETE ON person_participants FOR EACH ROW
+		     EXECUTE FUNCTION msgvault_person_sweep_changes_bindings()`,
+	}
 }
 
 // EnsureActivityProjectionTriggers installs the PostgreSQL triggers that keep
@@ -1800,6 +2267,7 @@ var exclusiveLockTables = []string{
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.
 	"persons", "person_participants",
+	"person_sweep_changes", "person_sweep_sync_publications",
 	// Activity projection rows are written from and cascade with the sync
 	// archive. The queue is trigger-written by every message/participant
 	// mutation, so it belongs to the same exclusive write set.

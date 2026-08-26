@@ -50,6 +50,9 @@ func postgresFTSRankExpression(vectorExpr, queryArg string) string {
 // the pool was capped and downstream callers should consider raising
 // KPerSignal or narrowing the query.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+	if err := vector.ValidateFilter(req.Filter); err != nil {
+		return nil, false, err
+	}
 	useFTS := len(req.FTSTerms) > 0
 	useANN := req.QueryVec != nil
 	if !useFTS && !useANN {

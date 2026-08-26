@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -196,6 +197,7 @@ type Chunk struct {
 //     `>= After` and `< Before`.
 //   - LargerThan/SmallerThan compare against m.size_estimate.
 type Filter struct {
+	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	SenderGroups       [][]int64 // one inner slice per `from:` token; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
@@ -215,7 +217,8 @@ type Filter struct {
 // IsEmpty reports whether the filter has no restrictions. A zero-value
 // Filter is empty and backends should skip filter resolution entirely.
 func (f Filter) IsEmpty() bool {
-	return len(f.SourceIDs) == 0 &&
+	return len(f.MessageIDs) == 0 &&
+		len(f.SourceIDs) == 0 &&
 		len(f.SenderGroups) == 0 &&
 		len(f.SenderExactGroups) == 0 &&
 		len(f.RecipientAnyGroups) == 0 &&
@@ -230,6 +233,17 @@ func (f Filter) IsEmpty() bool {
 		f.SmallerThan == nil &&
 		len(f.SubjectSubstrings) == 0 &&
 		len(f.MessageTypes) == 0
+}
+
+const MaxFilterMessageIDs = 2_000
+
+var ErrFilterTooLarge = errors.New("vector message ID filter exceeds 2000 IDs")
+
+func ValidateFilter(filter Filter) error {
+	if len(filter.MessageIDs) > MaxFilterMessageIDs {
+		return ErrFilterTooLarge
+	}
+	return nil
 }
 
 // Hit is one search result.

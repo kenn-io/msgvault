@@ -118,6 +118,17 @@ func NewImporter(s *store.Store, c *Client, teamID string) *Importer {
 	return &Importer{store: s, client: c, res: newParticipantResolver(s, teamID), now: time.Now}
 }
 
+func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(sourceID, syncID)
+	teamID := ""
+	if imp.res != nil {
+		teamID = imp.res.teamID
+	}
+	scoped.res = newParticipantResolver(scoped.store, teamID)
+	return &scoped
+}
+
 // errInvalidResumeState distinguishes an unreadable durable state blob from a
 // failure to read the store itself. A full repair may discard the former, but
 // must continue to fail closed on the latter.
@@ -211,6 +222,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return nil, err
 	}
+	imp = imp.scopedToSync(src.ID, syncID)
 	// Failures below must ASSIGN to err (never shadow it with :=) so this
 	// defer records them on the run — WITH the in-memory final state, so
 	// resume granularity is the failure instant, not the last throttled
@@ -1339,6 +1351,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return nil, err
 	}
+	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
 			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), imp.failCheckpoint(state, sum))

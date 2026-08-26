@@ -303,6 +303,108 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 	), "cleanup warning must be emitted only for the repairing run")
 }
 
+func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "legacy_recipient_activity.db")
+
+	seed, err := Open(dbPath)
+	require.NoError(err, "open seed archive")
+	require.NoError(seed.InitSchema(), "initialize seed archive")
+	source, err := seed.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err, "create source")
+	conversationID, err := seed.EnsureConversation(
+		source.ID, "thread-legacy-recipient-activity", "",
+	)
+	require.NoError(err, "create conversation")
+	firstMessageID, err := seed.UpsertMessage(&Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "msg-legacy-recipient-activity-first",
+		MessageType:     "email",
+	})
+	require.NoError(err, "create first message")
+	secondMessageID, err := seed.UpsertMessage(&Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "msg-legacy-recipient-activity-second",
+		MessageType:     "email",
+	})
+	require.NoError(err, "create second message")
+	participantID, err := seed.EnsureParticipant(
+		"recipient@example.test", "Recipient", "example.test",
+	)
+	require.NoError(err, "create participant")
+	require.NoError(seed.Close(), "close seed archive")
+
+	legacy, err := sql.Open(
+		sqliteutil.DriverName(), dbPath+"?_foreign_keys=OFF",
+	)
+	require.NoError(err, "open legacy archive")
+	for _, stmt := range []string{
+		`DELETE FROM applied_migrations
+		 WHERE name = 'message_recipients_envelope_unique_index'`,
+		`DROP INDEX IF EXISTS idx_message_recipients_envelope`,
+		`ALTER TABLE message_recipients RENAME TO message_recipients_current`,
+		`CREATE TABLE message_recipients (
+			id INTEGER PRIMARY KEY,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			recipient_type TEXT NOT NULL,
+			display_name TEXT,
+			email_address TEXT,
+			UNIQUE(message_id, participant_id, recipient_type)
+		)`,
+		`INSERT INTO message_recipients
+			(id, message_id, participant_id, recipient_type, display_name, email_address)
+		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+		 FROM message_recipients_current`,
+		`DROP TABLE message_recipients_current`,
+	} {
+		_, err = legacy.Exec(stmt)
+		require.NoError(err, "restore legacy recipient schema: %q", stmt)
+	}
+	require.NoError(legacy.Close(), "close legacy archive")
+
+	upgraded, err := Open(dbPath)
+	require.NoError(err, "open legacy archive for upgrade")
+	t.Cleanup(func() { _ = upgraded.Close() })
+	require.NoError(upgraded.InitSchema(), "upgrade legacy archive")
+	_, err = upgraded.db.Exec(`DELETE FROM activity_projection_queue`)
+	require.NoError(err, "clear pre-upgrade activity work")
+
+	revision := func(messageID int64) int64 {
+		var got int64
+		require.NoError(upgraded.db.QueryRow(`
+			SELECT COALESCE((
+				SELECT revision FROM activity_projection_queue WHERE message_id = ?
+			), 0)
+		`, messageID).Scan(&got), "read activity revision for message %d", messageID)
+		return got
+	}
+
+	var recipientID int64
+	require.NoError(upgraded.db.QueryRow(`
+		INSERT INTO message_recipients
+			(message_id, participant_id, recipient_type, display_name, email_address)
+		VALUES (?, ?, 'to', 'Recipient', 'recipient@example.test')
+		RETURNING id
+	`, firstMessageID, participantID).Scan(&recipientID), "insert recipient")
+	assert.Equal(int64(1), revision(firstMessageID), "insert must enqueue the new message")
+	assert.Zero(revision(secondMessageID), "insert must not enqueue an unrelated message")
+
+	_, err = upgraded.db.Exec(`
+		UPDATE message_recipients SET message_id = ? WHERE id = ?
+	`, secondMessageID, recipientID)
+	require.NoError(err, "move recipient")
+	assert.Equal(int64(2), revision(firstMessageID), "update must enqueue the old message")
+	assert.Equal(int64(1), revision(secondMessageID), "update must enqueue the new message")
+
+	_, err = upgraded.db.Exec(`DELETE FROM message_recipients WHERE id = ?`, recipientID)
+	require.NoError(err, "delete recipient")
+	assert.Equal(int64(2), revision(secondMessageID), "delete must enqueue the old message")
+}
+
 // TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop simulates an
 // upgraded PostgreSQL archive whose message_recipients still carries the
 // table-level UNIQUE constraint, and proves the migration discovers it by

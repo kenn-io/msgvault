@@ -65,6 +65,16 @@ type personFactClaimChronology struct {
 	GenerationID int64
 }
 
+type personFactApplyMetadata struct {
+	generationInserted         bool
+	claimRowsInserted          int
+	evidenceStatusRowsInserted int
+	resolutionRowsInserted     int
+	decisionRowsInserted       int
+	projectionRowsWritten      int
+	vcardRevisionBumped        bool
+}
+
 func (s *Store) ApplyPersonFactGenerationContext(
 	ctx context.Context, input personfacts.GenerationInput, aligner personfacts.EvidenceAligner,
 ) (*personfacts.GenerationResult, error) {
@@ -110,42 +120,56 @@ func (s *Store) applyPersonFactGenerationContext(
 func (s *Store) applyPreparedPersonFactGenerationTx(
 	ctx context.Context, tx *loggedTx, prepared personfacts.PreparedGeneration,
 ) (*personfacts.GenerationResult, error) {
+	result, _, err := s.applyPreparedPersonFactGenerationDetailedTx(ctx, tx, prepared, nil)
+	return result, err
+}
+
+func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
+	ctx context.Context, tx *loggedTx, prepared personfacts.PreparedGeneration,
+	afterStage func(string) error,
+) (*personfacts.GenerationResult, personFactApplyMetadata, error) {
 	input, claims, statuses, err := verifyPreparedPersonFactGeneration(prepared)
 	if err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
 	if err := s.lockProfileIdentityKeyTxContext(
 		ctx, tx, "person-fact-generation", input.PersonID); err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
 	if err := verifyTrackedPersonFactPersonTx(ctx, tx, input.PersonID); err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
+	}
+	var revisionBefore int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT vcard_projection_revision FROM persons WHERE id = ?`, input.PersonID,
+	).Scan(&revisionBefore); err != nil {
+		return nil, personFactApplyMetadata{}, fmt.Errorf("read person projection revision before fact generation: %w", err)
 	}
 	touched, err := s.personFactTouchedTargetsTx(ctx, tx, input.PersonID, claims, statuses)
 	if err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
 	for _, target := range touched {
 		if err := s.lockProfileIdentityKeyTxContext(
 			ctx, tx, "person-fact-target", input.PersonID, target.Kind, target.Key); err != nil {
-			return nil, err
+			return nil, personFactApplyMetadata{}, err
 		}
 	}
 	organizationRefs, employmentTouched, err := s.personFactGenerationEmploymentOrganizationReferencesTx(
 		ctx, tx, input.PersonID, touched, claims)
 	if err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
 	if employmentTouched {
 		if err := s.lockPersonFactOrganizationTableForReferencesTx(
 			ctx, tx, organizationRefs); err != nil {
-			return nil, err
+			return nil, personFactApplyMetadata{}, err
 		}
 	}
 	for _, target := range touched {
 		if target.Kind == personfacts.TargetEmployment {
 			if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
-				return nil, err
+				return nil, personFactApplyMetadata{}, err
 			}
 			break
 		}
@@ -153,24 +177,26 @@ func (s *Store) applyPreparedPersonFactGenerationTx(
 
 	generation, replay, err := s.insertPersonFactGenerationTx(ctx, tx, prepared)
 	if err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
 	if replay {
-		return s.loadPersonFactGenerationResultTx(ctx, tx, input.PersonID, generation.GenerationKey)
+		result, loadErr := s.loadPersonFactGenerationResultTx(ctx, tx, input.PersonID, generation.GenerationKey)
+		return result, personFactApplyMetadata{}, loadErr
 	}
+	metadata := personFactApplyMetadata{generationInserted: true}
 
 	preparedFailures := make(map[string]*personfacts.ValidationFailure, len(claims))
 	for index := range claims {
 		claimKey, keyErr := personfacts.ClaimKey(generation.GenerationKey, claims[index])
 		if keyErr != nil {
-			return nil, keyErr
+			return nil, personFactApplyMetadata{}, keyErr
 		}
 		failure := claims[index].Failure
 		descriptor, eligibility, loadErr := s.loadPersonFactTargetDescriptorTx(
 			ctx, tx, claims[index].Target.Kind, claims[index].Target.Key,
 			&claims[index].Target, input.Policy.AllowSensitive)
 		if loadErr != nil {
-			return nil, loadErr
+			return nil, personFactApplyMetadata{}, loadErr
 		}
 		if failure == nil && !eligibility.Supported {
 			failure = &personfacts.ValidationFailure{
@@ -193,20 +219,33 @@ func (s *Store) applyPreparedPersonFactGenerationTx(
 		organizationLocks, err = s.lockPersonFactOrganizationReferencesTx(
 			ctx, tx, organizationRefs)
 		if err != nil {
-			return nil, err
+			return nil, personFactApplyMetadata{}, err
 		}
 	}
 	if err := s.preflightPersonFactEmploymentOrganizationsTx(
 		ctx, tx, generation.GenerationKey, claims, preparedFailures,
 		organizationLocks); err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
 	}
-	if _, err := s.insertPersonFactClaimsWithFailuresTx(
-		ctx, tx, generation, claims, preparedFailures); err != nil {
-		return nil, err
+	insertedClaims, err := s.insertPersonFactClaimsWithFailuresTx(
+		ctx, tx, generation, claims, preparedFailures)
+	if err != nil {
+		return nil, personFactApplyMetadata{}, err
+	}
+	metadata.claimRowsInserted = len(insertedClaims)
+	if afterStage != nil {
+		if err := afterStage("claim"); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
 	}
 	if err := s.insertPersonFactEvidenceStatusEventsTx(ctx, tx, generation, statuses); err != nil {
-		return nil, err
+		return nil, personFactApplyMetadata{}, err
+	}
+	metadata.evidenceStatusRowsInserted = len(statuses)
+	if afterStage != nil {
+		if err := afterStage("evidence_status"); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
 	}
 
 	transactionTime := time.Now().UTC()
@@ -216,22 +255,44 @@ func (s *Store) applyPreparedPersonFactGenerationTx(
 			ctx, tx, touchedTarget.Kind, touchedTarget.Key, touchedTarget.Fallback,
 			input.Policy.AllowSensitive)
 		if loadErr != nil {
-			return nil, loadErr
+			return nil, personFactApplyMetadata{}, loadErr
 		}
 		changed, resolveErr := s.resolvePersonFactTargetWithOrganizationLocksTx(
 			ctx, tx, generation, descriptor, eligibility, input.Policy,
 			preparedFailures, organizationLocks, transactionTime)
 		if resolveErr != nil {
-			return nil, resolveErr
+			return nil, personFactApplyMetadata{}, resolveErr
 		}
 		projectionChanged = projectionChanged || changed
 	}
 	if projectionChanged {
 		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
-			return nil, err
+			return nil, personFactApplyMetadata{}, err
 		}
 	}
-	return s.loadPersonFactGenerationResultTx(ctx, tx, input.PersonID, generation.GenerationKey)
+	result, err := s.loadPersonFactGenerationResultTx(ctx, tx, input.PersonID, generation.GenerationKey)
+	if err != nil {
+		return nil, personFactApplyMetadata{}, err
+	}
+	metadata.resolutionRowsInserted = len(result.Resolutions)
+	metadata.decisionRowsInserted = len(result.Decisions)
+	metadata.projectionRowsWritten = len(result.Projections)
+	if afterStage != nil {
+		if err := afterStage("decision"); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
+		if err := afterStage("projection"); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
+	}
+	var revisionAfter int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT vcard_projection_revision FROM persons WHERE id = ?`, input.PersonID,
+	).Scan(&revisionAfter); err != nil {
+		return nil, personFactApplyMetadata{}, fmt.Errorf("read person projection revision after fact generation: %w", err)
+	}
+	metadata.vcardRevisionBumped = revisionAfter != revisionBefore
+	return result, metadata, nil
 }
 
 func (s *Store) preflightPersonFactEmploymentOrganizationsTx(

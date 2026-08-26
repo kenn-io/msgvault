@@ -34,32 +34,47 @@ func (c *countingConsent) HasActivePersonInferenceConsent(
 }
 
 type countingTransport struct {
-	response peoplesweep.StructuredResponse
-	err      error
-	calls    atomic.Int64
-	order    func(string)
-	mu       sync.Mutex
-	request  peoplesweep.StructuredRequest
-	profile  peoplesweep.ProviderProfile
-	key      string
+	response         peoplesweep.StructuredResponse
+	err              error
+	calls            atomic.Int64
+	order            func(string)
+	mu               sync.Mutex
+	request          peoplesweep.StructuredRequest
+	profile          peoplesweep.ProviderProfile
+	key              string
+	preserveVersions bool
 }
 
-func (t *countingTransport) GenerateJSON(
+func (t *countingTransport) PrepareJSON(
+	profile peoplesweep.ProviderProfile,
+	request peoplesweep.StructuredRequest,
+) (peoplesweep.PreparedStructuredRequest, error) {
+	return peoplesweep.NewPreparedStructuredRequest(request, []byte(`{"prepared":true}`))
+}
+
+func (t *countingTransport) GeneratePreparedJSON(
 	_ context.Context,
 	profile peoplesweep.ProviderProfile,
 	key string,
-	request peoplesweep.StructuredRequest,
+	prepared peoplesweep.PreparedStructuredRequest,
 ) (peoplesweep.StructuredResponse, error) {
 	t.calls.Add(1)
 	if t.order != nil {
 		t.order("transport")
 	}
 	t.mu.Lock()
-	t.request = request
+	t.request = prepared.Request()
 	t.profile = profile
 	t.key = key
 	t.mu.Unlock()
-	return t.response, t.err
+	response := t.response
+	if !t.preserveVersions && response.ProviderVersion == "" {
+		response.ProviderVersion = "test-provider-v1"
+	}
+	if !t.preserveVersions && response.ModelVersion == "" {
+		response.ModelVersion = "test-model-v1"
+	}
+	return response, t.err
 }
 
 func runnerTestConfig() peoplesweep.Config {
@@ -145,7 +160,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 				}}
 				return request
 			}(),
-			wantConsent: 1, want: "source class",
+			wantConsent: 0, want: "source class",
 		},
 		{
 			name: "before date", config: runnerTestConfig(), consented: true,
@@ -156,7 +171,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 				}}
 				return request
 			}(),
-			wantConsent: 1, want: "date range",
+			wantConsent: 0, want: "date range",
 		},
 		{
 			name: "after date", config: runnerTestConfig(), consented: true,
@@ -167,7 +182,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 				}}
 				return request
 			}(),
-			wantConsent: 1, want: "date range",
+			wantConsent: 0, want: "date range",
 		},
 		{
 			name: "sensitive", config: runnerTestConfig(), consented: true,
@@ -176,7 +191,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 				request.ContainsSensitive = true
 				return request
 			}(),
-			wantConsent: 1, want: "sensitive",
+			wantConsent: 0, want: "sensitive",
 		},
 	}
 	for _, test := range tests {
@@ -361,14 +376,120 @@ func TestRunnerCheckRejectsSchemaInvalidProviderOutput(t *testing.T) {
 
 type blockingTransport struct{}
 
-func (blockingTransport) GenerateJSON(
+func (blockingTransport) PrepareJSON(
+	_ peoplesweep.ProviderProfile,
+	request peoplesweep.StructuredRequest,
+) (peoplesweep.PreparedStructuredRequest, error) {
+	return peoplesweep.NewPreparedStructuredRequest(request, []byte(`{"prepared":true}`))
+}
+
+func (blockingTransport) GeneratePreparedJSON(
 	ctx context.Context,
 	_ peoplesweep.ProviderProfile,
 	_ string,
-	_ peoplesweep.StructuredRequest,
+	_ peoplesweep.PreparedStructuredRequest,
 ) (peoplesweep.StructuredResponse, error) {
 	<-ctx.Done()
 	return peoplesweep.StructuredResponse{}, ctx.Err()
+}
+
+func TestStructuredResponseCarriesAuthoritativeVersions(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response peoplesweep.StructuredResponse
+		want     string
+	}{
+		{"preserves versions", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1", ModelVersion: "model-v1"}, ""},
+		{"missing provider version", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ModelVersion: "model-v1"}, "version metadata"},
+		{"missing model version", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1"}, "version metadata"},
+		{"unsafe model version", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1", ModelVersion: "model\nversion"}, "version metadata"},
+		{"provider version with spaces", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider claim", ModelVersion: "model-v1"}, "version metadata"},
+		{"oversized model version", peoplesweep.StructuredResponse{Output: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1", ModelVersion: strings.Repeat("m", 129)}, "version metadata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			transport := &countingTransport{response: test.response, preserveVersions: true}
+			runner, err := peoplesweep.NewRunner(
+				runnerTestConfig(), &countingConsent{active: true}, transport,
+				func(string) (string, bool) { return "test-key", true },
+			)
+			requirements.NoError(err)
+
+			got, runErr := runner.RunStructured(t.Context(), structuredTestRequest())
+			if test.want != "" {
+				requirements.ErrorContains(runErr, test.want)
+				return
+			}
+			requirements.NoError(runErr)
+			checks.Equal("provider-v1", got.ProviderVersion)
+			checks.Equal("model-v1", got.ModelVersion)
+		})
+	}
+}
+
+func TestPreparedStructuredRequestUsesExactSentBytes(t *testing.T) {
+	checks := assert.New(t)
+	request := structuredTestRequest()
+	prepared, err := peoplesweep.NewPreparedStructuredRequest(request, []byte(`{"request":"exact"}`))
+	require.NoError(t, err)
+
+	wire := prepared.WireRequest()
+	wire[0] = '['
+	copyRequest := prepared.Request()
+	copyRequest.InputText = "mutated"
+
+	checks.JSONEq(`{"request":"exact"}`, string(prepared.WireRequest()))
+	checks.Equal("Synthetic input only.", prepared.Request().InputText)
+	checks.NotEmpty(prepared.WireSHA256())
+}
+
+func TestRunnerRejectsForgedPreparedRequestWire(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	transport := &countingTransport{response: peoplesweep.StructuredResponse{
+		Output: json.RawMessage(`{"ok":true}`),
+	}}
+	consent := &countingConsent{active: true}
+	runner, err := peoplesweep.NewRunner(
+		runnerTestConfig(), consent, transport,
+		func(string) (string, bool) { return "test-key", true },
+	)
+	requirements.NoError(err)
+
+	forged, err := peoplesweep.NewPreparedStructuredRequest(
+		structuredTestRequest(), []byte(`{"different":"wire"}`))
+	requirements.NoError(err)
+
+	_, err = runner.RunPreparedStructured(t.Context(), forged)
+	requirements.ErrorContains(err, "does not match deterministic provider encoding")
+	checks.Zero(consent.calls.Load())
+	checks.Zero(transport.calls.Load())
+}
+
+func TestRunnerDoesNotTreatCallerProviderCheckAsSynthetic(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	transport := &countingTransport{response: peoplesweep.StructuredResponse{
+		Output: json.RawMessage(`{"ok":true}`),
+	}}
+	consent := &countingConsent{active: true}
+	runner, err := peoplesweep.NewRunner(
+		runnerTestConfig(), consent, transport,
+		func(string) (string, bool) { return "test-key", true },
+	)
+	requirements.NoError(err)
+
+	request := structuredTestRequest()
+	request.ProgramID = "provider-check"
+	request.Sources[0].Class = peoplesweep.SourceDocumentText
+	prepared, err := peoplesweep.NewPreparedStructuredRequest(request, []byte(`{"prepared":true}`))
+	requirements.NoError(err)
+
+	_, err = runner.RunPreparedStructured(t.Context(), prepared)
+	requirements.ErrorContains(err, "source class")
+	checks.Equal(int64(1), consent.calls.Load())
+	checks.Zero(transport.calls.Load())
 }
 
 func TestRunnerAppliesConfiguredRequestTimeout(t *testing.T) {
@@ -382,6 +503,39 @@ func TestRunnerAppliesConfiguredRequestTimeout(t *testing.T) {
 
 	_, err = runner.RunStructured(t.Context(), structuredTestRequest())
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestRunnerPreservesOnlyCompletedInvalidOutputMetadata(t *testing.T) {
+	tests := []struct {
+		name         string
+		transportErr error
+		wantUsage    peoplesweep.TokenUsage
+	}{
+		{
+			name: "completed invalid output",
+			transportErr: errors.Join(peoplesweep.ErrInvalidStructuredOutput,
+				errors.New("synthetic adapter validation")),
+			wantUsage: peoplesweep.TokenUsage{InputTokens: 321, OutputTokens: 45},
+		},
+		{name: "ordinary transport failure", transportErr: errors.New("synthetic network failure")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &countingTransport{err: test.transportErr,
+				response: peoplesweep.StructuredResponse{Usage: peoplesweep.TokenUsage{
+					InputTokens: 321, OutputTokens: 45,
+				}}}
+			runner, err := peoplesweep.NewRunner(
+				runnerTestConfig(), &countingConsent{active: true}, transport,
+				func(string) (string, bool) { return "test-key", true },
+			)
+			require.NoError(t, err)
+
+			response, err := runner.RunStructured(t.Context(), structuredTestRequest())
+			require.ErrorIs(t, err, test.transportErr)
+			assert.Equal(t, test.wantUsage, response.Usage)
+		})
+	}
 }
 
 func TestRunnerReturnsConsentCheckFailureWithoutCredentialLookup(t *testing.T) {

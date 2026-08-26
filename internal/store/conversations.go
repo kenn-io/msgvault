@@ -383,11 +383,14 @@ func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMess
 // SetConversationMetadata writes the conversations.metadata JSON/JSONB column.
 // Passing an invalid sql.NullString clears the column.
 func (s *Store) SetConversationMetadata(conversationID int64, metadata sql.NullString) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE conversations
-		SET metadata = %s
-		WHERE id = ?
-	`, s.dialect.JSONBindExpr()), metadata, conversationID)
+	err := s.withSyncConversationWriteContext(context.Background(), conversationID, func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			UPDATE conversations
+			SET metadata = %s
+			WHERE id = ?
+		`, s.dialect.JSONBindExpr()), metadata, conversationID)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("set conversation metadata (id=%d): %w", conversationID, err)
 	}

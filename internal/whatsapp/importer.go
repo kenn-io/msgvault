@@ -74,6 +74,9 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
+	imp = &scoped
 
 	// Ensure we complete/fail the sync run on exit.
 	var syncErr error
@@ -414,12 +417,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 							messageID,
 						).Scan(&existingCount)
 						if existingCount == 0 {
-							// has_attachments is BOOLEAN on PG; bind a Go
-							// bool through the rebind layer so the driver
-							// emits the right literal for each backend.
-							_, _ = imp.store.DB().Exec(
-								imp.store.Rebind("UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?"),
-								false, 0, messageID)
+							_ = imp.store.RecomputeMessageAttachmentStats(messageID)
 						}
 					}
 
@@ -427,17 +425,26 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					// For extra metadata (width, height, duration, media_type),
 					// update via a direct SQL call for provider dimensions and duration.
 					if mediaType != "" || (media.Width.Valid && media.Width.Int64 > 0) {
-						imp.updateAttachmentMetadata(messageID, contentHash, mediaType, media)
+						if err := imp.updateAttachmentMetadata(ctx, messageID, contentHash, mediaType, media); err != nil {
+							syncErr = err
+							return nil, fmt.Errorf("update attachment metadata: %w", err)
+						}
 					}
 				}
 
 				// Handle quoted/reply messages.
 				if quoted, ok := quotedMap[waMsg.RowID]; ok {
 					if replyToMsgID, found := keyIDToMsgID[quoted.QuotedKeyID]; found {
-						imp.setReplyTo(messageID, replyToMsgID)
+						if err := imp.setReplyTo(ctx, messageID, replyToMsgID); err != nil {
+							syncErr = err
+							return nil, fmt.Errorf("link reply: %w", err)
+						}
 					} else if dbMsgID, lookupErr := imp.lookupMessageByKeyID(source.ID, quoted.QuotedKeyID); lookupErr == nil && dbMsgID > 0 {
 						// Found in DB from a previous import run or another chat.
-						imp.setReplyTo(messageID, dbMsgID)
+						if err := imp.setReplyTo(ctx, messageID, dbMsgID); err != nil {
+							syncErr = err
+							return nil, fmt.Errorf("link reply: %w", err)
+						}
 					}
 				}
 
@@ -613,7 +620,9 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 }
 
 // updateAttachmentMetadata updates media-specific metadata on an attachment record.
-func (imp *Importer) updateAttachmentMetadata(messageID int64, contentHash, mediaType string, media waMedia) {
+func (imp *Importer) updateAttachmentMetadata(
+	ctx context.Context, messageID int64, contentHash, mediaType string, media waMedia,
+) error {
 	var width, height, durationMS sql.NullInt64
 	if media.Width.Valid && media.Width.Int64 > 0 {
 		width = media.Width
@@ -626,10 +635,8 @@ func (imp *Importer) updateAttachmentMetadata(messageID int64, contentHash, medi
 		durationMS = sql.NullInt64{Int64: media.MediaDuration.Int64 * 1000, Valid: true}
 	}
 
-	_, _ = imp.store.DB().Exec(imp.store.Rebind(`
-		UPDATE attachments SET media_type = ?, width = ?, height = ?, duration_ms = ?
-		WHERE message_id = ? AND (content_hash = ? OR content_hash IS NULL)
-	`), mediaType, width, height, durationMS, messageID, contentHash)
+	return imp.store.UpdateAttachmentMediaMetadataContext(
+		ctx, messageID, contentHash, mediaType, width, height, durationMS)
 }
 
 // lookupMessageByKeyID looks up a previously imported message by its WhatsApp key_id.
@@ -647,10 +654,8 @@ func (imp *Importer) lookupMessageByKeyID(sourceID int64, keyID string) (int64, 
 }
 
 // setReplyTo sets the reply_to_message_id on a message.
-func (imp *Importer) setReplyTo(messageID, replyToID int64) {
-	_, _ = imp.store.DB().Exec(imp.store.Rebind(`
-		UPDATE messages SET reply_to_message_id = ? WHERE id = ?
-	`), replyToID, messageID)
+func (imp *Importer) setReplyTo(ctx context.Context, messageID, replyToID int64) error {
+	return imp.store.SetMessageReplyContext(ctx, messageID, replyToID)
 }
 
 // verifyWhatsAppDB checks that the database looks like a WhatsApp msgstore.db.

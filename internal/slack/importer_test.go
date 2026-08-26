@@ -19,6 +19,21 @@ import (
 // offsets up to a few hours never land in the future.
 var tsBase = time.Now().Add(-25 * time.Hour).UTC().Truncate(time.Second)
 
+func TestImporterScopesParticipantResolver(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeSlack, "team-a:user-a")
+	requirements.NoError(err)
+	runID, err := st.StartSync(source.ID, sourceTypeSlack)
+	requirements.NoError(err)
+	scoped := NewImporter(st, nil, "team-a").scopedToSync(source.ID, runID)
+	_, err = st.StartSync(source.ID, sourceTypeSlack)
+	requirements.NoError(err)
+
+	_, err = scoped.res.resolveID("user-a")
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+}
+
 // ts renders a Slack ts for offset minutes after tsBase.
 func ts(minutes int) string {
 	return strconv.FormatInt(tsBase.Add(time.Duration(minutes)*time.Minute).Unix(), 10) + ".000100"

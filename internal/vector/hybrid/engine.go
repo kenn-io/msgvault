@@ -163,6 +163,9 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 	if req.Mode != ModeVector && req.Mode != ModeHybrid {
 		return nil, ResultMeta{}, fmt.Errorf("unknown mode %q", req.Mode)
 	}
+	if err := vector.ValidateFilter(req.Filter); err != nil {
+		return nil, ResultMeta{}, err
+	}
 
 	active, err := vector.ResolveActiveForFingerprint(ctx, e.backend, e.cfg.ExpectedFingerprint)
 	if err != nil {

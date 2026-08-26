@@ -47,9 +47,21 @@ const (
 	// unindexable until a full rebuild).
 	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v9"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
-	migrationIdentityMatchSourceSupport     = "identity_match_source_support_v1"
-	migrationVCardSourceResourceIdentity    = "vcard_source_resource_identity_v1"
-	migrationOrganizationDomainIDNA         = "organization_domain_idna_v1"
+	// v2: message updates share the content-column/value guard, participant
+	// scope mirrors personscope, and metadata-only edge edits are not identity
+	// reassignments.
+	// v3: recipient role edits that cross the authoritative-role boundary are
+	// scope relinks/unlinks; edits within the boundary remain source edits.
+	// v4: source deletion/reimport, scope unlink/relink, and identity
+	// reassignment publish lane-exact document_text changes with the serving
+	// occurrence's attachment and occurrence coordinates. Archives that ran v3
+	// must reinstall both backend trigger sets so document evidence lifecycle
+	// changes can match the canonical document lane instead of only the owning
+	// conversation_text or meeting_text row.
+	migrationPersonSweepChangeTriggers   = "person_sweep_change_triggers_v5"
+	migrationIdentityMatchSourceSupport  = "identity_match_source_support_v1"
+	migrationVCardSourceResourceIdentity = "vcard_source_resource_identity_v1"
+	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.

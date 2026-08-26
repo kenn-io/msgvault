@@ -17,7 +17,7 @@ import (
 
 func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	t.Helper()
-	profile, err := (peoplesweep.Config{
+	config := peoplesweep.Config{
 		Enabled: true,
 		Provider: peoplesweep.ProviderConfig{
 			Kind:             peoplesweep.ProviderOpenAICompatible,
@@ -32,7 +32,9 @@ func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 			SourceSince:    "2025-01-01",
 			RequestTimeout: time.Minute,
 		},
-	}).Profile()
+	}
+	config.ApplyDefaults()
+	profile, err := config.Profile()
 	require.NoError(t, err)
 	return profile
 }
@@ -174,6 +176,29 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
+}
+
+func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
+		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test",
+		ReasoningEffort: "high", ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
+	}}
+	config.ApplyDefaults()
+	profile, err := config.Profile()
+	requirements.NoError(err)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
+	requirements.NoError(err)
+
+	profiles, err := st.ListPersonInferenceProfiles(t.Context())
+	requirements.NoError(err)
+	requirements.Len(profiles, 1)
+	checks.Equal(profile, profiles[0])
 }
 
 func TestPersonInferenceConsentConcurrentGrantAndRevoke(t *testing.T) {

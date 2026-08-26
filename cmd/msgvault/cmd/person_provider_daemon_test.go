@@ -25,7 +25,8 @@ import (
 type inProcessPersonProviderDaemonStore struct {
 	*storeAPIAdapter
 
-	config peoplesweep.Config
+	config     peoplesweep.Config
+	httpClient *http.Client
 }
 
 func (s *inProcessPersonProviderDaemonStore) RunCLICommand(
@@ -41,7 +42,7 @@ func (s *inProcessPersonProviderDaemonStore) RunCLICommand(
 		return peoplesweep.NewRunner(
 			config,
 			consent,
-			peoplesweep.NewOpenAICompatibleTransport(http.DefaultClient),
+			peoplesweep.NewOpenAICompatibleTransport(s.httpClient),
 			func(name string) (string, bool) {
 				value, ok := req.Env[name]
 				return value, ok
@@ -79,7 +80,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	}
 	requests := make(chan capturedProviderRequest, 1)
 	var requestCount atomic.Int64
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -91,6 +92,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("x-request-id", "req-daemon")
 		_, _ = io.WriteString(w, `{
+			"model":"test-model",
 			"choices":[{"message":{"content":"{\"ok\":true}"}}],
 			"usage":{"prompt_tokens":9,"completion_tokens":2}
 		}`)
@@ -104,6 +106,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	daemonStore := &inProcessPersonProviderDaemonStore{
 		storeAPIAdapter: &storeAPIAdapter{store: st},
 		config:          peopleConfig,
+		httpClient:      provider.Client(),
 	}
 	logger := slog.New(slog.DiscardHandler)
 	daemon := api.NewServerWithOptions(api.ServerOptions{
