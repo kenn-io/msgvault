@@ -74,8 +74,6 @@ func TestPersonEnrichmentScheduleResumesRunningRunAfterCrash(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	base := time.Now().UTC().Truncate(time.Second)
-	now := base.Add(time.Second)
 	profile := scheduleTestEnrichmentProfile(t)
 	_, err := f.Store.EnsurePersonEnrichmentProfile(t.Context(), profile)
 	require.NoError(err)
@@ -88,6 +86,8 @@ func TestPersonEnrichmentScheduleResumesRunningRunAfterCrash(t *testing.T) {
 		_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
 		require.NoError(err)
 	}
+	base := time.Now().UTC().Truncate(time.Second)
+	now := base.Add(time.Second)
 	oldRun, _, err := f.Store.StartRun(t.Context(), personenrichment.RunStart{
 		Kind: "manual", RequestedBy: "crashed-run", RequestedAt: base.Add(-time.Hour),
 	})
