@@ -33,6 +33,13 @@ type MessageReader interface {
 	ListHistory(ctx context.Context, startHistoryID uint64, pageToken string) (*HistoryResponse, error)
 }
 
+// CompleteMessageSnapshotReader lists every message still present in Gmail,
+// including messages in Spam and Trash. The returned IDs are suitable for
+// source-presence reconciliation only after every page has been consumed.
+type CompleteMessageSnapshotReader interface {
+	ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*MessageListResponse, error)
+}
+
 // MessageDeleter provides write operations for deleting Gmail messages.
 type MessageDeleter interface {
 	// TrashMessage moves a message to trash (recoverable for 30 days).

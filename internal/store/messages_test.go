@@ -479,6 +479,49 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 	assert.True(otherDeletedAt.Valid)
 }
 
+func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "primary@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "primary-thread", "email_thread", "Primary",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, source.ID, conversationID, "missing")
+	insertStoreTestMessage(t, st, source.ID, conversationID, "present")
+
+	otherSource, err := st.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	otherConversationID, err := st.EnsureConversationWithType(
+		otherSource.ID, "other-thread", "email_thread", "Other",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "missing")
+
+	syncID, err := st.StartSync(source.ID, "full")
+	require.NoError(err)
+	scoped := st.ScopedToSync(source.ID, syncID)
+	reconciled, err := scoped.ReconcileSourceMessageSnapshot(
+		t.Context(), source.ID, map[string]struct{}{"present": {}},
+	)
+	require.NoError(err)
+	assert.Equal(int64(1), reconciled)
+	assertMessageDeletedFromSource(t, st, source.ID, "missing", true)
+	assertMessageDeletedFromSource(t, st, source.ID, "present", false)
+	assertMessageDeletedFromSource(t, st, otherSource.ID, "missing", false)
+
+	staleSyncID, err := st.StartSync(source.ID, "full")
+	require.NoError(err)
+	stale := st.ScopedToSync(source.ID, staleSyncID)
+	_, err = st.StartSync(source.ID, "full")
+	require.NoError(err)
+	_, err = stale.ReconcileSourceMessageSnapshot(t.Context(), source.ID, map[string]struct{}{})
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+}
+
 func TestMarkMessagesDeletedFromReaderIsAtomicOnLateReadFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -533,6 +576,19 @@ func assertSourceMessageIDNotDeleted(t *testing.T, st *store.Store, sourceID int
 	).Scan(&deletedAt)
 	require.NoError(t, err, "scan deleted_from_source_at")
 	assert.False(t, deletedAt.Valid, "deleted_from_source_at should be cleared")
+}
+
+func assertMessageDeletedFromSource(
+	t *testing.T, st *store.Store, sourceID int64, sourceMessageID string, want bool,
+) {
+	t.Helper()
+	var deletedAt sql.NullTime
+	err := st.DB().QueryRow(
+		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		sourceID, sourceMessageID,
+	).Scan(&deletedAt)
+	require.NoError(t, err, "scan deleted_from_source_at")
+	assert.Equal(t, want, deletedAt.Valid, "deleted_from_source_at validity")
 }
 
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {

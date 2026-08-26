@@ -1524,6 +1524,252 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 	assert.ErrorIs(t, err, ErrHistoryExpired)
 }
 
+func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
+	env := newTestEnv(t)
+	seedMessages(env, 2, 1000, "present", "missing")
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(t, err, "GetSourceByIdentifier")
+
+	delete(env.Mock.Messages, "missing")
+	env.Mock.MessagePages = [][]string{{"present"}}
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 2000
+	env.Mock.HistoryID = 2000
+
+	_, err = env.Syncer.RecoverExpiredHistory(env.Context, source)
+	require.NoError(t, err, "RecoverExpiredHistory")
+
+	assertDeletedFromSource(t, env.Store, "present", false)
+	assertDeletedFromSource(t, env.Store, "missing", true)
+	assertRawDataExists(t, env.Store, "missing")
+}
+
+type recoveryProfileSequenceAPI struct {
+	*gmail.MockAPI
+
+	historyIDs []uint64
+	calls      int
+}
+
+func (a *recoveryProfileSequenceAPI) GetProfile(context.Context) (*gmail.Profile, error) {
+	profile := *a.Profile
+	if a.calls < len(a.historyIDs) {
+		profile.HistoryID = a.historyIDs[a.calls]
+	}
+	a.calls++
+	return &profile, nil
+}
+
+func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	env := newTestEnv(t)
+	seedMessages(env, 1, 1000, "present")
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+
+	env.Mock.MessagePages = [][]string{{"present"}}
+	env.Mock.AddMessage("arrived-during-recovery", testMIME(), []string{"INBOX"})
+	env.Mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("arrived-during-recovery")}
+	env.Mock.HistoryID = 2000
+	syncer := New(&recoveryProfileSequenceAPI{
+		MockAPI:    env.Mock,
+		historyIDs: []uint64{1500, 2000},
+	}, env.Store, nil)
+
+	summary, err := syncer.RecoverExpiredHistory(env.Context, source)
+	require.NoError(err, "RecoverExpiredHistory")
+
+	assertRawDataExists(t, env.Store, "arrived-during-recovery")
+	assert.Equal(uint64(2000), summary.FinalHistoryID, "final history cursor")
+	refreshed, err := env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID")
+	assert.Equal("2000", refreshed.SyncCursor.String, "persisted history cursor")
+}
+
+func TestRecoverExpiredHistoryRejectsPartialEnumerationOptions(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*Options)
+	}{
+		{
+			name: "query",
+			modify: func(options *Options) {
+				options.Query = "from:alice@example.com"
+			},
+		},
+		{
+			name: "limit",
+			modify: func(options *Options) {
+				options.Limit = 1
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			seedMessages(env, 2, 1000, "present", "outside-partial-enumeration")
+			runFullSync(t, env)
+			source, err := env.Store.GetSourceByIdentifier(testEmail)
+			require.NoError(t, err, "GetSourceByIdentifier")
+
+			delete(env.Mock.Messages, "outside-partial-enumeration")
+			env.Mock.MessagePages = [][]string{{"present"}}
+			env.Mock.Profile.HistoryID = 2000
+			env.Mock.HistoryID = 2000
+			options := DefaultOptions()
+			test.modify(options)
+			syncer := New(env.Mock, env.Store, options)
+
+			_, err = syncer.RecoverExpiredHistory(env.Context, source)
+			require.Error(t, err, "partial enumeration must not reconcile absence")
+			assertDeletedFromSource(t, env.Store, "outside-partial-enumeration", false)
+		})
+	}
+}
+
+type interruptedRecoverySnapshotAPI struct {
+	*gmail.MockAPI
+
+	calls int
+}
+
+func (a *interruptedRecoverySnapshotAPI) ListCompleteMessageSnapshot(
+	context.Context, string,
+) (*gmail.MessageListResponse, error) {
+	a.calls++
+	if a.calls == 1 {
+		return &gmail.MessageListResponse{
+			Messages:      []gmail.MessageID{{ID: "present", ThreadID: "thread_present"}},
+			NextPageToken: "second-page",
+		}, nil
+	}
+	return nil, errors.New("snapshot interrupted")
+}
+
+func TestRecoverExpiredHistoryDoesNotReconcileIncompleteSnapshot(t *testing.T) {
+	env := newTestEnv(t)
+	seedMessages(env, 2, 1000, "present", "not-yet-enumerated")
+	runFullSync(t, env)
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(t, err, "GetSourceByIdentifier")
+
+	delete(env.Mock.Messages, "not-yet-enumerated")
+	env.Mock.MessagePages = [][]string{{"present"}}
+	env.Mock.Profile.HistoryID = 2000
+	env.Mock.HistoryID = 2000
+	syncer := New(&interruptedRecoverySnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
+
+	_, err = syncer.RecoverExpiredHistory(env.Context, source)
+	require.Error(t, err, "an incomplete snapshot must fail recovery")
+	assertDeletedFromSource(t, env.Store, "not-yet-enumerated", false)
+}
+
+func TestRecoverExpiredHistoryDoesNotReuseUnmarkedFullCheckpoint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	syncID, err := env.Store.StartSync(source.ID, "full")
+	require.NoError(err, "StartSync")
+	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+		PageToken:         "page_1",
+		MessagesProcessed: 2,
+		MessagesAdded:     2,
+	}), "UpdateSyncCheckpoint")
+	env.Mock.ListMessagesCalls = 0
+	env.Mock.SnapshotListCalls = 0
+
+	summary, err := env.Syncer.RecoverExpiredHistory(env.Context, source)
+	require.NoError(err, "RecoverExpiredHistory")
+	assert.False(summary.WasResumed, "an ordinary full checkpoint has no pinned recovery cursor")
+	assert.Empty(summary.ResumedFromToken, "recovery restarts ordinary full enumeration")
+	assert.Equal(2, env.Mock.ListMessagesCalls, "recovery content enumeration starts at page zero")
+	assert.Equal(2, env.Mock.SnapshotListCalls, "presence snapshot starts at page zero")
+	assertDeletedFromSource(t, env.Store, "msg1", false)
+	assertDeletedFromSource(t, env.Store, "msg4", false)
+}
+
+func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env, source, active := setupInterruptedHistoryRecoveryWithPrefixChange(t)
+	env.Syncer = New(env.Mock, env.Store, nil)
+
+	var recoveryNotices []bool
+	summary, err := env.Syncer.IncrementalWithHistoryRecovery(env.Context, source, func(resumed bool) {
+		recoveryNotices = append(recoveryNotices, resumed)
+	})
+	require.NoError(err, "IncrementalWithHistoryRecovery")
+	assert.Equal([]bool{true}, recoveryNotices, "retry announces the resumed recovery")
+	assert.True(summary.WasResumed, "recovery uses its saved page checkpoint")
+	assert.Equal(active.ID, summary.SyncRunID, "retry does not supersede the recovery run")
+	assertRawDataExists(t, env.Store, "arrived-before-resume")
+	refreshed, err := env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID")
+	assert.Equal("20000", refreshed.SyncCursor.String, "catch-up advances from the pinned cursor")
+}
+
+func TestFullRoutesPinnedHistoryRecoveryThroughCatchup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env, source, active := setupInterruptedHistoryRecoveryWithPrefixChange(t)
+	env.Syncer = New(env.Mock, env.Store, nil)
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "Full")
+	assert.True(summary.WasResumed, "full routes through the marked recovery")
+	assert.Equal(active.ID, summary.SyncRunID, "full does not reinterpret or supersede the recovery run")
+	assertRawDataExists(t, env.Store, "arrived-before-resume")
+	refreshed, err := env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID")
+	assert.Equal("20000", refreshed.SyncCursor.String, "full recovery catches up from the pinned cursor")
+}
+
+func setupInterruptedHistoryRecoveryWithPrefixChange(
+	t *testing.T,
+) (*TestEnv, *store.Source, *store.SyncRun) {
+	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+	runFullSync(t, env)
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+
+	env.Mock.Profile.HistoryID = 15000
+	env.Mock.HistoryID = 15000
+	env.Syncer = New(&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, nil)
+	_, err = env.Syncer.RecoverExpiredHistory(env.Context, source)
+	require.ErrorIs(err, context.Canceled, "interrupt recovery after its first page")
+	active, err := env.Store.GetActiveSync(source.ID)
+	require.NoError(err, "GetActiveSync")
+	assert.Equal("15000", active.CursorAfter.String, "recovery pins its handoff cursor before enumeration")
+
+	env.Mock.AddMessage("arrived-before-resume", testMIME(), []string{"INBOX"})
+	env.Mock.MessagePages = [][]string{
+		{"msg1", "msg2", "arrived-before-resume"},
+		{"msg3", "msg4"},
+	}
+	env.Mock.Profile.HistoryID = 20000
+	env.Mock.HistoryID = 20000
+	env.Mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("arrived-before-resume")}
+	return env, source, active
+}
+
 func TestIncrementalSyncProfileError(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12345")

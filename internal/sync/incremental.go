@@ -13,8 +13,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// Incremental performs an incremental sync using the Gmail History API.
-// Falls back to full sync if history is too old (404 error).
+// Incremental performs an incremental sync using the Gmail History API. It
+// returns ErrHistoryExpired when Gmail requires a full history recovery.
 //
 // The caller must resolve the correct *store.Source before calling this
 // method. This avoids ambiguity when multiple sources share the same

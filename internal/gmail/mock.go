@@ -44,6 +44,7 @@ type MockAPI struct {
 	ProfileCalls      int
 	LabelsCalls       int
 	ListMessagesCalls int
+	SnapshotListCalls int
 	LastQuery         string // Last query passed to ListMessages
 	GetMessageCalls   []string
 	HistoryCalls      []uint64
@@ -115,7 +116,19 @@ func (m *MockAPI) ListMessages(ctx context.Context, query string, pageToken stri
 	defer m.mu.Unlock()
 	m.ListMessagesCalls++
 	m.LastQuery = query
+	return m.listMessages(pageToken)
+}
 
+// ListCompleteMessageSnapshot returns all mock message IDs as one complete
+// Gmail presence snapshot.
+func (m *MockAPI) ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*MessageListResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SnapshotListCalls++
+	return m.listMessages(pageToken)
+}
+
+func (m *MockAPI) listMessages(pageToken string) (*MessageListResponse, error) {
 	if m.ListMessagesError != nil {
 		return nil, m.ListMessagesError
 	}
@@ -329,6 +342,7 @@ func (m *MockAPI) Reset() {
 	m.ProfileCalls = 0
 	m.LabelsCalls = 0
 	m.ListMessagesCalls = 0
+	m.SnapshotListCalls = 0
 	m.LastQuery = ""
 	m.GetMessageCalls = nil
 	m.HistoryCalls = nil

@@ -485,6 +485,29 @@ func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, c
 	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
+// PinSyncHandoffCursorContext records the history cursor a resumable recovery
+// must catch up from after its full enumeration. A completed sync overwrites
+// cursor_after with the same value when it publishes the source cursor.
+func (s *Store) PinSyncHandoffCursorContext(ctx context.Context, syncID int64, cursor string) error {
+	if cursor == "" {
+		return errors.New("pin sync handoff cursor: empty cursor")
+	}
+	if s.syncGeneration == nil {
+		return errors.New("pin sync handoff cursor: sync-scoped store required")
+	}
+	if syncID != s.syncGeneration.runID {
+		return fmt.Errorf("pin handoff cursor for sync run %d through scoped run %d: %w",
+			syncID, s.syncGeneration.runID, ErrSyncRunSuperseded)
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`, cursor, syncID)
+		return err
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
+}
+
 // RecordSyncRunItem records a per-item sync outcome for diagnostics.
 func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
 	_, err := s.db.Exec(fmt.Sprintf(`

@@ -253,6 +253,9 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 		{name: "checkpoint", write: func() error {
 			return stale.UpdateSyncCheckpoint(oldID, &store.Checkpoint{PageToken: "stale"})
 		}},
+		{name: "history recovery handoff", write: func() error {
+			return stale.PinSyncHandoffCursorContext(t.Context(), oldID, "12345")
+		}},
 		{name: "attachment metadata", write: func() error {
 			return stale.UpdateAttachmentMediaMetadataContext(
 				t.Context(), messageID, "hash", "image", sql.NullInt64{}, sql.NullInt64{}, sql.NullInt64{})

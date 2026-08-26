@@ -2845,21 +2845,15 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	summary, err := syncer.Incremental(ctx, source)
-	if err != nil {
-		// Once the history baseline expires (Gmail keeps only ~7 days),
-		// every future incremental sync fails too; without a fallback the
-		// account stays stuck until someone runs sync-full by hand. The
-		// full sync is resumable and skips already-archived messages.
-		if errors.Is(err, sync.ErrHistoryExpired) {
-			logger.Warn("gmail history expired; falling back to full sync", keyEmail, email)
-			summary, err = syncer.Full(ctx, source.Identifier)
-			if err != nil {
-				return nil, fmt.Errorf("full sync fallback failed: %w", err)
-			}
-			return summary, nil
+	summary, err := syncer.IncrementalWithHistoryRecovery(ctx, source, func(resumed bool) {
+		if resumed {
+			logger.Warn("resuming interrupted Gmail history recovery", keyEmail, email)
+		} else {
+			logger.Warn("gmail history expired; reconciling complete mailbox", keyEmail, email)
 		}
-		return nil, fmt.Errorf("incremental sync failed: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gmail sync failed: %w", err)
 	}
 	return summary, nil
 }

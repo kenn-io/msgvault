@@ -34,8 +34,8 @@ UIDVALIDITY/UIDNEXT high water marks are available.
 If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
 
-If history is too old (Gmail returns 404), automatically falls back to a full
-sync, which is resumable and skips already-archived messages.
+If history is too old (Gmail returns 404), automatically reconciles the complete
+mailbox, preserving archived content while repairing source-deletion metadata.
 
 Examples:
   msgvault sync                 # Sync all accounts
@@ -270,21 +270,19 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 	fmt.Printf("Starting incremental sync for %s\n", email)
 	fmt.Printf("Last history ID: %s\n", source.SyncCursor.String)
 
-	summary, err := syncer.Incremental(ctx, source)
+	summary, err := syncer.IncrementalWithHistoryRecovery(ctx, source, func(resumed bool) {
+		if resumed {
+			fmt.Println("Resuming complete mailbox reconciliation after interruption.")
+		} else {
+			fmt.Println("History ID has expired (Gmail keeps only ~7 days of history).")
+			fmt.Println("Reconciling the complete mailbox; already-archived messages are skipped.")
+		}
+		fmt.Println()
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nSync interrupted. Run again to resume.")
 			return nil
-		}
-		// The history baseline is gone (Gmail keeps only ~7 days), so an
-		// incremental sync can never succeed again for this account. Fall
-		// back to a full sync instead of telling the user to run one:
-		// it is resumable and skips already-archived messages.
-		if errors.Is(err, sync.ErrHistoryExpired) {
-			fmt.Println("History ID has expired (Gmail keeps only ~7 days of history).")
-			fmt.Println("Falling back to a full sync; already-archived messages are skipped.")
-			fmt.Println()
-			return runFullSync(ctx, s, getOAuthMgr, source)
 		}
 		return fmt.Errorf("sync failed: %w", err)
 	}

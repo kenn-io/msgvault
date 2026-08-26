@@ -2375,6 +2375,63 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
+// ReconcileSourceMessageSnapshot tombstones locally live messages that are
+// absent from one complete provider snapshot. The sync-scoped Store fences the
+// current generation before reading or writing, and the transaction ensures an
+// incomplete reconciliation cannot publish partial tombstones.
+func (s *Store) ReconcileSourceMessageSnapshot(
+	ctx context.Context, sourceID int64, present map[string]struct{},
+) (int64, error) {
+	if present == nil {
+		return 0, errors.New("reconcile source message snapshot: nil snapshot")
+	}
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return 0, err
+	}
+
+	var missing []string
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT source_message_id
+			FROM messages
+			WHERE source_id = ?
+			  AND deleted_at IS NULL
+			  AND deleted_from_source_at IS NULL
+		`, sourceID)
+		if err != nil {
+			return fmt.Errorf("reconcile source message snapshot: list live messages: %w", err)
+		}
+		for rows.Next() {
+			var sourceMessageID string
+			if err := rows.Scan(&sourceMessageID); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("reconcile source message snapshot: scan live message: %w", err)
+			}
+			if _, ok := present[sourceMessageID]; !ok {
+				missing = append(missing, sourceMessageID)
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("reconcile source message snapshot: close live messages: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("reconcile source message snapshot: list live messages: %w", err)
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if err := execInChunksContext(ctx, tx, missing, []any{sourceID},
+			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(missing)), nil
+}
+
 // MarkMessagesDeletedFromReader consumes newline-delimited source message IDs
 // in bounded batches and commits all tombstones atomically. Any late reader or
 // update failure rolls back earlier batches.
