@@ -3986,6 +3986,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 				ID:              42,
 				SourceMessageID: "source-42",
 				Subject:         "HTML Email",
+				IsFromMe:        true,
 				From:            []query.Address{{Email: "sender@example.com", Name: "Sender"}},
 				To:              []query.Address{{Email: "rcpt@example.com"}},
 				SentAt:          time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
@@ -4010,6 +4011,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	assert.Equal("source-42", resp["source_message_id"], "source_message_id")
 	assert.Equal("HTML Email", resp["subject"], "subject")
 	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
+	assert.Equal(true, resp["is_from_me"], "is_from_me")
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
 }
 

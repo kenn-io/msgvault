@@ -74,6 +74,7 @@ type MessageDetail struct {
 	DeletedAt            *time.Time `json:"deleted_at,omitempty"` // When message was deleted from source (nil if not deleted)
 	SizeEstimate         int64      `json:"size_estimate"`
 	HasAttachments       bool       `json:"has_attachments"`
+	IsFromMe             bool       `json:"is_from_me"`
 
 	// Participants
 	From []Address `json:"from"`

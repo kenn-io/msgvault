@@ -504,6 +504,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		Labels:          labels,
 		HasAttach:       qMsg.HasAttachments,
 		SizeBytes:       qMsg.SizeEstimate,
+		IsFromMe:        qMsg.IsFromMe,
 		Body:            body,
 		BodyHTML:        qMsg.BodyHTML,
 		Attachments:     attachments,
