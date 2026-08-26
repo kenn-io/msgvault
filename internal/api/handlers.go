@@ -3684,6 +3684,13 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	merged := query.MergeFilterIntoQuery(q, filter)
+	if filter.HideDeletedFromSource {
+		merged.DeletionScope = search.DeletionScopeActive
+	} else {
+		// Preserve the pre-2.12 deep-search contract: omitted or false
+		// hide_deleted includes retained source-deleted messages.
+		merged.DeletionScope = search.DeletionScopeAny
+	}
 
 	// Fetch one extra row to determine has_more accurately.
 	var messages []query.MessageSummary

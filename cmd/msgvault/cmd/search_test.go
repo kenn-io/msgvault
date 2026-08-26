@@ -89,6 +89,7 @@ func resetSearchFlags() {
 	searchJSON = false
 	searchMode = "fts"
 	searchExplain = false
+	searchDeletionScope = "active"
 	searchMessageTypes = nil
 	// Cobra remembers per-flag `Changed` state on the global searchCmd
 	// across test invocations. Without clearing it, mutually-exclusive
@@ -205,6 +206,75 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 	err := root.Execute()
 	require.NoError(t, err, "message-type remote search should be forwarded")
 	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
+}
+
+func TestSearchCmd_DeletionScopeForwardsToRemoteFTS(t *testing.T) {
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	searchRequests := &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.12.0"}`))
+			return
+		}
+		searchRequests.Add(1)
+		assert.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
+		assert.Equal(t, "deleted", r.URL.Query().Get("deletion_scope"), "deletion_scope query")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer srv.Close()
+
+	cfg = &config.Config{}
+	cfg.Remote.URL = srv.URL
+	cfg.Remote.AllowInsecure = true
+	useLocal = false
+
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--deletion-scope", "deleted", "statement"})
+
+	err := root.Execute()
+	require.NoError(t, err, "source-deleted FTS search")
+	assert.Equal(t, int32(1), searchRequests.Load(), "search endpoint calls")
+}
+
+func TestSearchCmd_DeletionScopeRejectsInvalidValue(t *testing.T) {
+	defer resetSearchFlags()
+
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--deletion-scope", "trash", "statement"})
+
+	err := root.Execute()
+	require.Error(t, err, "invalid deletion scope")
+	assert.ErrorContains(t, err, `invalid --deletion-scope: "trash" (want active|deleted|any)`)
+}
+
+func TestSearchCmd_DeletionScopeRejectsVectorAndHybrid(t *testing.T) {
+	for _, mode := range []string{"vector", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			defer resetSearchFlags()
+
+			root := newTestRootCmd()
+			root.AddCommand(searchCmd)
+			root.SetArgs([]string{
+				"search", "--mode", mode,
+				"--deletion-scope", "any", "statement",
+			})
+
+			err := root.Execute()
+			require.Error(t, err, "non-active semantic deletion scope")
+			assert.ErrorContains(t, err,
+				"--deletion-scope=any is only supported with --mode=fts; vector and hybrid indexes cover active messages only")
+		})
+	}
 }
 
 func TestSearchCmd_FTSUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
@@ -872,6 +942,10 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.12.0"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
 	defer srv.Close()

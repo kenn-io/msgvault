@@ -539,29 +539,41 @@ func TestSearchByDomains_HidesDeleted(t *testing.T) {
 	}
 }
 
-func TestSearch_HideDeleted(t *testing.T) {
-	assert := assert.New(t)
+func TestSearch_DeletionScope(t *testing.T) {
 	env := newTestEnv(t)
 
-	// Mark message 1 as deleted
+	// Source deletion is selectable; dedup-hidden rows are never searchable.
 	env.MarkDeletedByID(1)
+	env.MarkDedupLoserByID(2)
 
-	// Search without HideDeleted: all messages returned
-	q := &search.Query{}
-	all := env.MustSearch(q, 100, 0)
-	assert.Len(all, 5, "Search without HideDeleted")
-
-	// Search with HideDeleted: deleted message excluded
-	q = &search.Query{HideDeleted: true}
-	filtered := env.MustSearch(q, 100, 0)
-	assert.Len(filtered, 4, "Search with HideDeleted")
+	tests := []struct {
+		name    string
+		scope   search.DeletionScope
+		wantIDs []int64
+	}{
+		{name: "zero_value_defaults_to_active", wantIDs: []int64{3, 4, 5}},
+		{name: "active", scope: search.DeletionScopeActive, wantIDs: []int64{3, 4, 5}},
+		{name: "deleted", scope: search.DeletionScopeDeleted, wantIDs: []int64{1}},
+		{name: "any", scope: search.DeletionScopeAny, wantIDs: []int64{1, 3, 4, 5}},
+		{name: "unknown_fails_closed_to_active", scope: search.DeletionScope("bogus"), wantIDs: []int64{3, 4, 5}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := env.MustSearch(&search.Query{DeletionScope: tt.scope}, 100, 0)
+			gotIDs := make([]int64, 0, len(results))
+			for _, result := range results {
+				gotIDs = append(gotIDs, result.ID)
+			}
+			require.ElementsMatch(t, tt.wantIDs, gotIDs)
+		})
+	}
 
 	// MergeFilterIntoQuery carries HideDeletedFromSource → HideDeleted
 	baseQ := &search.Query{}
 	filter := MessageFilter{HideDeletedFromSource: true}
 	merged := MergeFilterIntoQuery(baseQ, filter)
-	assert.True(merged.HideDeleted,
+	require.True(t, merged.HideDeleted,
 		"MergeFilterIntoQuery should set HideDeleted from HideDeletedFromSource")
 	results := env.MustSearch(merged, 100, 0)
-	assert.Len(results, 4, "Search via merged query")
+	require.Len(t, results, 3, "Search via merged query")
 }

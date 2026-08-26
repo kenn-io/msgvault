@@ -237,7 +237,10 @@ import (
 // candidate, review, accept, or reject workflow.
 // Additive (minor bump): existing person, participant, relationship, calendar,
 // and CardDAV routes are unchanged.
-const APISchemaVersion = "2.11.0"
+// 2.12.0 adds deletion_scope=active|deleted|any to GET /api/v1/cli/search.
+// Omission preserves the active-only default. Additive (minor bump): existing
+// clients continue to receive the same result population.
+const APISchemaVersion = "2.12.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

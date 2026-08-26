@@ -1028,6 +1028,7 @@ msgvault search <query> [flags]
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
 | `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms` |
+| `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
 
@@ -1037,7 +1038,7 @@ Ordinary aggregate views and statistics still default to email-only; use
 `--message-type` (or `message_type:` in the query) when you need an explicit
 search scope.
 
-`--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected), so bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/usage/searching/) for the operator reference and [Vector Search](/usage/vector-search/) for semantic setup.
+`--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/usage/searching/) for the operator reference and [Vector Search](/usage/vector-search/) for semantic setup.
 
 ---
 

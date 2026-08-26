@@ -33,7 +33,8 @@ type Query struct {
 	// (messages.deleted_from_source_at). It is caller-set context — the
 	// parser never populates it — and the zero value keeps the historical
 	// active-only behavior, so callers that never set it are unaffected.
-	// The DuckDB SearchFast path ignores it and keeps honoring HideDeleted.
+	// SearchFast is an analytical path and keeps honoring its separate
+	// MessageFilter deletion context.
 	DeletionScope DeletionScope
 
 	// UnsupportedOperators records recognized Gmail operators that msgvault
@@ -65,6 +66,21 @@ const (
 	// DeletionScopeAny matches both live and source-deleted messages.
 	DeletionScopeAny DeletionScope = "any"
 )
+
+// ParseDeletionScope converts the public active|deleted|any spelling into
+// the internal scope. Empty input is the active-only default.
+func ParseDeletionScope(value string) (DeletionScope, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "active":
+		return DeletionScopeActive, nil
+	case "deleted":
+		return DeletionScopeDeleted, nil
+	case "any":
+		return DeletionScopeAny, nil
+	default:
+		return DeletionScopeActive, fmt.Errorf("invalid deletion scope %q (want active, deleted, or any)", value)
+	}
+}
 
 // Err returns a combined error describing every known operator that was
 // given an invalid value, or nil if the query parsed cleanly. Front doors

@@ -1557,9 +1557,15 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 // correlated subquery, so the only join this ever emits is the optional
 // FTS join (ftsJoin); there is no separate non-EXISTS join slot.
 func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
-	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
-	// q.HideDeleted via the helper.
-	conditions = append(conditions, store.LiveMessagesWhere("m", q.HideDeleted))
+	return e.buildSearchQueryPartsWithVisibility(ctx, q,
+		searchMessageVisibilityWhere("m", q.DeletionScope))
+}
+
+// buildSearchQueryPartsWithVisibility keeps the historical SearchFast
+// deletion context separate from Search's explicit DeletionScope while the
+// two paths continue sharing every other structured predicate.
+func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, q *search.Query, visibility string) (conditions []string, args []any, ftsJoin string) {
+	conditions = append(conditions, visibility)
 
 	// From filter - uses EXISTS to avoid join multiplication in aggregates.
 	// Handles both exact addresses and @domain patterns.
@@ -1785,7 +1791,8 @@ func metadataContainsExpression(d Dialect, column string) string {
 func (e *SQLiteEngine) buildMetadataSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
 	structured := *q
 	structured.TextTerms = nil
-	conditions, args, ftsJoin = e.buildSearchQueryParts(ctx, &structured)
+	conditions, args, ftsJoin = e.buildSearchQueryPartsWithVisibility(ctx, &structured,
+		store.LiveMessagesWhere("m", q.HideDeleted))
 
 	for _, term := range q.TextTerms {
 		pattern := "%" + escapeSQLiteLike(term) + "%"

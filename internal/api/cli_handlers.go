@@ -1845,6 +1845,12 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
+	deletionScope, err := search.ParseDeletionScope(r.URL.Query().Get("deletion_scope"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_deletion_scope", err.Error())
+		return
+	}
+	parsed.DeletionScope = deletionScope
 	for _, raw := range r.URL.Query()["message_type"] {
 		for typ := range strings.SplitSeq(raw, ",") {
 			typ = strings.TrimSpace(strings.ToLower(typ))
