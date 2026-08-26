@@ -6,8 +6,6 @@ import { selectKitOption, setKitTheme } from './kit-ui';
 
 const outputDir = process.env.MSGVAULT_DOCS_SCREENSHOT_OUTPUT ?? '';
 const platform = process.env.MSGVAULT_DOCS_SCREENSHOT_PLATFORM ?? 'darwin';
-const compareDir = process.env.MSGVAULT_DOCS_SCREENSHOT_COMPARE_DIR;
-const comparePublishedAssets = Boolean(compareDir);
 
 const exploreURL = (workspace: 'everything' | 'relationships') =>
   `/?explore=${encodeURIComponent(JSON.stringify({ workspace }))}`;
@@ -20,27 +18,13 @@ async function waitForOverview(page: import('@playwright/test').Page) {
   return grid;
 }
 
-async function captureEvidence(
-  page: import('@playwright/test').Page,
-  filename: string,
-  compareOptions?: { maxDiffPixelRatio?: number }
-) {
-  await captureScreenshot(
-    page,
-    path.join(outputDir, filename),
-    comparePublishedAssets
-      ? async (screenshot) => {
-          const options = compareOptions ?? (platform === 'darwin' ? { maxDiffPixelRatio: 0.005 } : { maxDiffPixels: 100 });
-          await expect(screenshot).toMatchSnapshot(filename, options);
-        }
-      : undefined
-  );
+async function captureEvidence(page: import('@playwright/test').Page, filename: string) {
+  await captureScreenshot(page, path.join(outputDir, filename));
 }
 
-test('writes the exact screenshot buffer supplied to the comparer', async ({}, testInfo) => {
+test('writes the final stable screenshot buffer', async ({}, testInfo) => {
   const frames = [Buffer.from('transient screenshot'), Buffer.from('stable screenshot'), Buffer.from('stable screenshot')];
   let screenshotCalls = 0;
-  let comparedScreenshot: Buffer | undefined;
   const screenshotOptions: ScreenshotOptions[] = [];
   const outputPath = path.join(testInfo.outputDir, 'exact-buffer.png');
   await mkdir(testInfo.outputDir, { recursive: true });
@@ -53,10 +37,7 @@ test('writes the exact screenshot buffer supplied to the comparer', async ({}, t
         return frames.shift()!;
       }
     },
-    outputPath,
-    async (buffer) => {
-      comparedScreenshot = buffer;
-    }
+    outputPath
   );
 
   expect(screenshotCalls).toBe(3);
@@ -65,12 +46,11 @@ test('writes the exact screenshot buffer supplied to the comparer', async ({}, t
     { fullPage: false, animations: 'disabled', caret: 'hide' },
     { fullPage: false, animations: 'disabled', caret: 'hide' }
   ]);
-  expect(comparedScreenshot).toEqual(Buffer.from('stable screenshot'));
   expect(await readFile(outputPath)).toEqual(Buffer.from('stable screenshot'));
 });
 
 test.describe('documentation fixture capture', () => {
-  test.skip(!outputDir, 'documentation screenshot output is configured only for the dedicated docs workflow');
+  test.skip(!outputDir, 'documentation screenshot output is configured only for manual capture');
 
   test('real archive provides analytical and relationship evidence', async ({ page }) => {
     await mkdir(outputDir, { recursive: true });
@@ -88,9 +68,9 @@ test.describe('documentation fixture capture', () => {
     }
 
     if (platform === 'darwin') {
-      for (const [theme, density, filename, maxDiffPixelRatio] of [
-        ['dark', 'comfortable', 'relationships-dark-comfortable-darwin.png', 0.025],
-        ['light', 'compact', 'relationships-light-compact-darwin.png', 0.05]
+      for (const [theme, density, filename] of [
+        ['dark', 'comfortable', 'relationships-dark-comfortable-darwin.png'],
+        ['light', 'compact', 'relationships-light-compact-darwin.png']
       ] as const) {
         await page.goto(exploreURL('relationships'));
         await setKitTheme(page, theme);
@@ -110,7 +90,7 @@ test.describe('documentation fixture capture', () => {
         await expect.poll(async () => await timeline.getByRole('row').count()).toBeGreaterThan(0);
         await expect(timeline.locator('[role="row"]').first()).toContainText(/\S/);
         await expect(page.getByLabel('Relationship activity intensity from less to more')).toBeVisible();
-        await captureEvidence(page, filename, { maxDiffPixelRatio });
+        await captureEvidence(page, filename);
       }
     }
   });

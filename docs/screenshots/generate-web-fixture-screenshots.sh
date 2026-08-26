@@ -92,10 +92,9 @@ for _ in $(seq 1 180); do
 done
 [[ -n "$base_url" && -s "$scratch/session.json" ]] || { sed -n '1,240p' "$scratch/serve.log" >&2; exit 1; }
 
-# The capture itself only needs the running web app. Each platform runner
-# captures its own rasterization; the docs build hydrates the complete static
-# asset branch after these new captures are published.
-(cd "$repo_root/web" && MSGVAULT_DOCS_BASE_URL="$base_url" MSGVAULT_DOCS_SCREENSHOT_OUTPUT="$scratch/output" MSGVAULT_DOCS_SCREENSHOT_PLATFORM="$platform" MSGVAULT_DOCS_SCREENSHOT_COMPARE_DIR="${MSGVAULT_DOCS_SCREENSHOT_COMPARE_DIR:-}" bunx playwright test tests/docs-fixture-screenshots.spec.ts --config "$repo_root/docs/screenshots/playwright-fixture.config.ts")
+# The capture itself only needs the running web app. Maintainers review and
+# publish each platform's rasterization through the docs asset branch.
+(cd "$repo_root/web" && MSGVAULT_DOCS_BASE_URL="$base_url" MSGVAULT_DOCS_SCREENSHOT_OUTPUT="$scratch/output" MSGVAULT_DOCS_SCREENSHOT_PLATFORM="$platform" bunx playwright test tests/docs-fixture-screenshots.spec.ts --config "$repo_root/docs/screenshots/playwright-fixture.config.ts")
 
 expected=(
   "analytical-dark-comfortable-$platform.png"
