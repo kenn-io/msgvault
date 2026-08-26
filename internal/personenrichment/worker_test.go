@@ -701,6 +701,8 @@ func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
 			f := newWorkerFixture(t, "begin-attempt-error", nil)
 			f.enqueue(t)
 			work := &beginAttemptErrorStore{WorkStore: f.store, err: test.injected}
@@ -722,35 +724,35 @@ func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.
 				}},
 				f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
 			)
-			require.NoError(t, err)
+			requirements.NoError(err)
 
 			processed, err := worker.RunOnce(t.Context(), f.run.ID)
-			assert.True(t, processed)
+			checks.True(processed)
 			if test.wantError {
-				require.ErrorIs(t, err, test.injected)
+				requirements.ErrorIs(err, test.injected)
 			} else {
-				require.NoError(t, err)
+				requirements.NoError(err)
 			}
-			assert.Equal(t, test.wantReleases, work.releases.Load())
-			assert.Zero(t, starts.Load())
+			checks.Equal(test.wantReleases, work.releases.Load())
+			checks.Zero(starts.Load())
 			attempts, listErr := f.store.ListPersonEnrichmentAttemptsContext(
 				t.Context(), store.PersonEnrichmentAttemptFilter{PersonID: f.person.ID, RunID: f.run.ID, Limit: 10},
 			)
-			require.NoError(t, listErr)
+			requirements.NoError(listErr)
 			if test.wantState == "" {
-				assert.Empty(t, attempts)
+				checks.Empty(attempts)
 				if errors.Is(test.injected, personenrichment.ErrRequestBudgetExceeded) {
 					workRows, workErr := f.store.ListPersonEnrichmentWorkContext(t.Context(),
 						store.PersonEnrichmentWorkFilter{PersonID: f.person.ID,
 							ProfileFingerprint: f.profile.Fingerprint, Limit: 10})
-					require.NoError(t, workErr)
-					require.Len(t, workRows, 1)
-					assert.Nil(t, workRows[0].ActiveAttemptID)
+					requirements.NoError(workErr)
+					requirements.Len(workRows, 1)
+					checks.Nil(workRows[0].ActiveAttemptID)
 				}
 				return
 			}
-			require.Len(t, attempts, 1)
-			assert.Equal(t, test.wantState, attempts[0].State)
+			requirements.Len(attempts, 1)
+			checks.Equal(test.wantState, attempts[0].State)
 		})
 	}
 }

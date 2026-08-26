@@ -124,6 +124,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 		AdapterVersion:     result.AdapterVersion, WireSchemaVersion: result.SchemaVersion,
 	})
 	require.NoError(t, err)
+	require.NoError(t, st.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(t, st.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: result.RequestID, JobID: result.JobID,
 		StartedAt:      now,

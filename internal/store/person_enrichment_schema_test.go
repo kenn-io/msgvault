@@ -114,6 +114,7 @@ func TestPersonEnrichmentBackendParityMatrix(t *testing.T) {
 		checks.False(created)
 		checks.Equal(attempt.ID, replayed.ID)
 
+		requirements.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 		requirements.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 			State: personenrichment.AttemptPending, RequestID: "parity-request", JobID: "parity-job",
 			StartedAt: f.now, AdapterVersion: "parity-adapter-v1", SchemaVersion: "parity-wire-v1",

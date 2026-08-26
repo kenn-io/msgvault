@@ -150,7 +150,7 @@ func prepareClaim(
 		}
 		evidence.EventTime = portableFactTime(evidence.EventTime)
 		evidence.RecordedTime = portableFactTime(evidence.RecordedTime)
-		alignExternal := aligner != nil &&
+		alignExternal := claim.Origin == OriginEnrichment && aligner != nil &&
 			(evidence.SourceClass == EvidencePublic || evidence.SourceClass == EvidenceProviderAssertion)
 		if alignExternal {
 			result, alignErr := aligner.Align(ctx, copyEvidenceInput(evidence))

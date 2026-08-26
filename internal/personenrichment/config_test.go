@@ -309,6 +309,7 @@ func TestConfigRejectsUnsupportedBuiltInHardCostCaps(t *testing.T) {
 }
 
 func TestConfigRejectsUnsafeProviderPolicies(t *testing.T) {
+	requirements := require.New(t)
 	tests := []struct {
 		name   string
 		mutate func(*personenrichment.ProviderConfig)
@@ -353,30 +354,30 @@ func TestConfigRejectsUnsafeProviderPolicies(t *testing.T) {
 
 	sixtyfour := validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.Tier = ""
-	require.ErrorContains(t, sixtyfour.Validate(), "tier")
+	requirements.ErrorContains(sixtyfour.Validate(), "tier")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.PollEndpoint = ""
-	require.ErrorContains(t, sixtyfour.Validate(), "poll_endpoint")
+	requirements.ErrorContains(sixtyfour.Validate(), "poll_endpoint")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.Mode = "people"
-	require.ErrorContains(t, sixtyfour.Validate(), "mode")
+	requirements.ErrorContains(sixtyfour.Validate(), "mode")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.AllowedIdentifiers = []personenrichment.IdentifierClass{personenrichment.IdentifierPublicProfileURL}
-	require.ErrorContains(t, sixtyfour.Validate(), "allowed_identifiers")
+	requirements.ErrorContains(sixtyfour.Validate(), "allowed_identifiers")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.AllowedIdentifiers = []personenrichment.IdentifierClass{personenrichment.IdentifierName}
-	require.ErrorContains(t, sixtyfour.Validate(), "allowed_identifiers")
+	requirements.ErrorContains(sixtyfour.Validate(), "allowed_identifiers")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.AllowedIdentifiers = []personenrichment.IdentifierClass{personenrichment.IdentifierEmail}
-	require.ErrorContains(t, sixtyfour.Validate(), "allowed_identifiers")
+	requirements.ErrorContains(sixtyfour.Validate(), "allowed_identifiers")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.AllowedIdentifiers = []personenrichment.IdentifierClass{personenrichment.IdentifierPhone}
-	require.ErrorContains(t, sixtyfour.Validate(), "allowed_identifiers")
+	requirements.ErrorContains(sixtyfour.Validate(), "allowed_identifiers")
 	sixtyfour = validProviderConfig(personenrichment.ProviderSixtyfour)
 	sixtyfour.AllowedIdentifiers = []personenrichment.IdentifierClass{
 		personenrichment.IdentifierName, personenrichment.IdentifierCurrentCompany,
 	}
-	require.NoError(t, sixtyfour.Validate())
+	requirements.NoError(sixtyfour.Validate())
 }
 
 func TestConfigRequiresUniqueEnabledProviderNames(t *testing.T) {

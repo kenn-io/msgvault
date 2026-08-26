@@ -65,9 +65,11 @@ func TestPersonEnrichmentSuppressHashesStdinBeforeDaemonRequest(t *testing.T) {
 }
 
 func TestPersonEnrichmentDaemonProxyForwardsOnlyRequiredConfiguredCredentials(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	config := personEnrichmentCLIConfig("TEST_PERSON_ENRICHMENT_SUPPRESSION_KEY")
 	provider, ok := personEnrichmentProviderConfig(config, "exa-default")
-	require.True(t, ok)
+	requirements.True(ok)
 	values := map[string]string{
 		config.SuppressionKeyEnv: "suppression-secret",
 		provider.APIKeyEnv:       "provider-secret",
@@ -86,8 +88,8 @@ func TestPersonEnrichmentDaemonProxyForwardsOnlyRequiredConfiguredCredentials(t 
 
 	_, _, err := executePersonEnrichmentCommand(t, deps, "", "run",
 		"--person=7", "--provider=exa-default", "--idempotency-key=manual-1")
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{
+	requirements.NoError(err)
+	checks.Equal(map[string]string{
 		config.SuppressionKeyEnv: "suppression-secret",
 		provider.APIKeyEnv:       "provider-secret",
 	}, proxiedEnv)
@@ -95,8 +97,8 @@ func TestPersonEnrichmentDaemonProxyForwardsOnlyRequiredConfiguredCredentials(t 
 	proxiedEnv = nil
 	_, _, err = executePersonEnrichmentCommand(t, deps, "", "suppress",
 		"--person=7", "--reason=opt_out")
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{config.SuppressionKeyEnv: "suppression-secret"}, proxiedEnv)
+	requirements.NoError(err)
+	checks.Equal(map[string]string{config.SuppressionKeyEnv: "suppression-secret"}, proxiedEnv)
 }
 
 func TestPersonEnrichmentSuppressInputModesAndReasons(t *testing.T) {

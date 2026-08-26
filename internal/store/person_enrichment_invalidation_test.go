@@ -434,6 +434,7 @@ func prepareCurrentEnrichmentResult(
 		AdapterVersion:     result.AdapterVersion, WireSchemaVersion: result.SchemaVersion,
 	})
 	require.NoError(t, err)
+	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(t, f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: result.RequestID, JobID: result.JobID,
 		StartedAt: f.now, AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,

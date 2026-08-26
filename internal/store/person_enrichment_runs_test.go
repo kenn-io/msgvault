@@ -141,6 +141,7 @@ func testPersonEnrichmentRunCannotCompleteWithDeferredAttempt(t *testing.T, kind
 			NextActionAt: next,
 		})
 	} else {
+		require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 		err = f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 			State: personenrichment.AttemptPending, RequestID: "request", JobID: "job",
 			StartedAt:      f.now,

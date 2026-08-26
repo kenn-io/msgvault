@@ -686,6 +686,7 @@ func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *te
 		PersonRevision: f.person.Revision, Trigger: lease.Trigger,
 	})
 	require.NoError(err)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, JobID: "opaque-consent-job", StartedAt: f.now,
 		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",

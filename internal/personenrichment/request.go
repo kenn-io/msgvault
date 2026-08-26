@@ -105,7 +105,7 @@ func validateRequestIdentityForProfile(identity Identity, profile ProviderProfil
 		hasName := identity.Name != ""
 		hasCompany := identity.CurrentCompany != ""
 		if !hasName || !hasCompany {
-			return errors.New("Sixtyfour requires name and current company for verified response binding")
+			return errors.New("sixtyfour requires name and current company for verified response binding")
 		}
 	}
 	return nil

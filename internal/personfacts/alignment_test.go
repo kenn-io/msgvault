@@ -132,7 +132,7 @@ func TestEvidenceAlignmentBindsImmutableSourceVersion(t *testing.T) {
 	assert.Equal([]string{wantKey}, claims[0].EvidenceKeys)
 }
 
-func TestPreparePersonFactGenerationAlignsExternalEvidenceWhenAlignerIsSupplied(t *testing.T) {
+func TestPreparePersonFactGenerationAlignsExternalEnrichmentEvidenceWhenAlignerIsSupplied(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	public := validArchiveEvidence()
@@ -144,7 +144,9 @@ func TestPreparePersonFactGenerationAlignsExternalEvidenceWhenAlignerIsSupplied(
 	public.SourceVersion = "submitted-version"
 	public.ContentSHA256 = ""
 	input := validGenerationInput()
-	input.Claims = []ProposedClaim{validClaim(public)}
+	claim := validClaim(public)
+	claim.Origin = OriginEnrichment
+	input.Claims = []ProposedClaim{claim}
 	called := 0
 	prepared, err := PreparePersonFactGeneration(t.Context(), input,
 		evidenceAlignerFunc(func(_ context.Context, got EvidenceInput) (AlignmentResult, error) {

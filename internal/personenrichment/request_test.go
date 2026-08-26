@@ -198,6 +198,8 @@ func TestBuildRequestEnforcesExaModeIdentityRequirements(t *testing.T) {
 }
 
 func TestBuildRequestOmitsIncompleteOptionalNamePairWhenExaUsesProfileURL(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	target := requestTarget("attribute:bio", false)
 	request, _, err := personenrichment.BuildRequest(personenrichment.RequestInput{
 		PersonID:          1,
@@ -212,10 +214,10 @@ func TestBuildRequestOmitsIncompleteOptionalNamePairWhenExaUsesProfileURL(t *tes
 			personenrichment.IdentifierPublicProfileURL,
 		}, Targets: []personfacts.TargetDescriptor{target},
 	})
-	require.NoError(t, err)
-	assert.Empty(t, request.Identity.Name)
-	assert.Empty(t, request.Identity.CurrentCompany)
-	assert.Equal(t, []string{"https://example.com/alice"}, request.Identity.PublicProfileURLs)
+	requirements.NoError(err)
+	checks.Empty(request.Identity.Name)
+	checks.Empty(request.Identity.CurrentCompany)
+	checks.Equal([]string{"https://example.com/alice"}, request.Identity.PublicProfileURLs)
 }
 
 func TestBuildRequestEnforcesSixtyfourSuppressionBoundIdentity(t *testing.T) {
@@ -237,7 +239,7 @@ func TestBuildRequestEnforcesSixtyfourSuppressionBoundIdentity(t *testing.T) {
 	}{
 		{name: "rejects profile URL only", allowed: []personenrichment.IdentifierClass{
 			personenrichment.IdentifierPublicProfileURL,
-		}, wantErr: "Sixtyfour"},
+		}, wantErr: "sixtyfour"},
 		{name: "rejects name only", allowed: []personenrichment.IdentifierClass{
 			personenrichment.IdentifierName,
 		}, wantErr: "name and current company"},

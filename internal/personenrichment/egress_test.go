@@ -218,9 +218,11 @@ func TestEgressGateRejectsUnpairedNameOrCompanyBeforeCredentialLookup(t *testing
 		{CurrentCompany: "Example Labs"},
 	} {
 		t.Run(fmt.Sprintf("name=%t-company=%t", identity.Name != "", identity.CurrentCompany != ""), func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
 			events := []string{}
 			hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x52}, 32))
-			require.NoError(t, err)
+			requirements.NoError(err)
 			profile := egressProfile(t, []personenrichment.IdentifierClass{
 				personenrichment.IdentifierName, personenrichment.IdentifierCurrentCompany,
 			})
@@ -233,13 +235,13 @@ func TestEgressGateRejectsUnpairedNameOrCompanyBeforeCredentialLookup(t *testing
 					return "secret", true
 				},
 			)
-			require.NoError(t, err)
+			requirements.NoError(err)
 
 			_, err = gate.Authorize(t.Context(), personenrichment.EgressInput{
 				Request: personenrichment.Request{Identity: identity}, Profile: profile,
 			})
-			require.ErrorContains(t, err, "name and current company")
-			assert.NotContains(t, events, "credential")
+			requirements.ErrorContains(err, "name and current company")
+			checks.NotContains(events, "credential")
 		})
 	}
 }

@@ -713,14 +713,6 @@ func (commandCodexGate) Verify(_ context.Context, _, boundary string) (peopleswe
 	}, nil
 }
 
-func commandCodexAttestedPath() string {
-	path, err := os.Executable()
-	if err != nil {
-		return filepath.Join(string(filepath.Separator), "attested", "codex")
-	}
-	return path
-}
-
 func (commandCodexGate) ReverifyForLaunch(peoplesweep.CodexAttestation) error { return nil }
 
 func commandCodexConfig() peoplesweep.Config {

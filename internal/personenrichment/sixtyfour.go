@@ -431,7 +431,7 @@ func decodeSixtyfourCompleted(
 }
 
 func sixtyfourIdentityMatch(key string, raw json.RawMessage, confidence int) (IdentityMatch, bool) {
-	class := IdentifierClass("")
+	var class IdentifierClass
 	switch key {
 	case "name":
 		class = IdentifierName

@@ -177,30 +177,32 @@ func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *tes
 }
 
 func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "dispatch-consent")
 	f.enqueue(t)
 	lease := f.claim(t, run.ID, "dispatch-consent-worker")
 	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
 		testAttemptStart(&f, run.ID, "d"))
-	require.NoError(t, err)
+	requirements.NoError(err)
 
-	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+	requirements.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	var authorized bool
-	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT dispatch_authorized_at IS NOT NULL FROM person_enrichment_attempts WHERE id = ?`),
 		attempt.ID).Scan(&authorized))
-	assert.True(t, authorized)
+	checks.True(authorized)
 
 	changed, err := f.store.RevokePersonEnrichmentConsent(
 		t.Context(), f.profile.Fingerprint, "dispatch-test")
-	require.NoError(t, err)
-	assert.True(t, changed)
-	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+	requirements.NoError(err)
+	checks.True(changed)
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT dispatch_authorized_at IS NOT NULL FROM person_enrichment_attempts WHERE id = ?`),
 		attempt.ID).Scan(&authorized))
-	assert.True(t, authorized)
-	require.ErrorIs(t,
+	checks.True(authorized)
+	requirements.ErrorIs(
 		f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token),
 		personenrichment.ErrConsentRequired)
 }
@@ -232,6 +234,7 @@ func TestPersonEnrichmentClaimReturnsBoundActiveAttempt(t *testing.T) {
 	assert.True(attempt.StartedAt.IsZero())
 	target := durableAttemptTarget(t)
 	providerStartedAt := f.now.Add(90 * time.Second)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: "opaque-request", JobID: "opaque-job-42",
 		StartedAt:      providerStartedAt,
@@ -307,6 +310,7 @@ func TestSixtyfourReclaimUsesProviderStartTimeForMaximumJobAge(t *testing.T) {
 	require.NoError(err)
 	providerStartedAt := reservationTime.Add(-config.MaxJobAge - time.Minute)
 	started.StartedAt = providerStartedAt
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), durable.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), durable.Token, started))
 	require.NoError(f.store.SchedulePoll(t.Context(), durable.Token, personenrichment.Result{
 		State: personenrichment.ResultPending, JobID: started.JobID, PollAfter: started.PollAfter,
@@ -377,6 +381,7 @@ func TestSixtyfourAttemptPollsAfterDurableReleaseAndReclaim(t *testing.T) {
 		Targets: []personfacts.TargetDescriptor{target},
 	})
 	require.NoError(err)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), durable.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), durable.Token, started))
 	require.NoError(f.store.SchedulePoll(t.Context(), durable.Token, personenrichment.Result{
 		State: personenrichment.ResultPending, JobID: started.JobID, PollAfter: started.PollAfter,
@@ -413,6 +418,7 @@ func TestPersonEnrichmentClaimRejectsCorruptDurableAttemptTargets(t *testing.T) 
 	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, testAttemptStart(&f, run.ID, "f"))
 	require.NoError(err)
 	target := durableAttemptTarget(t)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, JobID: "opaque-job-42",
 		StartedAt:      f.now,
@@ -483,6 +489,7 @@ func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema
 	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, testAttemptStart(&f, run.ID, "a"))
 	require.NoError(t, err)
 
+	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	err = f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, JobID: "opaque-job",
 		StartedAt:      f.now,
@@ -507,6 +514,7 @@ func TestPersonEnrichmentGeneratedSynchronousStartDoesNotRequireRestartTargets(t
 		ProviderVersion: "provider-v1", GeneratedSchema: true,
 		GeneratedSchemaHash: strings.Repeat("c", 64),
 	}
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	err = f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptComplete, RequestID: "opaque-request", Result: &result,
 		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1", GeneratedSchema: true,
@@ -523,13 +531,15 @@ func TestPersonEnrichmentGeneratedSynchronousStartDoesNotRequireRestartTargets(t
 }
 
 func TestPersonEnrichmentAttemptRejectsPollingDifferentOpaqueJob(t *testing.T) {
+	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "poll-job-binding")
 	f.enqueue(t)
 	lease := f.claim(t, run.ID, "worker-a")
 	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, testAttemptStart(&f, run.ID, "a"))
-	require.NoError(t, err)
-	require.NoError(t, f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
+	require.NoError(err)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: "opaque-request", JobID: "opaque-job-42",
 		StartedAt:      f.now,
 		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
@@ -540,7 +550,7 @@ func TestPersonEnrichmentAttemptRejectsPollingDifferentOpaqueJob(t *testing.T) {
 		State: personenrichment.ResultPending, RequestID: "opaque-request", JobID: "different-job",
 		PollAfter: time.Minute, AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
 	})
-	require.Error(t, err)
+	require.Error(err)
 }
 
 func TestPersonEnrichmentAttemptPersistsOpaqueProviderIDsExactly(t *testing.T) {
@@ -554,6 +564,7 @@ func TestPersonEnrichmentAttemptPersistsOpaqueProviderIDsExactly(t *testing.T) {
 	require.NoError(err)
 	requestID := " request-id\t"
 	jobID := "\njob-id "
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: requestID, JobID: jobID,
 		StartedAt:      f.now,

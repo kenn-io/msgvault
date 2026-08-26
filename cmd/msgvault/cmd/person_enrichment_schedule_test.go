@@ -94,6 +94,7 @@ func TestPersonEnrichmentScheduleResumesRunningRunAfterCrash(t *testing.T) {
 	require.NoError(err)
 
 	pending := scheduleTestAttempt(t, f.Store, profile, oldRun.ID, first, now, "pending-owner", "a")
+	require.NoError(f.Store.AuthorizeAttemptDispatch(t.Context(), pending.Token))
 	require.NoError(f.Store.RecordProviderStarted(t.Context(), pending.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, JobID: "pending-job", StartedAt: now,
 		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
