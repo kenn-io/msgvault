@@ -276,6 +276,71 @@ func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing
 	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
 }
 
+func TestPersonEnrichmentSuppressionFencesAttemptCreatedAfterSnapshot(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	if !f.store.IsPostgreSQL() {
+		t.Skip("PostgreSQL exercises concurrent transactions")
+	}
+	run := f.startRun(t, "concurrent-suppression")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "concurrent-suppression-worker")
+	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x76}, 32))
+	require.NoError(err)
+	digest := hasher.Digest(f.profile.ProviderNamespace,
+		personenrichment.SuppressionEmail, personenrichment.EmailNormalizationV1,
+		"work-person@example.com")
+	start := testAttemptStart(&f, run.ID, "a")
+	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+
+	beginRechecked := make(chan struct{})
+	releaseBegin := make(chan struct{})
+	suppressionSnapshotted := make(chan struct{})
+	store.SetPersonEnrichmentTxBarrierForTest(f.store, func(phase string) {
+		switch phase {
+		case "begin_suppressions_rechecked":
+			close(beginRechecked)
+			<-releaseBegin
+		case "suppression_affected_people_snapshotted":
+			close(suppressionSnapshotted)
+		}
+	})
+	type beginResult struct {
+		attempt *personenrichment.DurableAttempt
+		created bool
+		err     error
+	}
+	beginDone := make(chan beginResult, 1)
+	go func() {
+		attempt, created, beginErr := f.store.BeginAttempt(t.Context(), lease.Token, start)
+		beginDone <- beginResult{attempt: attempt, created: created, err: beginErr}
+	}()
+	requireChannelSignal(t, beginRechecked, "begin did not recheck suppressions")
+	suppressionDone := make(chan error, 1)
+	go func() {
+		suppressionDone <- f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+			[]store.PersonEnrichmentSuppressionInput{{
+				ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+				NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID,
+				Digest: digest.Digest, Reason: store.PersonEnrichmentSuppressionOptOut,
+				Actor: "privacy-test",
+			}})
+	}()
+	requireChannelSignal(t, suppressionSnapshotted,
+		"suppression did not snapshot active attempts")
+	close(releaseBegin)
+	result := <-beginDone
+	require.NoError(result.err)
+	require.True(result.created)
+	require.NotNil(result.attempt)
+	require.NoError(<-suppressionDone)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), result.attempt.ID)
+	require.NoError(err)
+	assert.Equal("terminal", stored.State)
+	assert.Empty(f.work(t))
+}
+
 func TestPersonEnrichmentBeginAttemptRechecksDisclosedIdentifierSuppression(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

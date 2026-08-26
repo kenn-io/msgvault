@@ -499,9 +499,6 @@ func (s *Store) BeginAttempt(
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("begin_before_person_lock")
 		}
-		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
-			return err
-		}
 		currentRevision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, start.PersonID)
 		if err != nil {
 			return err
@@ -587,6 +584,9 @@ func (s *Store) BeginAttempt(
 		if err := s.recheckPersonEnrichmentSuppressionsTx(
 			ctx, tx, start.DisclosedIdentifiers); err != nil {
 			return err
+		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("begin_suppressions_rechecked")
 		}
 
 		policy, err := loadPersonEnrichmentBudgetPolicyTx(ctx, tx, start.ProfileFingerprint)

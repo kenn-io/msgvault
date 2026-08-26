@@ -90,6 +90,9 @@ func (s *Store) InsertPersonEnrichmentSuppressionsContext(
 		if err != nil {
 			return err
 		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("suppression_affected_people_snapshotted")
+		}
 		if err := s.lockPersonEnrichmentSuppressionKeyStateTx(ctx, tx); err != nil {
 			return err
 		}
@@ -139,6 +142,12 @@ func (s *Store) InsertPersonEnrichmentSuppressionsContext(
 				return fmt.Errorf("person enrichment suppression %d already exists with different metadata", i)
 			}
 		}
+		concurrentPersonIDs, err := s.lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(
+			ctx, tx, validated)
+		if err != nil {
+			return err
+		}
+		personIDs = sortedUniqueInt64s(append(personIDs, concurrentPersonIDs...)...)
 		return s.forceInvalidatePersonEnrichmentPeopleTx(ctx, tx, personIDs)
 	})
 }
@@ -172,6 +181,9 @@ func (s *Store) InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 		if err != nil {
 			return err
 		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("suppression_affected_people_snapshotted")
+		}
 		if err := s.validatePersonEnrichmentSuppressionKeyStateTx(
 			ctx, tx, configuredKeyID); err != nil {
 			return err
@@ -179,6 +191,12 @@ func (s *Store) InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 		if err := s.insertPersonEnrichmentSuppressionsTx(ctx, tx, validated); err != nil {
 			return err
 		}
+		concurrentPersonIDs, err := s.lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(
+			ctx, tx, validated)
+		if err != nil {
+			return err
+		}
+		personIDs = sortedUniqueInt64s(append(personIDs, concurrentPersonIDs...)...)
 		return s.forceInvalidatePersonEnrichmentPeopleTx(ctx, tx, personIDs)
 	})
 }
@@ -191,6 +209,14 @@ func (s *Store) lockPersonEnrichmentSuppressionAffectedPeopleTx(
 	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 		return nil, err
 	}
+	return s.lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(ctx, tx, inputs)
+}
+
+func (s *Store) lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(
+	ctx context.Context,
+	tx *loggedTx,
+	inputs []PersonEnrichmentSuppressionInput,
+) ([]int64, error) {
 	affected := make(map[int64]struct{})
 	for i := range inputs {
 		input := inputs[i]
