@@ -351,6 +351,9 @@ func (w *Worker) beginAndStart(
 		if errors.Is(err, ErrRequestBudgetExceeded) || errors.Is(err, ErrCostBudgetExceeded) {
 			return w.deferBudgetExhausted(ctx, lease.Token, input)
 		}
+		if errors.Is(err, ErrSuppressed) {
+			return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "suppressed")
+		}
 		if errors.Is(err, ErrAccountingDisabled) {
 			return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
 		}
@@ -470,6 +473,10 @@ func (w *Worker) startAttempt(
 	knownIDs []string,
 ) error {
 	if err := w.work.AuthorizeAttemptDispatch(ctx, lease.Token); err != nil {
+		if errors.Is(err, ErrSuppressed) {
+			return w.work.MarkTerminal(ctx, lease.Token,
+				safeFailure(FailureSuppressed, 0, "", "enrichment suppressed before dispatch"))
+		}
 		if errors.Is(err, ErrConsentRequired) {
 			return w.work.MarkTerminal(ctx, lease.Token,
 				safeFailure(FailurePolicy, 0, "", "enrichment consent revoked before dispatch"))

@@ -3324,6 +3324,10 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 	// existing blank display name was really filled.
 	var id int64
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		displayNameChanged := false
 		now := s.dialect.Now()
 		for range 3 {
 			insertResult, err := tx.Exec(fmt.Sprintf(`
@@ -3355,7 +3359,8 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 				if err != nil {
 					return fmt.Errorf("backfill participant by phone: %w", err)
 				}
-				if _, err := s.bumpParticipantDisplayNameRevisionIfChanged(tx, updateResult); err != nil {
+				displayNameChanged, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, updateResult)
+				if err != nil {
 					return err
 				}
 			}
@@ -3382,6 +3387,16 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 		if err != nil {
 			return err
 		}
+		finish := func(result sql.Result) error {
+			if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, result); err != nil {
+				return err
+			}
+			if !displayNameChanged {
+				return nil
+			}
+			return s.invalidateParticipantPersonEnrichmentTx(
+				context.Background(), tx, id)
+		}
 		if !classificationColumns {
 			result, err := tx.Exec(`INSERT INTO participant_identifiers (
 					participant_id, identifier_type, identifier_value, is_primary
@@ -3391,7 +3406,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			if err != nil {
 				return fmt.Errorf("insert participant identifier: %w", err)
 			}
-			return s.bumpParticipantIdentifierRevisionIfChanged(tx, result)
+			return finish(result)
 		}
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
 			identifierType, phone,
@@ -3425,7 +3440,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 		if err != nil {
 			return fmt.Errorf("insert participant identifier: %w", err)
 		}
-		return s.bumpParticipantIdentifierRevisionIfChanged(tx, result)
+		return finish(result)
 	})
 	if err != nil {
 		return 0, err
@@ -3897,14 +3912,22 @@ func (s *Store) RepairParticipantEmailAddresses(repairs []ParticipantEmailRepair
 		}
 		participantIDs := make([]int64, 0, len(repairs))
 		for _, repair := range repairs {
-			if _, err := tx.Exec(
-				`UPDATE participants SET email_address = ? WHERE id = ?`,
-				repair.EmailAddress, repair.ParticipantID,
-			); err != nil {
+			result, err := tx.Exec(
+				`UPDATE participants SET email_address = ? WHERE id = ?
+				 AND (email_address IS NULL OR email_address <> ?)`,
+				repair.EmailAddress, repair.ParticipantID, repair.EmailAddress,
+			)
+			if err != nil {
 				return fmt.Errorf(
 					"repair participant email %d: %w", repair.ParticipantID, err)
 			}
-			participantIDs = append(participantIDs, repair.ParticipantID)
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("check participant email %d repair: %w", repair.ParticipantID, err)
+			}
+			if changed > 0 {
+				participantIDs = append(participantIDs, repair.ParticipantID)
+			}
 		}
 		const chunkSize = 500
 		for start := 0; start < len(participantIDs); start += chunkSize {
@@ -3918,7 +3941,11 @@ func (s *Store) RepairParticipantEmailAddresses(repairs []ParticipantEmailRepair
 		if _, err := s.bumpIdentityRevision(tx); err != nil {
 			return err
 		}
-		return s.bumpAccountIdentityRevision(tx)
+		if err := s.bumpAccountIdentityRevision(tx); err != nil {
+			return err
+		}
+		return s.invalidateParticipantPersonEnrichmentTx(
+			context.Background(), tx, participantIDs...)
 	})
 }
 
@@ -3970,6 +3997,9 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 
 	var participantID int64
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
 		err := tx.QueryRow(`
 			SELECT participant_id FROM participant_identifiers
 			WHERE identifier_type = ? AND identifier_value = ?
@@ -3983,8 +4013,13 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 				if err != nil {
 					return fmt.Errorf("backfill participant display name: %w", err)
 				}
-				if _, err := s.bumpParticipantDisplayNameRevisionIfChanged(tx, result); err != nil {
+				changed, err := s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
+				if err != nil {
 					return err
+				}
+				if changed {
+					return s.invalidateParticipantPersonEnrichmentTx(
+						context.Background(), tx, participantID)
 				}
 			}
 			return nil
@@ -4052,6 +4087,15 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 
 	var updated bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		participantIDs, err := s.participantIdentityUpdateIDsTx(tx,
+			`SELECT id FROM participants
+			 WHERE phone_number = ? AND (display_name IS NULL OR display_name = '')`, phone)
+		if err != nil {
+			return err
+		}
 		result, err := tx.Exec(fmt.Sprintf(`
 			UPDATE participants SET display_name = ?, updated_at = %s
 			WHERE phone_number = ? AND (display_name IS NULL OR display_name = '')
@@ -4060,7 +4104,11 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		return err
+		if err != nil || !updated {
+			return err
+		}
+		return s.invalidateParticipantPersonEnrichmentTx(
+			context.Background(), tx, participantIDs...)
 	})
 	if err != nil {
 		return false, err
@@ -4085,6 +4133,21 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 
 	var updated bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		participantIDs, err := s.participantIdentityUpdateIDsTx(tx, `SELECT id FROM participants
+			WHERE phone_number = ?
+			  AND (display_name IS NULL OR display_name = '' OR display_name = phone_number)
+			  AND (display_name IS NULL OR display_name <> ?)
+			  AND EXISTS (
+			      SELECT 1 FROM participant_identifiers pi
+			      WHERE pi.participant_id = participants.id
+			        AND pi.identifier_type = 'imessage'
+			  )`, phone, displayName)
+		if err != nil {
+			return err
+		}
 		result, err := tx.Exec(fmt.Sprintf(`
 			UPDATE participants SET display_name = ?, updated_at = %s
 			WHERE phone_number = ?
@@ -4100,7 +4163,11 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		return err
+		if err != nil || !updated {
+			return err
+		}
+		return s.invalidateParticipantPersonEnrichmentTx(
+			context.Background(), tx, participantIDs...)
 	})
 	if err != nil {
 		return false, err
@@ -4368,6 +4435,16 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 
 	var updated bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		participantIDs, err := s.participantIdentityUpdateIDsTx(tx,
+			`SELECT id FROM participants
+			 WHERE LOWER(email_address) = LOWER(?)
+			   AND (display_name IS NULL OR display_name = '')`, email)
+		if err != nil {
+			return err
+		}
 		result, err := tx.Exec(fmt.Sprintf(`
 			UPDATE participants SET display_name = ?, updated_at = %s
 			WHERE LOWER(email_address) = LOWER(?) AND (display_name IS NULL OR display_name = '')
@@ -4376,12 +4453,38 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		return err
+		if err != nil || !updated {
+			return err
+		}
+		return s.invalidateParticipantPersonEnrichmentTx(
+			context.Background(), tx, participantIDs...)
 	})
 	if err != nil {
 		return false, err
 	}
 	return updated, nil
+}
+
+func (s *Store) participantIdentityUpdateIDsTx(
+	tx *loggedTx, query string, args ...any,
+) ([]int64, error) {
+	rows, err := tx.Query(query+` ORDER BY id`+s.dialect.SelectForUpdate(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("lock participant identity updates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	participantIDs := make([]int64, 0)
+	for rows.Next() {
+		var participantID int64
+		if err := rows.Scan(&participantID); err != nil {
+			return nil, fmt.Errorf("scan participant identity update: %w", err)
+		}
+		participantIDs = append(participantIDs, participantID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate participant identity updates: %w", err)
+	}
+	return participantIDs, nil
 }
 
 // EnsureConversationParticipant adds a participant to a conversation.

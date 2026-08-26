@@ -333,6 +333,16 @@ func (s *Store) invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 		ctx, tx, false, personIDs...)
 }
 
+func (s *Store) invalidateParticipantPersonEnrichmentTx(
+	ctx context.Context, tx *loggedTx, participantIDs ...int64,
+) error {
+	personIDs, err := personIDsForParticipantsTx(ctx, tx, participantIDs)
+	if err != nil {
+		return err
+	}
+	return s.invalidatePersonEnrichmentIdentitiesTx(ctx, tx, personIDs...)
+}
+
 func (s *Store) invalidatePersonEnrichmentIdentitiesWithRevisionTx(
 	ctx context.Context, tx *loggedTx, bumpAuthorized bool, personIDs ...int64,
 ) error {

@@ -37,6 +37,11 @@ func newEnrichmentWorkFixture(t *testing.T) enrichmentWorkFixture {
 	require.NoError(t, err)
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	store.SetPersonEnrichmentClockForTest(fixture.Store, func() time.Time { return now })
+	_, err = fixture.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+	require.NoError(t, err)
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(
+		`DELETE FROM person_enrichment_work WHERE person_id = ?`), person.ID)
+	require.NoError(t, err)
 	return enrichmentWorkFixture{store: fixture.Store, person: person, profile: profile, now: now}
 }
 
@@ -73,6 +78,15 @@ func (f *enrichmentWorkFixture) claim(t *testing.T, runID int64, owner string) *
 	require.NoError(t, err)
 	require.NotNil(t, lease)
 	return lease
+}
+
+func (f *enrichmentWorkFixture) work(t *testing.T) []store.PersonEnrichmentWork {
+	t.Helper()
+	rows, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	require.NoError(t, err)
+	return rows
 }
 
 func testAttemptStart(f *enrichmentWorkFixture, runID int64, hashByte string) personenrichment.AttemptStart {
@@ -205,6 +219,91 @@ func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *tes
 	requirements.ErrorIs(
 		f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token),
 		personenrichment.ErrConsentRequired)
+}
+
+func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	run := f.startRun(t, "dispatch-untracking")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "dispatch-untracking-worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "7"))
+	require.NoError(err)
+
+	_, err = f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
+	require.NoError(err)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	require.NoError(err)
+	assert.Equal("terminal", stored.State)
+	assert.Empty(f.work(t))
+	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
+}
+
+func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	run := f.startRun(t, "dispatch-suppression")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "dispatch-suppression-worker")
+	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x74}, 32))
+	require.NoError(err)
+	digest := hasher.Digest(f.profile.ProviderNamespace,
+		personenrichment.SuppressionEmail, personenrichment.EmailNormalizationV1,
+		"work-person@example.com")
+	start := testAttemptStart(&f, run.ID, "8")
+	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+	require.NoError(err)
+
+	require.NoError(f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+		[]store.PersonEnrichmentSuppressionInput{{
+			ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+			NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID,
+			Digest: digest.Digest, Reason: store.PersonEnrichmentSuppressionOptOut,
+			Actor: "privacy-test",
+		}}))
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	require.NoError(err)
+	assert.Equal("terminal", stored.State)
+	assert.Empty(f.work(t))
+	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
+}
+
+func TestPersonEnrichmentBeginAttemptRechecksDisclosedIdentifierSuppression(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	run := f.startRun(t, "begin-suppression")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "begin-suppression-worker")
+	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x75}, 32))
+	require.NoError(err)
+	digest := hasher.Digest(f.profile.ProviderNamespace,
+		personenrichment.SuppressionEmail, personenrichment.EmailNormalizationV1,
+		"work-person@example.com")
+	require.NoError(f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+		[]store.PersonEnrichmentSuppressionInput{{
+			ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+			NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID,
+			Digest: digest.Digest, Reason: store.PersonEnrichmentSuppressionOptOut,
+			Actor: "privacy-test",
+		}}))
+	start := testAttemptStart(&f, run.ID, "9")
+	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+
+	attempt, created, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+	require.ErrorIs(err, personenrichment.ErrSuppressed)
+	assert.Nil(attempt)
+	assert.False(created)
 }
 
 func TestPersonEnrichmentLeaseRejectsStaleWorkerAfterReclaim(t *testing.T) {

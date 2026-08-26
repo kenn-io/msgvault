@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -84,6 +85,11 @@ func (s *Store) InsertPersonEnrichmentSuppressionsContext(
 		)
 	})
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		personIDs, err := s.lockPersonEnrichmentSuppressionAffectedPeopleTx(
+			ctx, tx, validated)
+		if err != nil {
+			return err
+		}
 		if err := s.lockPersonEnrichmentSuppressionKeyStateTx(ctx, tx); err != nil {
 			return err
 		}
@@ -133,7 +139,7 @@ func (s *Store) InsertPersonEnrichmentSuppressionsContext(
 				return fmt.Errorf("person enrichment suppression %d already exists with different metadata", i)
 			}
 		}
-		return nil
+		return s.forceInvalidatePersonEnrichmentPeopleTx(ctx, tx, personIDs)
 	})
 }
 
@@ -161,12 +167,83 @@ func (s *Store) InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 		validated[i] = input
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		personIDs, err := s.lockPersonEnrichmentSuppressionAffectedPeopleTx(
+			ctx, tx, validated)
+		if err != nil {
+			return err
+		}
 		if err := s.validatePersonEnrichmentSuppressionKeyStateTx(
 			ctx, tx, configuredKeyID); err != nil {
 			return err
 		}
-		return s.insertPersonEnrichmentSuppressionsTx(ctx, tx, validated)
+		if err := s.insertPersonEnrichmentSuppressionsTx(ctx, tx, validated); err != nil {
+			return err
+		}
+		return s.forceInvalidatePersonEnrichmentPeopleTx(ctx, tx, personIDs)
 	})
+}
+
+func (s *Store) lockPersonEnrichmentSuppressionAffectedPeopleTx(
+	ctx context.Context,
+	tx *loggedTx,
+	inputs []PersonEnrichmentSuppressionInput,
+) ([]int64, error) {
+	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+		return nil, err
+	}
+	affected := make(map[int64]struct{})
+	for i := range inputs {
+		input := inputs[i]
+		rows, err := tx.QueryContext(ctx, `SELECT a.person_id
+			FROM person_enrichment_attempts a
+			JOIN person_enrichment_attempt_identifiers identifier ON identifier.attempt_id = a.id
+			WHERE identifier.provider_namespace = ? AND identifier.identifier_class = ?
+			  AND identifier.normalization_version = ? AND identifier.key_id = ?
+			  AND identifier.digest = ?
+			  AND a.state IN ('queued','starting','pending','retry_wait','uncertain_start')
+			GROUP BY a.person_id ORDER BY a.person_id`, input.ProviderNamespace,
+			input.IdentifierClass, input.NormalizationVersion, input.KeyID, input.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("list people affected by person enrichment suppression %d: %w", i, err)
+		}
+		for rows.Next() {
+			var personID int64
+			if err := rows.Scan(&personID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan person affected by person enrichment suppression %d: %w", i, err)
+			}
+			affected[personID] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("iterate people affected by person enrichment suppression %d: %w", i, err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close people affected by person enrichment suppression %d: %w", i, err)
+		}
+	}
+	personIDs := make([]int64, 0, len(affected))
+	for personID := range affected {
+		personIDs = append(personIDs, personID)
+	}
+	slices.Sort(personIDs)
+	for _, personID := range personIDs {
+		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID); err != nil {
+			return nil, err
+		}
+	}
+	return personIDs, nil
+}
+
+func (s *Store) forceInvalidatePersonEnrichmentPeopleTx(
+	ctx context.Context, tx *loggedTx, personIDs []int64,
+) error {
+	for _, personID := range personIDs {
+		if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, personID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) lockPersonEnrichmentSuppressionKeyStateTx(
@@ -231,6 +308,87 @@ func (s *Store) validatePersonEnrichmentAttemptIdentifierKeyStateTx(
 		}
 	}
 	return s.validatePersonEnrichmentSuppressionKeyStateTx(ctx, tx, keyID)
+}
+
+func (s *Store) loadPersonEnrichmentAttemptIdentifiersTx(
+	ctx context.Context, tx *loggedTx, attemptID int64,
+) ([]personenrichment.SuppressionDigest, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT provider_namespace, identifier_class,
+		normalization_version, key_id, digest
+		FROM person_enrichment_attempt_identifiers
+		WHERE attempt_id = ?
+		ORDER BY provider_namespace, identifier_class, normalization_version, key_id, digest`,
+		attemptID)
+	if err != nil {
+		return nil, fmt.Errorf("load disclosed person enrichment identifiers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	digests := make([]personenrichment.SuppressionDigest, 0)
+	for rows.Next() {
+		var digest personenrichment.SuppressionDigest
+		if err := rows.Scan(&digest.ProviderNamespace, &digest.IdentifierClass,
+			&digest.NormalizationVersion, &digest.KeyID, &digest.Digest); err != nil {
+			return nil, fmt.Errorf("scan disclosed person enrichment identifier: %w", err)
+		}
+		digests = append(digests, digest)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate disclosed person enrichment identifiers: %w", err)
+	}
+	return digests, nil
+}
+
+func (s *Store) recheckPersonEnrichmentSuppressionsTx(
+	ctx context.Context, tx *loggedTx, input []personenrichment.SuppressionDigest,
+) error {
+	if len(input) == 0 {
+		return nil
+	}
+	digests := append([]personenrichment.SuppressionDigest(nil), input...)
+	for i := range digests {
+		if err := validatePersonEnrichmentSuppressionLookup(digests[i]); err != nil {
+			return fmt.Errorf("validate disclosed person enrichment identifier %d: %w", i, err)
+		}
+	}
+	if err := s.validatePersonEnrichmentAttemptIdentifierKeyStateTx(ctx, tx, digests); err != nil {
+		return err
+	}
+	sort.Slice(digests, func(i, j int) bool {
+		return personEnrichmentSuppressionLockKey(
+			digests[i].ProviderNamespace, digests[i].IdentifierClass,
+			digests[i].NormalizationVersion, digests[i].KeyID, digests[i].Digest,
+		) < personEnrichmentSuppressionLockKey(
+			digests[j].ProviderNamespace, digests[j].IdentifierClass,
+			digests[j].NormalizationVersion, digests[j].KeyID, digests[j].Digest,
+		)
+	})
+	previousKey := ""
+	for _, digest := range digests {
+		lockKey := personEnrichmentSuppressionLockKey(
+			digest.ProviderNamespace, digest.IdentifierClass,
+			digest.NormalizationVersion, digest.KeyID, digest.Digest)
+		if lockKey == previousKey {
+			continue
+		}
+		previousKey = lockKey
+		if err := s.lockProfileIdentityKeyTxContext(
+			ctx, tx, "person-enrichment-suppression", lockKey); err != nil {
+			return err
+		}
+		var suppressed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_enrichment_suppressions
+			WHERE provider_namespace = ? AND identifier_class = ?
+			  AND normalization_version = ? AND key_id = ? AND digest = ?)`,
+			digest.ProviderNamespace, digest.IdentifierClass, digest.NormalizationVersion,
+			digest.KeyID, digest.Digest).Scan(&suppressed); err != nil {
+			return fmt.Errorf("recheck disclosed person enrichment suppression: %w", err)
+		}
+		if suppressed {
+			return personenrichment.ErrSuppressed
+		}
+	}
+	return nil
 }
 
 // insertPersonEnrichmentSuppressionsTx inserts already validated digest-only

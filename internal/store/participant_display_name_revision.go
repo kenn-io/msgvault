@@ -119,7 +119,10 @@ func (s *Store) RepairParticipantDisplayNames(
 		return nil
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		changed := false
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		changedParticipantIDs := make([]int64, 0, len(repairs))
 		for _, repair := range repairs {
 			result, err := tx.Exec(`
 				UPDATE participants SET display_name = ?
@@ -136,11 +139,17 @@ func (s *Store) RepairParticipantDisplayNames(
 			if err != nil {
 				return fmt.Errorf("check participant display-name repair: %w", err)
 			}
-			changed = changed || rows > 0
+			if rows > 0 {
+				changedParticipantIDs = append(changedParticipantIDs, repair.ParticipantID)
+			}
 		}
-		if !changed {
+		if len(changedParticipantIDs) == 0 {
 			return nil
 		}
-		return s.bumpParticipantDisplayNameRevision(tx)
+		if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
+			return err
+		}
+		return s.invalidateParticipantPersonEnrichmentTx(
+			context.Background(), tx, changedParticipantIDs...)
 	})
 }

@@ -499,6 +499,9 @@ func (s *Store) BeginAttempt(
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("begin_before_person_lock")
 		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		currentRevision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, start.PersonID)
 		if err != nil {
 			return err
@@ -581,7 +584,7 @@ func (s *Store) BeginAttempt(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check person enrichment request replay: %w", err)
 		}
-		if err := s.validatePersonEnrichmentAttemptIdentifierKeyStateTx(
+		if err := s.recheckPersonEnrichmentSuppressionsTx(
 			ctx, tx, start.DisclosedIdentifiers); err != nil {
 			return err
 		}
@@ -834,13 +837,22 @@ func (s *Store) AuthorizeAttemptDispatch(
 		}
 		var active bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM person_enrichment_consents
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL)`,
-			token.ProfileFingerprint).Scan(&active); err != nil {
-			return fmt.Errorf("check person enrichment dispatch consent: %w", err)
+			SELECT 1 FROM person_tracking tracked
+			JOIN person_enrichment_consents consent
+			  ON consent.profile_fingerprint = ? AND consent.revoked_at IS NULL
+			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
+			token.WorkPersonID).Scan(&active); err != nil {
+			return fmt.Errorf("check person enrichment dispatch authority: %w", err)
 		}
 		if !active {
 			return personenrichment.ErrConsentRequired
+		}
+		digests, err := s.loadPersonEnrichmentAttemptIdentifiersTx(ctx, tx, token.AttemptID)
+		if err != nil {
+			return err
+		}
+		if err := s.recheckPersonEnrichmentSuppressionsTx(ctx, tx, digests); err != nil {
+			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
 			SET dispatch_authorized_at = ?

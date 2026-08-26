@@ -147,7 +147,7 @@ func (s *Store) SetPersonTrackingContext(
 			if s.personEnrichmentTxBarrier != nil {
 				s.personEnrichmentTxBarrier("untrack_authority_removed")
 			}
-			if err := s.cancelPersonEnrichmentTx(ctx, tx, personID, ""); err != nil {
+			if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, personID); err != nil {
 				return err
 			}
 		}

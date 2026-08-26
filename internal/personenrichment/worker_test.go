@@ -604,6 +604,82 @@ type beginAttemptErrorStore struct {
 	releases atomic.Int64
 }
 
+type authorityRemovalAfterBeginStore struct {
+	personenrichment.WorkStore
+
+	remove func() error
+}
+
+func (s *authorityRemovalAfterBeginStore) BeginAttempt(
+	ctx context.Context, token personenrichment.LeaseToken, start personenrichment.AttemptStart,
+) (*personenrichment.DurableAttempt, bool, error) {
+	attempt, created, err := s.WorkStore.BeginAttempt(ctx, token, start)
+	if err != nil {
+		return attempt, created, err
+	}
+	if err := s.remove(); err != nil {
+		return nil, false, err
+	}
+	return attempt, created, nil
+}
+
+func TestWorkerDoesNotStartProviderAfterAuthorityRemovalCommits(t *testing.T) {
+	for _, removal := range []string{"tracking", "suppression"} {
+		t.Run(removal, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newWorkerFixture(t, "authority-removal-"+removal, nil)
+			f.enqueue(t)
+			remove := func() error {
+				_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
+				return err
+			}
+			if removal == "suppression" {
+				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
+					personenrichment.SuppressionPublicProfileURL,
+					[]string{"https://profiles.example.test/worker-person"})
+				require.NoError(err)
+				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class,
+					normalized.NormalizationVersion, normalized.Value)
+				remove = func() error {
+					return f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+						[]store.PersonEnrichmentSuppressionInput{{
+							ProviderNamespace:    digest.ProviderNamespace,
+							IdentifierClass:      digest.IdentifierClass,
+							NormalizationVersion: digest.NormalizationVersion,
+							KeyID:                digest.KeyID, Digest: digest.Digest,
+							Reason: store.PersonEnrichmentSuppressionOptOut, Actor: "privacy-test",
+						}})
+				}
+			}
+			work := &authorityRemovalAfterBeginStore{WorkStore: f.store, remove: remove}
+			var starts atomic.Int64
+			factory := func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+				return &functionProvider{
+					start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+						starts.Add(1)
+						return personenrichment.Attempt{}, errors.New("provider must not start")
+					},
+					poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+						return personenrichment.Result{}, errors.New("unexpected poll")
+					},
+				}, nil
+			}
+			worker, err := personenrichment.NewWorker(
+				work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+				map[string]personenrichment.ProviderFactory{f.config.Name: factory},
+				f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
+			)
+			require.NoError(err)
+
+			processed, err := worker.RunOnce(t.Context(), f.run.ID)
+			assert.True(processed)
+			require.ErrorIs(err, store.ErrStaleLease)
+			assert.Zero(starts.Load())
+		})
+	}
+}
+
 func (s *beginAttemptErrorStore) BeginAttempt(
 	ctx context.Context, token personenrichment.LeaseToken, start personenrichment.AttemptStart,
 ) (*personenrichment.DurableAttempt, bool, error) {

@@ -420,6 +420,15 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	if catalogDisposition == personenrichment.ClaimPolicyRejected {
 		return enrichmentCommitDisposition{Status: catalogDisposition}, nil
 	}
+	var tracked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_tracking WHERE person_id = ?)`, commit.PersonID,
+	).Scan(&tracked); err != nil {
+		return enrichmentCommitDisposition{}, fmt.Errorf("recheck person enrichment tracking: %w", err)
+	}
+	if !tracked {
+		return enrichmentCommitDisposition{Status: personenrichment.ClaimPolicyRejected}, nil
+	}
 	var consentID int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM person_enrichment_consents
 		WHERE profile_fingerprint = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`+
@@ -434,39 +443,18 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	if err != nil {
 		return enrichmentCommitDisposition{}, err
 	}
-	if err := s.validatePersonEnrichmentAttemptIdentifierKeyStateTx(ctx, tx, digests); err != nil {
+	disclosedDigests, err := s.loadPersonEnrichmentAttemptIdentifiersTx(
+		ctx, tx, commit.AttemptID)
+	if err != nil {
 		return enrichmentCommitDisposition{}, err
 	}
-	sort.Slice(digests, func(i, j int) bool {
-		return personEnrichmentSuppressionLockKey(
-			digests[i].ProviderNamespace, digests[i].IdentifierClass,
-			digests[i].NormalizationVersion, digests[i].KeyID, digests[i].Digest,
-		) < personEnrichmentSuppressionLockKey(
-			digests[j].ProviderNamespace, digests[j].IdentifierClass,
-			digests[j].NormalizationVersion, digests[j].KeyID, digests[j].Digest,
-		)
-	})
-	for _, digest := range digests {
-		if err := s.lockProfileIdentityKeyTxContext(
-			ctx, tx, "person-enrichment-suppression",
-			personEnrichmentSuppressionLockKey(
-				digest.ProviderNamespace, digest.IdentifierClass,
-				digest.NormalizationVersion, digest.KeyID, digest.Digest,
-			)); err != nil {
-			return enrichmentCommitDisposition{}, err
-		}
-		var suppressed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM person_enrichment_suppressions
-			WHERE provider_namespace = ? AND identifier_class = ?
-			  AND normalization_version = ? AND key_id = ? AND digest = ?)`,
-			digest.ProviderNamespace, digest.IdentifierClass, digest.NormalizationVersion,
-			digest.KeyID, digest.Digest).Scan(&suppressed); err != nil {
-			return enrichmentCommitDisposition{}, fmt.Errorf("recheck returned-identifier suppression: %w", err)
-		}
-		if suppressed {
+	allDigests := append([]personenrichment.SuppressionDigest(nil), disclosedDigests...)
+	allDigests = append(allDigests, digests...)
+	if err := s.recheckPersonEnrichmentSuppressionsTx(ctx, tx, allDigests); err != nil {
+		if errors.Is(err, personenrichment.ErrSuppressed) {
 			return enrichmentCommitDisposition{Status: personenrichment.ClaimSuppressed}, nil
 		}
+		return enrichmentCommitDisposition{}, err
 	}
 	providerIDs := result.ProviderPersonIDs
 	sort.Slice(providerIDs, func(i, j int) bool { return providerIDs[i].ID < providerIDs[j].ID })

@@ -69,6 +69,30 @@ func TestPersonEnrichmentSplitInvalidatesActivePreparedAttemptAndAcceptsFreshRes
 		enrichmentInvalidationProviderIDs(t, f.store, f.person.ID, f.profile.ProviderNamespace))
 }
 
+func TestPersonEnrichmentParticipantIdentityChangeFencesAttemptAndPublishesReplacement(t *testing.T) {
+	for _, identity := range []string{"display_name", "email"} {
+		t.Run(identity, func(t *testing.T) {
+			f := newEnrichmentResultFixture(t)
+			participantID := enrichmentInvalidationParticipant(t, f.store, f.person.ID)
+			switch identity {
+			case "display_name":
+				require.NoError(t, f.store.RepairParticipantDisplayNames(
+					[]ParticipantDisplayNameRepair{{
+						ParticipantID: participantID,
+						DisplayName:   "Updated Participant",
+					}}))
+			case "email":
+				require.NoError(t, f.store.RepairParticipantEmailAddresses(
+					[]ParticipantEmailRepair{{
+						ParticipantID: participantID,
+						EmailAddress:  "updated-participant@example.test",
+					}}))
+			}
+			assertEnrichmentInvalidationState(t, f, f.attempt.ID)
+		})
+	}
+}
+
 func TestPersonEnrichmentEmploymentAdvancesGenerationAndPreservesFreshCompanyWork(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
