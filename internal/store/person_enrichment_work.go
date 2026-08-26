@@ -1353,10 +1353,11 @@ func lockEnrichmentWorkStateTx(
 func lockPersonEnrichmentPersonTx(
 	ctx context.Context, tx *loggedTx, dialect Dialect, personID int64,
 ) (int64, error) {
+	lockClause := dialect.SelectForUpdate()
 	// SQLite has no SELECT FOR UPDATE. Make the person gate the transaction's
 	// first write so its database-wide writer lock provides the same ordering
 	// before this transaction reads work or attempts.
-	if dialect.SelectForUpdate() == "" {
+	if lockClause == "" {
 		result, err := tx.ExecContext(ctx,
 			`UPDATE persons SET revision = revision WHERE id = ?`, personID)
 		if err != nil {
@@ -1367,10 +1368,16 @@ func lockPersonEnrichmentPersonTx(
 		} else if rows != 1 {
 			return 0, sql.ErrNoRows
 		}
+	} else {
+		// PostgreSQL enrichment transactions only mutate non-key person fields.
+		// A NO KEY UPDATE lock still serializes those transactions with each
+		// other while remaining compatible with the KEY SHARE lock PostgreSQL
+		// takes for sweep-work foreign-key publication.
+		lockClause = " FOR NO KEY UPDATE"
 	}
 	var revision int64
 	if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`+
-		dialect.SelectForUpdate(), personID).Scan(&revision); err != nil {
+		lockClause, personID).Scan(&revision); err != nil {
 		return 0, fmt.Errorf("lock person enrichment person: %w", err)
 	}
 	return revision, nil

@@ -174,6 +174,7 @@ func TestNullableTimestampScan(t *testing.T) {
 	}{
 		{"nil", nil, false, time.Time{}},
 		{"time.Time", tref, true, tref},
+		{"time.Time normalized to UTC", tref.In(time.FixedZone("driver-local", -6*60*60)), true, tref},
 		{"zero time.Time treated as invalid", time.Time{}, false, time.Time{}},
 		{"string SQLite datetime", "2024-06-15 10:30:45", true, tref},
 		{"string RFC3339", "2024-06-15T10:30:45Z", true, tref},
@@ -187,6 +188,9 @@ func TestNullableTimestampScan(t *testing.T) {
 			require.NoError(t, n.Scan(tt.src), "Scan(%T %v)", tt.src, tt.src)
 			assert.Equal(t, tt.wantValid, n.Valid, "Valid")
 			assert.True(t, n.Time.Equal(tt.wantTime), "Time = %v, want %v", n.Time, tt.wantTime)
+			if tt.wantValid {
+				assert.Equal(t, time.UTC, n.Time.Location(), "Location")
+			}
 		})
 	}
 

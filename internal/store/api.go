@@ -878,7 +878,7 @@ func (n *nullableTimestamp) Scan(src any) error {
 	}
 	switch v := src.(type) {
 	case time.Time:
-		n.Time, n.Valid = v, !v.IsZero()
+		n.Time, n.Valid = v.UTC(), !v.IsZero()
 		return nil
 	case string:
 		t := parseSQLiteTime(v)

@@ -62,7 +62,6 @@ func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testi
 	}()
 	<-mergeStarted
 	if f.store.IsPostgreSQL() {
-		requireReceiveEnrichmentBarrier(t, invalidationBeforeLock, "invalidation did not reach person gate")
 		select {
 		case <-invalidationLocked:
 			require.Fail("invalidation acquired person while result still owned it")
@@ -74,6 +73,9 @@ func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testi
 	require.NoError(result.err)
 	require.NotNil(result.outcome)
 	assert.Equal(personenrichment.ClaimApplied, result.outcome.Status)
+	if f.store.IsPostgreSQL() {
+		requireReceiveEnrichmentBarrier(t, invalidationBeforeLock, "invalidation did not reach person gate")
+	}
 	requireReceiveEnrichmentBarrier(t, invalidationLocked, "invalidation never acquired released person gate")
 	require.NoError(<-mergeDone)
 	rows, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), PersonEnrichmentWorkFilter{

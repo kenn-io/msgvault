@@ -254,7 +254,7 @@ func TestWorkerResumesExactBoundAsyncAttemptAfterRestart(t *testing.T) {
 			(run_id, person_id, profile_fingerprint, trigger_kind, trigger_generation,
 			 person_revision, payload_hash, request_hash, state, lease_fence,
 			 hard_cost_cap_enforced, reserved_cost_usd_micros, completed_at)
-		VALUES (?, ?, ?, 'tracked', 'diagnostic', ?, ?, ?, 'terminal', 0, 0, 0, ?)`),
+		VALUES (?, ?, ?, 'tracked', 'diagnostic', ?, ?, ?, 'terminal', 0, FALSE, 0, ?)`),
 		f.run.ID, f.person.ID, f.profile.Fingerprint, f.person.Revision,
 		strings.Repeat("b", 64), strings.Repeat("c", 64), time.Now().UTC())
 	requirements.NoError(err)
