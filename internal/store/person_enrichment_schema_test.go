@@ -248,6 +248,7 @@ func TestPersonEnrichmentSchemaWorkAttemptPointerAndIndexes(t *testing.T) {
 	assert.Contains(attemptColumns, "program_fingerprint")
 	assert.Contains(attemptColumns, "targets_json")
 	assert.Contains(attemptColumns, "provider_started_at")
+	assert.Contains(attemptColumns, "dispatch_authorized_at")
 
 	workIndexes := pragmaIndexes(t, st.DB(), "person_enrichment_work")
 	foundUniquePointer := false
@@ -291,6 +292,25 @@ func TestPersonEnrichmentAttemptProviderStartedAtLegacyMigrationParity(t *testin
 					matches++
 					assert.Contains(t, migration.SQL, "ADD COLUMN")
 					assert.Contains(t, migration.SQL, "provider_started_at")
+				}
+			}
+			assert.Equal(t, 1, matches)
+		})
+	}
+}
+
+func TestPersonEnrichmentAttemptDispatchAuthorizationLegacyMigrationParity(t *testing.T) {
+	for name, migrations := range map[string][]store.ColumnMigration{
+		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
+		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			matches := 0
+			for _, migration := range migrations {
+				if migration.Desc == "person_enrichment_attempts.dispatch_authorized_at" {
+					matches++
+					assert.Contains(t, migration.SQL, "ADD COLUMN")
+					assert.Contains(t, migration.SQL, "dispatch_authorized_at")
 				}
 			}
 			assert.Equal(t, 1, matches)

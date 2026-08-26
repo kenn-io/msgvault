@@ -205,9 +205,20 @@ func TestSixtyfourRequiresDocumentedEmptyFindings(t *testing.T) {
 		{"nonempty", `"findings": [{"synthetic":"unsupported"}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
 			body := sixtyfourFixture(t, "sixtyfour_complete.json")
 			if test.name == "missing" {
-				body = bytes.Replace(body, []byte(",\n    \"findings\": []"), nil, 1)
+				var envelope map[string]json.RawMessage
+				requirements.NoError(json.Unmarshal(body, &envelope))
+				var result map[string]json.RawMessage
+				requirements.NoError(json.Unmarshal(envelope["result"], &result))
+				delete(result, "findings")
+				resultBody, err := json.Marshal(result)
+				requirements.NoError(err)
+				envelope["result"] = resultBody
+				body, err = json.Marshal(envelope)
+				requirements.NoError(err)
 			} else {
 				body = bytes.Replace(body, []byte(`"findings": []`), []byte(test.replacement), 1)
 			}
@@ -215,10 +226,10 @@ func TestSixtyfourRequiresDocumentedEmptyFindings(t *testing.T) {
 				t, http.StatusOK, "application/json", body, "")
 			defer closeServer()
 			_, err := provider.Poll(t.Context(), attempt)
-			require.Error(t, err)
+			requirements.Error(err)
 			var providerErr *personenrichment.ProviderError
-			require.ErrorAs(t, err, &providerErr)
-			assert.Equal(t, personenrichment.FailureInvalidOutput, providerErr.Class)
+			requirements.ErrorAs(err, &providerErr)
+			checks.Equal(personenrichment.FailureInvalidOutput, providerErr.Class)
 		})
 	}
 }
