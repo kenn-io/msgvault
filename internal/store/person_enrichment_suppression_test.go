@@ -186,7 +186,7 @@ func TestPersonEnrichmentSuppressionKeyIDsIncludeAttemptIdentifierKeys(t *testin
 	digest := hasher.Digest(f.profile.ProviderNamespace, personenrichment.SuppressionEmail,
 		personenrichment.EmailNormalizationV1, "gate-union@example.test")
 	start := testAttemptStart(&f, run.ID, "e")
-	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+	start.CheckedIdentifiers = []personenrichment.SuppressionDigest{digest}
 	_, _, err = f.store.BeginAttempt(t.Context(), lease.Token, start)
 	requirements.NoError(err)
 

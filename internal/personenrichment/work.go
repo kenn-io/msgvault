@@ -80,16 +80,16 @@ type WorkLease struct {
 }
 
 type AttemptStart struct {
-	RunID                int64
-	PersonID             int64
-	ProfileFingerprint   string
-	PayloadHash          string
-	RequestHash          string
-	PersonRevision       int64
-	Trigger              Trigger
-	HardCostCap          bool
-	GuaranteedMaxCost    Cost
-	DisclosedIdentifiers []SuppressionDigest
+	RunID              int64
+	PersonID           int64
+	ProfileFingerprint string
+	PayloadHash        string
+	RequestHash        string
+	PersonRevision     int64
+	Trigger            Trigger
+	HardCostCap        bool
+	GuaranteedMaxCost  Cost
+	CheckedIdentifiers []SuppressionDigest
 }
 
 type DurableAttempt struct {

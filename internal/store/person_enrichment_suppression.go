@@ -346,7 +346,7 @@ func (s *Store) loadPersonEnrichmentAttemptIdentifiersTx(
 		ORDER BY provider_namespace, identifier_class, normalization_version, key_id, digest`,
 		attemptID)
 	if err != nil {
-		return nil, fmt.Errorf("load disclosed person enrichment identifiers: %w", err)
+		return nil, fmt.Errorf("load checked person enrichment identifiers: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	digests := make([]personenrichment.SuppressionDigest, 0)
@@ -354,12 +354,12 @@ func (s *Store) loadPersonEnrichmentAttemptIdentifiersTx(
 		var digest personenrichment.SuppressionDigest
 		if err := rows.Scan(&digest.ProviderNamespace, &digest.IdentifierClass,
 			&digest.NormalizationVersion, &digest.KeyID, &digest.Digest); err != nil {
-			return nil, fmt.Errorf("scan disclosed person enrichment identifier: %w", err)
+			return nil, fmt.Errorf("scan checked person enrichment identifier: %w", err)
 		}
 		digests = append(digests, digest)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate disclosed person enrichment identifiers: %w", err)
+		return nil, fmt.Errorf("iterate checked person enrichment identifiers: %w", err)
 	}
 	return digests, nil
 }
@@ -373,7 +373,7 @@ func (s *Store) recheckPersonEnrichmentSuppressionsTx(
 	digests := append([]personenrichment.SuppressionDigest(nil), input...)
 	for i := range digests {
 		if err := validatePersonEnrichmentSuppressionLookup(digests[i]); err != nil {
-			return fmt.Errorf("validate disclosed person enrichment identifier %d: %w", i, err)
+			return fmt.Errorf("validate checked person enrichment identifier %d: %w", i, err)
 		}
 	}
 	if err := s.validatePersonEnrichmentAttemptIdentifierKeyStateTx(ctx, tx, digests); err != nil {
@@ -408,7 +408,7 @@ func (s *Store) recheckPersonEnrichmentSuppressionsTx(
 			  AND normalization_version = ? AND key_id = ? AND digest = ?)`,
 			digest.ProviderNamespace, digest.IdentifierClass, digest.NormalizationVersion,
 			digest.KeyID, digest.Digest).Scan(&suppressed); err != nil {
-			return fmt.Errorf("recheck disclosed person enrichment suppression: %w", err)
+			return fmt.Errorf("recheck checked person enrichment suppression: %w", err)
 		}
 		if suppressed {
 			return personenrichment.ErrSuppressed

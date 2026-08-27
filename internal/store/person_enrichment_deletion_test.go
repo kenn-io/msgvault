@@ -166,7 +166,7 @@ func newEnrichmentDeletionFixture(t *testing.T) enrichmentDeletionFixture {
 		RunID: run.ID, PersonID: person.ID, ProfileFingerprint: f.profile.Fingerprint,
 		PayloadHash: strings.Repeat("7", 64), RequestHash: strings.Repeat("8", 64),
 		PersonRevision: person.Revision, Trigger: lease.Trigger,
-		DisclosedIdentifiers: []personenrichment.SuppressionDigest{disclosedDigest},
+		CheckedIdentifiers: []personenrichment.SuppressionDigest{disclosedDigest},
 	})
 	require.NoError(t, err)
 	require.True(t, created)

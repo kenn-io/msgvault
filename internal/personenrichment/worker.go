@@ -344,7 +344,7 @@ func (w *Worker) beginAndStart(
 			PayloadHash: hashes.PayloadHash, RequestHash: hashes.RequestHash,
 			PersonRevision: input.PersonRevision, Trigger: lease.Trigger,
 			HardCostCap: profileHasHardCostCap(profile), GuaranteedMaxCost: guaranteed,
-			DisclosedIdentifiers: authorization.DisclosedIdentifiers,
+			CheckedIdentifiers: authorization.CheckedIdentifiers,
 		})
 	})
 	if err != nil {
@@ -430,9 +430,9 @@ func (w *Worker) resumeAttempt(
 				RunID: lease.RunID, PersonID: lease.PersonID, ProfileFingerprint: lease.ProfileFingerprint,
 				PayloadHash: hashes.PayloadHash, RequestHash: hashes.RequestHash,
 				PersonRevision: input.PersonRevision, Trigger: lease.Trigger,
-				HardCostCap:          profileHasHardCostCap(profile),
-				GuaranteedMaxCost:    durableGuaranteedCost(active),
-				DisclosedIdentifiers: authorization.DisclosedIdentifiers,
+				HardCostCap:        profileHasHardCostCap(profile),
+				GuaranteedMaxCost:  durableGuaranteedCost(active),
+				CheckedIdentifiers: authorization.CheckedIdentifiers,
 			})
 		})
 		if err != nil {

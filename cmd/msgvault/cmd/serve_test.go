@@ -150,7 +150,7 @@ func TestStoreAPIAdapterDeletePersonRejectsRecordedAttemptKeyMismatch(t *testing
 		RunID: run.ID, PersonID: person.ID, ProfileFingerprint: profile.Fingerprint,
 		PayloadHash: strings.Repeat("a", 64), RequestHash: strings.Repeat("b", 64),
 		PersonRevision: person.Revision, Trigger: lease.Trigger,
-		DisclosedIdentifiers: []personenrichment.SuppressionDigest{oldDigest},
+		CheckedIdentifiers: []personenrichment.SuppressionDigest{oldDigest},
 	})
 	require.NoError(err)
 	adapter := &storeAPIAdapter{

@@ -370,6 +370,7 @@ type EgressInput struct {
 type Authorization struct {
 	Credential           string
 	DisclosedIdentifiers []SuppressionDigest
+	CheckedIdentifiers   []SuppressionDigest
 }
 
 type EgressGate struct {
@@ -458,6 +459,7 @@ func (g EgressGate) Authorize(ctx context.Context, input EgressInput) (Authoriza
 	}
 	return Authorization{
 		Credential: credential, DisclosedIdentifiers: cloneSuppressionDigests(disclosed),
+		CheckedIdentifiers: cloneSuppressionDigests(checked),
 	}, nil
 }
 

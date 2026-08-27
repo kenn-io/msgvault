@@ -147,7 +147,7 @@ func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *tes
 			result := make(chan beginResult, 1)
 			go func() {
 				start := testAttemptStart(&f, run.ID, "d")
-				start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{oldDigest}
+				start.CheckedIdentifiers = []personenrichment.SuppressionDigest{oldDigest}
 				attempt, created, beginErr := f.store.BeginAttempt(t.Context(), lease.Token, start)
 				result <- beginResult{attempt: attempt, created: created, err: beginErr}
 			}()
@@ -258,7 +258,7 @@ func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing
 		personenrichment.SuppressionEmail, personenrichment.EmailNormalizationV1,
 		"work-person@example.com")
 	start := testAttemptStart(&f, run.ID, "8")
-	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+	start.CheckedIdentifiers = []personenrichment.SuppressionDigest{digest}
 	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
 	require.NoError(err)
 
@@ -292,7 +292,7 @@ func TestPersonEnrichmentSuppressionFencesAttemptCreatedAfterSnapshot(t *testing
 		personenrichment.SuppressionEmail, personenrichment.EmailNormalizationV1,
 		"work-person@example.com")
 	start := testAttemptStart(&f, run.ID, "a")
-	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+	start.CheckedIdentifiers = []personenrichment.SuppressionDigest{digest}
 
 	beginRechecked := make(chan struct{})
 	releaseBegin := make(chan struct{})
@@ -341,7 +341,7 @@ func TestPersonEnrichmentSuppressionFencesAttemptCreatedAfterSnapshot(t *testing
 	assert.Empty(f.work(t))
 }
 
-func TestPersonEnrichmentBeginAttemptRechecksDisclosedIdentifierSuppression(t *testing.T) {
+func TestPersonEnrichmentBeginAttemptRechecksCheckedIdentifierSuppression(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -363,7 +363,7 @@ func TestPersonEnrichmentBeginAttemptRechecksDisclosedIdentifierSuppression(t *t
 			Actor: "privacy-test",
 		}}))
 	start := testAttemptStart(&f, run.ID, "9")
-	start.DisclosedIdentifiers = []personenrichment.SuppressionDigest{digest}
+	start.CheckedIdentifiers = []personenrichment.SuppressionDigest{digest}
 
 	attempt, created, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
 	require.ErrorIs(err, personenrichment.ErrSuppressed)

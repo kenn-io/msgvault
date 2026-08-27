@@ -504,9 +504,8 @@ CREATE TABLE IF NOT EXISTS person_enrichment_attempts (
            (generated_schema = 0 AND generated_schema_hash IS NULL))
 );
 
--- Returned suppression identifiers retain only the sealed keyed digest
--- manifest produced before the store boundary. Raw and normalized values are
--- intentionally unrepresentable here.
+-- Suppression identifiers checked for an attempt retain only sealed keyed
+-- digests. Raw and normalized values are intentionally unrepresentable here.
 CREATE TABLE IF NOT EXISTS person_enrichment_attempt_identifiers (
     attempt_id INTEGER NOT NULL REFERENCES person_enrichment_attempts(id) ON DELETE CASCADE,
     provider_namespace TEXT NOT NULL,

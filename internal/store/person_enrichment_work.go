@@ -611,6 +611,14 @@ func (s *Store) BeginAttempt(
 			if requestHash != start.RequestHash {
 				return ErrActiveAttemptConflict
 			}
+			if err := s.recheckPersonEnrichmentSuppressionsTx(
+				ctx, tx, start.CheckedIdentifiers); err != nil {
+				return err
+			}
+			if err := bindPersonEnrichmentAttemptIdentifiersTx(
+				ctx, tx, existing.ID, start.CheckedIdentifiers); err != nil {
+				return err
+			}
 			if existing.State == "retry_wait" && existing.JobID == "" && existing.RequestID == "" {
 				result, updateErr := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
 					SET state = 'starting', next_action_at = NULL, failure_class = NULL
@@ -664,7 +672,7 @@ func (s *Store) BeginAttempt(
 			return fmt.Errorf("check person enrichment request replay: %w", err)
 		}
 		if err := s.recheckPersonEnrichmentSuppressionsTx(
-			ctx, tx, start.DisclosedIdentifiers); err != nil {
+			ctx, tx, start.CheckedIdentifiers); err != nil {
 			return err
 		}
 		if s.personEnrichmentTxBarrier != nil {
@@ -717,16 +725,9 @@ func (s *Store) BeginAttempt(
 			s.personEnrichmentTime()).Scan(&id); err != nil {
 			return fmt.Errorf("insert person enrichment attempt: %w", err)
 		}
-		for i, digest := range start.DisclosedIdentifiers {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO person_enrichment_attempt_identifiers
-				(attempt_id, provider_namespace, identifier_class, normalization_version, key_id, digest)
-				VALUES (?, ?, ?, ?, ?, ?)
-				ON CONFLICT (attempt_id, provider_namespace, identifier_class,
-				             normalization_version, key_id, digest) DO NOTHING`,
-				id, digest.ProviderNamespace, digest.IdentifierClass,
-				digest.NormalizationVersion, digest.KeyID, digest.Digest); err != nil {
-				return fmt.Errorf("record disclosed person enrichment identifier %d: %w", i, err)
-			}
+		if err := bindPersonEnrichmentAttemptIdentifiersTx(
+			ctx, tx, id, start.CheckedIdentifiers); err != nil {
+			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work
 			SET active_attempt_id = ?, trigger_mask = ?, trigger_generation = ?,
@@ -771,9 +772,27 @@ func validateAttemptStart(token personenrichment.LeaseToken, start personenrichm
 	} else if start.GuaranteedMaxCost != (personenrichment.Cost{}) {
 		return errors.New("request-only enrichment attempt requires a zero guaranteed maximum cost")
 	}
-	for i, digest := range start.DisclosedIdentifiers {
+	for i, digest := range start.CheckedIdentifiers {
 		if err := validatePersonEnrichmentSuppressionLookup(digest); err != nil {
-			return fmt.Errorf("validate disclosed person enrichment identifier %d: %w", i, err)
+			return fmt.Errorf("validate checked person enrichment identifier %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func bindPersonEnrichmentAttemptIdentifiersTx(
+	ctx context.Context, tx *loggedTx, attemptID int64,
+	digests []personenrichment.SuppressionDigest,
+) error {
+	for i, digest := range digests {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_enrichment_attempt_identifiers
+			(attempt_id, provider_namespace, identifier_class, normalization_version, key_id, digest)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (attempt_id, provider_namespace, identifier_class,
+			             normalization_version, key_id, digest) DO NOTHING`,
+			attemptID, digest.ProviderNamespace, digest.IdentifierClass,
+			digest.NormalizationVersion, digest.KeyID, digest.Digest); err != nil {
+			return fmt.Errorf("record checked person enrichment identifier %d: %w", i, err)
 		}
 	}
 	return nil

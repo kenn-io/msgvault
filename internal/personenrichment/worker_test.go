@@ -624,11 +624,20 @@ func (s *authorityRemovalAfterBeginStore) BeginAttempt(
 }
 
 func TestWorkerDoesNotStartProviderAfterAuthorityRemovalCommits(t *testing.T) {
-	for _, removal := range []string{"tracking", "suppression"} {
+	for _, removal := range []string{"tracking", "suppression", "provider-id-suppression"} {
 		t.Run(removal, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := newWorkerFixture(t, "authority-removal-"+removal, nil)
+			providerPersonID := "known-provider-person-id"
+			if removal == "provider-id-suppression" {
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+					INSERT INTO person_enrichment_provider_identities
+						(person_id, provider_namespace, provider_person_id, confidence, verified_at)
+					VALUES (?, ?, ?, ?, ?)`), f.person.ID, f.profile.ProviderNamespace,
+					providerPersonID, 1000, f.now)
+				require.NoError(err)
+			}
 			f.enqueue(t)
 			remove := func() error {
 				_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
@@ -638,6 +647,23 @@ func TestWorkerDoesNotStartProviderAfterAuthorityRemovalCommits(t *testing.T) {
 				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
 					personenrichment.SuppressionPublicProfileURL,
 					[]string{"https://profiles.example.test/worker-person"})
+				require.NoError(err)
+				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class,
+					normalized.NormalizationVersion, normalized.Value)
+				remove = func() error {
+					return f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+						[]store.PersonEnrichmentSuppressionInput{{
+							ProviderNamespace:    digest.ProviderNamespace,
+							IdentifierClass:      digest.IdentifierClass,
+							NormalizationVersion: digest.NormalizationVersion,
+							KeyID:                digest.KeyID, Digest: digest.Digest,
+							Reason: store.PersonEnrichmentSuppressionOptOut, Actor: "privacy-test",
+						}})
+				}
+			}
+			if removal == "provider-id-suppression" {
+				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
+					personenrichment.SuppressionProviderPersonID, []string{providerPersonID})
 				require.NoError(err)
 				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class,
 					normalized.NormalizationVersion, normalized.Value)
