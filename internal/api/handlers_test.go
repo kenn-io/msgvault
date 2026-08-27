@@ -40,6 +40,7 @@ import (
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
@@ -1390,6 +1391,56 @@ func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
 
 	assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "env_not_allowed", "error body")
+}
+
+func TestHandleCLIRunEnforcesPersonEnrichmentCommandEnvironments(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	var runs []CLIRunRequest
+	st := &mockStore{runFunc: func(
+		_ context.Context, req CLIRunRequest, _ func(CLIRunEvent) error,
+	) error {
+		runs = append(runs, req)
+		return nil
+	}}
+	srv := newCLIHandlerTestServer(st)
+	srv.cfg.People.Enrichment.SuppressionKeyEnv = "ENRICHMENT_SUPPRESSION_KEY"
+	srv.cfg.People.Enrichment.Providers = []personenrichment.ProviderConfig{
+		{Name: "exa-primary", Enabled: true, APIKeyEnv: "EXA_PRIMARY_KEY"},
+		{Name: "exa-secondary", Enabled: true, APIKeyEnv: "EXA_SECONDARY_KEY"},
+	}
+
+	request := func(args []string, env map[string]string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(CLIRunRequest{Args: args, Env: env})
+		requirements.NoError(err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		return resp
+	}
+
+	run := []string{"person", "enrichment", "run", "--person=7", "--provider=exa-primary", "--idempotency-key=run-1"}
+	allowed := request(run, map[string]string{
+		"ENRICHMENT_SUPPRESSION_KEY": "synthetic-suppression-key",
+		"EXA_PRIMARY_KEY":            "synthetic-provider-key",
+	})
+	checks.Equal(http.StatusOK, allowed.Code, allowed.Body.String())
+	requirements.Len(runs, 1)
+	checks.Equal("synthetic-provider-key", runs[0].Env["EXA_PRIMARY_KEY"])
+
+	rejected := request(run, map[string]string{"EXA_SECONDARY_KEY": "wrong-provider-key"})
+	checks.Equal(http.StatusBadRequest, rejected.Code, rejected.Body.String())
+	checks.Contains(rejected.Body.String(), "env_not_allowed")
+	checks.Len(runs, 1, "rejected environment must not reach the CLI runner")
+
+	suppress := []string{"person", "enrichment", "suppress", "--person=7", "--reason=data_subject_request"}
+	allowed = request(suppress, map[string]string{"ENRICHMENT_SUPPRESSION_KEY": "synthetic-suppression-key"})
+	checks.Equal(http.StatusOK, allowed.Code, allowed.Body.String())
+	checks.Len(runs, 2)
+	rejected = request(suppress, map[string]string{"EXA_PRIMARY_KEY": "synthetic-provider-key"})
+	checks.Equal(http.StatusBadRequest, rejected.Code, rejected.Body.String())
+	checks.Len(runs, 2, "provider credentials must not reach person suppression")
 }
 
 func TestHandleCLIAddCalendarPlanReturnsPrompt(t *testing.T) {

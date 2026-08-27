@@ -935,6 +935,67 @@ func TestWorkerRejectsRuntimeProfileAndCatalogDriftBeforeEgress(t *testing.T) {
 	}
 }
 
+func TestWorkerTerminalizesActiveAttemptWhenRuntimeProfileDrifts(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "active-profile-drift", nil)
+	f.enqueue(t)
+	const schemaHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var polls atomic.Int64
+	factory := personenrichment.ProviderFactory(func(
+		personenrichment.ProviderConfig, string,
+	) (personenrichment.Provider, error) {
+		return &functionProvider{
+			start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
+				return personenrichment.Attempt{
+					State: personenrichment.AttemptPending, JobID: "profile-drift-job",
+					PollAfter: time.Nanosecond, StartedAt: time.Now().UTC(),
+					AdapterVersion: "test-adapter-v1", SchemaVersion: "test-wire-v1",
+					GeneratedSchema: true, GeneratedSchemaHash: schemaHash,
+					ProgramFingerprint: workerProgramFingerprint(t, true, schemaHash), Targets: request.Targets,
+				}, nil
+			},
+			poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+				polls.Add(1)
+				return personenrichment.Result{}, errors.New("drifted attempt must not be polled")
+			},
+		}, nil
+	})
+
+	first := f.newWorker(t,
+		map[string]personenrichment.ProviderFactory{f.config.Name: factory},
+		map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
+		func(string) (string, bool) { return "test-key", true },
+	)
+	processed, err := first.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	requirements.True(processed)
+
+	options := f.options(map[string]personenrichment.ProviderConfig{})
+	second, err := personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: factory}, options,
+	)
+	requirements.NoError(err)
+	processed, err = second.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	checks.Zero(polls.Load())
+
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(attempts, 1)
+	checks.Equal("terminal", attempts[0].State)
+	checks.Equal(string(personenrichment.FailurePolicy), *attempts[0].FailureClass)
+	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Empty(work)
+}
+
 func TestWorkerRejectsModeIncompatibleIdentityBeforeEgress(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

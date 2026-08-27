@@ -21,7 +21,7 @@ func enrichmentTriggerProfile(t *testing.T, name, endpoint string) personenrichm
 	t.Helper()
 	profile, err := (personenrichment.ProviderConfig{
 		Name: name, Kind: personenrichment.ProviderExa, Enabled: true,
-		Endpoint: endpoint, APIKeyEnv: "TEST_ENRICHMENT_KEY", Mode: "people", NumResults: 1,
+		Endpoint: endpoint, APIKeyEnv: "TEST_ENRICHMENT_KEY", Mode: "deep", NumResults: 1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{
 			personenrichment.IdentifierName, personenrichment.IdentifierEmail,
 			personenrichment.IdentifierPhone, personenrichment.IdentifierCurrentCompany,

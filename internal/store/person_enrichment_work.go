@@ -203,6 +203,88 @@ func (s *Store) PutPersonEnrichmentWorkContext(
 	return nil
 }
 
+// CancelPersonEnrichmentWorkOutsideProfilesContext terminalizes active
+// attempts and removes work whose immutable profile is no longer configured.
+func (s *Store) CancelPersonEnrichmentWorkOutsideProfilesContext(
+	ctx context.Context, activeFingerprints []string,
+) error {
+	seen := make(map[string]struct{}, len(activeFingerprints))
+	arguments := make([]any, 0, len(activeFingerprints))
+	for _, fingerprint := range activeFingerprints {
+		if !validLowerSHA256(fingerprint) {
+			return errors.New("active person enrichment profile fingerprint is invalid")
+		}
+		if _, duplicate := seen[fingerprint]; duplicate {
+			continue
+		}
+		seen[fingerprint] = struct{}{}
+		arguments = append(arguments, fingerprint)
+	}
+	query := `SELECT person_id, profile_fingerprint, active_attempt_id
+		FROM person_enrichment_work`
+	if len(arguments) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(arguments)), ",")
+		query += ` WHERE profile_fingerprint NOT IN (` + placeholders + `)`
+	}
+	type staleWork struct {
+		personID      int64
+		fingerprint   string
+		activeAttempt sql.NullInt64
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, query+s.dialect.SelectForUpdate(), arguments...)
+		if err != nil {
+			return fmt.Errorf("list unavailable person enrichment work: %w", err)
+		}
+		stale := make([]staleWork, 0)
+		for rows.Next() {
+			var item staleWork
+			if err := rows.Scan(&item.personID, &item.fingerprint, &item.activeAttempt); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan unavailable person enrichment work: %w", err)
+			}
+			stale = append(stale, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate unavailable person enrichment work: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close unavailable person enrichment work: %w", err)
+		}
+
+		completedAt := s.personEnrichmentTime()
+		for _, item := range stale {
+			if item.activeAttempt.Valid {
+				if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect,
+					item.activeAttempt.Int64, personenrichment.Cost{}, true, completedAt); err != nil {
+					return err
+				}
+				result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+					SET state = 'terminal', failure_class = ?, completed_at = ?, next_action_at = NULL,
+					    lease_owner = NULL, lease_until = NULL
+					WHERE id = ? AND state IN ('queued','starting','pending','retry_wait','uncertain_start')`,
+					personenrichment.FailurePolicy, completedAt, item.activeAttempt.Int64)
+				if err != nil {
+					return fmt.Errorf("terminalize unavailable person enrichment attempt: %w", err)
+				}
+				if err := requireOneLeaseRow(result); err != nil {
+					return err
+				}
+			}
+			result, err := tx.ExecContext(ctx, `DELETE FROM person_enrichment_work
+				WHERE person_id = ? AND profile_fingerprint = ?`, item.personID, item.fingerprint)
+			if err != nil {
+				return fmt.Errorf("delete unavailable person enrichment work: %w", err)
+			}
+			if err := requireOneLeaseRow(result); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func personEnrichmentTriggerMask(kind personenrichment.TriggerKind) (int64, error) {
 	switch kind {
 	case personenrichment.TriggerTracked:

@@ -1273,16 +1273,57 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
 		providerCall := args[1] == "provider" && args[2] == "check"
 		sweepCall := args[1] == "sweep" && args[2] == "run"
-		if !providerCall && !sweepCall {
-			return false
+		if providerCall || sweepCall {
+			keyEnv := s.configuredPeopleProviderKeyEnv()
+			return keyEnv != "" && keyEnv == name
 		}
-		keyEnv := s.configuredPeopleProviderKeyEnv()
-		return keyEnv != "" && keyEnv == name
+		enrichmentRun := args[1] == "enrichment" && args[2] == "run"
+		if enrichmentRun {
+			return s.cliRunPersonEnrichmentRunEnvAllowed(args, name)
+		}
+		personSuppression := args[1] == "enrichment" && args[2] == "suppress" &&
+			cliRunArgsContainFlag(args, "person")
+		return personSuppression && s.cfg != nil &&
+			s.cfg.People.Enrichment.SuppressionKeyEnv != "" &&
+			s.cfg.People.Enrichment.SuppressionKeyEnv == name
 	}
 	if keyEnv := s.configuredPeopleProviderKeyEnv(); keyEnv != "" && keyEnv == name {
 		return false
 	}
 	return s.cliRunEnvAllowed(name)
+}
+
+func (s *Server) cliRunPersonEnrichmentRunEnvAllowed(args []string, name string) bool {
+	if s.cfg == nil {
+		return false
+	}
+	if suppressionEnv := s.cfg.People.Enrichment.SuppressionKeyEnv; suppressionEnv != "" && suppressionEnv == name {
+		return true
+	}
+	providerName, ok := cliRunFlagValue(args, "provider")
+	if !ok {
+		return false
+	}
+	for _, provider := range s.cfg.People.Enrichment.Providers {
+		if provider.Enabled && provider.Name == providerName &&
+			provider.APIKeyEnv != "" && provider.APIKeyEnv == name {
+			return true
+		}
+	}
+	return false
+}
+
+func cliRunFlagValue(args []string, name string) (string, bool) {
+	flag := "--" + name
+	for i, arg := range args {
+		if value, ok := strings.CutPrefix(arg, flag+"="); ok {
+			return value, value != ""
+		}
+		if arg == flag && i+1 < len(args) {
+			return args[i+1], args[i+1] != ""
+		}
+	}
+	return "", false
 }
 
 func cliRunArgsContainFlag(args []string, name string) bool {

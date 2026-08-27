@@ -240,19 +240,19 @@ func (w *Worker) processLease(
 	}
 	request, hashes, err := BuildRequest(input, profile)
 	if err != nil {
-		return w.releaseTerminalBeforeAttempt(ctx, lease, input, RequestHashes{}, "policy")
+		return w.terminalizePolicyDrift(ctx, lease, input, RequestHashes{})
 	}
 
 	config, ok := w.options.ProviderConfigs[lease.ProviderName]
 	if !ok {
-		return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
+		return w.terminalizePolicyDrift(ctx, lease, input, hashes)
 	}
 	configuredProfile, err := config.Profile(personfacts.Catalog{Targets: profile.Targets})
 	if err != nil || !reflect.DeepEqual(configuredProfile, profile) {
-		return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
+		return w.terminalizePolicyDrift(ctx, lease, input, hashes)
 	}
 	if config.Name != lease.ProviderName || !config.Enabled {
-		return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
+		return w.terminalizePolicyDrift(ctx, lease, input, hashes)
 	}
 	if lease.ActiveAttempt != nil {
 		if err := verifyDurableRequestBinding(lease, input, request, hashes); err != nil {
@@ -741,6 +741,19 @@ func (w *Worker) releaseTerminalBeforeAttempt(
 		Outcome: outcome, PersonRevision: input.PersonRevision,
 		PayloadHash: hashes.PayloadHash, RequestHash: hashes.RequestHash,
 	})
+}
+
+func (w *Worker) terminalizePolicyDrift(
+	ctx context.Context,
+	lease WorkLease,
+	input RequestInput,
+	hashes RequestHashes,
+) error {
+	if lease.ActiveAttempt != nil {
+		return w.work.MarkTerminal(ctx, lease.Token,
+			safeFailure(FailurePolicy, 0, "", "enrichment policy changed"))
+	}
+	return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
 }
 
 func (w *Worker) releaseRetry(

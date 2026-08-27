@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personenrichment"
 )
 
 func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
@@ -151,4 +152,31 @@ func TestCLIRunCommandAllowedRejectsPersonSuppressionMetadataSmuggling(t *testin
 			assert.False(t, cliRunCommandAllowed(args))
 		})
 	}
+}
+
+func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T) {
+	checks := assert.New(t)
+	srv := &Server{cfg: &config.Config{}}
+	srv.cfg.People.Enrichment.SuppressionKeyEnv = "ENRICHMENT_SUPPRESSION_KEY"
+	srv.cfg.People.Enrichment.Providers = []personenrichment.ProviderConfig{
+		{Name: "exa-primary", Enabled: true, APIKeyEnv: "EXA_PRIMARY_KEY"},
+		{Name: "exa-secondary", Enabled: true, APIKeyEnv: "EXA_SECONDARY_KEY"},
+		{Name: "exa-disabled", Enabled: false, APIKeyEnv: "EXA_DISABLED_KEY"},
+	}
+
+	run := []string{"person", "enrichment", "run", "--person=7", "--provider=exa-primary", "--idempotency-key=run-1"}
+	checks.True(srv.cliRunEnvAllowedForCommand(run, "ENRICHMENT_SUPPRESSION_KEY"))
+	checks.True(srv.cliRunEnvAllowedForCommand(run, "EXA_PRIMARY_KEY"))
+	checks.False(srv.cliRunEnvAllowedForCommand(run, "EXA_SECONDARY_KEY"))
+	checks.False(srv.cliRunEnvAllowedForCommand(run, "EXA_DISABLED_KEY"))
+
+	personSuppression := []string{"person", "enrichment", "suppress", "--person=7", "--reason=data_subject_request"}
+	checks.True(srv.cliRunEnvAllowedForCommand(personSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
+	checks.False(srv.cliRunEnvAllowedForCommand(personSuppression, "EXA_PRIMARY_KEY"))
+
+	digestSuppression := []string{"person", "enrichment", "suppress", "--provider-namespace=exa:" + strings.Repeat("a", 64),
+		"--identifier-class=email", "--normalization-version=email-v1", "--key-id=" + strings.Repeat("b", 64),
+		"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli"}
+	checks.False(srv.cliRunEnvAllowedForCommand(digestSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
+	checks.False(srv.cliRunEnvAllowedForCommand([]string{"person", "enrichment", "status"}, "EXA_PRIMARY_KEY"))
 }

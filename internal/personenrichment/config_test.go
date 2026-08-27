@@ -397,7 +397,7 @@ func validProviderConfig(kind string) personenrichment.ProviderConfig {
 		Enabled:            true,
 		APIKeyEnv:          "PROVIDER_API_KEY",
 		AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierName},
-		TargetKeys:         []string{"attribute:bio"},
+		TargetKeys:         []string{"attribute:location"},
 		RetentionPosture:   "zero_retention",
 		TrainingPosture:    "no_training",
 		RefreshInterval:    24 * time.Hour,

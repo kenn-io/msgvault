@@ -2833,6 +2833,12 @@ func registerPersonEnrichmentJob(
 	enrichmentConfig personenrichment.Config,
 ) error {
 	if !enrichmentConfig.Enabled {
+		if st == nil {
+			return nil
+		}
+		if err := st.CancelPersonEnrichmentWorkOutsideProfilesContext(ctx, nil); err != nil {
+			return fmt.Errorf("cancel disabled person enrichment work: %w", err)
+		}
 		return nil
 	}
 	if sched == nil || st == nil {
@@ -2856,6 +2862,7 @@ func registerPersonEnrichmentJob(
 	}
 	factories := make(map[string]personenrichment.ProviderFactory)
 	providerConfigs := make(map[string]personenrichment.ProviderConfig)
+	activeFingerprints := make([]string, 0, len(enrichmentConfig.Providers))
 	for _, configured := range enrichmentConfig.Providers {
 		provider := configured
 		if !provider.Enabled {
@@ -2868,6 +2875,7 @@ func registerPersonEnrichmentJob(
 		if _, err := st.EnsurePersonEnrichmentProfile(ctx, profile); err != nil {
 			return fmt.Errorf("ensure person enrichment profile %q: %w", provider.Name, err)
 		}
+		activeFingerprints = append(activeFingerprints, profile.Fingerprint)
 		providerConfigs[provider.Name] = provider
 		switch provider.Kind {
 		case personenrichment.ProviderExa:
@@ -2884,6 +2892,9 @@ func registerPersonEnrichmentJob(
 	}
 	if len(factories) == 0 {
 		return errors.New("person enrichment has no structurally valid enabled provider")
+	}
+	if err := st.CancelPersonEnrichmentWorkOutsideProfilesContext(ctx, activeFingerprints); err != nil {
+		return fmt.Errorf("cancel unavailable person enrichment work: %w", err)
 	}
 	gate, err := personenrichment.NewEgressGate(st, st, hasher, os.LookupEnv)
 	if err != nil {

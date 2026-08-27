@@ -20,7 +20,7 @@ func enrichmentBudgetProfile(t *testing.T, requestsPerRun, personCost, runCost, 
 	profile, err := (personenrichment.ProviderConfig{
 		Name: "exa-budget", Kind: personenrichment.ProviderExa, Enabled: true,
 		Endpoint: "https://api.example.test/search", APIKeyEnv: "PROVIDER_API_KEY",
-		Mode: "people", NumResults: 1,
+		Mode: "deep", NumResults: 1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierEmail},
 		TargetKeys:         []string{"attribute:bio"}, RetentionPosture: "zero_retention",
 		TrainingPosture: "no_training", RefreshInterval: 24 * time.Hour,

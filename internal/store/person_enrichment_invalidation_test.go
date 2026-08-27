@@ -498,12 +498,15 @@ func prepareCurrentEnrichmentResult(
 	programFingerprint, err := personenrichment.ProgramFingerprint(personenrichment.ProgramDescriptor{
 		HostMappingVersion: personenrichment.HostClaimMappingVersion,
 		AdapterVersion:     result.AdapterVersion, WireSchemaVersion: result.SchemaVersion,
+		GeneratedSchema: result.GeneratedSchema, GeneratedSchemaHash: result.GeneratedSchemaHash,
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
 	require.NoError(t, f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
 		State: personenrichment.AttemptPending, RequestID: result.RequestID, JobID: result.JobID,
 		StartedAt: f.now, AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
+		GeneratedSchema: result.GeneratedSchema, GeneratedSchemaHash: result.GeneratedSchemaHash,
+		Targets:            f.profile.Targets,
 		ProgramFingerprint: programFingerprint,
 	}))
 	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x6a}, 32))

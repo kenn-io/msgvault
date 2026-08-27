@@ -52,7 +52,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 	profile, err := (personenrichment.ProviderConfig{
 		Name: "exa-results", Kind: personenrichment.ProviderExa, Enabled: true,
 		Endpoint: "https://api.example.test/search", APIKeyEnv: "PROVIDER_API_KEY",
-		Mode: "people", NumResults: 1,
+		Mode: "deep", NumResults: 1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{
 			personenrichment.IdentifierEmail, personenrichment.IdentifierPublicProfileURL,
 		},
@@ -94,11 +94,13 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 	require.NoError(t, err)
 	require.True(t, created)
 
+	schemaHash := strings.Repeat("a", 64)
 	result := personenrichment.Result{
 		State: personenrichment.ResultComplete, RequestID: " opaque-request\t",
 		JobID: "opaque/job:Case?part=1", FreshAsOf: now.Add(-time.Hour),
 		AdapterVersion: "exa-adapter-fixture-v1", SchemaVersion: "exa-wire-fixture-v1",
 		ProviderVersion: "provider-fixture-v1", Model: "fixture-model", ModelVersion: "fixture-model-v1",
+		GeneratedSchema: true, GeneratedSchemaHash: schemaHash,
 		ProviderPersonIDs: []personenrichment.ProviderPersonID{{
 			ID: "Opaque/Person:Case?part=1", Confidence: 975,
 		}},
@@ -122,6 +124,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 	programFingerprint, err := personenrichment.ProgramFingerprint(personenrichment.ProgramDescriptor{
 		HostMappingVersion: personenrichment.HostClaimMappingVersion,
 		AdapterVersion:     result.AdapterVersion, WireSchemaVersion: result.SchemaVersion,
+		GeneratedSchema: true, GeneratedSchemaHash: schemaHash,
 	})
 	require.NoError(t, err)
 	require.NoError(t, st.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
@@ -129,6 +132,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 		State: personenrichment.AttemptPending, RequestID: result.RequestID, JobID: result.JobID,
 		StartedAt:      now,
 		AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
+		GeneratedSchema: true, GeneratedSchemaHash: schemaHash, Targets: selected,
 		ProgramFingerprint: programFingerprint,
 	}))
 	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x6a}, 32))

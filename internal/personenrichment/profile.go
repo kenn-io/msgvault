@@ -181,6 +181,13 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 	if err != nil {
 		return ProviderProfile{}, err
 	}
+	if c.Kind == ProviderExa && c.Mode == "people" {
+		for _, target := range targets {
+			if _, err := exaPeopleCapabilityForTarget(target); err != nil {
+				return ProviderProfile{}, fmt.Errorf("validate Exa people target %q: %w", target.Key, err)
+			}
+		}
+	}
 	if c.Kind == ProviderSixtyfour {
 		for _, target := range targets {
 			if _, err := sixtyfourStructValue(target); err != nil {

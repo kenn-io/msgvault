@@ -161,11 +161,12 @@ func TestProviderProfileCanonicalizesOrderAndExcludesOperationalSettings(t *test
 	checks := assert.New(t)
 	requirements := require.New(t)
 	provider := validProviderConfig(personenrichment.ProviderExa)
+	provider.Mode = "deep"
 	provider.AllowedIdentifiers = []personenrichment.IdentifierClass{
 		personenrichment.IdentifierEmail,
 		personenrichment.IdentifierName,
 	}
-	provider.TargetKeys = []string{"attribute:timezone", "attribute:bio"}
+	provider.TargetKeys = []string{"attribute:timezone", "attribute:location"}
 	catalog := profileCatalog()
 	catalog.Targets = append(catalog.Targets, personfacts.TargetDescriptor{
 		Kind: personfacts.TargetAttribute, Key: "attribute:timezone", Revision: "revision-1",
@@ -181,7 +182,7 @@ func TestProviderProfileCanonicalizesOrderAndExcludesOperationalSettings(t *test
 		personenrichment.IdentifierName,
 		personenrichment.IdentifierEmail,
 	}
-	reordered.TargetKeys = []string{"attribute:bio", "attribute:timezone"}
+	reordered.TargetKeys = []string{"attribute:location", "attribute:timezone"}
 	reorderedCatalog := catalog
 	reorderedCatalog.Targets = slices.Clone(catalog.Targets)
 	slices.Reverse(reorderedCatalog.Targets)
@@ -225,7 +226,7 @@ func TestProviderProfileRejectsUnknownAndSensitiveTargets(t *testing.T) {
 	_, err := provider.Profile(profileCatalog())
 	require.ErrorContains(t, err, "target")
 
-	provider.TargetKeys = []string{"attribute:bio"}
+	provider.TargetKeys = []string{"attribute:location"}
 	catalog := profileCatalog()
 	catalog.Targets[0].Sensitive = true
 	_, err = provider.Profile(catalog)
@@ -240,6 +241,23 @@ func TestSixtyfourProviderProfileRejectsStructuredTargets(t *testing.T) {
 
 	_, err = provider.Profile(catalog)
 	require.Error(t, err)
+}
+
+func TestExaPeopleProviderProfileRejectsUnsupportedTargets(t *testing.T) {
+	provider := validProviderConfig(personenrichment.ProviderExa)
+	provider.TargetKeys = []string{"attribute:biography"}
+	catalog := personfacts.Catalog{Targets: []personfacts.TargetDescriptor{{
+		Kind: personfacts.TargetAttribute, Key: "attribute:biography", Revision: "revision-1",
+		UniversalID: "attribute:biography", Slug: "biography", Description: "Synthetic biography",
+		ValueType: personfacts.ValueText, Cardinality: personfacts.CardinalitySingle,
+	}}}
+
+	_, err := provider.Profile(catalog)
+	require.ErrorContains(t, err, "unsupported")
+
+	provider.Mode = "deep"
+	_, err = provider.Profile(catalog)
+	require.NoError(t, err, "synthesized-output modes support catalog-defined scalar targets")
 }
 
 func TestProviderProfileValidatesPolicyWhenProviderIsDisabled(t *testing.T) {
@@ -287,8 +305,8 @@ func profileCatalog() personfacts.Catalog {
 	return personfacts.Catalog{
 		Version: "1",
 		Targets: []personfacts.TargetDescriptor{{
-			Kind: personfacts.TargetAttribute, Key: "attribute:bio", Revision: "revision-1",
-			UniversalID: "attribute:bio", Slug: "bio", Description: "Fixture biography",
+			Kind: personfacts.TargetAttribute, Key: "attribute:location", Revision: "revision-1",
+			UniversalID: "attribute:location", Slug: "location", Description: "Fixture location",
 			ValueType: personfacts.ValueText, Cardinality: personfacts.CardinalitySingle,
 			Choices: []personfacts.ChoiceDescriptor{}, Fields: []personfacts.FieldDescriptor{},
 		}},

@@ -23,7 +23,7 @@ func enrichmentTestProfile(t *testing.T) personenrichment.ProviderProfile {
 		Enabled:            true,
 		Endpoint:           "https://api.example.test/search",
 		APIKeyEnv:          "PROVIDER_API_KEY",
-		Mode:               "people",
+		Mode:               "deep",
 		NumResults:         1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierEmail},
 		TargetKeys:         []string{"attribute:bio"},
@@ -148,7 +148,7 @@ func TestPersonEnrichmentConsentRejectsImmutableProfileCollisions(t *testing.T) 
 		{"start endpoint", func(p *personenrichment.ProviderProfile) { p.Endpoint = "https://other.example.test/search" }},
 		{"poll endpoint", func(p *personenrichment.ProviderProfile) { p.PollEndpoint = "https://other.example.test/poll" }},
 		{"credential name", func(p *personenrichment.ProviderProfile) { p.APIKeyEnv = "OTHER_API_KEY" }},
-		{"mode", func(p *personenrichment.ProviderProfile) { p.Mode = "deep" }},
+		{"mode", func(p *personenrichment.ProviderProfile) { p.Mode = "deep-reasoning" }},
 		{"tier", func(p *personenrichment.ProviderProfile) { p.Tier = "standard" }},
 		{"result count", func(p *personenrichment.ProviderProfile) { p.NumResults++ }},
 		{"allowed identifiers", func(p *personenrichment.ProviderProfile) {

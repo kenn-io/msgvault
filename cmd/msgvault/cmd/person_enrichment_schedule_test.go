@@ -168,7 +168,7 @@ func TestPersonEnrichmentScheduleRegistersWithoutResolvingProviderCredentials(t 
 			{
 				Name: "exa-scheduled", Kind: personenrichment.ProviderExa, Enabled: true,
 				Endpoint: "https://exa.example.test/search", APIKeyEnv: "TEST_EXA_CREDENTIAL",
-				Mode: "people", NumResults: 1,
+				Mode: "deep", NumResults: 1,
 				AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierEmail},
 				TargetKeys:         []string{targetKey}, RetentionPosture: "zero_retention", TrainingPosture: "no_training",
 				RefreshInterval: time.Hour, RequestTimeout: time.Minute, PollInterval: time.Minute,
@@ -218,7 +218,7 @@ func TestPersonEnrichmentScheduleRealWorkerPollsAndRetriesAcrossRestart(t *testi
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	now := time.Now().UTC().Truncate(time.Second).Add(2 * time.Second)
+	now := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
 	config, profile, target := scheduleWorkerProfile(t, f, "a-restart", "RESTART_PROVIDER_KEY")
 	_, _, err := f.Store.GrantPersonEnrichmentConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
@@ -321,7 +321,7 @@ func TestPersonEnrichmentScheduleRealWorkerIsolatesProviderCredentialsAndFailure
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	now := time.Now().UTC().Truncate(time.Second).Add(2 * time.Second)
+	now := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
 	missingConfig, missingProfile, _ := scheduleWorkerProfile(t, f, "a-missing", "MISSING_PROVIDER_KEY")
 	failingConfig, failingProfile, _ := scheduleWorkerProfile(t, f, "b-failing", "FAILING_PROVIDER_KEY")
 	goodConfig, goodProfile, goodTarget := scheduleWorkerProfile(t, f, "c-good", "GOOD_PROVIDER_KEY")
@@ -389,15 +389,96 @@ func TestPersonEnrichmentScheduleRealWorkerIsolatesProviderCredentialsAndFailure
 	assert.NotContains(lookups, "UNRELATED_CHILD_SECRET")
 }
 
+func TestRegisterPersonEnrichmentJobCancelsWorkForUnavailableProfiles(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		includeStale       bool
+		enrichmentDisabled bool
+	}{
+		{name: "removed provider"},
+		{name: "disabled provider", includeStale: true},
+		{name: "enrichment disabled", enrichmentDisabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			f := storetest.New(t)
+			now := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+			staleConfig, staleProfile, _ := scheduleWorkerProfile(t, f, "stale-provider", "STALE_PROVIDER_KEY")
+			currentConfig, _, _ := scheduleWorkerProfile(t, f, "current-provider", "CURRENT_PROVIDER_KEY")
+			person := scheduleTestPerson(t, f, "unavailable-profile@example.test")
+			_, err := f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+			requirements.NoError(err)
+			person, err = f.Store.GetPersonContext(t.Context(), person.ID)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
+				PersonID: person.ID, ProfileFingerprint: staleProfile.Fingerprint,
+				Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "revision:stale"},
+				DueAt:   now,
+			}))
+			run, _, err := f.Store.StartRun(t.Context(), personenrichment.RunStart{
+				Kind: "manual", RequestedBy: "unavailable-profile-" + test.name, RequestedAt: now,
+			})
+			requirements.NoError(err)
+			attempt := scheduleTestAttempt(t, f.Store, staleProfile, run.ID, person, now, "stale-owner", "e")
+
+			providers := []personenrichment.ProviderConfig{currentConfig}
+			if test.includeStale {
+				staleConfig.Enabled = false
+				providers = append(providers, staleConfig)
+			}
+			enrichmentEnabled := !test.enrichmentDisabled
+			if enrichmentEnabled {
+				t.Setenv("UNAVAILABLE_PROFILE_SUPPRESSION_KEY", strings.Repeat("s", 32))
+			}
+			sched := scheduler.New(nil)
+			requirements.NoError(registerPersonEnrichmentJob(t.Context(), sched, f.Store, personenrichment.Config{
+				Enabled: enrichmentEnabled, Schedule: "*/15 * * * *", BatchSize: 25, LeaseDuration: time.Minute,
+				SuppressionKeyEnv: "UNAVAILABLE_PROFILE_SUPPRESSION_KEY", Providers: providers,
+			}))
+
+			stored, err := f.Store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+			requirements.NoError(err)
+			checks.Equal("terminal", stored.State)
+			requirements.NotNil(stored.FailureClass)
+			checks.Equal(string(personenrichment.FailurePolicy), *stored.FailureClass)
+			work, err := f.Store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+				PersonID: person.ID, ProfileFingerprint: staleProfile.Fingerprint, Limit: 10,
+			})
+			requirements.NoError(err)
+			checks.Empty(work)
+			requirements.NoError(f.Store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{
+				CompletedAt: now.Add(time.Second),
+			}))
+			completed, err := f.Store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
+			requirements.NoError(err)
+			checks.Equal("failed", completed.State)
+		})
+	}
+}
+
 func scheduleWorkerProfile(
 	t *testing.T, f *storetest.Fixture, name, credentialEnv string,
 ) (personenrichment.ProviderConfig, personenrichment.ProviderProfile, personfacts.TargetDescriptor) {
 	t.Helper()
+	description := "Public location for provider scheduling tests"
+	_, err := f.Store.GetAttributeDefinitionBySlugContext(
+		t.Context(), store.AttributeObjectPerson, "location")
+	if errors.Is(err, store.ErrAttributeDefinitionNotFound) {
+		_, err = f.Store.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
+			UniversalID: "test-person-location", ObjectType: store.AttributeObjectPerson,
+			Slug: "location", Label: "Location", Description: &description,
+			ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
+			Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser,
+			UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true,
+		})
+	}
+	require.NoError(t, err)
 	catalog, err := f.Store.BuildPersonFactCatalogContext(t.Context(), false)
 	require.NoError(t, err)
 	var target personfacts.TargetDescriptor
 	for _, candidate := range catalog.Targets {
-		if candidate.ValueType == personfacts.ValueText && candidate.Cardinality == personfacts.CardinalitySingle {
+		if candidate.Slug == "location" {
 			target = candidate
 			break
 		}
@@ -523,7 +604,7 @@ func scheduleTestEnrichmentProfile(t *testing.T) personenrichment.ProviderProfil
 	profile, err := (personenrichment.ProviderConfig{
 		Name: "schedule-provider", Kind: personenrichment.ProviderExa, Enabled: true,
 		Endpoint: "https://schedule.example.test/search", APIKeyEnv: "SCHEDULE_PROVIDER_KEY",
-		Mode: "people", NumResults: 1,
+		Mode: "deep", NumResults: 1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierEmail},
 		TargetKeys:         []string{target.Key}, RetentionPosture: "zero_retention", TrainingPosture: "no_training",
 		RefreshInterval: 24 * time.Hour, RequestTimeout: time.Minute, PollInterval: time.Minute,

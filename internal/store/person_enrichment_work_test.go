@@ -837,7 +837,7 @@ func TestPersonEnrichmentWorkLoadsCurrentMinimumRequestInput(t *testing.T) {
 	profile, err := (personenrichment.ProviderConfig{
 		Name: "exa-load", Kind: personenrichment.ProviderExa, Enabled: true,
 		Endpoint: "https://load.example.test/search", APIKeyEnv: "PROVIDER_API_KEY",
-		Mode: "people", NumResults: 1,
+		Mode: "deep", NumResults: 1,
 		AllowedIdentifiers: []personenrichment.IdentifierClass{
 			personenrichment.IdentifierEmail, personenrichment.IdentifierPublicProfileURL,
 		},
