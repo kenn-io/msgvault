@@ -750,9 +750,27 @@ func (s *Store) MessageMetadataWithRawBatch(
 // the whole thread once per synced message — quadratic queue churn on a large
 // thread.
 func (s *Store) EnsureConversation(sourceID int64, sourceConversationID, title string) (int64, error) {
-	now := s.dialect.Now()
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return 0, err
+	}
+	if s.syncGeneration != nil {
+		var id int64
+		err := s.withTx(func(tx *loggedTx) error {
+			var err error
+			id, err = ensureConversation(tx, s.dialect, sourceID, sourceConversationID, title)
+			return err
+		})
+		return id, err
+	}
+	return ensureConversation(s.db, s.dialect, sourceID, sourceConversationID, title)
+}
+
+func ensureConversation(
+	q querier, dialect Dialect, sourceID int64, sourceConversationID, title string,
+) (int64, error) {
+	now := dialect.Now()
 	var id int64
-	err := s.db.QueryRow(fmt.Sprintf(`
+	err := q.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, 'email_thread', ?, %s, %s)
 		ON CONFLICT (source_id, source_conversation_id) DO NOTHING
@@ -764,7 +782,7 @@ func (s *Store) EnsureConversation(sourceID int64, sourceConversationID, title s
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	if err := s.db.QueryRow(
+	if err := q.QueryRow(
 		`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`,
 		sourceID, sourceConversationID,
 	).Scan(&id); err != nil {

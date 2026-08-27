@@ -177,6 +177,31 @@ func TestApplyPersonSweepRequeuesExplicitlyDeferredCursorWork(t *testing.T) {
 	checks.Empty(owner)
 }
 
+func TestFinishPersonSweepWorkRequeuesDocumentContinuations(t *testing.T) {
+	for _, column := range []string{"optimistic_document_key", "reconcile_document_key"} {
+		t.Run(column, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
+			f := newPersonSweepApplyFixture(t, "document-continuation-"+column, false)
+			_, err := f.store.db.ExecContext(t.Context(), `UPDATE person_sweep_cursors
+				SET `+column+` = 'live:00000000000000000002' WHERE person_id = ?`, f.personID)
+			must.NoError(err)
+			var changed int
+			must.NoError(f.store.withTxContext(t.Context(), func(tx *loggedTx) error {
+				changed, err = f.store.finishPersonSweepWorkTx(t.Context(), tx, f.request)
+				return err
+			}))
+			checks.Equal(1, changed)
+			var count int
+			var owner string
+			must.NoError(f.store.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(lease_owner), '')
+				FROM person_sweep_work WHERE person_id = ?`, f.personID).Scan(&count, &owner))
+			checks.Equal(1, count)
+			checks.Empty(owner)
+		})
+	}
+}
+
 func TestApplyPersonSweepStoresGenerationIDAndKeyOnAttempt(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

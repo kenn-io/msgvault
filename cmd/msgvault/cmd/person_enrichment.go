@@ -289,8 +289,11 @@ func newPersonEnrichmentRunCommand(deps personEnrichmentCommandDeps) *cobra.Comm
 			if personID <= 0 || strings.TrimSpace(providerName) == "" || strings.TrimSpace(idempotencyKey) == "" {
 				return errors.New("run requires --person, --provider, and --idempotency-key")
 			}
+			config := deps.config()
+			if !config.Enabled {
+				return errors.New("person enrichment is disabled")
+			}
 			if !deps.isDaemonSubprocess() {
-				config := deps.config()
 				provider, ok := personEnrichmentProviderConfig(config, providerName)
 				if !ok {
 					return fmt.Errorf("person enrichment provider %q is not enabled", providerName)
@@ -298,7 +301,8 @@ func newPersonEnrichmentRunCommand(deps personEnrichmentCommandDeps) *cobra.Comm
 				return proxyPersonEnrichmentCommandWithEnv(command, args, deps,
 					config.SuppressionKeyEnv, provider.APIKeyEnv)
 			}
-			return runPersonEnrichmentManual(command, deps, personID, providerName, idempotencyKey, jsonOutput)
+			return runPersonEnrichmentManual(
+				command, deps, config, personID, providerName, idempotencyKey, jsonOutput)
 		},
 	}
 	command.Flags().Int64Var(&personID, "person", 0, "Person ID")
@@ -309,7 +313,7 @@ func newPersonEnrichmentRunCommand(deps personEnrichmentCommandDeps) *cobra.Comm
 }
 
 func runPersonEnrichmentManual(
-	command *cobra.Command, deps personEnrichmentCommandDeps,
+	command *cobra.Command, deps personEnrichmentCommandDeps, config personenrichment.Config,
 	personID int64, providerName, idempotencyKey string, jsonOutput bool,
 ) error {
 	st, cleanup, err := deps.openStore()
@@ -317,7 +321,6 @@ func runPersonEnrichmentManual(
 		return err
 	}
 	defer cleanup()
-	config := deps.config()
 	provider, ok := personEnrichmentProviderConfig(config, providerName)
 	if !ok {
 		return fmt.Errorf("person enrichment provider %q is not enabled", providerName)

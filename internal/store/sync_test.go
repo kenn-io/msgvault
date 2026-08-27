@@ -229,6 +229,10 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 		name  string
 		write func() error
 	}{
+		{name: "email conversation", write: func() error {
+			_, err := stale.EnsureConversation(f.Source.ID, "stale-email-thread", "Stale")
+			return err
+		}},
 		{name: "conversation", write: func() error {
 			_, err := stale.EnsureConversationWithType(f.Source.ID, "stale-thread", "chat", "Stale")
 			return err
@@ -305,6 +309,11 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 			require.ErrorIs(t, test.write(), store.ErrSyncRunSuperseded)
 		})
 	}
+	var staleEmailThreads int
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM conversations
+		WHERE source_id = ? AND source_conversation_id = 'stale-email-thread'`),
+		f.Source.ID).Scan(&staleEmailThreads))
+	assert.Zero(t, staleEmailThreads)
 }
 
 func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) {

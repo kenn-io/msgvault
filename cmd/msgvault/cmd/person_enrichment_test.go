@@ -498,6 +498,43 @@ func TestPersonEnrichmentManualRunRejectsUntrackedPersonWithoutRunOrWork(t *test
 	checks.Zero(work)
 }
 
+func TestPersonEnrichmentManualRunRejectsGloballyDisabledEnrichment(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("disabled@example.test", "Disabled Person", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
+	requirements.NoError(err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+	requirements.NoError(err)
+	provider, profile, _ := scheduleWorkerProfile(t, f, "manual-disabled", "TEST_MANUAL_PROVIDER_KEY")
+	_, _, err = f.Store.GrantPersonEnrichmentConsent(t.Context(), profile.Fingerprint, "test")
+	requirements.NoError(err)
+	config := personenrichment.Config{
+		Enabled: false, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY",
+		Providers: []personenrichment.ProviderConfig{provider},
+	}
+	var workBefore int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT COUNT(*) FROM person_enrichment_work WHERE person_id = ?`), person.ID).Scan(&workBefore))
+	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps.newManualWorker = func(context.Context, *store.Store, personenrichment.Config) (personEnrichmentScheduleWorker, error) {
+		require.FailNow(t, "disabled manual enrichment must not construct a worker")
+		return nil, errors.New("unreachable test worker construction")
+	}
+	_, _, err = executePersonEnrichmentCommand(t, deps, "", "run",
+		"--person", strconv.FormatInt(person.ID, 10), "--provider", provider.Name,
+		"--idempotency-key", "disabled-key", "--json")
+	requirements.ErrorContains(err, "disabled")
+	var runs, work int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM person_enrichment_runs WHERE kind = 'manual' AND requested_by = 'disabled-key'`).Scan(&runs))
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT COUNT(*) FROM person_enrichment_work WHERE person_id = ?`), person.ID).Scan(&work))
+	checks.Zero(runs)
+	checks.Equal(workBefore, work)
+}
+
 func TestPersonEnrichmentManualRunKeepsRunIDOnLeaseAndAttemptAndReportsFinalCounts(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
