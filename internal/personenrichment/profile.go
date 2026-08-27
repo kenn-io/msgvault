@@ -181,6 +181,14 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 	if err != nil {
 		return ProviderProfile{}, err
 	}
+	if c.Kind == ProviderSixtyfour {
+		for _, target := range targets {
+			if _, err := sixtyfourStructValue(target); err != nil {
+				return ProviderProfile{}, fmt.Errorf(
+					"validate Sixtyfour target %q: %w", target.Key, err)
+			}
+		}
+	}
 	catalogFingerprint, err := personfacts.CatalogFingerprint(targets)
 	if err != nil {
 		return ProviderProfile{}, fmt.Errorf("fingerprint provider target catalog: %w", err)

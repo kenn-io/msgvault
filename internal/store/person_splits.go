@@ -337,6 +337,11 @@ func (s *Store) splitPersonMergeOnce(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, request.SourcePersonID, newPersonID); err != nil {
 			return err
 		}
+		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+			ctx, tx, request.SourcePersonID, newPersonID,
+		); err != nil {
+			return err
+		}
 		exactReversal := selection.exact && len(unrestored) == 0
 		if _, err := tx.ExecContext(ctx, `UPDATE person_splits
 			SET is_exact_reversal = ? WHERE id = ?`, exactReversal, splitID); err != nil {

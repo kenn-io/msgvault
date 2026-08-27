@@ -93,6 +93,48 @@ func TestPersonEnrichmentParticipantIdentityChangeFencesAttemptAndPublishesRepla
 	}
 }
 
+func TestPersonEnrichmentParticipantLinkFencesAttemptAndPublishesReplacement(t *testing.T) {
+	f := newEnrichmentResultFixture(t)
+	participantID := enrichmentInvalidationParticipant(t, f.store, f.person.ID)
+	linkedID, err := f.store.EnsureParticipant(
+		"linked-identity@example.test", "Linked Identity", "example.test")
+	require.NoError(t, err)
+
+	_, err = f.store.LinkParticipants(participantID, linkedID)
+	require.NoError(t, err)
+	assertEnrichmentInvalidationState(t, f, f.attempt.ID)
+}
+
+func TestPersonEnrichmentPersonSplitFencesSourceAttemptAndPublishesReplacement(t *testing.T) {
+	require := require.New(t)
+	f := newEnrichmentResultFixture(t)
+	absorbedParticipantID, err := f.store.EnsureParticipant(
+		"split-enrichment@example.test", "Split Enrichment", "example.test")
+	require.NoError(err)
+	absorbed, _, err := f.store.CreatePersonFromParticipantContext(t.Context(), absorbedParticipantID)
+	require.NoError(err)
+	source, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	require.NoError(err)
+	merged, err := f.store.MergePersonsContext(t.Context(), PersonMergeRequest{
+		SurvivorID: source.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: source.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "enrichment-source-split-merge", Actor: "test",
+	})
+	require.NoError(err)
+	f.person = &merged.Person
+	_, attempt := prepareCurrentEnrichmentResult(t, f, "before-person-split")
+
+	_, err = f.store.SplitPersonMergeContext(t.Context(), PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         []int64{absorbedParticipantID},
+		ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey:         "enrichment-source-split", Actor: "test",
+	})
+	require.NoError(err)
+	assertEnrichmentInvalidationState(t, f, attempt.ID)
+}
+
 func TestPersonEnrichmentEmploymentAdvancesGenerationAndPreservesFreshCompanyWork(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

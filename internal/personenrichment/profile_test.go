@@ -232,6 +232,16 @@ func TestProviderProfileRejectsUnknownAndSensitiveTargets(t *testing.T) {
 	require.ErrorContains(t, err, "sensitive")
 }
 
+func TestSixtyfourProviderProfileRejectsStructuredTargets(t *testing.T) {
+	catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
+	require.NoError(t, err)
+	provider := validProviderConfig(personenrichment.ProviderSixtyfour)
+	provider.TargetKeys = []string{"system:employment"}
+
+	_, err = provider.Profile(catalog)
+	require.Error(t, err)
+}
+
 func TestProviderProfileValidatesPolicyWhenProviderIsDisabled(t *testing.T) {
 	requirements := require.New(t)
 	catalog := profileCatalog()

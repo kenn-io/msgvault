@@ -432,6 +432,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 				if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 					return err
 				}
+				if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+					ctx, tx, personID,
+				); err != nil {
+					return err
+				}
 			}
 		}
 		revision, err = s.bumpIdentityRevisionContext(ctx, tx)
