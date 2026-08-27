@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 var (
@@ -579,29 +580,8 @@ func NormalizeOrganizationName(raw string) string {
 
 // NormalizeDomain reduces a domain, URL, or email to a bare lowercase host.
 func NormalizeDomain(raw string) string {
-	candidate := strings.ToLower(strings.TrimSpace(raw))
-	if at := strings.LastIndex(candidate, "@"); at >= 0 {
-		candidate = candidate[at+1:]
-	}
-	var host string
-	if strings.Contains(candidate, "://") {
-		parsed, err := url.Parse(candidate)
-		if err != nil {
-			return ""
-		}
-		host = parsed.Hostname()
-	} else {
-		if strings.Contains(candidate, "/") {
-			return ""
-		}
-		parsed, err := url.Parse("//" + candidate)
-		if err != nil {
-			return ""
-		}
-		host = parsed.Hostname()
-	}
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "www."), ".")
-	if !strings.Contains(host, ".") || strings.ContainsAny(host, "/ \t\r\n") {
+	host, err := personfacts.NormalizeDomain(raw)
+	if err != nil {
 		return ""
 	}
 	return host

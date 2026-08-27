@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
 const (
@@ -48,6 +50,18 @@ type DocumentStatusStore interface {
 	) (int64, error)
 }
 
+type DocumentVectorStatusStore interface {
+	GetDocumentVectorTargetProfileID(ctx context.Context) (string, error)
+	GetDocumentVectorOperationsStatus(ctx context.Context, configured store.DocumentVectorGenerationSpec, documentEgressFingerprint, queryEgressFingerprint string, generationID int64, afterToken string, limit int) (store.DocumentVectorOperationsStatus, error)
+}
+
+type DocumentVectorOperationsResponse struct {
+	Enabled                              bool                                  `json:"enabled"`
+	Configured                           bool                                  `json:"configured"`
+	ScheduledRegistrationRequiresRestart bool                                  `json:"scheduled_registration_requires_restart,omitempty"`
+	Status                               *store.DocumentVectorOperationsStatus `json:"status,omitempty"`
+}
+
 type documentOccurrenceStatusReconciler interface {
 	ReconcileDocumentOccurrences(ctx context.Context) error
 }
@@ -70,6 +84,82 @@ func (s *Server) registerDocumentSearchRoute(api huma.API) {
 		http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaJSONRouteWithErrors[DocumentVectorOperationsResponse](
+		api, "getDocumentVectorStatus", http.MethodGet, "/documents/vectors/status",
+		"Get document vector generation, consent, usage, and failure status",
+		s.documentSearchGuard("document vector status", s.handleDocumentVectorStatus),
+		http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests,
+		http.StatusServiceUnavailable,
+	)
+}
+
+func (s *Server) handleDocumentVectorStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Vector.Enabled || !s.cfg.Attachments.Documents.Index.Embeddings.Enabled {
+		writeJSON(w, http.StatusOK, DocumentVectorOperationsResponse{Enabled: false})
+		return
+	}
+	statusStore, ok := s.store.(DocumentVectorStatusStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "document_vector_status_unavailable", "Document vector status is unavailable")
+		return
+	}
+	generationID, _, err := queryInt64(r, "generation_id")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	limit, found, err := queryInt(r, "limit")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	if !found {
+		limit = 20
+	}
+	if limit < 1 || limit > 1000 {
+		s.rejectBadParam(w, errors.New("limit must be between 1 and 1000"))
+		return
+	}
+	target, err := statusStore.GetDocumentVectorTargetProfileID(r.Context())
+	if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
+		writeJSON(w, http.StatusOK, DocumentVectorOperationsResponse{Enabled: true, Configured: false})
+		return
+	}
+	if err != nil {
+		s.writeDocumentSearchError(w, err)
+		return
+	}
+	generationFingerprint, err := vectordocument.Fingerprint(target, s.cfg.Vector)
+	if err != nil {
+		s.writeDocumentSearchError(w, err)
+		return
+	}
+	spec := store.DocumentVectorGenerationSpec{
+		Fingerprint: generationFingerprint, TargetExtractionProfileID: target,
+		EmbeddingProfile: s.cfg.Attachments.Documents.Index.Embeddings.Profile,
+		Model:            s.cfg.Vector.Embeddings.Model, Dimension: s.cfg.Vector.Embeddings.Dimension,
+	}
+	documentEgressFingerprint, err := vectordocument.EgressFingerprint(target, s.cfg.Vector)
+	if err != nil {
+		s.writeDocumentSearchError(w, err)
+		return
+	}
+	queryEgressFingerprint, err := vectordocument.QueryEgressFingerprint(target, s.cfg.Vector)
+	if err != nil {
+		s.writeDocumentSearchError(w, err)
+		return
+	}
+	status, err := statusStore.GetDocumentVectorOperationsStatus(r.Context(), spec, documentEgressFingerprint, queryEgressFingerprint, generationID, r.URL.Query().Get("after_token"), limit)
+	if err != nil {
+		s.writeDocumentSearchError(w, err)
+		return
+	}
+	s.documentSearchMu.RLock()
+	restartRequired := status.QueryConsent != nil && s.documentSearch == nil
+	s.documentSearchMu.RUnlock()
+	writeJSON(w, http.StatusOK, DocumentVectorOperationsResponse{
+		Enabled: true, Configured: true, ScheduledRegistrationRequiresRestart: restartRequired, Status: &status,
+	})
 }
 
 // documentSearchGuard protects the document reads that reconcile attachment
@@ -189,7 +279,23 @@ func (s *Server) handleDocumentSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Person = &resolved.Scope
 	}
-	response, err := searcher.SearchDocuments(r.Context(), request)
+	s.documentSearchMu.RLock()
+	service := s.documentSearch
+	s.documentSearchMu.RUnlock()
+	var response store.DocumentSearchResponse
+	if service != nil {
+		if reconciler, ok := s.store.(documentOccurrenceStatusReconciler); ok {
+			if err := reconciler.ReconcileDocumentOccurrences(r.Context()); err != nil {
+				s.writeDocumentSearchError(w, err)
+				return
+			}
+		}
+		response, err = service.Search(r.Context(), request)
+	} else if request.SearchMode == string(vectordocument.SearchModeSemantic) || request.SearchMode == string(vectordocument.SearchModeHybrid) {
+		err = vectordocument.ErrSemanticSearchUnavailable
+	} else {
+		response, err = searcher.SearchDocuments(r.Context(), request)
+	}
 	if err != nil {
 		s.writeDocumentSearchError(w, err)
 		return
@@ -211,6 +317,9 @@ func (s *Server) writeDocumentSearchError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrDocumentSearchUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "document_search_unavailable",
 			"Document search requires full-text search support")
+	case errors.Is(err, vectordocument.ErrSemanticSearchUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "semantic_search_unavailable",
+			"Semantic document search is unavailable")
 	default:
 		s.logger.Error("document search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Document search failed")
@@ -219,8 +328,15 @@ func (s *Server) writeDocumentSearchError(w http.ResponseWriter, err error) {
 
 func parseDocumentSearchRequest(r *http.Request) (store.DocumentSearchRequest, error) {
 	request := store.DocumentSearchRequest{
-		Query:  r.URL.Query().Get("q"),
-		Cursor: r.URL.Query().Get("cursor"),
+		Query: r.URL.Query().Get("q"), Cursor: r.URL.Query().Get("cursor"),
+		SearchMode: r.URL.Query().Get("mode"),
+	}
+	if request.SearchMode != "" {
+		mode, err := vectordocument.ParseSearchMode(request.SearchMode)
+		if err != nil {
+			return request, err
+		}
+		request.SearchMode = string(mode)
 	}
 	var err error
 	request.SourceIDs, _, err = queryInt64s(r, "source_id")
@@ -234,6 +350,18 @@ func parseDocumentSearchRequest(r *http.Request) (store.DocumentSearchRequest, e
 	}
 	if request.PageSize, _, err = queryInt(r, "limit"); err != nil {
 		return request, err
+	}
+	var candidateFound bool
+	if request.CandidateLimit, candidateFound, err = queryInt(r, "candidate_limit"); err != nil {
+		return request, err
+	}
+	maxCandidateLimit := store.MaxLexicalDocumentSearchCandidateLimit
+	if request.SearchMode == string(vectordocument.SearchModeSemantic) ||
+		request.SearchMode == string(vectordocument.SearchModeHybrid) {
+		maxCandidateLimit = store.MaxDocumentSearchCandidateLimit
+	}
+	if candidateFound && (request.CandidateLimit < 1 || request.CandidateLimit > maxCandidateLimit) {
+		return request, fmt.Errorf("candidate_limit must be between 1 and %d for this mode", maxCandidateLimit)
 	}
 	if request.AttachmentID, _, err = queryInt64(r, "attachment_id"); err != nil {
 		return request, err
@@ -283,4 +411,13 @@ func parseDocumentSearchRequest(r *http.Request) (store.DocumentSearchRequest, e
 		return request, errors.New("after must be before before")
 	}
 	return request, nil
+}
+
+// SetDocumentSearchService installs semantic document retrieval after the
+// optional vector runtime is ready. Before installation auto/lexical remain
+// available and explicit semantic/hybrid requests return a stable 503.
+func (s *Server) SetDocumentSearchService(service *vectordocument.SearchService) {
+	s.documentSearchMu.Lock()
+	s.documentSearch = service
+	s.documentSearchMu.Unlock()
 }

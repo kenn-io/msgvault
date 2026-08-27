@@ -112,6 +112,19 @@ func NewImporter(s *store.Store, c *Client) *Importer {
 	}
 }
 
+func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(sourceID, syncID)
+	accountID := ""
+	if imp.res != nil {
+		accountID = imp.res.accountID
+	}
+	scoped.res = newParticipantResolver(scoped.store, accountID)
+	scoped.obs = newObservationRecorder(scoped.store)
+	scoped.matcher = newIdentityMatcher(scoped.store)
+	return &scoped
+}
+
 // loadResumeState rebuilds the sync state for a source: the last successful
 // run's cursor blob (baseline) merged with the latest interrupted checkpoint,
 // so a resumed run skips already-covered work.
@@ -183,6 +196,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return nil, err
 	}
+	imp = imp.scopedToSync(src.ID, syncID)
 	// Failures below must ASSIGN to err (never shadow it with :=) so this
 	// defer records them on the run.
 	defer func() {

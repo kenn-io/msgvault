@@ -1,0 +1,28 @@
+name: Documentation
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install documentation tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Install documentation dependencies
+        working-directory: docs
+        run: uv sync --frozen --no-dev
+
+      - name: Check documentation
+        run: make docs-check

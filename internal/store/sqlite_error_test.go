@@ -17,7 +17,7 @@ func TestIsSQLiteError_ValueForm(t *testing.T) {
 	}
 
 	// Wrap the error
-	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
+	wrappedErr := errors.Join(sqliteErr)
 
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
 	assert.True(t, isSQLiteError(wrappedErr, "constraint failed"),
@@ -33,7 +33,6 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 		Code:         sqlite3.ErrConstraint,
 		ExtendedCode: sqlite3.ErrConstraintForeignKey,
 	}
-
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
 	assert.True(t, isSQLiteError(sqliteErr, "constraint failed"),
 		"isSQLiteError should match constraint error via pointer, got: %v", sqliteErr.Error())

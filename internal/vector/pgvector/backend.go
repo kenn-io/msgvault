@@ -991,6 +991,9 @@ func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
 // hits are emitted with Score = 1 - distance to align with the
 // sqlitevec convention.
 func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, filter vector.Filter) ([]vector.Hit, error) {
+	if err := vector.ValidateFilter(filter); err != nil {
+		return nil, err
+	}
 	if len(queryVec) == 0 {
 		return nil, errors.New("search: empty query vector")
 	}

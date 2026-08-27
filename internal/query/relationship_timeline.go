@@ -122,7 +122,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 
 	timezone := request.Timezone
 	if timezone == "" {
-		timezone = "UTC"
+		timezone = relationshipScoringTimezone
 	}
 	args = append(args, timezone)
 	limit := request.Limit

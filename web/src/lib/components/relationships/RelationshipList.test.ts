@@ -30,7 +30,9 @@ function relationshipRow(id: number, label: string, overrides: Partial<Relations
 function person(id: number, label: string): PersonSummary {
   return {
     id, display_label: label, partial_label: false, identifiers: [],
-    activity_count: 4, file_count: 0, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
+    activity_count: 4, meeting_count: 0, file_count: 0,
+    current_relationship_temperature: 0, peak_relationship_temperature: 0, peak_relationship_year: 0,
+    source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
   };
 }
 

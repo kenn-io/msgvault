@@ -1,11 +1,17 @@
 <script lang="ts">
-  import { appShortcuts, Button, Modal, SearchInput } from '@kenn-io/kit-ui';
+  import {
+    appShortcuts,
+    Button,
+    debounce,
+    Modal,
+    Typeahead,
+    type TypeaheadOption
+  } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { PersonSummary } from '../../explore/models';
   import type { LinkOutcome } from '../../relationships/controller.svelte';
-  import { debounce } from '../../util/debounce';
 
   const SEARCH_DEBOUNCE_MS = 250;
   const SEARCH_LIMIT = 20;
@@ -31,6 +37,12 @@
   let selectedID = $state<number | null>(null);
   let confirming = $state(false);
   let confirmError = $state<string | null>(null);
+  let preserveSelectionOnClose = false;
+  const options = $derived(results.map((row): TypeaheadOption => ({
+    name: String(row.id),
+    label: row.display_label,
+    meta: identifiersSummary(row)
+  })));
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
@@ -97,20 +109,22 @@
 
   function handleQueryInput(value: string): void {
     query = value;
-    selectedID = null;
-    confirmError = null;
+    if (value.trim() === '' && preserveSelectionOnClose) {
+      preserveSelectionOnClose = false;
+    } else {
+      selectedID = null;
+      confirmError = null;
+    }
     debouncedSearch(value);
   }
 
   function selectResult(id: number): void {
     selectedID = id;
     confirmError = null;
-  }
-
-  function selectOnEnter(event: KeyboardEvent, id: number): void {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    selectResult(id);
+    // Typeahead reports an empty query as it closes after selection. Preserve
+    // this result through that lifecycle reset; a later empty editable field
+    // clears it before confirmation can use stale state.
+    preserveSelectionOnClose = true;
   }
 
   async function confirmLink(): Promise<void> {
@@ -160,37 +174,22 @@
   onclose={requestClose}
 >
   <div class="link-identity-dialog" aria-busy={confirming}>
-    <SearchInput
-      value={query}
-      ariaLabel="Search people to link"
-      placeholder="Search names, emails, phone numbers…"
-      autofocus
-      oninput={handleQueryInput}
+    <Typeahead
+      options={options}
+      value={selectedID === null ? '' : String(selectedID)}
+      fallbackLabel="Choose a person"
+      placeholder="Search people to link"
+      title="Person to link"
+      emptyLabel="No matching people found"
+      loading={searching}
+      loadingLabel="Searching…"
+      remote
+      onquery={handleQueryInput}
+      error={searchError ?? ''}
+      onselect={(value) => {
+        selectResult(Number(value));
+      }}
     />
-    {#if searching}
-      <p role="status">Searching…</p>
-    {:else if searchError}
-      <p role="alert">{searchError}</p>
-    {:else if query.trim() !== '' && results.length === 0}
-      <p>No matching people found.</p>
-    {/if}
-    <ul class="results" role="listbox" aria-label="Search results">
-      {#each results as row (row.id)}
-        <li>
-          <button
-            type="button"
-            role="option"
-            aria-selected={selectedID === row.id}
-            class:selected={selectedID === row.id}
-            onclick={() => selectResult(row.id)}
-            onkeydown={(event) => selectOnEnter(event, row.id)}
-          >
-            <strong>{row.display_label}</strong>
-            <small>{identifiersSummary(row)}</small>
-          </button>
-        </li>
-      {/each}
-    </ul>
     {#if confirmError}
       <p class="confirm-error" role="alert">{confirmError}</p>
     {/if}
@@ -213,42 +212,6 @@
     min-width: 20rem;
     flex-direction: column;
     gap: var(--space-3);
-  }
-
-  .results {
-    display: flex;
-    max-height: 16rem;
-    flex-direction: column;
-    gap: var(--space-1);
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    list-style: none;
-  }
-
-  .results button {
-    display: flex;
-    width: 100%;
-    flex-direction: column;
-    align-items: start;
-    gap: 2px;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-primary);
-    padding: var(--space-2);
-    text-align: left;
-  }
-
-  .results button:hover,
-  .results button.selected {
-    border-color: var(--border-strong);
-    background: var(--surface-raised);
-  }
-
-  .results small {
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
   }
 
   .confirm-error {

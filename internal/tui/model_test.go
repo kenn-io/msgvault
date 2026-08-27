@@ -112,7 +112,7 @@ func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
 		assert.ElementsMatch([]string{"alice@example.com", "@example.com"}, formatted.FromAddrs)
 		assert.Equal([]string{"bob@example.com"}, formatted.ToAddrs)
 		assert.Equal([]string{"Project Review"}, formatted.Labels)
-		assert.Equal([]string{"email"}, formatted.MessageTypes)
+		assert.Equal([]string{emailMessageType}, formatted.MessageTypes)
 		require.NotNil(formatted.AfterDate, "merged after date")
 		require.NotNil(formatted.BeforeDate, "merged before date")
 		assert.Equal(after, *formatted.AfterDate)

@@ -585,6 +585,7 @@ func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing
 	_, err := env.Store.DB().Exec(`
 		CREATE TRIGGER fail_sync_checkpoint
 		BEFORE UPDATE ON sync_runs
+		WHEN NEW.messages_processed <> OLD.messages_processed
 		BEGIN
 			SELECT RAISE(ABORT, 'checkpoint unavailable');
 		END

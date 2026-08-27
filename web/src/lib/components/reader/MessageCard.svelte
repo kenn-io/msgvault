@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button } from '@kenn-io/kit-ui';
+
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
@@ -85,9 +87,9 @@
           <summary aria-label={`Message ${message.id} display options`}>⋯</summary>
           <div class="menu-sheet kit-popover-card">
             {#if viewMode === 'html'}
-              <button type="button" onclick={() => selectMode('text')}>Show plain text</button>
+              <Button class="menu-action" size="sm" surface="soft" label="Show plain text" onclick={() => selectMode('text')} />
             {:else}
-              <button type="button" onclick={() => selectMode('html')}>Show formatted HTML</button>
+              <Button class="menu-action" size="sm" surface="soft" label="Show formatted HTML" onclick={() => selectMode('html')} />
             {/if}
           </div>
         </details>
@@ -305,23 +307,10 @@
     padding: var(--space-2);
   }
 
-  .menu-sheet button {
-    display: block;
+  .menu-sheet :global(.menu-action) {
+    display: flex;
     width: 100%;
-    padding: var(--space-2) var(--space-3);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--text-primary);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--font-size-xs);
-    text-align: left;
-    white-space: nowrap;
-  }
-
-  .menu-sheet button:hover {
-    background: var(--bg-surface-hover);
+    justify-content: flex-start;
   }
 
   .sanitize-notice {

@@ -30,6 +30,9 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // KPerSignal before fusion. The extra "probe" row exists only so the
 // outer query can report whether the pool was full on either side.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+	if err := vector.ValidateFilter(req.Filter); err != nil {
+		return nil, false, err
+	}
 	if req.QueryVec == nil && len(req.FTSTerms) == 0 {
 		return nil, false, errors.New("FusedSearch: neither vector nor FTS query provided")
 	}
@@ -59,6 +62,10 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		return nil, false, err
 	}
 
+	messageIDs, err := idsToJSON(req.Filter.MessageIDs)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode message_ids: %w", err)
+	}
 	sourceIDs, err := idsToJSON(req.Filter.SourceIDs)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode source_ids: %w", err)
@@ -177,6 +184,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	}
 
 	filterWhere := fmt.Sprintf(`%s
+       AND (:message_ids IS NULL OR m.id IN (SELECT value FROM json_each(:message_ids)))
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
        %s
        %s
@@ -300,6 +308,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	// which it references) — the go-sqlite3 driver rejects extra
 	// named binds when its placeholder count check fails.
 	filterArgs := []any{
+		sql.Named("message_ids", messageIDs),
 		sql.Named("source_ids", sourceIDs),
 	}
 	if hasMessageType {

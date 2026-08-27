@@ -8,7 +8,7 @@ import type {
   PersonSummary
 } from '../explore/models';
 import { canonicalFingerprint, predicateFingerprint } from '../explore/selection';
-import type { RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
+import type { RelationshipCalendar, RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
 
 export type LinkOutcome =
   | { ok: true; identityRevision: number; cacheState: 'ready' | 'stale' }
@@ -33,6 +33,7 @@ interface ListPageResponse {
 const RANKED_LIST_LIMIT = 200;
 const SEARCH_LIST_LIMIT = 500;
 const TIMELINE_PAGE_LIMIT = 200;
+const MIN_RELATIONSHIP_CALENDAR_YEAR = 1970;
 const DEFAULT_IDENTITY_SORT: IdentitySearchSort = { field: 'activity_count', direction: 'desc' };
 const REPEATED_CURSOR_MESSAGE = 'Pagination stopped because the server repeated a cursor without progress.';
 const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
@@ -88,6 +89,12 @@ export class RelationshipsController {
   timelineRestartNotice = $state<string | null>(null);
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
+  relationshipCalendar = $state<RelationshipCalendar | null>(null);
+  relationshipCalendarYear = $state(new Date().getUTCFullYear());
+  relationshipCalendarCurrentYear = $state(this.relationshipCalendarYear);
+  relationshipCalendarFirstYear = $state(this.relationshipCalendarYear);
+  relationshipCalendarLoading = $state(false);
+  relationshipCalendarError = $state<string | null>(null);
 
   private readonly client: APIClient;
   private readonly timezone: () => string;
@@ -97,6 +104,11 @@ export class RelationshipsController {
   private detailCacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
+  private relationshipCalendarGeneration = 0;
+  private relationshipCalendarCache = new Map<string, RelationshipCalendar>();
+  private relationshipCalendarCacheRevision: string | null = null;
+  private relationshipCalendarIdentityRevision: number | null = null;
+  private relationshipCalendarRestarted = false;
   private listPageRequest: ListPageRequest | undefined;
   /** Fingerprint of the context (endpoint + facet/query/showAll/filters) the
    * visible rows were loaded for — lets loadList tell a fresh-context load
@@ -110,6 +122,9 @@ export class RelationshipsController {
   constructor(client: APIClient, timezone: () => string) {
     this.client = client;
     this.timezone = timezone;
+    this.relationshipCalendarYear = currentYearInTimezone(this.timezone());
+    this.relationshipCalendarCurrentYear = this.relationshipCalendarYear;
+    this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
   }
 
   async loadList(predicate: ExplorePredicate): Promise<void> {
@@ -264,6 +279,15 @@ export class RelationshipsController {
   }
 
   async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
+    await this.openTargetWithCalendarState(target, predicate);
+  }
+
+  private async openTargetWithCalendarState(
+    target: string,
+    predicate: ExplorePredicate,
+    selectedCalendarYear?: number,
+    calendarRestarted = false
+  ): Promise<void> {
     this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
     const controller = new AbortController();
@@ -280,6 +304,7 @@ export class RelationshipsController {
     this.timelineLoadingMore = false;
     this.canonicalID = null;
     this.identityRevision = null;
+    this.resetRelationshipCalendar(selectedCalendarYear, calendarRestarted);
     this.seenCursors = new Set<string>();
 
     const clusterID = parseClusterID(target);
@@ -290,8 +315,28 @@ export class RelationshipsController {
     }
     this.timelineLoading = true;
     try {
-      if (clusterID !== undefined) await this.openCluster(clusterID, predicate, generation, controller.signal);
-      else if (domainName !== undefined) await this.openDomain(domainName, predicate, generation, controller.signal);
+      if (clusterID !== undefined) {
+        const unfilteredPerson = await this.openCluster(clusterID, predicate, generation, controller.signal);
+        const personDetail = unfilteredPerson ?? (this.detail as PersonSummary | null);
+        if (!controller.signal.aborted && generation === this.detailGeneration && personDetail !== null) {
+          this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
+          this.relationshipCalendarFirstYear = clampNumber(
+            personFirstYear(personDetail, this.timezone(), this.relationshipCalendarCurrentYear),
+            MIN_RELATIONSHIP_CALENDAR_YEAR,
+            this.relationshipCalendarCurrentYear
+          );
+          this.relationshipCalendarYear = clampNumber(
+            this.relationshipCalendarYear,
+            this.relationshipCalendarFirstYear,
+            this.relationshipCalendarCurrentYear
+          );
+          this.relationshipCalendarCacheRevision = personDetail.cache_revision;
+          this.relationshipCalendarIdentityRevision = this.identityRevision;
+          void this.loadRelationshipYear(this.relationshipCalendarYear);
+        }
+      } else if (domainName !== undefined) {
+        await this.openDomain(domainName, predicate, generation, controller.signal);
+      }
     } finally {
       if (generation === this.detailGeneration) this.timelineLoading = false;
     }
@@ -302,7 +347,7 @@ export class RelationshipsController {
     predicate: ExplorePredicate,
     generation: number,
     signal: AbortSignal
-  ): Promise<void> {
+  ): Promise<PersonSummary | null> {
     const context = contextPredicate(predicate);
     try {
       // The unfiltered GET stays the source of cluster metadata (identifiers,
@@ -316,7 +361,7 @@ export class RelationshipsController {
           ? this.client.POST('/api/v1/participants/{id}/summary', { params: { path: { id } }, body: context, signal })
           : undefined
       ]);
-      if (signal.aborted || generation !== this.detailGeneration) return;
+      if (signal.aborted || generation !== this.detailGeneration) return null;
       const summary = summaryResponse?.data?.summary;
       const base = personResponse.data;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
@@ -329,8 +374,10 @@ export class RelationshipsController {
           summaryResponse.error, summaryResponse.response.status, generation, signal
         )) this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
       }
+      return base ?? summary ?? null;
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
+      return null;
     }
   }
 
@@ -392,7 +439,84 @@ export class RelationshipsController {
     this.timelineRestartNotice = null;
     this.canonicalID = null;
     this.identityRevision = null;
+  this.resetRelationshipCalendar();
     this.seenCursors = new Set<string>();
+  }
+
+  async loadRelationshipYear(year: number): Promise<void> {
+  const target = this.target;
+  const clusterID = target ? parseClusterID(target) : undefined;
+  const signal = this.detailAbort?.signal;
+  const detailGeneration = this.detailGeneration;
+  const currentYear = currentYearInTimezone(this.timezone());
+  if (clusterID === undefined || !signal || signal.aborted ||
+    year < this.relationshipCalendarFirstYear || year > currentYear) return;
+
+  const canonicalID = this.canonicalID ?? clusterID;
+  const timezone = this.timezone();
+  this.relationshipCalendarYear = year;
+  if (this.relationshipCalendarError !== null) this.relationshipCalendarRestarted = false;
+  this.relationshipCalendarError = null;
+  const cached = this.relationshipCalendarCache.get(relationshipCalendarCacheKey(
+    canonicalID, year, timezone,
+    this.relationshipCalendarCacheRevision,
+    this.relationshipCalendarIdentityRevision
+  ));
+  if (cached) {
+    this.relationshipCalendar = cached;
+    this.relationshipCalendarLoading = false;
+    return;
+  }
+
+  const generation = ++this.relationshipCalendarGeneration;
+  this.relationshipCalendar = null;
+  this.relationshipCalendarLoading = true;
+  try {
+    const { data, error, response } = await this.client.POST('/api/v1/relationships/{id}/calendar', {
+      params: { path: { id: clusterID } },
+      body: { year, timezone },
+      signal
+    });
+    if (signal.aborted || generation !== this.relationshipCalendarGeneration ||
+      detailGeneration !== this.detailGeneration || target !== this.target ||
+      year !== this.relationshipCalendarYear) return;
+      if (!data) {
+        this.relationshipCalendarError = errorMessage(error, response.status);
+        return;
+      }
+      if (!isRelationshipCalendar(data)) {
+        this.relationshipCalendarError = 'Relationship activity returned an incomplete response.';
+        return;
+      }
+    const changed =
+      (this.relationshipCalendarCacheRevision !== null &&
+       data.cache_revision !== this.relationshipCalendarCacheRevision) ||
+      (this.relationshipCalendarIdentityRevision !== null &&
+       data.identity_revision !== this.relationshipCalendarIdentityRevision);
+    if (changed) {
+      this.relationshipCalendarCache.clear();
+      if (!this.relationshipCalendarRestarted && target !== null && this.lastPredicate) {
+        await this.openTargetWithCalendarState(target, this.lastPredicate, year, true);
+        return;
+      }
+      this.relationshipCalendarError = 'Relationship activity changed again. Retry when the archive settles.';
+      return;
+    }
+    this.relationshipCalendarCacheRevision = data.cache_revision;
+    this.relationshipCalendarIdentityRevision = data.identity_revision;
+    this.relationshipCalendarRestarted = false;
+    this.relationshipCalendarCache.set(relationshipCalendarCacheKey(
+      data.canonical_id, data.year, data.timezone, data.cache_revision, data.identity_revision
+    ), data);
+    this.relationshipCalendar = data;
+  } catch (cause: unknown) {
+    if (!signal.aborted && generation === this.relationshipCalendarGeneration &&
+      detailGeneration === this.detailGeneration && target === this.target) {
+      this.relationshipCalendarError = errorMessage(cause, 0);
+    }
+  } finally {
+    if (generation === this.relationshipCalendarGeneration) this.relationshipCalendarLoading = false;
+  }
   }
 
   async loadMoreTimeline(): Promise<void> {
@@ -560,6 +684,21 @@ export class RelationshipsController {
     this.clearDetailCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
+  ++this.relationshipCalendarGeneration;
+  this.relationshipCalendarLoading = false;
+  }
+
+  private resetRelationshipCalendar(selectedYear?: number, restarted = false): void {
+  ++this.relationshipCalendarGeneration;
+  this.relationshipCalendar = null;
+  this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
+  this.relationshipCalendarYear = selectedYear ?? this.relationshipCalendarCurrentYear;
+  this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
+  this.relationshipCalendarLoading = false;
+  this.relationshipCalendarError = null;
+  this.relationshipCalendarCacheRevision = null;
+  this.relationshipCalendarIdentityRevision = null;
+  this.relationshipCalendarRestarted = restarted;
   }
 
   private clearCacheBuildRetry(): void {
@@ -595,6 +734,44 @@ export class RelationshipsController {
     clearTimeout(this.detailCacheBuildRetry);
     this.detailCacheBuildRetry = undefined;
   }
+}
+
+function relationshipCalendarCacheKey(
+  canonicalID: number,
+  year: number,
+  timezone: string,
+  cacheRevision: string | null,
+  identityRevision: number | null
+): string {
+  return `${canonicalID}:${year}:${timezone}:${cacheRevision ?? ''}:${identityRevision ?? ''}`;
+}
+
+function isRelationshipCalendar(value: RelationshipCalendar): boolean {
+  return typeof value.canonical_id === 'number' && typeof value.year === 'number' &&
+    typeof value.timezone === 'string' && typeof value.cache_revision === 'string' &&
+    typeof value.identity_revision === 'number' && typeof value.current?.temperature === 'number' &&
+    typeof value.peak_temperature === 'number' && typeof value.peak_year === 'number';
+}
+
+function currentYearInTimezone(timezone: string): number {
+  try {
+    return Number(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date()));
+  } catch {
+    return new Date().getUTCFullYear();
+  }
+}
+
+function personFirstYear(person: PersonSummary | null, timezone: string, fallback: number): number {
+  if (!person?.first_at) return fallback;
+  try {
+    return Number(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date(person.first_at)));
+  } catch {
+    return new Date(person.first_at).getUTCFullYear() || fallback;
+  }
+}
+
+function clampNumber(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 // Also drops the workspace text query: the relationships ranking and

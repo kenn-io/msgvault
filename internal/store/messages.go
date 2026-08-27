@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -440,6 +441,14 @@ func (s *Store) listUnresolvedMessageReplies(
 // JSONB cast on PG (?::JSONB) and a bare ? on SQLite, so a JSON string binds in
 // both backends.
 func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return setMessageMetadataWith(tx, s.dialect, messageID, metadata)
+		})
+	}
 	return setMessageMetadataWith(s.db, s.dialect, messageID, metadata)
 }
 
@@ -503,21 +512,31 @@ func (s *Store) RekeyMessageSourceID(
 	messageID int64,
 	expectedSourceMessageID, newSourceMessageID string,
 ) (bool, error) {
-	result, err := s.db.Exec(
-		`UPDATE messages SET source_message_id = ?
-		 WHERE id = ? AND source_message_id = ?`,
-		newSourceMessageID,
-		messageID,
-		expectedSourceMessageID,
-	)
-	if err != nil {
-		return false, fmt.Errorf("rekey message source ID: %w", err)
+	var rekeyed bool
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		result, err := q.Exec(
+			`UPDATE messages SET source_message_id = ?
+			 WHERE id = ? AND source_message_id = ?`,
+			newSourceMessageID, messageID, expectedSourceMessageID)
+		if err != nil {
+			return fmt.Errorf("rekey message source ID: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read rekeyed row count: %w", err)
+		}
+		rekeyed = affected == 1
+		return nil
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("read rekeyed row count: %w", err)
+	if s.syncGeneration == nil {
+		err := write(s.db)
+		return rekeyed, err
 	}
-	return affected == 1, nil
+	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
+	return rekeyed, err
 }
 
 // UpdateMessageOnDedup updates an existing message's composite ID
@@ -549,6 +568,9 @@ func (s *Store) updateMessageOnDedup(
 ) (bool, error) {
 	var changed bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
 		var currentSourceMessageID string
 		if err := tx.QueryRow(
 			`SELECT source_message_id FROM messages WHERE id = ?`,
@@ -588,6 +610,9 @@ func (s *Store) updateMessageOnDedup(
 func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySourceMessageID, newSourceMessageID string) error {
 	if legacySourceMessageID == "" || legacySourceMessageID == newSourceMessageID {
 		return nil
+	}
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
 	}
 	return s.withTx(func(tx *loggedTx) error {
 		var newID int64
@@ -830,7 +855,22 @@ func upsertMessageSQL(now string) string {
 
 // UpsertMessage inserts or updates a message.
 func (s *Store) UpsertMessage(msg *Message) (int64, error) {
+	if msg == nil {
+		return 0, errors.New("upsert message requires a message")
+	}
+	if err := s.requireSyncSource(msg.SourceID); err != nil {
+		return 0, err
+	}
 	if !isBodylessMessageJournalCandidate(msg) {
+		if s.syncGeneration != nil {
+			var id int64
+			err := s.withTx(func(tx *loggedTx) error {
+				var err error
+				id, err = upsertMessageWith(tx, s.dialect, msg)
+				return err
+			})
+			return id, err
+		}
 		return upsertMessageWith(s.db, s.dialect, msg)
 	}
 	var id int64
@@ -946,6 +986,11 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
 		return 0, err
 	}
+	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
+		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
+			return 0, err
+		}
+	}
 	return id, nil
 }
 
@@ -1046,6 +1091,15 @@ func enqueueActivityProjectionMessage(q querier, d Dialect, messageID int64) err
 
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
 func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullString) error {
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return upsertMessageBody(tx, s.dialect, s.fts5Available,
+				messageID, bodyText, bodyHTML)
+		})
+	}
 	return upsertMessageBody(s.db, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML)
 }
 
@@ -1438,6 +1492,12 @@ func (s *Store) persistMessageWithParticipantsContext(
 			return err
 		}
 		data := build(participantIDs)
+		if data == nil || data.Message == nil {
+			return errors.New("persist message requires a message")
+		}
+		if err := s.requireSyncSource(data.Message.SourceID); err != nil {
+			return err
+		}
 		id, err := s.persistMessageWith(ctx, tx, data)
 		if err != nil {
 			return err
@@ -1695,6 +1755,9 @@ func (s *Store) EnsureParticipantsBatch(addresses []mime.Address) (map[string]in
 // ReplaceMessageRecipients replaces all recipients for a message atomically.
 func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
 	return s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
 		if err := replaceMessageRecipientsTx(tx, messageID, RecipientSet{
 			Type:           recipientType,
 			ParticipantIDs: participantIDs,
@@ -2209,6 +2272,15 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 	if len(labelIDs) == 0 {
 		return nil
 	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return execInChunks(tx, labelIDs, []any{messageID},
+				`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
+		})
+	}
 	return execInChunks(s.db, labelIDs, []any{messageID},
 		`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
 }
@@ -2216,41 +2288,73 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 // SetReplyTo links a channel reply to its parent by resolving the parent's
 // source_message_id to its internal messages.id within the same source.
 func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
-	_, err := s.db.Exec(s.dialect.Rebind(`
-		UPDATE messages SET reply_to_message_id =
-		  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
-		WHERE source_id = ? AND source_message_id = ?`),
-		sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
-	return err
+	return s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+		_, err := q.Exec(`
+			UPDATE messages SET reply_to_message_id =
+			  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
+			WHERE source_id = ? AND source_message_id = ?`,
+			sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
+		return err
+	})
 }
 
 // SetMessageEdited marks a message as edited at the source. UpsertMessage
 // does not write is_edited, so importers that observe an edit flag call this
 // after upserting.
 func (s *Store) SetMessageEdited(messageID int64) error {
-	_, err := s.db.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
-	return err
+	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
+		_, err := q.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
+		return err
+	})
+}
+
+// SetMessageReplyContext links a message to the message it replies to while
+// preserving the scoped sync-generation fence of the writer.
+func (s *Store) SetMessageReplyContext(ctx context.Context, messageID, replyToMessageID int64) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`,
+			replyToMessageID, messageID)
+		return err
+	})
 }
 
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE messages
-		SET deleted_from_source_at = %s
-		WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
-	`, s.dialect.Now()), sourceID, sourceMessageID)
-	return err
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q chunkQuerier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			UPDATE messages
+			SET deleted_from_source_at = %s
+			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
+		`, s.dialect.Now()), sourceID, sourceMessageID)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
 // reappears during a provider repair scan.
 func (s *Store) ClearMessageDeletedFromSource(sourceID int64, sourceMessageID string) error {
-	_, err := s.db.Exec(`
-		UPDATE messages
-		SET deleted_from_source_at = NULL
-		WHERE source_id = ? AND source_message_id = ?
-	`, sourceID, sourceMessageID)
-	return err
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(`
+			UPDATE messages
+			SET deleted_from_source_at = NULL
+			WHERE source_id = ? AND source_message_id = ?
+		`, sourceID, sourceMessageID)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.
@@ -2258,8 +2362,17 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	if len(sourceMessageIDs) == 0 {
 		return nil
 	}
-	return execInChunks(s.db, sourceMessageIDs, []any{sourceID},
-		fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q chunkQuerier) error {
+		return execInChunks(q, sourceMessageIDs, []any{sourceID},
+			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 // MarkMessagesDeletedFromReader consumes newline-delimited source message IDs
@@ -2272,48 +2385,44 @@ func (s *Store) MarkMessagesDeletedFromReader(sourceID int64, reader io.Reader, 
 	if batchSize <= 0 {
 		return errors.New("mark messages deleted from reader: batch size must be positive")
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("mark messages deleted from reader: begin: %w", err)
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	batch := make([]string, 0, batchSize)
-	flush := func() error {
-		if len(batch) == 0 {
+	return s.withTx(func(tx *loggedTx) error {
+		batch := make([]string, 0, batchSize)
+		flush := func() error {
+			if len(batch) == 0 {
+				return nil
+			}
+			if err := execInChunks(tx, batch, []any{sourceID},
+				fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+				return err
+			}
+			batch = batch[:0]
 			return nil
 		}
-		if err := execInChunks(tx, batch, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
-			return err
-		}
-		batch = batch[:0]
-		return nil
-	}
 
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		messageID := scanner.Text()
-		if messageID == "" {
-			return errors.New("mark messages deleted from reader: empty source message ID")
-		}
-		batch = append(batch, messageID)
-		if len(batch) == batchSize {
-			if err := flush(); err != nil {
-				return fmt.Errorf("mark messages deleted from reader: update: %w", err)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			messageID := scanner.Text()
+			if messageID == "" {
+				return errors.New("mark messages deleted from reader: empty source message ID")
+			}
+			batch = append(batch, messageID)
+			if len(batch) == batchSize {
+				if err := flush(); err != nil {
+					return fmt.Errorf("mark messages deleted from reader: update: %w", err)
+				}
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("mark messages deleted from reader: %w", err)
-	}
-	if err := flush(); err != nil {
-		return fmt.Errorf("mark messages deleted from reader: update: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("mark messages deleted from reader: commit: %w", err)
-	}
-	return nil
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("mark messages deleted from reader: %w", err)
+		}
+		if err := flush(); err != nil {
+			return fmt.Errorf("mark messages deleted from reader: update: %w", err)
+		}
+		return nil
+	})
 }
 
 // MarkMessageDeletedByGmailID marks a message as deleted by its Gmail ID.
@@ -2549,14 +2658,23 @@ func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs,
 	if !s.fts5Available {
 		return nil
 	}
-	return s.dialect.FTSUpsert(s.db, FTSDoc{
+	doc := FTSDoc{
 		MessageID: messageID,
 		Subject:   subject,
 		Body:      bodyText,
 		FromAddr:  fromAddr,
 		ToAddrs:   toAddrs,
 		CcAddrs:   ccAddrs,
-	})
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return s.dialect.FTSUpsert(tx, doc)
+		})
+	}
+	return s.dialect.FTSUpsert(s.db, doc)
 }
 
 // BackfillFTS populates the FTS table from existing message data.
@@ -2799,7 +2917,16 @@ const latestConversationPreviewSubquery = `(SELECT snippet FROM messages
 // last_message_at, and last_message_preview from the current table state.
 // Safe to call multiple times — always produces the same result (idempotent).
 func (s *Store) RecomputeConversationStats(sourceID int64) error {
-	return s.recomputeConversationStats("source_id = ?", sourceID)
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		return s.recomputeConversationStatsWith(q, "source_id = ?", sourceID)
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	}
+	return write(s.db)
 }
 
 // RecomputeConversationStatsForMessage updates the denormalized stats only for
@@ -2811,19 +2938,23 @@ func (s *Store) RecomputeConversationStatsForMessage(messageID int64) error {
 // RecomputeConversationStatsForMessageContext is the request-aware form of
 // RecomputeConversationStatsForMessage.
 func (s *Store) RecomputeConversationStatsForMessageContext(ctx context.Context, messageID int64) error {
-	return s.recomputeConversationStatsContext(
-		ctx,
-		"id = (SELECT conversation_id FROM messages WHERE id = ?)",
-		messageID,
-	)
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		return s.recomputeConversationStatsWith(q,
+			"id = (SELECT conversation_id FROM messages WHERE id = ?)", messageID)
+	}
+	if s.syncGeneration != nil {
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
+	}
+	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
-func (s *Store) recomputeConversationStats(whereClause string, arg any) error {
-	return s.recomputeConversationStatsContext(context.Background(), whereClause, arg)
-}
-
-func (s *Store) recomputeConversationStatsContext(ctx context.Context, whereClause string, arg any) error {
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, arg any) error {
+	_, err := q.Exec(fmt.Sprintf(`
 		UPDATE conversations SET
 			message_count = (
 				SELECT COUNT(*) FROM messages
@@ -3063,6 +3194,18 @@ func (s *Store) forEachHostedContentBody(query string, sourceID int64, fn func(m
 // a non-empty title — preserves the prior behavior of not blanking out
 // stored titles when re-syncs pass an empty value.
 func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return 0, err
+	}
+	if s.syncGeneration != nil {
+		var id int64
+		err := s.withTx(func(tx *loggedTx) error {
+			var err error
+			id, err = ensureConversationWithType(tx, s.dialect, sourceID, sourceConversationID, conversationType, title)
+			return err
+		})
+		return id, err
+	}
 	return ensureConversationWithType(s.db, s.dialect, sourceID, sourceConversationID, conversationType, title)
 }
 
@@ -3404,7 +3547,15 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 			return err
 		}
 		_, err = tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
-		return err
+		if err != nil {
+			return err
+		}
+		if personID != 0 {
+			return s.publishPersonIdentityScopeChangesTx(
+				context.Background(), tx, []int64{personID},
+				peoplesweep.EvidenceEffectIdentityReassigned)
+		}
+		return nil
 	})
 }
 
@@ -4169,9 +4320,18 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 // EnsureConversationParticipant adds a participant to a conversation.
 // Uses INSERT OR IGNORE to be idempotent.
 func (s *Store) EnsureConversationParticipant(conversationID, participantID int64, role string) error {
-	_, err := s.db.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
-		VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participantID, role)
-	return err
+	write := func(q querier) error {
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		_, err := q.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+			VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participantID, role)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 // ConversationParticipantRef identifies one current member of a conversation.
@@ -4184,6 +4344,9 @@ type ConversationParticipantRef struct {
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
 	return s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncConversationSourceTx(tx, conversationID); err != nil {
+			return err
+		}
 		return replaceConversationParticipantsTx(
 			context.Background(), tx, s.dialect, conversationID, participants,
 		)
@@ -4294,9 +4457,18 @@ func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conv
 
 // UpsertReaction inserts or ignores a reaction.
 func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, reactionValue string, createdAt time.Time) error {
-	_, err := s.db.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-		VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
-	return err
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
+		return err
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	}
+	return write(s.db)
 }
 
 type ReactionRef struct {
@@ -4328,6 +4500,14 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.
 // Unlike UpsertMessageRaw (which hardcodes 'mime'), this accepts the format as a parameter.
 func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, format string) error {
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+			return upsertMessageRawWithFormat(tx, messageID, rawData, format)
+		})
+	}
 	return upsertMessageRawWithFormat(s.db, messageID, rawData, format)
 }
 
@@ -4423,13 +4603,22 @@ func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePat
 // RecomputeMessageAttachmentStats refreshes the denormalized attachment flags
 // on one message from its current attachment rows.
 func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
-	_, err := s.db.Exec(`
-		UPDATE messages
-		SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
-		    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
-		WHERE id = ?
-	`, messageID, messageID, messageID)
-	return err
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		_, err := q.Exec(`
+			UPDATE messages
+			SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
+			    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
+			WHERE id = ?
+		`, messageID, messageID, messageID)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 type AttachmentRef struct {

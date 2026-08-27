@@ -1,0 +1,39 @@
+{
+  "name": "subject attribution",
+  "allow_sensitive": false,
+  "description_overrides": {},
+  "max_requests": 2,
+  "steps": [
+    {
+      "name": "wrong person statement",
+      "excerpt": "Bob said, \"I live in Rome.\"",
+      "subject": "other",
+      "event_time": "2026-02-01T09:00:00Z",
+      "resolved_at": "2026-02-01T10:00:00Z",
+      "expected_span": [0, 27],
+      "expected_packet_error": "evidence subject person id must equal evidence person id",
+      "provider_claims": [],
+      "expected_claims": [],
+      "expected_current": {},
+      "retained_values": {},
+      "stale_resolution": false
+    },
+    {
+      "name": "scoped person statement",
+      "excerpt": "I live in Lisbon.",
+      "subject": "scoped",
+      "event_time": "2026-02-02T09:00:00Z",
+      "resolved_at": "2026-02-02T10:00:00Z",
+      "expected_span": [0, 17],
+      "provider_claims": [
+        {"target_slug":"location","relation":"support","value":"Lisbon","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":960}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"support","value":"Lisbon","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":960}
+      ],
+      "expected_current": {"location":["Lisbon"]},
+      "retained_values": {"location":["Lisbon"]},
+      "stale_resolution": false
+    }
+  ]
+}

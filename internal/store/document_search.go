@@ -17,18 +17,22 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	docembedding "go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
 const (
-	documentSearchCursorVersion = 2
-	documentSearchRRFConstant   = 60.0
-	maxDocumentSearchQueryBytes = 1_024
-	maxDocumentSearchTerms      = 20
-	maxDocumentSearchPageSize   = 100
-	maxDocumentSearchOffset     = 10_000
-	maxDocumentSearchCandidates = 10_000
-	maxDocumentSearchExcerpt    = 320
+	documentSearchCursorVersion                = 2
+	documentSearchRRFConstant                  = float64(docembedding.DefaultReciprocalRankConstant)
+	DefaultDocumentSearchCandidateLimit        = docembedding.DefaultCandidateLimit
+	MaxDocumentSearchCandidateLimit            = docembedding.MaxCandidateLimit
+	DefaultLexicalDocumentSearchCandidateLimit = 10_000
+	MaxLexicalDocumentSearchCandidateLimit     = 10_000
+	maxDocumentSearchQueryBytes                = 1_024
+	maxDocumentSearchTerms                     = 20
+	maxDocumentSearchPageSize                  = 100
+	maxDocumentSearchOffset                    = 10_000
+	maxDocumentSearchExcerpt                   = 320
 )
 
 var (
@@ -39,58 +43,82 @@ var (
 )
 
 type DocumentSearchRequest struct {
-	Query         string
-	SourceIDs     []int64
-	MessageTypes  []string
-	AttachmentID  int64
-	MessageID     int64
-	PageSize      int
-	Cursor        string
-	After         *time.Time
-	Before        *time.Time
-	PersonID      int64
-	ParticipantID int64
-	Directions    []personscope.Direction
-	Person        *personscope.Scope
+	Query          string                  `json:"query"`
+	SourceIDs      []int64                 `json:"source_ids,omitempty"`
+	MessageIDs     []int64                 `json:"message_ids,omitempty"`
+	MessageTypes   []string                `json:"message_types,omitempty"`
+	AttachmentID   int64                   `json:"attachment_id,omitempty"`
+	MessageID      int64                   `json:"message_id,omitempty"`
+	PageSize       int                     `json:"page_size"`
+	Cursor         string                  `json:"cursor,omitempty"`
+	SearchMode     string                  `json:"search_mode,omitempty"`
+	CandidateLimit int                     `json:"candidate_limit,omitempty"`
+	After          *time.Time              `json:"after,omitempty"`
+	Before         *time.Time              `json:"before,omitempty"`
+	PersonID       int64                   `json:"person_id,omitempty"`
+	ParticipantID  int64                   `json:"participant_id,omitempty"`
+	Directions     []personscope.Direction `json:"directions,omitempty"`
+	Person         *personscope.Scope      `json:"person,omitempty"`
 }
 
 type DocumentSearchResponse struct {
-	Results    []DocumentSearchResult `json:"results"`
-	NextCursor string                 `json:"next_cursor,omitempty"`
-	Revision   int64                  `json:"revision"`
-	Truncated  bool                   `json:"truncated,omitempty"`
+	Results                     []DocumentSearchResult `json:"results"`
+	NextCursor                  string                 `json:"next_cursor,omitempty"`
+	Revision                    int64                  `json:"revision"`
+	Truncated                   bool                   `json:"truncated,omitempty"`
+	EffectiveMode               string                 `json:"effective_mode,omitempty"`
+	VectorGenerationID          int64                  `json:"vector_generation_id,omitempty"`
+	VectorGenerationFingerprint string                 `json:"vector_generation_fingerprint,omitempty"`
 }
 
 type DocumentSearchResult struct {
-	AttachmentID      int64                   `json:"attachment_id"`
-	MessageID         int64                   `json:"message_id"`
-	ConversationID    int64                   `json:"conversation_id"`
-	SourceID          int64                   `json:"source_id"`
-	SourceMessageID   string                  `json:"source_message_id,omitempty"`
-	OccurredAt        *time.Time              `json:"occurred_at,omitempty"`
-	OccurrenceKey     string                  `json:"occurrence_key"`
-	SourcePartKey     string                  `json:"source_part_key,omitempty"`
-	Filename          string                  `json:"filename,omitempty"`
-	ContainingTitle   string                  `json:"containing_title,omitempty"`
-	MIMEType          string                  `json:"mime_type,omitempty"`
-	CanonicalBlobHash string                  `json:"canonical_blob_hash"`
-	OtherLiveCopies   int                     `json:"other_live_copies"`
-	ChunkKey          string                  `json:"chunk_key"`
-	ChunkOrdinal      int                     `json:"chunk_ordinal"`
-	HeadingPath       []string                `json:"heading_path,omitempty"`
-	FirstUnitIndex    int                     `json:"first_unit_index"`
-	LastUnitIndex     int                     `json:"last_unit_index"`
-	Excerpt           string                  `json:"excerpt"`
-	HighlightStart    int                     `json:"highlight_start"`
-	HighlightEnd      int                     `json:"highlight_end"`
-	ProfileID         string                  `json:"profile_id"`
-	ExtractionID      string                  `json:"extraction_id"`
-	Provider          string                  `json:"provider"`
-	Model             string                  `json:"model"`
-	MatchedSignals    []string                `json:"matched_signals"`
-	Truncated         bool                    `json:"truncated"`
-	Rank              int                     `json:"rank"`
-	PersonProvenance  *personscope.Provenance `json:"person_provenance,omitempty"`
+	AttachmentID                int64                   `json:"attachment_id"`
+	MessageID                   int64                   `json:"message_id"`
+	ConversationID              int64                   `json:"conversation_id"`
+	SourceID                    int64                   `json:"source_id"`
+	SourceMessageID             string                  `json:"source_message_id,omitempty"`
+	OccurredAt                  *time.Time              `json:"occurred_at,omitempty"`
+	OccurrenceKey               string                  `json:"occurrence_key"`
+	SourcePartKey               string                  `json:"source_part_key,omitempty"`
+	Filename                    string                  `json:"filename,omitempty"`
+	ContainingTitle             string                  `json:"containing_title,omitempty"`
+	MIMEType                    string                  `json:"mime_type,omitempty"`
+	CanonicalBlobHash           string                  `json:"canonical_blob_hash"`
+	OtherLiveCopies             int                     `json:"other_live_copies"`
+	ChunkKey                    string                  `json:"chunk_key"`
+	ChunkOrdinal                int                     `json:"chunk_ordinal"`
+	HeadingPath                 []string                `json:"heading_path,omitempty"`
+	FirstUnitIndex              int                     `json:"first_unit_index"`
+	LastUnitIndex               int                     `json:"last_unit_index"`
+	Excerpt                     string                  `json:"excerpt"`
+	HighlightStart              int                     `json:"highlight_start"`
+	HighlightEnd                int                     `json:"highlight_end"`
+	ProfileID                   string                  `json:"profile_id"`
+	ExtractionID                string                  `json:"extraction_id"`
+	Provider                    string                  `json:"provider"`
+	Model                       string                  `json:"model"`
+	MatchedSignals              []string                `json:"matched_signals"`
+	Truncated                   bool                    `json:"truncated"`
+	Rank                        int                     `json:"rank"`
+	PersonProvenance            *personscope.Provenance `json:"person_provenance,omitempty"`
+	LexicalRank                 int                     `json:"lexical_rank,omitempty"`
+	SemanticRank                int                     `json:"semantic_rank,omitempty"`
+	SemanticScore               float64                 `json:"semantic_score,omitempty"`
+	FusionScore                 float64                 `json:"fusion_score,omitempty"`
+	VectorToken                 string                  `json:"vector_token,omitempty"`
+	VectorGenerationID          int64                   `json:"vector_generation_id,omitempty"`
+	VectorGenerationFingerprint string                  `json:"vector_generation_fingerprint,omitempty"`
+	VectorEmbeddingProfile      string                  `json:"vector_embedding_profile,omitempty"`
+	VectorModel                 string                  `json:"vector_model,omitempty"`
+	VectorDimension             int                     `json:"vector_dimension,omitempty"`
+}
+
+// DocumentVectorSearchHit is an opaque backend hit presented for authoritative
+// occurrence expansion. Rank is one-based in backend order.
+type DocumentVectorSearchHit struct {
+	Token string
+	Score float64
+	Rank  int
 }
 
 type documentSearchCursor struct {
@@ -104,6 +132,7 @@ type documentSearchCursor struct {
 type documentSearchHashPayload struct {
 	Query        string             `json:"query"`
 	SourceIDs    []int64            `json:"source_ids"`
+	MessageIDs   []int64            `json:"message_ids"`
 	MessageTypes []string           `json:"message_types"`
 	AttachmentID int64              `json:"attachment_id"`
 	MessageID    int64              `json:"message_id"`
@@ -145,7 +174,7 @@ func (s *Store) SearchDocuments(
 	moreCandidates := contentMore || filenameMore || fusionMore
 	response := DocumentSearchResponse{
 		Revision:  revision,
-		Truncated: moreCandidates && candidateLimit == maxDocumentSearchCandidates,
+		Truncated: moreCandidates,
 	}
 	if offset >= len(rows) {
 		return response, nil
@@ -177,6 +206,164 @@ func (s *Store) SearchDocuments(
 	return response, nil
 }
 
+// ResolveDocumentVectorSearchOccurrences filters backend hits through the
+// active generation's exact publication snapshot and expands surviving chunks
+// to scoped live attachment occurrences. The limit applies after occurrence
+// deduplication, so duplicate chunks and heavily reused blobs stay bounded.
+func (s *Store) ResolveDocumentVectorSearchOccurrences(
+	ctx context.Context,
+	generationID int64,
+	hits []DocumentVectorSearchHit,
+	request DocumentSearchRequest,
+	limit int,
+) ([]DocumentSearchResult, bool, error) {
+	if generationID <= 0 {
+		return nil, false, fmt.Errorf("%w: vector generation must be positive", ErrDocumentSearchInvalidRequest)
+	}
+	if limit < 1 || limit > maxDocumentVectorCandidateLimit+1 || len(hits) > maxDocumentVectorCandidateLimit {
+		return nil, false, fmt.Errorf("%w: semantic candidate bounds are invalid", ErrDocumentSearchInvalidRequest)
+	}
+	if len(hits) == 0 {
+		return []DocumentSearchResult{}, false, nil
+	}
+	var err error
+	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs, "source IDs")
+	if err != nil {
+		return nil, false, err
+	}
+	request.MessageIDs, err = sortedUniquePositive(request.MessageIDs, "message IDs")
+	if err != nil {
+		return nil, false, err
+	}
+	request.MessageTypes, err = sortedUniqueNonempty(request.MessageTypes)
+	if err != nil {
+		return nil, false, err
+	}
+	if request.AttachmentID < 0 || request.MessageID < 0 {
+		return nil, false, fmt.Errorf("%w: request scope has invalid bounds", ErrDocumentSearchInvalidRequest)
+	}
+	seenTokens := make(map[string]struct{}, len(hits))
+	values := make([]string, 0, len(hits))
+	args := make([]any, 0, len(hits)*3+6)
+	for _, hit := range hits {
+		if !documentVectorFingerprintPattern.MatchString(hit.Token) || hit.Rank < 1 || math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) {
+			return nil, false, fmt.Errorf("%w: semantic hit is invalid", ErrDocumentSearchInvalidRequest)
+		}
+		if _, exists := seenTokens[hit.Token]; exists {
+			return nil, false, fmt.Errorf("%w: semantic hit token is duplicated", ErrDocumentSearchInvalidRequest)
+		}
+		seenTokens[hit.Token] = struct{}{}
+		// Explicit parameter casts keep PostgreSQL from inferring a parameter-only
+		// VALUES column as text (which would order rank 10 before rank 2).
+		values = append(values, "(CAST(? AS TEXT), CAST(? AS INTEGER), CAST(? AS DOUBLE PRECISION))")
+		args = append(args, hit.Token, hit.Rank, hit.Score)
+	}
+	conditions, scopeArgs := documentSearchScope(request, "m", "a", "cv")
+	args = append(args, generationID, string(DocumentVectorGenerationActive))
+	args = append(args, scopeArgs...)
+	args = append(args, limit+1)
+	query := `
+		WITH requested(token, semantic_rank, semantic_score) AS (
+			VALUES ` + strings.Join(values, ", ") + `
+		), ranked AS (
+			SELECT ` + documentSearchRankedSelectColumns + `,
+			       v.token AS vector_token,
+			       requested.semantic_rank AS semantic_rank,
+			       requested.semantic_score AS semantic_score,
+			       g.id AS vector_generation_id,
+			       g.fingerprint AS vector_generation_fingerprint,
+			       g.embedding_profile AS vector_embedding_profile,
+			       g.model AS vector_model,
+			       g.dimension AS vector_dimension,
+			       ROW_NUMBER() OVER (
+			           PARTITION BY o.occurrence_key
+			           ORDER BY requested.semantic_rank, requested.token
+			       ) AS occurrence_rank
+			FROM requested
+			JOIN document_vector_publications v ON v.token = requested.token
+			JOIN document_vector_generations g ON g.id = v.generation_id
+			JOIN document_index_state ds ON ds.singleton = 1
+			JOIN document_extraction_heads h
+			  ON h.extraction_id = v.extraction_id
+			 AND h.profile_id = v.extraction_profile_id
+			 AND h.canonical_blob_hash = v.canonical_blob_hash
+			 AND h.extraction_input_key = v.extraction_input_key
+			JOIN document_extractions e ON e.id = h.extraction_id
+			JOIN document_extraction_profiles p ON p.id = h.profile_id
+			JOIN document_provider_consents c ON c.profile_id = p.id
+			JOIN document_chunks dc
+			  ON dc.id = v.chunk_id AND dc.extraction_id = v.extraction_id
+			 AND dc.chunk_key = v.chunk_key AND dc.checksum = v.chunk_checksum
+			JOIN document_occurrences o ON o.canonical_blob_hash = h.canonical_blob_hash
+			JOIN attachments a ON a.id = o.attachment_id
+			JOIN messages m ON m.id = o.message_id
+			JOIN conversations cv ON cv.id = m.conversation_id
+			WHERE g.id = ? AND g.state = ?
+			  AND ds.target_profile_id = g.target_extraction_profile_id
+			  AND v.state = 'ready'
+			  AND e.source_sequence = v.source_sequence
+			  AND h.source_sequence = v.source_sequence
+			  AND ` + documentSearchValidity() + conditions + `
+		)
+		SELECT ` + documentSearchOuterColumns + `,
+		       vector_token, semantic_rank, semantic_score,
+		       vector_generation_id, vector_generation_fingerprint,
+		       vector_embedding_profile, vector_model, vector_dimension
+		FROM ranked
+		WHERE occurrence_rank = 1
+		ORDER BY semantic_rank, occurrence_key
+		LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve document vector search occurrences: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	results := make([]DocumentSearchResult, 0, limit+1)
+	for rows.Next() {
+		var result DocumentSearchResult
+		var headingJSON, text string
+		var occurredAt nullableTimestamp
+		if err := rows.Scan(
+			&result.AttachmentID, &result.MessageID, &result.ConversationID, &result.SourceID,
+			&result.SourceMessageID, &occurredAt, &result.OccurrenceKey,
+			&result.SourcePartKey, &result.Filename, &result.ContainingTitle, &result.MIMEType,
+			&result.CanonicalBlobHash, &result.ChunkKey, &result.ChunkOrdinal, &headingJSON,
+			&result.FirstUnitIndex, &result.LastUnitIndex, &text,
+			&result.ProfileID, &result.ExtractionID, &result.Provider, &result.Model,
+			&result.Truncated, &result.VectorToken, &result.SemanticRank, &result.SemanticScore,
+			&result.VectorGenerationID, &result.VectorGenerationFingerprint,
+			&result.VectorEmbeddingProfile, &result.VectorModel, &result.VectorDimension,
+		); err != nil {
+			return nil, false, fmt.Errorf("scan document vector search occurrence: %w", err)
+		}
+		if occurredAt.Valid {
+			result.OccurredAt = &occurredAt.Time
+		}
+		if err := json.Unmarshal([]byte(headingJSON), &result.HeadingPath); err != nil {
+			return nil, false, fmt.Errorf("decode document vector search heading path: %w", err)
+		}
+		result.Excerpt, result.HighlightStart, result.HighlightEnd = documentSearchExcerpt(text, nil)
+		result.MatchedSignals = []string{"semantic"}
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate document vector search occurrences: %w", err)
+	}
+	truncated := len(results) > limit
+	if truncated {
+		results = results[:limit]
+	}
+	if err := s.populateDocumentLiveCopyCounts(ctx, results); err != nil {
+		return nil, false, err
+	}
+	if request.Person != nil {
+		if err := s.populateDocumentPersonProvenance(ctx, results, *request.Person); err != nil {
+			return nil, false, err
+		}
+	}
+	return results, truncated, nil
+}
+
 func (s *Store) prepareDocumentSearch(
 	ctx context.Context,
 	request DocumentSearchRequest,
@@ -195,7 +382,11 @@ func (s *Store) prepareDocumentSearch(
 	if request.PageSize == 0 {
 		request.PageSize = 20
 	}
+	if request.CandidateLimit == 0 {
+		request.CandidateLimit = DefaultLexicalDocumentSearchCandidateLimit
+	}
 	if request.PageSize < 1 || request.PageSize > maxDocumentSearchPageSize ||
+		request.CandidateLimit < 1 || request.CandidateLimit > MaxLexicalDocumentSearchCandidateLimit ||
 		request.AttachmentID < 0 || request.MessageID < 0 || request.PersonID < 0 || request.ParticipantID < 0 ||
 		(request.PersonID > 0 && request.ParticipantID > 0) ||
 		((request.PersonID > 0 || request.ParticipantID > 0) && request.Person == nil) {
@@ -203,7 +394,11 @@ func (s *Store) prepareDocumentSearch(
 	}
 	var err error
 	request.Query = strings.ToLower(strings.Join(terms, " "))
-	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs)
+	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs, "source IDs")
+	if err != nil {
+		return request, nil, "", 0, 0, 0, err
+	}
+	request.MessageIDs, err = sortedUniquePositive(request.MessageIDs, "message IDs")
 	if err != nil {
 		return request, nil, "", 0, 0, 0, err
 	}
@@ -230,7 +425,7 @@ func (s *Store) prepareDocumentSearch(
 	// RRF ranks are meaningful only for one fixed candidate set. Every page
 	// therefore evaluates the same bounded set instead of widening it between
 	// cursors, which could reorder earlier results and cause skips or repeats.
-	candidateLimit := maxDocumentSearchCandidates
+	candidateLimit := request.CandidateLimit
 	if request.Cursor != "" {
 		cursor, decodeErr := decodeDocumentSearchCursor(request.Cursor)
 		if decodeErr != nil {
@@ -258,7 +453,7 @@ func (s *Store) searchDocumentContent(
 ) ([]documentSearchRow, bool, error) {
 	ftsArg := s.dialect.BuildFTSArg(terms)
 	conditions, scopeArgs := documentSearchScope(request, "m", "a", "cv")
-	validity := documentSearchValidity("p", "c", "h", "o", "a", "m", "ds")
+	validity := documentSearchValidity()
 	var query string
 	args := make([]any, 0, len(scopeArgs)+2)
 	if s.IsPostgreSQL() {
@@ -355,7 +550,7 @@ func (s *Store) searchDocumentFilenames(
 		JOIN messages m ON m.id = o.message_id
 		JOIN conversations cv ON cv.id = m.conversation_id
 		CROSS JOIN document_index_state ds
-		WHERE ` + documentSearchValidity("p", "c", "h", "o", "a", "m", "ds") + conditions + `
+		WHERE ` + documentSearchValidity() + conditions + `
 		ORDER BY LOWER(COALESCE(o.filename, '')), o.occurrence_key
 		LIMIT ?`
 	args = append(args, limit+1)
@@ -401,15 +596,21 @@ const documentSearchOuterColumns = `
 		first_unit_index, last_unit_index, chunk_text,
 		profile_id, extraction_id, provider, model, truncated`
 
-func documentSearchValidity(profile, consent, head, occurrence, attachment, message, state string) string {
+func documentSearchValidity() string {
+	return documentSearchValidityForConsent("c")
+}
+
+func documentSearchValidityForConsent(consentName string) string {
+	const profile, head, attachment, message, state = "p", "h", "a", "m", "ds"
+
 	return profile + `.enabled = TRUE
 		AND ` + profile + `.retired_at IS NULL
-		AND ` + consent + `.profile_fingerprint = ` + profile + `.fingerprint
-		AND ` + consent + `.retention_posture = ` + profile + `.retention_posture
-		AND ` + consent + `.training_posture = ` + profile + `.training_posture
-		AND ` + occurrence + `.attachment_role = 'standalone'
+		AND ` + consentName + `.profile_fingerprint = ` + profile + `.fingerprint
+		AND ` + consentName + `.retention_posture = ` + profile + `.retention_posture
+		AND ` + consentName + `.training_posture = ` + profile + `.training_posture
+		AND o.attachment_role = 'standalone'
 		AND ` + attachment + `.attachment_role = 'standalone'
-		AND ` + occurrence + `.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
+		AND o.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + attachment + `.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + LiveMessagesWhere(message, true) + `
 		AND (` + attachment + `.content_hash = ` + head + `.canonical_blob_hash
@@ -456,9 +657,9 @@ func documentSearchValidity(profile, consent, head, occurrence, attachment, mess
 		              AND fallback_consent.retention_posture = fallback_profile.retention_posture
 		              AND fallback_consent.training_posture = fallback_profile.training_posture
 		              AND (
-		                  fallback_consent.consented_at > ` + consent + `.consented_at
-		                  OR (fallback_consent.consented_at = ` + consent + `.consented_at
-		                      AND fallback_profile.id > ` + profile + `.id)
+			          fallback_consent.consented_at > ` + consentName + `.consented_at
+			          OR (fallback_consent.consented_at = ` + consentName + `.consented_at
+					  AND fallback_profile.id > p.id)
 		              )
 		        )
 		    )
@@ -482,6 +683,14 @@ func documentSearchScope(request DocumentSearchRequest, message, attachment, con
 		conditions.WriteByte(')')
 		for _, messageType := range request.MessageTypes {
 			args = append(args, messageType)
+		}
+	}
+	if len(request.MessageIDs) > 0 {
+		conditions.WriteString(` AND ` + message + `.id IN (`)
+		conditions.WriteString(documentPlaceholders(len(request.MessageIDs)))
+		conditions.WriteByte(')')
+		for _, id := range request.MessageIDs {
+			args = append(args, id)
 		}
 	}
 	if request.AttachmentID > 0 {
@@ -593,7 +802,7 @@ func (s *Store) populateDocumentLiveCopyCounts(
 		JOIN messages m ON m.id = o.message_id
 		CROSS JOIN document_index_state ds
 		WHERE h.canonical_blob_hash IN (` + documentPlaceholders(len(hashes)) + `)
-		  AND ` + documentSearchValidity("p", "c", "h", "o", "a", "m", "ds") + `
+		  AND ` + documentSearchValidity() + `
 		GROUP BY h.canonical_blob_hash`
 	args := make([]any, len(hashes))
 	for index := range hashes {
@@ -709,7 +918,8 @@ func documentSearchExcerpt(text string, terms []string) (string, int, int) {
 
 func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {
 	payload := documentSearchHashPayload{
-		Query: request.Query, SourceIDs: request.SourceIDs, MessageTypes: request.MessageTypes,
+		Query: request.Query, SourceIDs: request.SourceIDs, MessageIDs: request.MessageIDs,
+		MessageTypes: request.MessageTypes,
 		AttachmentID: request.AttachmentID, MessageID: request.MessageID, PageSize: request.PageSize,
 		After: request.After, Before: request.Before, Person: request.Person,
 	}
@@ -740,7 +950,7 @@ func decodeDocumentSearchCursor(value string) (documentSearchCursor, error) {
 	if err := decoder.Decode(&cursor); err != nil || cursor.Version != documentSearchCursorVersion ||
 		!validLowerSHA256(cursor.RequestHash) || cursor.Revision < 0 ||
 		cursor.Offset <= 0 || cursor.Offset > maxDocumentSearchOffset ||
-		cursor.CandidateLimit < 1 || cursor.CandidateLimit > maxDocumentSearchCandidates {
+		cursor.CandidateLimit < 1 || cursor.CandidateLimit > MaxLexicalDocumentSearchCandidateLimit {
 		return documentSearchCursor{}, ErrDocumentSearchInvalidCursor
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -749,13 +959,13 @@ func decodeDocumentSearchCursor(value string) (documentSearchCursor, error) {
 	return cursor, nil
 }
 
-func sortedUniquePositive(values []int64) ([]int64, error) {
+func sortedUniquePositive(values []int64, field string) ([]int64, error) {
 	result := slices.Clone(values)
 	slices.Sort(result)
 	result = slices.Compact(result)
 	for _, value := range result {
 		if value <= 0 {
-			return nil, fmt.Errorf("%w: source IDs must be positive", ErrDocumentSearchInvalidRequest)
+			return nil, fmt.Errorf("%w: %s must be positive", ErrDocumentSearchInvalidRequest, field)
 		}
 	}
 	return result, nil

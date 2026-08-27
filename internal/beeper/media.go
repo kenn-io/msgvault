@@ -382,6 +382,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return nil, err
 	}
+	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
 			_ = imp.store.FailSync(syncID, err.Error())

@@ -65,17 +65,19 @@ const (
 // Note: conversation scope for ListConversationMessages is passed as
 // an explicit parameter, not through this filter.
 type TextFilter struct {
-	SourceID      *int64
-	ContactPhone  string
-	ContactName   string
-	SourceType    string
-	Label         string
-	TimeRange     TimeRange
-	After         *time.Time
-	Before        *time.Time
-	Pagination    Pagination
-	SortField     TextSortField
-	SortDirection SortDirection
+	SourceID       *int64
+	ParticipantIDs []int64
+	SearchQuery    string
+	ContactPhone   string
+	ContactName    string
+	SourceType     string
+	Label          string
+	TimeRange      TimeRange
+	After          *time.Time
+	Before         *time.Time
+	Pagination     Pagination
+	SortField      TextSortField
+	SortDirection  SortDirection
 }
 
 // TextAggregateOptions configures a text aggregate query.

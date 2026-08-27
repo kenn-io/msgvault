@@ -55,6 +55,29 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
+  it('labels an outgoing chat message with no sender identity as You', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      id: 7,
+      anchor_id: 2,
+      messages: [message(2, 'whatsapp')].map((entry) => ({
+        ...entry,
+        from: '',
+        is_from_me: true
+      })),
+      has_before: false,
+      has_after: false,
+      total: 1
+    }));
+
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
+    expect(anchorCard.textContent).toContain('You');
+    expect(anchorCard.textContent).not.toContain('Unknown sender');
+  });
+
   it('sends optional start/end bounds when scoping to a chat burst day', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

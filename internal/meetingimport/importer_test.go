@@ -138,6 +138,112 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Equal(int64(0), latest.MessagesUpdated)
 }
 
+func TestImporterPostSupersessionWriteFailsGenerationFence(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL-only stale meeting writer regression")
+	}
+	req := validImportRequest(t)
+	importer := NewImporter(st, Hooks{})
+	baseline, err := importer.Import(t.Context(), req)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+		`DELETE FROM messages WHERE id = ?`), baseline.MessageID)
+	requirements.NoError(err)
+
+	holder, err := st.DB().Conn(t.Context())
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = holder.Close() })
+	tx, err := holder.BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	locked := true
+	t.Cleanup(func() {
+		if locked {
+			_ = tx.Rollback()
+		}
+	})
+	_, err = tx.ExecContext(t.Context(), `LOCK TABLE messages IN ACCESS EXCLUSIVE MODE`)
+	requirements.NoError(err)
+	var holderPID int
+	requirements.NoError(tx.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&holderPID))
+
+	type importResult struct {
+		result Result
+		err    error
+	}
+	importDone := make(chan importResult, 1)
+	importFinished := make(chan struct{})
+	go func() {
+		defer close(importFinished)
+		result, importErr := importer.Import(t.Context(), req)
+		importDone <- importResult{result: result, err: importErr}
+	}()
+	t.Cleanup(func() {
+		if locked {
+			_ = tx.Rollback()
+			locked = false
+		}
+		waitForMeetingImportGoroutine(t, importFinished)
+	})
+	waitForBlockedMeetingImportPID(t, st, holderPID, "SELECT source_message_id",
+		"meeting importer did not pause in its post-start message lookup")
+
+	var oldRunID int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT id FROM sync_runs
+		WHERE source_id = ? AND status = 'running'
+	`), baseline.SourceID).Scan(&oldRunID))
+	newRunID, err := st.StartSyncContext(t.Context(), baseline.SourceID, "superseding-test-run")
+	requirements.NoError(err)
+	requirements.NotEqual(oldRunID, newRunID)
+	requirements.NoError(tx.Commit())
+	locked = false
+
+	got := <-importDone
+	requirements.ErrorIs(got.err, store.ErrSyncRunSuperseded)
+	checks.Zero(got.result.MessageID)
+	var messageCount int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM messages
+		WHERE source_id = ? AND source_message_id = ?
+	`), baseline.SourceID, "meeting:42").Scan(&messageCount))
+	checks.Zero(messageCount,
+		"a meeting writer must not commit after its sync generation is superseded")
+	requirements.NoError(st.FailSync(newRunID, "test cleanup"))
+}
+
+func waitForBlockedMeetingImportPID(
+	t *testing.T,
+	st *store.Store,
+	blockerPID int,
+	queryFragment string,
+	message string,
+) {
+	t.Helper()
+	var blockedPID int
+	var waitErr error
+	require.Eventually(t, func() bool {
+		waitErr = st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MIN(pid), 0)
+			FROM pg_stat_activity
+			WHERE $1 = ANY(pg_blocking_pids(pid))
+			  AND POSITION($2 IN query) > 0`,
+			blockerPID, queryFragment).Scan(&blockedPID)
+		return waitErr == nil && blockedPID > 0
+	}, 5*time.Second, 10*time.Millisecond, message)
+	require.NoError(t, waitErr)
+}
+
+func waitForMeetingImportGoroutine(t *testing.T, finished <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		assert.Fail(t, "meeting import test goroutine did not finish")
+	}
+}
+
 func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -762,40 +868,20 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	assert.Zero(messageCount)
 }
 
-func TestImporterCancellationDuringCheckpointLeavesFailedSync(t *testing.T) {
-	testutil.SkipIfPostgres(t, "uses a SQLite trigger and registered function to pause the checkpoint")
+func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	st.DB().SetMaxOpenConns(1)
+	checkpointStarted := make(chan struct{})
+	releaseCheckpoint := make(chan struct{})
 	importer := NewImporter(st, Hooks{})
+	importer.beforeCheckpointForTest = func() {
+		close(checkpointStarted)
+		<-releaseCheckpoint
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	checkpointStarted := make(chan struct{})
-	conn, err := st.DB().Conn(context.Background())
-	require.NoError(err, "get SQLite connection")
-	err = conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok, "driver connection is SQLite")
-		return sqliteConn.RegisterFunc("wait_for_checkpoint_cancel", func() int {
-			close(checkpointStarted)
-			<-ctx.Done()
-			return 0
-		}, true)
-	})
-	require.NoError(err, "register cancellation function")
-	require.NoError(conn.Close(), "return SQLite connection to pool")
-	_, err = st.DB().Exec(`
-		CREATE TRIGGER wait_before_meeting_checkpoint
-		BEFORE UPDATE OF messages_processed ON sync_runs
-		WHEN NEW.messages_processed = 1 AND NEW.status = 'running'
-		BEGIN
-			SELECT wait_for_checkpoint_cancel();
-		END
-	`)
-	require.NoError(err, "create checkpoint cancellation trigger")
-
 	req := validImportRequest(t)
 	done := make(chan error, 1)
 	go func() {
@@ -809,13 +895,14 @@ func TestImporterCancellationDuringCheckpointLeavesFailedSync(t *testing.T) {
 		require.FailNow("meeting import did not reach checkpoint")
 	}
 	cancel()
+	close(releaseCheckpoint)
 
 	select {
-	case err = <-done:
+	case err := <-done:
+		require.ErrorIs(err, context.Canceled)
 	case <-time.After(time.Second):
 		require.FailNow("meeting import did not stop after cancellation")
 	}
-	require.ErrorIs(err, context.Canceled)
 
 	var messageCount int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))

@@ -8,9 +8,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -282,7 +285,9 @@ func TestActivateBuiltGeneration_ContextualLifecycleErrorsDoNotActivateAnotherGe
 	})
 }
 
-func setupVectorFeaturesFixture(t *testing.T, apiFormat vector.EmbeddingAPIFormat, readOnly bool) *vectorFeatures {
+func setupVectorFeaturesFixture(
+	t *testing.T, apiFormat vector.EmbeddingAPIFormat, readOnly bool, mutate ...func(*config.Config),
+) *vectorFeatures {
 	t.Helper()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
@@ -294,8 +299,13 @@ func setupVectorFeaturesFixture(t *testing.T, apiFormat vector.EmbeddingAPIForma
 	c.Vector.Embeddings.Model = "text-embedding-test"
 	c.Vector.Embeddings.Dimension = 4
 	c.Vector.Embeddings.APIFormat = apiFormat
+	c.Attachments.Documents.Index.Embeddings.Enabled = true
+	c.Attachments.Documents.Index.Embeddings.Profile = "vector.embeddings"
 	if apiFormat == vector.APIFormatVoyageContextual {
 		c.Vector.Embeddings.Model = "voyage-context-4"
+	}
+	for _, apply := range mutate {
+		apply(c)
 	}
 	withTestConfig(t, c)
 
@@ -303,12 +313,62 @@ func setupVectorFeaturesFixture(t *testing.T, apiFormat vector.EmbeddingAPIForma
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	require.NoError(t, s.InitSchema())
+	fingerprint := strings.Repeat("d", 64)
+	profile := store.DocumentExtractionProfile{
+		ID: "profile-" + fingerprint, Fingerprint: fingerprint, Provider: "synthetic",
+		Endpoint: "https://documents.example.test/v1", Region: localValue, Model: "extract-test",
+		RetentionPosture: "standard", TrainingPosture: "opted-out",
+		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
+	}
+	_, err = s.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(t, err)
+	_, err = s.DB().Exec(s.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
+	require.NoError(t, err)
+	spec, err := configuredDocumentVectorSpec(t.Context(), s)
+	require.NoError(t, err)
+	documentConsent, err := configuredDocumentVectorConsentSpec(spec)
+	require.NoError(t, err)
+	queryConsent, err := configuredDocumentVectorQueryConsentSpec(spec)
+	require.NoError(t, err)
+	for _, consentSpec := range []store.DocumentVectorConsentSpec{documentConsent, queryConsent} {
+		_, _, err = s.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
+		require.NoError(t, err)
+	}
 
 	vf, err := setupVectorFeatures(t.Context(), s, mainPath, readOnly)
 	require.NoError(t, err)
 	require.NotNil(t, vf)
 	t.Cleanup(func() { _ = vf.Close() })
 	return vf
+}
+
+func TestSetupVectorFeaturesDocumentClientRejectsCrossOriginRedirects(t *testing.T) {
+	for _, apiFormat := range []vector.EmbeddingAPIFormat{vector.APIFormatOpenAI, vector.APIFormatVoyageContextual} {
+		t.Run(string(apiFormat), func(t *testing.T) {
+			var targetRequests atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				targetRequests.Add(1)
+			}))
+			t.Cleanup(target.Close)
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", target.URL+"/outside-consent")
+				w.WriteHeader(http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(origin.Close)
+
+			vf := setupVectorFeaturesFixture(t, apiFormat, false, func(c *config.Config) {
+				c.Vector.Embeddings.Endpoint = origin.URL
+			})
+			_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{{
+				Chunks: []string{"private attachment text"},
+			}})
+
+			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
+			_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query text")
+			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
+			assert.Zero(t, targetRequests.Load(), "attachment text must not reach the redirect target")
+		})
+	}
 }
 
 func TestSetupVectorFeatures_SelectsRunnerByAPIFormat(t *testing.T) {

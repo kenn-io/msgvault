@@ -366,6 +366,11 @@ type SearchParticipantFilesPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListParticipantInboxesPath struct {
+	// ID Observed participant cluster member ID
+	ID int64 `json:"id"`
+}
+
 type GetParticipantContextSummaryPath struct {
 	// ID Observed participant cluster member ID
 	ID int64 `json:"id"`
@@ -455,6 +460,58 @@ type ListPersonEmploymentsPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListPersonFactClaimsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonFactDecisionsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonFactEvidencePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonFactEvidenceStatusEventsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonFactPinsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type SetPersonFactPinPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Kind Closed person fact target kind
+	Kind SetPersonFactPinPathKind `json:"kind" validate:"required"`
+
+	// Key Exact person fact target key
+	Key string `json:"key" validate:"required"`
+}
+
+func (s SetPersonFactPinPath) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(s.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type SearchPersonFilesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -466,6 +523,11 @@ type MergePersonsPath struct {
 }
 
 type ListPersonMergesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type AppendPersonNotePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
 }
@@ -567,6 +629,11 @@ type GetRelationshipTypePath struct {
 
 type PatchRelationshipTypePath struct {
 	// ID Relationship type ID
+	ID int64 `json:"id"`
+}
+
+type GetRelationshipCalendarPath struct {
+	// ID Any member participant ID of the counterpart's identity cluster
 	ID int64 `json:"id"`
 }
 

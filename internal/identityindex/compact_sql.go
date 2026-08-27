@@ -2,7 +2,9 @@ package identityindex
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -10,16 +12,17 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL() string {
+func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, attachment_count,
+	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
 	       canonical_id
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
+	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -28,6 +31,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
+	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -50,6 +54,7 @@ WITH logical_people AS (
 		       source_id := source_id,
 		       source_type := source_type,
 		       activity_count := activity_count,
+		       meeting_count := meeting_count,
 		       file_count := file_count,
 		       first_at := first_at,
 		       last_at := last_at
@@ -57,13 +62,36 @@ WITH logical_people AS (
 	FROM source_rows
 	GROUP BY canonical_id
 )
+` + relationshipTemperatureCTEs(effectiveAt) + `
 SELECT d.canonical_id, d.display_label, d.partial_label, d.member_ids,
-       d.search_values, d.is_owner, t.activity_count, t.file_count,
-       t.first_at, t.last_at, c.source_counts, r.source_rollups
+	   d.search_values, d.search_primitives, d.is_owner,
+	   t.activity_count, t.meeting_count, t.file_count,
+       t.first_at, t.last_at, c.source_counts, r.source_rollups,
+	   coalesce(cr.temperature, 0)::INTEGER AS current_temperature,
+	   coalesce(cr.score_rank, 0)::BIGINT AS current_temperature_rank,
+	   coalesce(cr.population, 0)::BIGINT AS current_temperature_population,
+	   coalesce(cr.raw_score, 0)::DOUBLE AS current_raw_score,
+	   coalesce(cr.sent_signal, 0)::DOUBLE AS current_sent_signal,
+	   coalesce(cr.received_volume, 0)::DOUBLE AS current_received_volume,
+	   coalesce(cr.meeting_signal, 0)::DOUBLE AS current_meeting_signal,
+	   coalesce(cr.modalities, 0)::INTEGER AS current_modalities,
+	   DATE '` + effectiveAt.UTC().Format(time.DateOnly) + `' AS temperature_effective_date,
+	   TIMESTAMP '` + effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999") + `' AS temperature_effective_at,
+	   ` + strconv.Itoa(RelationshipScoreVersion) + `::INTEGER AS temperature_score_version,
+	   coalesce(ar.annual_temperatures, []::STRUCT(
+	       year INTEGER, temperature INTEGER, rank BIGINT, population BIGINT,
+	       raw_score DOUBLE, sent_signal DOUBLE, received_volume DOUBLE,
+	       meeting_signal DOUBLE, modalities INTEGER
+	   )[]) AS annual_temperatures,
+	   coalesce(pk.peak_temperature, 0)::INTEGER AS peak_temperature,
+	   coalesce(pk.peak_year, 0)::INTEGER AS peak_year
 FROM ` + directoryBuildRelation + ` d
 JOIN people_totals t USING (canonical_id)
 JOIN source_counts c USING (canonical_id)
 JOIN source_rollups r USING (canonical_id)
+LEFT JOIN current_ranked cr USING (canonical_id)
+LEFT JOIN annual_rollups ar USING (canonical_id)
+LEFT JOIN peaks pk USING (canonical_id)
 ORDER BY d.canonical_id`
 }
 
@@ -246,6 +274,52 @@ WITH canon AS (
 	SELECT canonical_id, list(value ORDER BY value) AS search_values
 	FROM raw_searches
 	GROUP BY canonical_id
+), raw_primitives AS (
+	SELECT canonical_id, participant_id, 'name'::VARCHAR AS kind,
+	       lower(display_name)::VARCHAR AS match_value,
+	       display_name::VARCHAR AS display_value,
+	       'observed'::VARCHAR AS source
+	FROM canon WHERE display_name != ''
+	UNION ALL
+	SELECT canonical_id, participant_id, 'email', lower(email_address),
+	       email_address, 'observed'
+	FROM canon WHERE email_address != ''
+	UNION ALL
+	SELECT canonical_id, participant_id, 'phone', lower(phone_number),
+	       phone_number, 'observed'
+	FROM canon WHERE phone_number != ''
+	UNION ALL
+	SELECT c.canonical_id, c.participant_id,
+	       CASE lower(trim(pi.identifier_type))
+	           WHEN 'email' THEN 'email'
+	           WHEN 'phone' THEN 'phone'
+	           WHEN 'impp' THEN 'impp'
+	           ELSE 'username'
+	       END::VARCHAR AS kind,
+	       lower(trim(pi.identifier_value))::VARCHAR AS match_value,
+	       coalesce(nullif(trim(pi.display_value), ''),
+	                trim(pi.identifier_value))::VARCHAR AS display_value,
+	       coalesce(nullif(lower(trim(pi.identifier_type)), ''),
+	                'observed')::VARCHAR AS source
+	FROM canon c
+	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
+	WHERE trim(coalesce(pi.identifier_value, '')) != ''
+), primitives AS (
+	SELECT canonical_id,
+	       list(struct_pack(
+	           kind := kind,
+	           match_value := match_value,
+	           display_value := display_value,
+	           source := source,
+	           participant_id := participant_id
+	       ) ORDER BY participant_id,
+	                  CASE kind WHEN 'name' THEN 0 WHEN 'email' THEN 1
+	                            WHEN 'phone' THEN 2 WHEN 'impp' THEN 3 ELSE 4 END,
+	                  CASE WHEN source = 'observed' THEN 0 ELSE 1 END,
+	                  match_value, source, display_value) AS search_primitives
+	FROM (SELECT DISTINCT canonical_id, participant_id, kind, match_value,
+	             display_value, source FROM raw_primitives)
+	GROUP BY canonical_id
 ), owners AS (
 	SELECT DISTINCT c.canonical_id
 	FROM canon c
@@ -257,15 +331,20 @@ SELECT m.canonical_id,
        (n.display_name IS NULL) AS partial_label,
        m.member_ids,
        coalesce(s.search_values, []::VARCHAR[]) AS search_values,
+       coalesce(p.search_primitives, []::STRUCT(
+	       kind VARCHAR, match_value VARCHAR, display_value VARCHAR,
+	       source VARCHAR, participant_id BIGINT)[]) AS search_primitives,
        (o.canonical_id IS NOT NULL) AS is_owner
 FROM members m
 LEFT JOIN named n USING (canonical_id)
 LEFT JOIN fallback f USING (canonical_id)
 LEFT JOIN searches s USING (canonical_id)
+LEFT JOIN primitives p USING (canonical_id)
 LEFT JOIN owners o USING (canonical_id)
 ORDER BY m.canonical_id`,
 		quoteSQLString(path("participants")),
 		quoteSQLString(path("participant_clusters")),
+		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),

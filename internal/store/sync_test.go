@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -182,6 +183,261 @@ func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t
 	require.NoError(err)
 	assert.Equal(store.SyncStatusCompleted, run.Status)
 	assert.Equal("fresh-cursor", run.CursorAfter.String)
+}
+
+func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	requirements.NoError(f.Store.UpdateSourceSyncCursor(f.Source.ID, "baseline-cursor"))
+
+	oldID := f.StartSync()
+	newID := f.StartSync()
+	err := f.Store.FailSyncAndClearSourceCursorContext(
+		t.Context(), oldID, f.Source.ID, "expired cursor",
+	)
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+	source, err := f.Store.GetSourceByID(f.Source.ID)
+	requirements.NoError(err)
+	checks.Equal("baseline-cursor", source.SyncCursor.String)
+
+	requirements.NoError(f.Store.FailSyncAndClearSourceCursorContext(
+		t.Context(), newID, f.Source.ID, "expired cursor",
+	))
+	source, err = f.Store.GetSourceByID(f.Source.ID)
+	requirements.NoError(err)
+	checks.Empty(source.SyncCursor.String)
+	run, err := f.Store.GetLatestSync(f.Source.ID)
+	requirements.NoError(err)
+	checks.Equal(store.SyncStatusFailed, run.Status)
+	checks.Equal("expired cursor", run.ErrorMessage.String)
+}
+
+func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
+	f := storetest.New(t)
+	messageID := f.CreateMessage("generation-fence-message")
+	var conversationID int64
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT conversation_id FROM messages WHERE id = ?`), messageID,
+	).Scan(&conversationID))
+	participantID := f.EnsureParticipant("reactor@example.test", "Reactor", "example.test")
+	oldID := f.StartSync()
+	stale := f.Store.ScopedToSync(f.Source.ID, oldID)
+	_ = f.StartSync()
+
+	tests := []struct {
+		name  string
+		write func() error
+	}{
+		{name: "conversation", write: func() error {
+			_, err := stale.EnsureConversationWithType(f.Source.ID, "stale-thread", "chat", "Stale")
+			return err
+		}},
+		{name: "raw message", write: func() error {
+			return stale.UpsertMessageRawWithFormat(messageID, []byte("stale"), "json")
+		}},
+		{name: "attachment", write: func() error {
+			return stale.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+				Filename: "stale.txt", MIMEType: "text/plain", Size: 5,
+			})
+		}},
+		{name: "reaction", write: func() error {
+			return stale.UpsertReaction(messageID, participantID, "emoji", "stale", time.Now().UTC())
+		}},
+		{name: "FTS", write: func() error {
+			return stale.UpsertFTS(messageID, "stale", "stale", "", "", "")
+		}},
+		{name: "conversation stats", write: func() error {
+			return stale.RecomputeConversationStats(f.Source.ID)
+		}},
+		{name: "checkpoint", write: func() error {
+			return stale.UpdateSyncCheckpoint(oldID, &store.Checkpoint{PageToken: "stale"})
+		}},
+		{name: "attachment metadata", write: func() error {
+			return stale.UpdateAttachmentMediaMetadataContext(
+				t.Context(), messageID, "hash", "image", sql.NullInt64{}, sql.NullInt64{}, sql.NullInt64{})
+		}},
+		{name: "reply link", write: func() error {
+			return stale.SetMessageReplyContext(t.Context(), messageID, messageID)
+		}},
+		{name: "edited flag", write: func() error {
+			return stale.SetMessageEdited(messageID)
+		}},
+		{name: "conversation metadata", write: func() error {
+			return stale.SetConversationMetadata(conversationID, sql.NullString{String: `{}`, Valid: true})
+		}},
+		{name: "conversation member count", write: func() error {
+			return stale.SetConversationMemberCount(conversationID, 2)
+		}},
+		{name: "remove message labels", write: func() error {
+			return stale.RemoveMessageLabels(messageID, []int64{1})
+		}},
+		{name: "legacy reply link", write: func() error {
+			return stale.SetReplyTo(f.Source.ID, "generation-fence-message", "generation-fence-message")
+		}},
+		{name: "legacy attachment cleanup", write: func() error {
+			return stale.DeleteLegacyHashlessAttachmentsContext(t.Context(), messageID)
+		}},
+		{name: "hash attachment cleanup", write: func() error {
+			return stale.DeleteUnstoredAttachmentByHashContext(t.Context(), messageID, "hash")
+		}},
+		{name: "metadata attachment cleanup", write: func() error {
+			return stale.DeleteUnstoredAttachmentByMetadataContext(t.Context(), messageID, "stale", "text/plain")
+		}},
+		{name: "source import item", write: func() error {
+			return stale.UpsertSourceImportItem(store.SourceImportItem{
+				SourceID: f.Source.ID, Provider: "test", ProviderID: "stale-item",
+				Name: "stale-item", Status: "imported",
+			})
+		}},
+		{name: "source last sync", write: func() error {
+			return stale.TouchSourceLastSyncAt(f.Source.ID)
+		}},
+		{name: "source display name", write: func() error {
+			return stale.UpdateSourceDisplayName(f.Source.ID, "Stale Name")
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.ErrorIs(t, test.write(), store.ErrSyncRunSuperseded)
+		})
+	}
+}
+
+func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL-only sync source lock-order regression")
+	}
+	syncID := f.StartSync()
+	scoped := f.Store.ScopedToSync(f.Source.ID, syncID)
+
+	writeErr := forcePostgreSQLDeadlock(t.Context(), t, f.Store,
+		postgreSQLRowLock{table: "sources", id: f.Source.ID},
+		postgreSQLRowLock{table: "sync_runs", id: syncID},
+		func(ctx context.Context) error {
+			return scoped.UpdateSourceDisplayNameContext(ctx, f.Source.ID, "Updated Source")
+		})
+	require.NoError(t, writeErr,
+		"a scoped source write must not reverse StartSync's source-then-run lock order")
+
+	source, err := f.Store.GetSourceByID(f.Source.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated Source", source.DisplayName.String)
+}
+
+func TestSuccessfulSyncCoalescesTrackedPeopleOnce(t *testing.T) {
+	tests := []struct {
+		name     string
+		complete func(t *testing.T, f personSweepJournalFixture, syncID int64)
+	}{
+		{
+			name: "run completion",
+			complete: func(t *testing.T, f personSweepJournalFixture, syncID int64) {
+				t.Helper()
+				require.NoError(t, f.store.CompleteSyncContext(
+					t.Context(), syncID, "published-run-cursor"))
+			},
+		},
+		{
+			name: "source cursor publication",
+			complete: func(t *testing.T, f personSweepJournalFixture, syncID int64) {
+				t.Helper()
+				require.NoError(t, f.store.CompleteSyncAndUpdateSourceCursorContext(
+					t.Context(), syncID, f.sourceID, "published-source-cursor"))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			f := newPersonSweepJournalFixture(t, true, false)
+			deletePersonSweepWork(t, f.store, f.alicePersonID)
+			syncID, err := f.store.StartSync(f.sourceID, "incremental")
+			requirements.NoError(err)
+
+			f.insertMessage(t, "successful-sync-first", "email", f.aliceID,
+				time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
+			f.insertMessage(t, "successful-sync-second", "email", f.aliceID,
+				time.Date(2026, 8, 23, 12, 1, 0, 0, time.UTC))
+			want := latestPersonSweepSequence(t, f.store)
+			rows, _ := personSweepWorkState(t, f.store, f.alicePersonID)
+			requirements.Zero(rows, "archive mutations must wait for a publication boundary")
+
+			test.complete(t, f, syncID)
+			rows, dirtyThrough := personSweepWorkState(t, f.store, f.alicePersonID)
+			checks.Equal(1, rows)
+			checks.Equal(want, dirtyThrough)
+			lower, upper := personSweepSyncPublicationBounds(t, f.store, syncID)
+			requirements.True(upper.Valid)
+			checks.Less(lower, upper.Int64)
+			checks.Equal(want, upper.Int64)
+
+			deletePersonSweepWork(t, f.store, f.alicePersonID)
+			noChangeSyncID, err := f.store.StartSync(f.sourceID, "incremental")
+			requirements.NoError(err)
+			test.complete(t, f, noChangeSyncID)
+			rows, _ = personSweepWorkState(t, f.store, f.alicePersonID)
+			checks.Zero(rows,
+				"a later successful no-change sync must not replay historical journal debt")
+			lower, upper = personSweepSyncPublicationBounds(t, f.store, noChangeSyncID)
+			requirements.True(upper.Valid)
+			checks.Equal(want, lower)
+			checks.Equal(want, upper.Int64)
+		})
+	}
+}
+
+func TestSupersededSyncDoesNotCoalescePersonSweep(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	deletePersonSweepWork(t, f.store, f.alicePersonID)
+	oldSyncID, err := f.store.StartSync(f.sourceID, "incremental")
+	requirements.NoError(err)
+	f.insertMessage(t, "superseded-sync-change", "email", f.aliceID,
+		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
+	newSyncID, err := f.store.StartSync(f.sourceID, "incremental")
+	requirements.NoError(err)
+
+	err = f.store.CompleteSyncAndUpdateSourceCursorContext(
+		t.Context(), oldSyncID, f.sourceID, "stale-cursor")
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+	rows, _ := personSweepWorkState(t, f.store, f.alicePersonID)
+	checks.Zero(rows)
+	checks.NotEmpty(personSweepChangesAfter(t, f.store, f.alicePersonID, 0),
+		"the committed partial import remains available to gap recovery")
+	f.insertMessage(t, "failed-sync-partial-change", "email", f.aliceID,
+		time.Date(2026, 8, 23, 12, 1, 0, 0, time.UTC))
+	requirements.NoError(f.store.FailSync(newSyncID, "synthetic failed import"))
+	rows, _ = personSweepWorkState(t, f.store, f.alicePersonID)
+	checks.Zero(rows, "failed sync completion must leave committed mutations journal-only")
+	_, failedUpper := personSweepSyncPublicationBounds(t, f.store, newSyncID)
+	checks.False(failedUpper.Valid)
+
+	recoverySyncID, err := f.store.StartSync(f.sourceID, "incremental")
+	requirements.NoError(err)
+	requirements.NoError(f.store.CompleteSyncAndUpdateSourceCursorContext(
+		t.Context(), recoverySyncID, f.sourceID, "post-failure-no-change"))
+	rows, _ = personSweepWorkState(t, f.store, f.alicePersonID)
+	checks.Zero(rows,
+		"a later no-change sync must not publish a failed run's partial mutations")
+}
+
+func personSweepSyncPublicationBounds(
+	t *testing.T, st *store.Store, syncRunID int64,
+) (int64, sql.NullInt64) {
+	t.Helper()
+	var (
+		lower int64
+		upper sql.NullInt64
+	)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT lower_sequence, upper_sequence
+		FROM person_sweep_sync_publications
+		WHERE sync_run_id = ?`), syncRunID).Scan(&lower, &upper))
+	return lower, upper
 }
 
 func TestStore_GetLatestCheckpointedSyncFallsBackPastUncheckpointedRun(t *testing.T) {

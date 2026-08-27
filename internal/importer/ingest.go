@@ -197,10 +197,7 @@ func IngestRawMessage(
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
-			if _, err := st.DB().Exec(
-				st.Rebind(`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`),
-				storedCount > 0, storedCount, messageID,
-			); err != nil {
+			if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
 				)

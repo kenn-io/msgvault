@@ -226,9 +226,18 @@ import (
 // sync routes. Passwords are request-only and never appear in responses.
 // 2.9.0 adds reversible person merge/split mutations, merge history, snapshot
 // inspection, and merge-candidate decisions. Mutations require strong person
-// revision tags;
-// merge and split also require retry-stable Idempotency-Key headers.
-const APISchemaVersion = "2.9.0"
+// revision tags; merge and split also require retry-stable Idempotency-Key
+// headers.
+// 2.10.0 adds graph-relative relationship temperatures to participant summaries
+// and a timezone-aware person/year relationship calendar endpoint.
+// Additive (minor bump): existing relationship and participant routes retain
+// their request and response behavior.
+// 2.11.0 adds bounded person fact catalog, evidence, evidence-status, claim,
+// decision, and pin diagnostics plus direct pin replacement. It adds no
+// candidate, review, accept, or reject workflow.
+// Additive (minor bump): existing person, participant, relationship, calendar,
+// and CardDAV routes are unchanged.
+const APISchemaVersion = "2.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -694,6 +703,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		})
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"AppendPersonNoteRequest": {
+			exploreFilterSource: {
+				"AppendPersonNoteRequestSourceUser",
+				"AppendPersonNoteRequestSourceCarddavImport",
+				"AppendPersonNoteRequestSourceVcardImport",
+				"AppendPersonNoteRequestSourceArchiveObservation",
+				"AppendPersonNoteRequestSourceExtraction",
+				"AppendPersonNoteRequestSourceEnrichment",
+				"AppendPersonNoteRequestSourceSystem",
+			},
+		},
 		"CreateCommunicationServiceRequest": {
 			"normalization": {
 				"CreateCommunicationServiceRequestNormalizationNone",

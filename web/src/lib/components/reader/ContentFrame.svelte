@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -45,7 +46,7 @@
 
   function resolvedColorScheme(): FrameColorScheme {
     if (typeof document === 'undefined') return 'light';
-    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
   }
 
   function invalidateDocument(): void {
@@ -180,7 +181,7 @@
     themeObserver = new MutationObserver(() => { colorScheme = resolvedColorScheme(); });
     themeObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme']
+      attributeFilter: ['class']
     });
   });
   onDestroy(() => {
@@ -197,12 +198,14 @@
       <span>{remoteImageCount === 1
         ? '1 remote image is not loaded.'
         : `${remoteImageCount} remote images are not loaded.`}</span>
-      <button
-        type="button"
-        aria-label={`Load ${remoteImageCount} remote ${remoteImageCount === 1 ? 'image' : 'images'}`}
+      <Button
+        size="sm"
+        surface="soft"
+        label="Load images"
+        ariaLabel={`Load ${remoteImageCount} remote ${remoteImageCount === 1 ? 'image' : 'images'}`}
         disabled={documentState !== 'ready'}
         onclick={loadRemoteImages}
-      >Load images</button>
+      />
     </p>
   {/if}
   {#if documentState === 'failed'}
@@ -245,24 +248,6 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-
-  .remote-notice button {
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--accent-blue);
-    cursor: pointer;
-    font: inherit;
-  }
-
-  .remote-notice button:disabled {
-    color: var(--text-muted);
-    cursor: default;
-  }
-
-  .remote-notice button:hover:not(:disabled) {
-    text-decoration: underline;
   }
 
   .frame-state {

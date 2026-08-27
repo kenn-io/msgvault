@@ -138,7 +138,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	}
 	var err error
 	switch src.Backend {
-	case "", "local":
+	case "", localValue:
 		if src.Path == "" {
 			return fmt.Errorf("synctech-sms source %q path is required for local backend", src.Name)
 		}
@@ -211,6 +211,7 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 	if err != nil {
 		return summary, fmt.Errorf("start sync: %w", err)
 	}
+	st = st.ScopedToSync(source.ID, syncID)
 	completed := false
 	defer func() {
 		if !completed && retErr != nil {

@@ -1,9 +1,17 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,7 +26,7 @@ import (
 )
 
 func personProviderTestConfig() peoplesweep.Config {
-	return peoplesweep.Config{
+	config := peoplesweep.Config{
 		Enabled: true,
 		Provider: peoplesweep.ProviderConfig{
 			Kind: peoplesweep.ProviderOpenAICompatible, Endpoint: "https://provider.example/v1",
@@ -31,6 +39,8 @@ func personProviderTestConfig() peoplesweep.Config {
 			RequestTimeout: time.Second,
 		},
 	}
+	config.ApplyDefaults()
+	return config
 }
 
 type fixedPersonProviderChecker struct {
@@ -113,6 +123,16 @@ func executePersonProviderCommand(
 	args ...string,
 ) (string, error) {
 	t.Helper()
+	return executePersonProviderCommandContext(t.Context(), t, deps, args...)
+}
+
+func executePersonProviderCommandContext(
+	ctx context.Context,
+	t *testing.T,
+	deps personProviderCommandDeps,
+	args ...string,
+) (string, error) {
+	t.Helper()
 	root := &cobra.Command{Use: "msgvault"}
 	person := &cobra.Command{Use: "person"}
 	person.AddCommand(newPersonProviderCommand(deps))
@@ -121,7 +141,7 @@ func executePersonProviderCommand(
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
-	err := root.ExecuteContext(t.Context())
+	err := root.ExecuteContext(ctx)
 	return output.String(), err
 }
 
@@ -143,6 +163,15 @@ func TestPersonProviderStatusReportsExactPolicyWithoutMutation(t *testing.T) {
 	assert.Contains(human, "conversation_text, meeting_text")
 	assert.Contains(human, "2025-01-01 through 2025-12-31")
 	assert.Contains(human, "Sensitive content: denied")
+	assert.Contains(human, "Packet renderer: person-sweep-packet-v1")
+	assert.Contains(human, "Extraction program fingerprint: "+peoplesweep.ProgramFingerprint())
+	assert.Contains(human, "Disclosed packet field classes:")
+	for _, field := range []string{
+		"person_id", "program_identity", "catalog", "current_projection",
+		"unresolved_claims", "seed_evidence", "retrieved_context",
+	} {
+		assert.Contains(human, "- "+field)
+	}
 	assert.Contains(human, "Consent: inactive")
 
 	jsonOutput, err := executePersonProviderCommand(t, deps, "status", "--json")
@@ -441,6 +470,423 @@ func TestPersonProviderCommandsRejectInputAndDisabledConfigBeforeStore(t *testin
 	_, err := executePersonProviderCommand(t, disabled, "consent", "--yes")
 	require.ErrorContains(t, err, "disabled")
 	assert.Zero(t, opens.Load())
+}
+
+type unreleasedOperationStarter struct {
+	starts atomic.Int64
+}
+
+func (s *unreleasedOperationStarter) Start(
+	context.Context, peoplesweep.CodexExecutable, []string, []string, string,
+) (peoplesweep.RPCProcess, error) {
+	s.starts.Add(1)
+	return nil, errors.New("unexpected Codex process start")
+}
+
+func unreleasedCodexCommandConfig(t *testing.T) peoplesweep.Config {
+	t.Helper()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	config := commandCodexConfig()
+	config.Provider.Executable = executable
+	return config
+}
+
+func unreleasedCodexCommandDeps(
+	t *testing.T,
+	config peoplesweep.Config,
+	st personProviderStore,
+	starter *unreleasedOperationStarter,
+) personProviderCommandDeps {
+	t.Helper()
+	deps := localPersonProviderDeps(config, st, nil)
+	deps.newChecker = func(config peoplesweep.Config, st personProviderStore) (personProviderChecker, error) {
+		transport, err := peoplesweep.NewStructuredTransport(
+			config.Provider, nil, starter, peoplesweep.NewReleasedCodexIsolationGate(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return peoplesweep.NewRunner(config, st, transport, os.LookupEnv)
+	}
+	deps.newCodexClient = func(config peoplesweep.Config) (personProviderCodexClient, error) {
+		transport, err := peoplesweep.NewStructuredTransport(
+			config.Provider, nil, starter, peoplesweep.NewReleasedCodexIsolationGate(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		codex, ok := transport.(*peoplesweep.CodexAppServerTransport)
+		if !ok {
+			return nil, errors.New("expected Codex transport")
+		}
+		return codex, nil
+	}
+	return deps
+}
+
+// TestCodexUnreleasedOperationsLaunchNothing catches any process-capable CLI
+// or transport path bypassing the empty production release registry. Consent
+// and revoke remain durable host-only operations.
+func TestCodexUnreleasedOperationsLaunchNothing(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	config := unreleasedCodexCommandConfig(t)
+	st := testutil.NewSQLiteTestStore(t)
+	starter := &unreleasedOperationStarter{}
+	deps := unreleasedCodexCommandDeps(t, config, st, starter)
+	transport, err := peoplesweep.NewCodexAppServerTransport(
+		config.Provider, starter, peoplesweep.NewReleasedCodexIsolationGate(),
+	)
+	must.NoError(err)
+	profile, err := config.Profile()
+	must.NoError(err)
+	request := peoplesweep.StructuredRequest{
+		ProgramID: "unreleased-test", ProgramVersion: "1",
+		Sources:   []peoplesweep.SourceDescriptor{{Class: peoplesweep.SourceConversationText, ObservedOn: "2026-08-23"}},
+		InputText: `{"synthetic":"packet"}`, SchemaName: "empty",
+		JSONSchema:      json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		MaxOutputTokens: 16,
+	}
+	prepared, err := transport.PrepareJSON(profile, request)
+	must.NoError(err)
+
+	operations := []struct {
+		name        string
+		processable bool
+		run         func() error
+	}{
+		{name: "generation", processable: true, run: func() error {
+			_, callErr := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+			return callErr
+		}},
+		{name: "login", processable: true, run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "login")
+			return callErr
+		}},
+		{name: "models", processable: true, run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "models")
+			return callErr
+		}},
+		{name: "status", run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "status")
+			return callErr
+		}},
+		{name: "check", processable: true, run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "check")
+			return callErr
+		}},
+		{name: "consent", run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "consent", "--yes")
+			return callErr
+		}},
+		{name: "revoke", run: func() error {
+			_, callErr := executePersonProviderCommand(t, deps, "revoke")
+			return callErr
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			err := operation.run()
+			if operation.processable {
+				require.ErrorIs(t, err, peoplesweep.ErrCodexIsolationUnreleased)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+	checks.Zero(starter.starts.Load())
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	must.NoError(err)
+	checks.False(active, "revoke must remain a durable operation after consent")
+}
+
+// TestPersonProviderStatusCodexUnreleased catches status leaking operational
+// paths or environment values while reporting an unavailable boundary.
+func TestPersonProviderStatusCodexUnreleased(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	config := unreleasedCodexCommandConfig(t)
+	st := testutil.NewSQLiteTestStore(t)
+	starter := &unreleasedOperationStarter{}
+	deps := unreleasedCodexCommandDeps(t, config, st, starter)
+	authStore := filepath.Join(t.TempDir(), "auth-sensitive-path")
+	t.Setenv("CODEX_HOME", authStore)
+	t.Setenv("MSGVAULT_STATUS_SECRET", "environment-sensitive-value")
+
+	output, err := executePersonProviderCommand(t, deps, "status")
+	must.NoError(err)
+	checks.Contains(output, "Codex isolation: unavailable")
+	checks.Contains(output, "Execution boundary: "+peoplesweep.CodexExecutionBoundaryV1)
+	checks.Contains(output, "Reason: "+peoplesweep.ErrCodexIsolationUnreleased.Error())
+	checks.NotContains(output, config.Provider.Executable)
+	checks.NotContains(output, authStore)
+	checks.NotContains(output, "environment-sensitive-value")
+	checks.Zero(starter.starts.Load())
+}
+
+type commandCodexProcess struct {
+	stdin     *io.PipeWriter
+	stdout    *io.PipeReader
+	stderr    *io.PipeReader
+	serverIn  *io.PipeReader
+	serverOut *io.PipeWriter
+	serverErr *io.PipeWriter
+	done      chan struct{}
+	once      sync.Once
+}
+
+func newCommandCodexProcess(
+	serve func(*bufio.Reader, io.Writer) error,
+) *commandCodexProcess {
+	serverIn, stdin := io.Pipe()
+	stdout, serverOut := io.Pipe()
+	stderr, serverErr := io.Pipe()
+	process := &commandCodexProcess{
+		stdin: stdin, stdout: stdout, stderr: stderr,
+		serverIn: serverIn, serverOut: serverOut, serverErr: serverErr,
+		done: make(chan struct{}),
+	}
+	go func() {
+		_ = serve(bufio.NewReader(serverIn), serverOut)
+		_ = serverOut.Close()
+		_ = serverErr.Close()
+		_ = serverIn.Close()
+		close(process.done)
+	}()
+	return process
+}
+
+func (p *commandCodexProcess) Stdin() io.WriteCloser { return p.stdin }
+func (p *commandCodexProcess) Stdout() io.ReadCloser { return p.stdout }
+func (p *commandCodexProcess) Stderr() io.ReadCloser { return p.stderr }
+func (p *commandCodexProcess) Wait() error           { <-p.done; return nil }
+func (p *commandCodexProcess) Kill() error {
+	p.once.Do(func() {
+		_ = p.serverIn.CloseWithError(context.Canceled)
+		_ = p.serverOut.CloseWithError(context.Canceled)
+		_ = p.serverErr.CloseWithError(context.Canceled)
+	})
+	return nil
+}
+
+type commandCodexStarter struct {
+	t       *testing.T
+	mu      sync.Mutex
+	scripts []func(*bufio.Reader, io.Writer) error
+	starts  atomic.Int64
+}
+
+func commandCodexTestAbsolutePath() string {
+	if runtime.GOOS == "windows" {
+		return `C:\attested\codex.exe`
+	}
+	return "/attested/codex"
+}
+
+func (s *commandCodexStarter) Start(
+	_ context.Context, executable peoplesweep.CodexExecutable, _ []string, env []string, _ string,
+) (peoplesweep.RPCProcess, error) {
+	s.starts.Add(1)
+	assert.Equal(s.t, commandCodexTestAbsolutePath(), executable.Path())
+	assert.NotContains(s.t, env, "ARCHIVE_CREDENTIAL=must-not-forward")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.scripts) == 0 {
+		return nil, errors.New("unexpected Codex process")
+	}
+	script := s.scripts[0]
+	s.scripts = s.scripts[1:]
+	return newCommandCodexProcess(func(reader *bufio.Reader, writer io.Writer) error {
+		return script(reader, writer)
+	}), nil
+}
+
+type commandCodexGate struct{}
+
+func (commandCodexGate) Verify(_ context.Context, _, boundary string) (peoplesweep.CodexAttestation, error) {
+	return peoplesweep.CodexAttestation{
+		ExecutablePath: commandCodexTestAbsolutePath(), Version: "codex-cli 0.149.0",
+		ExecutableSHA256:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ExecutionBoundary: boundary,
+		LaunchArtifact:    peoplesweep.CodexLaunchArtifactNativeStandaloneV1,
+	}, nil
+}
+
+func (commandCodexGate) ReverifyForLaunch(peoplesweep.CodexAttestation) error { return nil }
+
+func commandCodexConfig() peoplesweep.Config {
+	config := personProviderTestConfig()
+	config.Provider = peoplesweep.ProviderConfig{
+		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		SourceSince:    "2025-01-01", Executable: "codex",
+		ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1, RequestTimeout: time.Second,
+	}
+	config.ApplyDefaults()
+	return config
+}
+
+func commandCodexScript(
+	t *testing.T,
+	methods *[]string,
+	operation string,
+	result map[string]any,
+) func(*bufio.Reader, io.Writer) error {
+	t.Helper()
+	return func(reader *bufio.Reader, writer io.Writer) error {
+		for id, want := range []string{"initialize", operation} {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return fmt.Errorf("read command Codex request: %w", err)
+			}
+			var request struct {
+				ID     int64          `json:"id"`
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil {
+				return err
+			}
+			*methods = append(*methods, request.Method)
+			if request.Method != want || request.ID != int64(id+1) {
+				return errors.New("unexpected Codex command transcript")
+			}
+			if operation == "account/login/start" && id == 1 {
+				assert.Equal(t, "chatgptDeviceCode", request.Params["type"])
+			}
+			response := map[string]any{"id": request.ID, "result": map[string]any{}}
+			if id == 1 {
+				response["result"] = result
+			}
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				return err
+			}
+			if _, err := writer.Write(append(encoded, '\n')); err != nil {
+				return err
+			}
+			if operation == "account/login/start" && id == 1 {
+				completed, err := json.Marshal(map[string]any{
+					"method": "account/login/completed",
+					"params": map[string]any{"success": true, "loginId": result["loginId"]},
+				})
+				if err != nil {
+					return err
+				}
+				if _, err := writer.Write(append(completed, '\n')); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+}
+
+func codexCommandDeps(
+	t *testing.T,
+	starter *commandCodexStarter,
+	opens *atomic.Int64,
+) personProviderCommandDeps {
+	t.Helper()
+	config := commandCodexConfig()
+	deps := localPersonProviderDeps(config, nil, nil)
+	deps.openStore = func() (personProviderStore, func(), error) {
+		opens.Add(1)
+		return nil, func() {}, errors.New("archive store must not be opened")
+	}
+	deps.newCodexClient = func(config peoplesweep.Config) (personProviderCodexClient, error) {
+		return peoplesweep.NewCodexAppServerTransport(config.Provider, starter, commandCodexGate{})
+	}
+	return deps
+}
+
+func TestPersonProviderLoginUsesDeviceCode(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	var methods []string
+	starter := &commandCodexStarter{t: t}
+	starter.scripts = []func(*bufio.Reader, io.Writer) error{commandCodexScript(t, &methods, "account/login/start", map[string]any{
+		"type": "chatgptDeviceCode", "loginId": "login-safe",
+		"verificationUrl": "https://auth.example.test/device", "userCode": "ABCD-1234",
+		"expiresAt": "2026-08-23T12:30:00Z",
+	})}
+	var opens atomic.Int64
+	t.Setenv("ARCHIVE_CREDENTIAL", "must-not-forward")
+	deps := codexCommandDeps(t, starter, &opens)
+
+	output, err := executePersonProviderCommand(t, deps, "login")
+	must.NoError(err)
+	checks.Contains(output, "https://auth.example.test/device")
+	checks.Contains(output, "ABCD-1234")
+	checks.Contains(output, "2026-08-23T12:30:00Z")
+	checks.NotContains(output, "login-safe")
+	checks.Equal([]string{"initialize", "account/login/start"}, methods)
+	checks.Zero(opens.Load())
+}
+
+func TestPersonProviderModelsListsSupportedEfforts(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	var methods []string
+	starter := &commandCodexStarter{t: t}
+	starter.scripts = []func(*bufio.Reader, io.Writer) error{commandCodexScript(t, &methods, "model/list", map[string]any{
+		"data": []any{map[string]any{
+			"id": "gpt-test", "model": "gpt-test", "displayName": "Test Model",
+			"defaultReasoningEffort": "medium",
+			"supportedReasoningEfforts": []any{
+				map[string]any{"reasoningEffort": "low", "description": "Fast"},
+				map[string]any{"reasoningEffort": "medium", "description": "Balanced"},
+			},
+		}}, "nextCursor": nil,
+	})}
+	var opens atomic.Int64
+	t.Setenv("ARCHIVE_CREDENTIAL", "must-not-forward")
+	deps := codexCommandDeps(t, starter, &opens)
+
+	output, err := executePersonProviderCommand(t, deps, "models")
+	must.NoError(err)
+	checks.Contains(output, "gpt-test")
+	checks.Contains(output, "Test Model")
+	checks.Contains(output, "medium")
+	checks.Contains(output, "low, medium")
+	checks.Equal([]string{"initialize", "model/list"}, methods)
+	checks.Zero(opens.Load())
+}
+
+func TestPersonProviderLoginAndModelsUseConfiguredTimeout(t *testing.T) {
+	for _, operation := range []string{"login", "models"} {
+		t.Run(operation, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
+			starter := &commandCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer) error{
+				func(reader *bufio.Reader, _ io.Writer) error {
+					if _, err := reader.ReadBytes('\n'); err != nil {
+						return fmt.Errorf("read silent command Codex request: %w", err)
+					}
+					_, err := reader.ReadBytes('\n')
+					if err != nil {
+						return fmt.Errorf("wait for silent command Codex request: %w", err)
+					}
+					return nil
+				},
+			}}
+			var opens atomic.Int64
+			deps := codexCommandDeps(t, starter, &opens)
+			config := commandCodexConfig()
+			config.Provider.RequestTimeout = 30 * time.Millisecond
+			deps.config = func() peoplesweep.Config { return config }
+			parentCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+			defer cancel()
+			startedAt := time.Now()
+			_, err := executePersonProviderCommandContext(parentCtx, t, deps, operation)
+			must.ErrorIs(err, context.DeadlineExceeded)
+			checks.Less(time.Since(startedAt), 250*time.Millisecond)
+			checks.Equal(int64(1), starter.starts.Load())
+			checks.Zero(opens.Load())
+		})
+	}
 }
 
 var _ personProviderStore = (*store.Store)(nil)

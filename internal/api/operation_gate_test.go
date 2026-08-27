@@ -681,6 +681,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/domains/example.com/timeline",
 		"/api/v1/domains/example.com/files/search",
 		"/api/v1/relationships",
+		"/api/v1/relationships/7/calendar",
 		"/api/v1/relationships/7/timeline",
 		"/api/v1/search/coverage",
 	}
@@ -736,10 +737,10 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // read-only POST table to the registered analytical routes: every POST
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
-// carry stale entries for routes that no longer exist. The remote-image
-// proxy and CardDAV account test are the pinned non-Exploration entries;
-// both must remain registered POST routes for their table entries to stay
-// valid.
+// carry stale entries for routes that no longer exist. The remote-image proxy,
+// CardDAV account test, and participant completion endpoint are the pinned
+// non-Exploration entries. All three must remain registered POST routes for
+// their table entries to stay valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require := require.New(t)
 	doc := OpenAPIDocument()
@@ -751,8 +752,12 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(cardDAVAccountTest, "CardDAV account test route must exist")
 	require.NotNil(cardDAVAccountTest.Post, "CardDAV account test must be registered as POST")
 	require.Nil(cardDAVAccountTest.Get, "CardDAV account test must not be reachable via GET")
+	completionPath := "/api/v1/participants/completions"
+	completion := doc.Paths[completionPath]
+	require.NotNil(completion, "participant completion route must exist")
+	require.NotNil(completion.Post, "participant completion must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
@@ -763,7 +768,8 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	slices.Sort(table)
 	assert.Equal(t, expected, table,
 		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration plus the "+
-			"pinned read-only POSTs; classify new analytical routes consciously in operation_gate.go")
+			"pinned read-only POST routes; classify new analytical routes consciously in "+
+			"operation_gate.go")
 }
 
 // gateAnalyticsEngine backs the read-only analytical routes with minimal
@@ -828,8 +834,16 @@ func (e *gateAnalyticsEngine) RelationshipTimeline(context.Context, query.Relati
 	return &query.RelationshipTimelineResponse{}, nil
 }
 
+func (e *gateAnalyticsEngine) RelationshipCalendar(context.Context, query.RelationshipCalendarRequest) (*query.RelationshipCalendarResponse, error) {
+	return &query.RelationshipCalendarResponse{}, nil
+}
+
 func (e *gateAnalyticsEngine) ResolveCanonicalParticipant(_ context.Context, id int64) (int64, error) {
 	return id, nil
+}
+
+func (e *gateAnalyticsEngine) ListPersonInboxes(context.Context, query.PersonInboxRequest) (*query.PersonInboxResponse, error) {
+	return &query.PersonInboxResponse{Rows: []query.PersonInboxRow{}, CacheRevision: "rev"}, nil
 }
 
 func (e *gateAnalyticsEngine) SearchFiles(context.Context, query.FileSearchRequest) (*query.FileSearchResponse, error) {
@@ -900,6 +914,26 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 	require.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope")
 	assert.Equal("operation_in_progress", errResp.Error, "error code")
 	assert.Contains(errResp.Message, "msgvault embeddings build", "message names the holder")
+}
+
+func TestServerParticipantInboxesBypassesHeldOperationGate(t *testing.T) {
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault embeddings build")
+	require.True(t, ok, "occupy gate")
+	defer release()
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         &gateFilesStore{mockStore: &mockStore{}},
+		Engine:        &gateAnalyticsEngine{MockEngine: &querytest.MockEngine{}},
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/api/v1/participants/7/inboxes", nil))
+
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {

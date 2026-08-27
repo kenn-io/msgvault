@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
@@ -201,10 +202,50 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
 
     await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
-    const theme = screen.getByRole('combobox', { name: 'Temporary theme' });
+    const theme = screen.getByRole('button', { name: 'Change theme (current: System)' });
     theme.focus();
     await Promise.resolve();
     expect(document.activeElement).toBe(theme);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('keeps the Kit theme toggle in sync with the session appearance override', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false,
+      appearanceDefaults: { theme: 'system', density: 'compact' }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Change theme (current: System)' }));
+
+    expect(screen.getByRole('button', { name: 'Change theme (current: Light)' })).toBeDefined();
+    expect(JSON.parse(sessionStorage.getItem('msgvault.appearance.override') ?? '{}')).toEqual({
+      theme: 'light'
+    });
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('restores the daemon theme after a temporary Kit theme selection', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false,
+      appearanceDefaults: { theme: 'dark', density: 'compact' }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Change theme (current: Dark)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use daemon theme' }));
+
+    expect(screen.getByRole('button', { name: 'Change theme (current: Dark)' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Use daemon theme' })).toBeNull();
+    expect(sessionStorage.getItem('msgvault.appearance.override')).toBeNull();
 
     rendered.unmount();
     state.destroy();
@@ -247,7 +288,7 @@ describe('AppShell', () => {
     });
 
     const nav = screen.getByRole('navigation', { name: 'Primary' });
-    expect(within(nav).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
       'Relationships', 'Everything', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings'
     ]);
     expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
@@ -859,7 +900,7 @@ describe('AppShell', () => {
     await fireEvent.keyDown(grid, { key: 'ArrowDown' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent).toMatch(/press End again to continue/);
 
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Show as' }), { target: { value: 'table' } });
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Table');
     await waitFor(() => expect(state.current.workspace).toBe('everything'));
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
       .toBe('Newest first is the canonical Everything order.');

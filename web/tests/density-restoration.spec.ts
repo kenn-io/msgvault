@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { selectKitOption } from './kit-ui';
 
 const total = 300;
 
@@ -28,7 +29,7 @@ test('Everything preserves a deep focused row across density changes', async ({ 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-250/);
   await expect(grid.getByText('Synthetic subject 250')).toBeVisible();
 
-  await page.getByLabel('Temporary density').selectOption('comfortable');
+  await selectKitOption(page, 'Temporary density', 'Density: Comfortable');
 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-250/);
   await expect(grid.getByText('Synthetic subject 250').locator('xpath=ancestor::*[@role="row"]')).toHaveCSS('height', '46px');
@@ -51,7 +52,7 @@ test('Group preserves a deep focused row across density changes', async ({ page 
   await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A250/);
   await expect(grid.getByText('Source 250')).toBeVisible();
 
-  await page.getByLabel('Temporary density').selectOption('comfortable');
+  await selectKitOption(page, 'Temporary density', 'Density: Comfortable');
 
   await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A250/);
   await expect(grid.getByText('Source 250').locator('xpath=ancestor::*[@role="row"]')).toHaveCSS('height', '46px');
@@ -68,7 +69,7 @@ test('Files preserves a deep focused row across density changes', async ({ page 
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-250');
   await expect(grid.getByText('file-250.pdf')).toBeVisible();
 
-  await page.getByLabel('Temporary density').selectOption('comfortable');
+  await selectKitOption(page, 'Temporary density', 'Density: Comfortable');
 
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-250');
   await expect(grid.getByText('file-250.pdf').locator('xpath=ancestor::*[@role="row"]')).toHaveCSS('height', '46px');

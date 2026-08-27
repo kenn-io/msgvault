@@ -44,6 +44,33 @@ func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
 	assert.Equal(1, result.Rank)
 }
 
+func TestSearchDocumentsRestrictsOwningMessageCandidates(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "candidate nebula evidence", "search-candidate")
+	first, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "nebula"})
+	requirements.NoError(err)
+	requirements.Len(first.Results, 1)
+
+	secondMessageID := f.CreateMessage("document-search-selected-candidate")
+	secondAttachmentID := addSearchAttachment(
+		t, f, secondMessageID, hash, "selected.pdf", "provider:selected-candidate",
+	)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), secondAttachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", MessageIDs: []int64{secondMessageID},
+	})
+	requirements.NoError(err)
+	requirements.Len(response.Results, 1)
+	checks.Equal(secondMessageID, response.Results[0].MessageID)
+	checks.NotEqual(first.Results[0].MessageID, response.Results[0].MessageID)
+}
+
 func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -497,13 +524,35 @@ func TestSearchDocumentsAppliesCandidateLimitAfterOccurrenceDeduplication(t *tes
 	assert.Contains(t, []int64{response.Results[0].AttachmentID, response.Results[1].AttachmentID}, secondAttachmentID)
 }
 
+func TestSearchDocumentsHonorsExplicitCandidateLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "bounded nebula evidence", "search-bounded")
+	messageID := f.CreateMessage("document-search-bounded-copy")
+	attachmentID := addSearchAttachment(
+		t, f, messageID, hash, "bounded-copy.pdf", "provider:bounded-copy",
+	)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	requirements.NoError(err)
+	requirements.True(eligible)
+
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", CandidateLimit: 1,
+	})
+	requirements.NoError(err)
+	assertions.Len(response.Results, 1)
+	assertions.True(response.Truncated)
+}
+
 func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, "window nebula evidence", "search-window")
 
-	const copies = 201
+	const copies = 1001
 	for index := 1; index < copies; index++ {
 		messageID := f.CreateMessage("document-search-window-" + strconv.Itoa(index))
 		attachmentID := addSearchAttachment(
@@ -520,7 +569,7 @@ func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
 	nextRank := 1
 	for {
 		response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
-			Query: "nebula", PageSize: 10, Cursor: cursor,
+			Query: "nebula", PageSize: 100, Cursor: cursor,
 		})
 		require.NoError(err)
 		for _, result := range response.Results {
@@ -539,6 +588,221 @@ func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
 	require.Len(seen, copies, "pagination must cover the fixed ranked candidate set")
 }
 
+func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDeduplication(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, generation := seedDocumentVectorGenerationWithChunks(t, 2)
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	claims := readyAllDocumentVectorChunks(t, f, generation, now)
+	require.Len(claims, 2)
+
+	copyMessageID := f.CreateMessage("semantic-search-copy")
+	copyAttachmentID := addSearchAttachment(
+		t, f, copyMessageID, claims[0].CanonicalBlobHash, "semantic-copy.pdf", "provider:semantic-copy",
+	)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sent_at = ? WHERE id = ?`), now, copyMessageID)
+	require.NoError(err)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), copyAttachmentID, 2)
+	require.NoError(err)
+	require.True(eligible)
+	require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
+
+	hits := []store.DocumentVectorSearchHit{
+		{Token: claims[0].Token, Score: .8, Rank: 10},
+		{Token: claims[1].Token, Score: .9, Rank: 2},
+	}
+	results, resultsMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+		t.Context(), generation.ID, hits, store.DocumentSearchRequest{}, 10,
+	)
+	require.NoError(err)
+	assert.False(resultsMore)
+	require.Len(results, 2, "two chunks must expand to each occurrence, then collapse by occurrence")
+	assert.Less(results[0].OccurrenceKey, results[1].OccurrenceKey)
+	for _, result := range results {
+		assert.Equal(claims[1].Token, result.VectorToken)
+		assert.Equal(2, result.SemanticRank)
+		assert.InDelta(.9, result.SemanticScore, 1e-12)
+		assert.Equal(generation.ID, result.VectorGenerationID)
+		assert.Equal(generation.Fingerprint, result.VectorGenerationFingerprint)
+		assert.Equal(generation.EmbeddingProfile, result.VectorEmbeddingProfile)
+		assert.Equal(generation.Model, result.VectorModel)
+		assert.Equal(generation.Dimension, result.VectorDimension)
+		assert.Equal(claims[1].ChunkKey, result.ChunkKey)
+		assert.Equal(claims[1].ChunkOrdinal, result.ChunkOrdinal)
+		assert.Equal(claims[1].ExtractionID, result.ExtractionID)
+		assert.Equal(claims[1].ExtractionProfileID, result.ProfileID)
+		assert.Equal([]string{"semantic"}, result.MatchedSignals)
+		if result.AttachmentID == copyAttachmentID {
+			require.NotNil(result.OccurredAt)
+			assert.True(now.Equal(*result.OccurredAt))
+		}
+	}
+
+	bounded, boundedMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+		t.Context(), generation.ID, hits, store.DocumentSearchRequest{}, 1,
+	)
+	require.NoError(err)
+	require.Len(bounded, 1)
+	assert.True(boundedMore)
+	assert.Equal(results[0].OccurrenceKey, bounded[0].OccurrenceKey)
+
+	scoped, scopedMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+		t.Context(), generation.ID, hits, store.DocumentSearchRequest{AttachmentID: copyAttachmentID}, 10,
+	)
+	require.NoError(err)
+	require.Len(scoped, 1)
+	assert.False(scopedMore)
+	assert.Equal(copyAttachmentID, scoped[0].AttachmentID)
+
+	participantID := f.EnsureParticipant("semantic@example.test", "Semantic", "example.test")
+	var originalMessageID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT message_id FROM attachments WHERE content_hash = ? AND id <> ?`),
+		claims[0].CanonicalBlobHash, copyAttachmentID).Scan(&originalMessageID))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, originalMessageID)
+	require.NoError(err)
+	personResults, personMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
+		t.Context(), generation.ID, hits, store.DocumentSearchRequest{Person: &personscope.Scope{
+			ParticipantIDs: []int64{participantID}, Directions: []personscope.Direction{personscope.FromPerson},
+		}}, 10,
+	)
+	require.NoError(err)
+	require.Len(personResults, 1)
+	assert.False(personMore)
+	assert.Equal(&personscope.Provenance{
+		ParticipantIDs: []int64{participantID}, Roles: []personscope.Role{personscope.RoleFrom},
+		Directions: []personscope.Direction{personscope.FromPerson},
+	}, personResults[0].PersonProvenance)
+}
+
+func TestResolveDocumentVectorSearchOccurrencesBoundsUnicodeExcerpt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, strings.Repeat("界", 400), "semantic-excerpt")
+	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
+		Fingerprint: strings.Repeat("f", 64), TargetExtractionProfileID: profile.ID,
+		EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 3,
+	})
+	require.NoError(err)
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	claims := readyAllDocumentVectorChunks(t, f, generation, now)
+	require.Len(claims, 1)
+	require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
+
+	results, truncated, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
+		{Token: claims[0].Token, Score: .9, Rank: 1},
+	}, store.DocumentSearchRequest{}, 10)
+	require.NoError(err)
+	require.Len(results, 1)
+	assert.False(truncated)
+	assert.Equal(strings.Repeat("界", 320), results[0].Excerpt)
+	assert.Zero(results[0].HighlightStart)
+	assert.Zero(results[0].HighlightEnd)
+}
+
+func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *storetest.Fixture, store.DocumentVectorChunkClaim)
+	}{
+		{
+			name: "attachment replacement",
+			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
+				t.Helper()
+				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
+				var messageID int64
+				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+					`SELECT message_id FROM attachments WHERE id = ?`), attachmentID).Scan(&messageID))
+				require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+					Filename: "replacement.pdf", MIMEType: "application/pdf", Size: 128,
+					StoragePath: "ee/" + strings.Repeat("e", 64), ContentHash: strings.Repeat("e", 64),
+					Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+					SourcePartKey: "mime:1.2",
+				}))
+			},
+		},
+		{
+			name: "occurrence deletion",
+			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
+				t.Helper()
+				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
+				_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), attachmentID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "role change",
+			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
+				t.Helper()
+				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
+				var messageID int64
+				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+					`SELECT message_id FROM attachments WHERE id = ?`), attachmentID).Scan(&messageID))
+				require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+					Filename: "inline.pdf", MIMEType: "application/pdf", Size: 128,
+					StoragePath: claim.CanonicalBlobHash[:2] + "/" + claim.CanonicalBlobHash,
+					ContentHash: claim.CanonicalBlobHash, Role: store.AttachmentRoleInline,
+					RoleSource: store.AttachmentRoleSourceMIMEDisposition, SourcePartKey: "mime:1.2",
+				}))
+			},
+		},
+		{
+			name: "message lifecycle deletion",
+			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
+				t.Helper()
+				var messageID int64
+				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+					SELECT message_id FROM document_occurrences WHERE canonical_blob_hash = ?`),
+					claim.CanonicalBlobHash).Scan(&messageID))
+				_, err := f.Store.DB().Exec(f.Store.Rebind(
+					`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "target profile rotation",
+			mutate: func(t *testing.T, f *storetest.Fixture, _ store.DocumentVectorChunkClaim) {
+				t.Helper()
+				profile := rotatedDocumentVectorProfile()
+				_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+				require.NoError(t, err)
+				require.NoError(t, f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+					ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+					RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+				}))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, generation := seedDocumentVectorGenerationWithChunks(t, 1)
+			now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+			claims := readyAllDocumentVectorChunks(t, f, generation, now)
+			require.Len(claims, 1)
+			require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
+			test.mutate(t, f, claims[0])
+
+			results, truncated, err := f.Store.ResolveDocumentVectorSearchOccurrences(t.Context(), generation.ID, []store.DocumentVectorSearchHit{
+				{Token: claims[0].Token, Score: .9, Rank: 1},
+			}, store.DocumentSearchRequest{}, 10)
+			require.NoError(err)
+			assert.Empty(results)
+			assert.False(truncated)
+			var publications int
+			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+				SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ? AND token = ?`),
+				generation.ID, claims[0].Token).Scan(&publications))
+			assert.Equal(1, publications, "authority changes hide but do not erase the token ledger")
+		})
+	}
+}
+
 func publishSearchDocument(
 	t *testing.T,
 	f *storetest.Fixture,
@@ -555,7 +819,7 @@ func publishSearchDocument(
 		LocalBytes: 128, SourceSequence: 1,
 	}))
 	require.NoError(t, err)
-	require.NoError(t, f.Store.PublishDocumentExtraction(t.Context(), publicationFor(
+	require.NoError(t, f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
 		claim, text, strings.Repeat("d", 64),
 	)))
 }
@@ -594,7 +858,7 @@ func publishManySearchChunks(
 	}))
 	require.NoError(t, err)
 	text := "crowded nebula evidence"
-	publication := publicationFor(claim, text, strings.Repeat("d", 64))
+	publication := publicationFor(t, claim, text, strings.Repeat("d", 64))
 	publication.Chunks = make([]store.DocumentPublishedChunk, count)
 	for index := range count {
 		publication.Chunks[index] = store.DocumentPublishedChunk{

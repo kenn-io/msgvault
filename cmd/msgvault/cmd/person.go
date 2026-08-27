@@ -676,11 +676,13 @@ func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 func init() {
 	rootCmd.AddCommand(personCmd)
 	personCmd.AddCommand(newPersonProviderCommand(defaultPersonProviderCommandDeps()))
+	personCmd.AddCommand(newPersonSweepCommand(defaultPersonSweepCommandDeps()))
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
 		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd,
 		personMergeCmd, personSplitCmd, personMergeHistoryCmd, personMergeShowCmd,
-		personMergeCandidateCmd, newPersonFilesCommand(defaultPersonFilesCommandDeps()),
-		personSearchCmd)
+		personMergeCandidateCmd, personNotesCmd,
+		newPersonFilesCommand(defaultPersonFilesCommandDeps()), personSearchCmd,
+		newPersonFactsCommand())
 	for _, command := range []*cobra.Command{
 		personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd,
 		personTrackCmd, personUntrackCmd,

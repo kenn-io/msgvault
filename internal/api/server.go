@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	webapp "go.kenn.io/msgvault/internal/web"
@@ -338,6 +339,8 @@ type Server struct {
 	// the ordinary refresh would flip straight back to ready. Only a
 	// successful reinit (SetVectorFeatures) clears the latch.
 	vectorStaleLatch bool
+	documentSearchMu sync.RWMutex
+	documentSearch   *vectordocument.SearchService
 	// vectorScopeCheck re-resolves the durable embedding scope on the
 	// vector-search preflight path (throttled by vectorScopeNextCheck) so
 	// drift is detected even when no embed job ever runs. Wired by the

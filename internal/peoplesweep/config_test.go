@@ -1,7 +1,9 @@
 package peoplesweep_test
 
 import (
+	"bytes"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +13,7 @@ import (
 )
 
 func validConfig() peoplesweep.Config {
-	return peoplesweep.Config{
+	config := peoplesweep.Config{
 		Enabled: true,
 		Provider: peoplesweep.ProviderConfig{
 			Kind:             peoplesweep.ProviderOpenAICompatible,
@@ -29,6 +31,8 @@ func validConfig() peoplesweep.Config {
 			RequestTimeout: 45 * time.Second,
 		},
 	}
+	config.ApplyDefaults()
+	return config
 }
 
 func TestConfigDefaultsStayDisabled(t *testing.T) {
@@ -47,6 +51,158 @@ func TestConfigDefaultsStayDisabled(t *testing.T) {
 	require.ErrorContains(err, "disabled")
 }
 
+func TestCodexProviderFingerprintIncludesExecutionBoundaryAndEffort(t *testing.T) {
+	base := validConfig()
+	base.Provider = peoplesweep.ProviderConfig{
+		Kind:              peoplesweep.ProviderCodexAppServer,
+		Model:             "gpt-test",
+		RetentionPosture:  "zero_retention",
+		TrainingPosture:   "no_training",
+		AllowedSources:    []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		SourceSince:       "2025-01-01",
+		ReasoningEffort:   "high",
+		ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+	}
+	base.ApplyDefaults()
+	want, err := base.Profile()
+	require.NoError(t, err)
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(*peoplesweep.Config)
+	}{
+		{"effort", func(c *peoplesweep.Config) { c.Provider.ReasoningEffort = "medium" }},
+		{"boundary", func(c *peoplesweep.Config) { c.Provider.ExecutionBoundary = "different-boundary" }},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			gotConfig := base
+			gotConfig.Provider.AllowedSources = slices.Clone(base.Provider.AllowedSources)
+			mutation.mutate(&gotConfig)
+			got, profileErr := gotConfig.Profile()
+			if mutation.name == "boundary" {
+				requirements.ErrorContains(profileErr, "execution_boundary")
+				return
+			}
+			requirements.NoError(profileErr)
+			checks.NotEqual(want.Fingerprint, got.Fingerprint)
+			checks.False(bytes.Equal(want.PolicyJSON, got.PolicyJSON))
+		})
+	}
+}
+
+// TestCodexProviderExecutableCannotSelfAttest catches a configured executable
+// path being incorporated as if it were a released binary identity.
+func TestCodexProviderExecutableCannotSelfAttest(t *testing.T) {
+	base := validConfig()
+	base.Provider = peoplesweep.ProviderConfig{
+		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		SourceSince:    "2025-01-01", Executable: "/synthetic/path/codex-one",
+		ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+	}
+	base.ApplyDefaults()
+	want, err := base.Profile()
+	require.NoError(t, err)
+
+	base.Provider.Executable = "/synthetic/path/codex-two"
+	got, err := base.Profile()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestPositiveCostBudgetRequiresPrices(t *testing.T) {
+	config := validConfig()
+	config.Budgets.MaxEstimatedCostMicroUSDPerDay = 1
+	config.Budgets.InputCostMicroUSDPerMillionTokens = 0
+	config.Budgets.OutputCostMicroUSDPerMillionTokens = 0
+
+	assert.ErrorContains(t, config.Validate(), "cost prices are required")
+}
+
+func TestOpenAIProviderProfileOperationalFieldsExcluded(t *testing.T) {
+	base := validConfig()
+	want, err := base.Profile()
+	require.NoError(t, err)
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(*peoplesweep.Config)
+	}{
+		{"timeout", func(c *peoplesweep.Config) { c.Provider.RequestTimeout = 2 * time.Minute }},
+		{"executable", func(c *peoplesweep.Config) { c.Provider.Executable = "other-codex" }},
+		{"schedule", func(c *peoplesweep.Config) { c.Schedule = "0 3 * * *" }},
+		{"lease", func(c *peoplesweep.Config) { c.LeaseDuration = 30 * time.Minute }},
+		{"retry", func(c *peoplesweep.Config) { c.RetryBase = 2 * time.Minute }},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			gotConfig := base
+			gotConfig.Provider.AllowedSources = slices.Clone(base.Provider.AllowedSources)
+			mutation.mutate(&gotConfig)
+			got, profileErr := gotConfig.Profile()
+			require.NoError(t, profileErr)
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
+func TestProviderFingerprintIncludesEgressPolicy(t *testing.T) {
+	base := validConfig()
+	want, err := base.Profile()
+	require.NoError(t, err)
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(*peoplesweep.Config)
+	}{
+		{"endpoint", func(c *peoplesweep.Config) { c.Provider.Endpoint = "https://other.example.test/v1" }},
+		{"model", func(c *peoplesweep.Config) { c.Provider.Model = "other-model" }},
+		{"key environment", func(c *peoplesweep.Config) { c.Provider.APIKeyEnv = "OTHER_KEY" }},
+		{"retention", func(c *peoplesweep.Config) { c.Provider.RetentionPosture = "provider-policy" }},
+		{"training", func(c *peoplesweep.Config) { c.Provider.TrainingPosture = "provider-policy" }},
+		{"sources", func(c *peoplesweep.Config) {
+			c.Provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceDocumentText}
+		}},
+		{"source since", func(c *peoplesweep.Config) { c.Provider.SourceSince = "2024-01-01" }},
+		{"source until", func(c *peoplesweep.Config) { c.Provider.SourceUntil = "2026-01-01" }},
+		{"sensitive", func(c *peoplesweep.Config) { c.Provider.AllowSensitive = true }},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			gotConfig := base
+			gotConfig.Provider.AllowedSources = slices.Clone(base.Provider.AllowedSources)
+			mutation.mutate(&gotConfig)
+			got, profileErr := gotConfig.Profile()
+			require.NoError(t, profileErr)
+			assert.NotEqual(t, want.Fingerprint, got.Fingerprint)
+		})
+	}
+}
+
+func TestPeopleSweepDefaults(t *testing.T) {
+	checks := assert.New(t)
+	var config peoplesweep.Config
+	config.ApplyDefaults()
+
+	checks.Equal("15 2 * * *", config.Schedule)
+	checks.Equal(25, config.WorkBatchSize)
+	checks.Equal(256, config.ChangeBatchSize)
+	checks.Equal(2_000, config.HistoricalMessageCap)
+	checks.Equal(8, config.ContextPerTarget)
+	checks.Equal(131_072, config.EvidenceMaxBytes)
+	checks.Equal(200, config.EvidenceMaxItems)
+	checks.Equal(15*time.Minute, config.LeaseDuration)
+	checks.Equal(24*time.Hour, config.BackstopInterval)
+	checks.Equal(time.Minute, config.RetryBase)
+	checks.Equal(6*time.Hour, config.RetryMax)
+	checks.Equal(peoplesweep.BudgetConfig{
+		MaxRequestsPerPerson: 4, MaxInputTokensPerPerson: 200_000, MaxOutputTokensPerPerson: 16_000,
+		MaxRequestsPerRun: 100, MaxInputTokensPerRun: 1_000_000, MaxOutputTokensPerRun: 160_000,
+		MaxRequestsPerDay: 500, MaxInputTokensPerDay: 5_000_000, MaxOutputTokensPerDay: 800_000,
+	}, config.Budgets)
+}
+
 func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 	assert := assert.New(t)
 	profile, err := validConfig().Profile()
@@ -57,7 +213,7 @@ func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 		peoplesweep.SourceConversationText,
 		peoplesweep.SourceMeetingText,
 	}, profile.AllowedSources)
-	assert.JSONEq(`{
+	assert.JSONEq(strings.ReplaceAll(`{
 		"kind":"openai_compatible",
 		"endpoint":"https://api.example.test/v1",
 		"model":"gpt-test",
@@ -68,11 +224,14 @@ func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 		"allowed_sources":["conversation_text","meeting_text"],
 		"source_since":"2025-01-01",
 		"source_until":"2025-12-31",
-		"allow_sensitive":false
-	}`, string(profile.PolicyJSON))
-	assert.Equal(
-		"6cdee4ab2dcc785c032067378de1121841725c602019c4046ec0ca3c32fdcb75",
-		profile.Fingerprint)
+		"allow_sensitive":false,
+		"reasoning_effort":"",
+		"execution_boundary":"",
+		"packet_renderer_policy":"person-sweep-packet-v1",
+		"program_fingerprint":"PROGRAM_FINGERPRINT",
+		"disclosed_packet_fields":["person_id","program_identity","catalog","current_projection","unresolved_claims","seed_evidence","retrieved_context"]
+	}`, "PROGRAM_FINGERPRINT", peoplesweep.ProgramFingerprint()), string(profile.PolicyJSON))
+	assert.Contains(string(profile.PolicyJSON), peoplesweep.ProgramFingerprint())
 	assert.NoError(profile.Validate())
 }
 
@@ -206,6 +365,12 @@ func TestConfigValidationRejectsUnsafeOrAmbiguousPolicies(t *testing.T) {
 		{"unknown source", func(c *peoplesweep.Config) {
 			c.Provider.AllowedSources = []peoplesweep.SourceClass{"raw_image"}
 		}, "allowed_sources"},
+		{"attachment caption without hydration", func(c *peoplesweep.Config) {
+			c.Provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceAttachmentCaption}
+		}, "not yet supported"},
+		{"attachment OCR without hydration", func(c *peoplesweep.Config) {
+			c.Provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceAttachmentOCR}
+		}, "not yet supported"},
 		{"duplicate source", func(c *peoplesweep.Config) {
 			c.Provider.AllowedSources = []peoplesweep.SourceClass{
 				peoplesweep.SourceConversationText,
@@ -218,6 +383,9 @@ func TestConfigValidationRejectsUnsafeOrAmbiguousPolicies(t *testing.T) {
 		{"reversed dates", func(c *peoplesweep.Config) { c.Provider.SourceUntil = "2024-12-31" }, "before"},
 		{"zero timeout", func(c *peoplesweep.Config) { c.Provider.RequestTimeout = 0 }, "request_timeout"},
 		{"negative timeout", func(c *peoplesweep.Config) { c.Provider.RequestTimeout = -time.Second }, "request_timeout"},
+		{"output budget below one request", func(c *peoplesweep.Config) {
+			c.Budgets.MaxOutputTokensPerPerson = 4095
+		}, "at least 4096"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -247,4 +415,11 @@ func TestConfigAllowsExplicitAnonymousLoopback(t *testing.T) {
 			assert.Empty(t, profile.APIKeyEnv)
 		})
 	}
+}
+
+func TestConfigRejectsAuthenticatedLoopbackHTTP(t *testing.T) {
+	config := validConfig()
+	config.Provider.Endpoint = "http://127.0.0.1:11434/v1"
+
+	assert.ErrorContains(t, config.Validate(), "anonymous loopback")
 }

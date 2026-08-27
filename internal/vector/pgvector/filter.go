@@ -30,6 +30,9 @@ func escapeLikeSubject(s string) string {
 // applyFilterClauses uses it inline).
 func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 	var clauses []string
+	if len(f.MessageIDs) > 0 {
+		clauses = append(clauses, fmt.Sprintf("m.id = ANY(%s::bigint[])", bind(int64Array(f.MessageIDs))))
+	}
 
 	if len(f.SourceIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.source_id = ANY(%s::bigint[])", bind(int64Array(f.SourceIDs))))

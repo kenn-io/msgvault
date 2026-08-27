@@ -253,6 +253,93 @@ CREATE TABLE IF NOT EXISTS person_tracking (
     tracked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Immutable, commit-ordered discovery for tracked-person archive changes.
+-- The singleton clock is updated in the same transaction as every row, so a
+-- rollback restores both and message dates never become cursor state.
+CREATE TABLE IF NOT EXISTS person_sweep_change_clock (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    enabled BOOLEAN NOT NULL
+);
+
+INSERT OR IGNORE INTO person_sweep_change_clock (singleton, sequence, enabled)
+VALUES (TRUE, 0, TRUE);
+
+CREATE TABLE IF NOT EXISTS person_sweep_changes (
+    sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    source_lane TEXT NOT NULL CHECK (source_lane IN (
+        'conversation_text', 'meeting_text', 'attachment_caption',
+        'attachment_ocr', 'document_text'
+    )),
+    change_kind TEXT NOT NULL CHECK (change_kind IN (
+        'upsert', 'delete', 'scope', 'tracking', 'publication'
+    )),
+    evidence_effect TEXT NOT NULL DEFAULT '' CHECK (evidence_effect IN (
+        '', 'source-deleted', 'source-edited', 'scope-unlinked',
+        'identity-reassigned', 'source-reimported', 'scope-relinked'
+    )),
+    source_id INTEGER,
+    message_id INTEGER,
+    attachment_id INTEGER,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    recorded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_changes_person_sequence
+    ON person_sweep_changes(person_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_changes_source_sequence
+    ON person_sweep_changes(source_id, sequence);
+
+-- Coalesced durable sweep debt. A lease ownership change always increments
+-- lease_fence; every worker mutation validates both owner and fence.
+CREATE TABLE IF NOT EXISTS person_sweep_work (
+    person_id                 INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    dirty_through_sequence    INTEGER NOT NULL CHECK (dirty_through_sequence >= 0),
+    available_at              DATETIME NOT NULL,
+    attempt_count             INTEGER NOT NULL CHECK (attempt_count >= 0),
+    last_failure_class        TEXT NOT NULL DEFAULT '',
+    lease_owner               TEXT NOT NULL DEFAULT '',
+    lease_until               DATETIME,
+    lease_fence               INTEGER NOT NULL CHECK (lease_fence >= 0),
+    created_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_work_available
+    ON person_sweep_work(available_at, person_id);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_work_lease
+    ON person_sweep_work(lease_until, person_id);
+
+-- Optimistic journal progress, bounded historical reconciliation, and the
+-- periodic backstop are deliberately independent per fingerprinted lane.
+CREATE TABLE IF NOT EXISTS person_sweep_cursors (
+    person_id                   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    source_lane                 TEXT NOT NULL CHECK (source_lane IN (
+        'conversation_text', 'meeting_text', 'attachment_caption',
+        'attachment_ocr', 'document_text'
+    )),
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    optimistic_sequence         INTEGER NOT NULL CHECK (optimistic_sequence >= 0),
+    optimistic_document_key     TEXT NOT NULL DEFAULT '',
+    reconcile_upper_key         TEXT NOT NULL,
+    reconcile_after_key         TEXT NOT NULL,
+    reconcile_document_key      TEXT NOT NULL DEFAULT '',
+    reconciliation_complete     BOOLEAN NOT NULL,
+    backstop_upper_key           TEXT NOT NULL DEFAULT '',
+    backstop_after_key           TEXT NOT NULL DEFAULT '',
+    backstop_document_key        TEXT NOT NULL DEFAULT '',
+    last_backstop_at            DATETIME,
+    created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (person_id, source_lane, program_fingerprint, catalog_fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_cursors_incomplete
+    ON person_sweep_cursors(person_id)
+    WHERE reconciliation_complete = FALSE;
+
 -- Immutable egress policy for model-backed people maintenance. Credentials
 -- are never stored; api_key_env records only the exact configured variable
 -- name. Runtime timeout is operational and intentionally outside the policy.
@@ -319,6 +406,290 @@ CREATE TABLE IF NOT EXISTS person_semantic_embedding_consents (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_person_semantic_embedding_consents_active
     ON person_semantic_embedding_consents(profile_fingerprint)
     WHERE revoked_at IS NULL;
+
+-- Immutable evidence and generation envelopes for automatic person facts.
+-- Rows remain append-only for the lifetime of their owning person.
+CREATE TABLE IF NOT EXISTS person_fact_evidence (
+    id                INTEGER PRIMARY KEY,
+    person_id         INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    evidence_key      TEXT NOT NULL,
+    source_class      TEXT NOT NULL
+                           CHECK (source_class IN ('archive', 'public', 'system', 'provider_assertion')),
+    directness        TEXT NOT NULL
+                           CHECK (directness IN ('direct-self', 'direct-other', 'indirect')),
+    authority         TEXT NOT NULL
+                           CHECK (authority IN ('authoritative', 'ordinary', 'aggregator')),
+    source_ref        TEXT NOT NULL DEFAULT '',
+    source_url        TEXT NOT NULL DEFAULT '',
+    subject_person_id INTEGER,
+    subject_ref       TEXT NOT NULL DEFAULT '',
+    span_start        INTEGER,
+    span_end          INTEGER,
+    excerpt           TEXT NOT NULL DEFAULT '',
+    content_sha256    TEXT NOT NULL DEFAULT '',
+    source_version    TEXT NOT NULL DEFAULT '',
+    event_time        DATETIME NOT NULL,
+    recorded_time     DATETIME NOT NULL,
+    identity_score    INTEGER NOT NULL CHECK (identity_score BETWEEN 0 AND 1000),
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(person_id, evidence_key),
+    CHECK ((span_start IS NULL) = (span_end IS NULL)),
+    CHECK (span_start IS NULL OR (span_start >= 0 AND span_end >= span_start))
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_generations (
+    id                          INTEGER PRIMARY KEY,
+    person_id                   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    generation_key              TEXT NOT NULL,
+    source_cursors_json         JSON NOT NULL,
+    program_id                  TEXT NOT NULL,
+    program_version             TEXT NOT NULL,
+    program_fingerprint         TEXT NOT NULL
+                                     CHECK (length(program_fingerprint) = 64
+                                        AND program_fingerprint NOT GLOB '*[^0-9a-f]*'),
+    catalog_fingerprint         TEXT NOT NULL,
+    provider                    TEXT NOT NULL,
+    provider_version            TEXT NOT NULL,
+    model                       TEXT NOT NULL,
+    model_version               TEXT NOT NULL,
+    provider_policy_fingerprint TEXT NOT NULL,
+    resolved_at                 DATETIME NOT NULL,
+    created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(person_id, generation_key)
+);
+
+-- Safe, durable accounting for model-backed person maintenance. The exact
+-- request and response bodies remain outside these metadata-only tables.
+CREATE TABLE IF NOT EXISTS person_sweep_runs (
+    id                          TEXT PRIMARY KEY,
+    kind                        TEXT NOT NULL CHECK (kind IN ('scheduled', 'manual')),
+    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop')),
+    status                      TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    provider_fingerprint        TEXT NOT NULL,
+    attempt_count               INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    success_count               INTEGER NOT NULL DEFAULT 0 CHECK (success_count >= 0),
+    failure_count               INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    projected_write_count       INTEGER NOT NULL DEFAULT 0 CHECK (projected_write_count >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        INTEGER NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       INTEGER NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    started_at                  TEXT NOT NULL,
+    completed_at                TEXT
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_attempts (
+    id                          TEXT PRIMARY KEY,
+    run_id                      TEXT NOT NULL REFERENCES person_sweep_runs(id) ON DELETE CASCADE,
+    person_id                   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    lease_fence                 INTEGER NOT NULL CHECK (lease_fence >= 0),
+    mode                        TEXT NOT NULL CHECK (mode IN ('incremental', 'backstop')),
+    status                      TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'cancelled')),
+    failure_class               TEXT NOT NULL DEFAULT '' CHECK (failure_class IN (
+        '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
+        'provider_http', 'invalid_output', 'archive_gap', 'internal'
+    )),
+    cursor_envelope_json        TEXT NOT NULL,
+    envelope_hash               TEXT NOT NULL,
+    program_fingerprint         TEXT NOT NULL,
+    catalog_fingerprint         TEXT NOT NULL,
+    provider_fingerprint        TEXT NOT NULL,
+    generation_id               INTEGER REFERENCES person_fact_generations(id) ON DELETE SET NULL,
+    generation_key              TEXT NOT NULL DEFAULT '',
+    seed_count                   INTEGER NOT NULL DEFAULT 0 CHECK (seed_count >= 0),
+    context_count                INTEGER NOT NULL DEFAULT 0 CHECK (context_count >= 0),
+    claim_count                  INTEGER NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
+    decision_count               INTEGER NOT NULL DEFAULT 0 CHECK (decision_count >= 0),
+    projected_write_count       INTEGER NOT NULL DEFAULT 0 CHECK (projected_write_count >= 0),
+    request_count                INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    provider_request_id         TEXT NOT NULL DEFAULT '',
+    input_tokens                INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+    output_tokens               INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+    estimated_cost_micro_usd    INTEGER NOT NULL DEFAULT 0 CHECK (estimated_cost_micro_usd >= 0),
+    latency_milliseconds        INTEGER NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
+    retry_at                    TEXT,
+    started_at                  TEXT NOT NULL,
+    completed_at                TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_person_started
+    ON person_sweep_attempts(person_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_run
+    ON person_sweep_attempts(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_generation
+    ON person_sweep_attempts(generation_id);
+
+CREATE TABLE IF NOT EXISTS person_sweep_batches (
+    attempt_id                  TEXT NOT NULL REFERENCES person_sweep_attempts(id) ON DELETE CASCADE,
+    batch_ordinal               INTEGER NOT NULL CHECK (batch_ordinal >= 0),
+    utc_day                     TEXT NOT NULL,
+    reservation_id              TEXT NOT NULL,
+    budget_fingerprint          TEXT NOT NULL,
+    input_hash                  TEXT NOT NULL,
+    item_count                  INTEGER NOT NULL CHECK (item_count >= 0),
+    status                      TEXT NOT NULL CHECK (status IN ('reserved', 'running', 'succeeded', 'failed', 'cancelled')),
+    provider_request_id         TEXT NOT NULL DEFAULT '',
+    reserved_requests           INTEGER NOT NULL CHECK (reserved_requests >= 0),
+    reserved_input_tokens       INTEGER NOT NULL CHECK (reserved_input_tokens >= 0),
+    reserved_output_tokens      INTEGER NOT NULL CHECK (reserved_output_tokens >= 0),
+    reserved_cost_micro_usd     INTEGER NOT NULL CHECK (reserved_cost_micro_usd >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        INTEGER NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       INTEGER NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    latency_milliseconds        INTEGER NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
+    failure_class               TEXT NOT NULL DEFAULT '' CHECK (failure_class IN (
+        '', 'policy', 'budget', 'lease_lost', 'rate_limited', 'timeout',
+        'provider_http', 'invalid_output', 'archive_gap', 'internal'
+    )),
+    created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at                TEXT,
+    PRIMARY KEY (attempt_id, batch_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS person_sweep_daily_usage (
+    utc_day                     TEXT PRIMARY KEY,
+    reserved_requests           INTEGER NOT NULL DEFAULT 0 CHECK (reserved_requests >= 0),
+    reserved_input_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (reserved_input_tokens >= 0),
+    reserved_output_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (reserved_output_tokens >= 0),
+    reserved_cost_micro_usd     INTEGER NOT NULL DEFAULT 0 CHECK (reserved_cost_micro_usd >= 0),
+    actual_requests             INTEGER NOT NULL DEFAULT 0 CHECK (actual_requests >= 0),
+    actual_input_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (actual_input_tokens >= 0),
+    actual_output_tokens        INTEGER NOT NULL DEFAULT 0 CHECK (actual_output_tokens >= 0),
+    actual_cost_micro_usd       INTEGER NOT NULL DEFAULT 0 CHECK (actual_cost_micro_usd >= 0),
+    updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_claims (
+    id                    INTEGER PRIMARY KEY,
+    person_id             INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    generation_id         INTEGER NOT NULL REFERENCES person_fact_generations(id) ON DELETE CASCADE,
+    claim_key             TEXT NOT NULL,
+    target_kind           TEXT NOT NULL,
+    target_key            TEXT NOT NULL,
+    target_revision       TEXT NOT NULL,
+    relation              TEXT NOT NULL CHECK (relation IN ('support', 'contradict', 'supersede', 'invalid')),
+    submitted_value_json  TEXT NOT NULL,
+    normalized_value_json JSON,
+    value_fingerprint     TEXT,
+    valid_from            DATETIME,
+    valid_until           DATETIME,
+    origin                TEXT NOT NULL CHECK (origin IN ('extraction', 'enrichment', 'system', 'invalid')),
+    confidence_json       JSON NOT NULL,
+    rejection_action      TEXT CHECK (rejection_action IN (
+                              'applied', 'retained', 'superseded', 'invalid', 'identity-rejected',
+                              'policy-rejected', 'conflict-rejected', 'ambiguous-retained')),
+    rejection_reason      TEXT CHECK (rejection_reason IN (
+                              'malformed-value', 'unsupported-target', 'stale-target-revision',
+                              'unaligned-evidence', 'identity-mismatch', 'sensitive-policy',
+                              'pin-retained', 'below-threshold', 'insufficient-margin',
+                              'competing-tie', 'explicit-contradiction', 'explicit-supersession',
+                              'organization-ambiguous', 'applied-projection', 'evidence-unsupported',
+                              'outside-validity')),
+    rejection_detail      TEXT,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((rejection_action IS NULL AND rejection_reason IS NULL AND rejection_detail IS NULL) OR
+           (rejection_action IS NOT NULL AND rejection_reason IS NOT NULL AND
+            rejection_detail IS NOT NULL AND rejection_detail <> '')),
+    UNIQUE(person_id, claim_key),
+    CHECK ((normalized_value_json IS NULL) = (value_fingerprint IS NULL)),
+    CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until >= valid_from)
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_claim_evidence (
+    claim_id    INTEGER NOT NULL REFERENCES person_fact_claims(id) ON DELETE CASCADE,
+    evidence_id INTEGER NOT NULL REFERENCES person_fact_evidence(id) ON DELETE CASCADE,
+    PRIMARY KEY (claim_id, evidence_id)
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_evidence_status_events (
+    id             INTEGER PRIMARY KEY,
+    person_id      INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    generation_id  INTEGER NOT NULL REFERENCES person_fact_generations(id) ON DELETE CASCADE,
+    evidence_id    INTEGER NOT NULL REFERENCES person_fact_evidence(id) ON DELETE CASCADE,
+    evidence_key   TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    supported      INTEGER NOT NULL CHECK (supported IN (0, 1)),
+    reason         TEXT NOT NULL CHECK (reason IN (
+                       'source-deleted', 'source-edited', 'scope-unlinked',
+                       'identity-reassigned', 'source-reimported', 'scope-relinked')),
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(person_id, generation_id, evidence_key, source_version)
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_resolutions (
+    id                          INTEGER PRIMARY KEY,
+    person_id                   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    generation_id               INTEGER NOT NULL REFERENCES person_fact_generations(id) ON DELETE CASCADE,
+    target_kind                 TEXT NOT NULL,
+    target_key                  TEXT NOT NULL,
+    target_revision             TEXT NOT NULL,
+    resolver_version            TEXT NOT NULL,
+    input_fingerprint           TEXT NOT NULL,
+    provider_policy_fingerprint TEXT NOT NULL,
+    resolved_at                 DATETIME NOT NULL,
+    created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(generation_id, target_kind, target_key, resolver_version, input_fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_decisions (
+    id                 INTEGER PRIMARY KEY,
+    person_id          INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    resolution_id      INTEGER NOT NULL REFERENCES person_fact_resolutions(id) ON DELETE CASCADE,
+    claim_id           INTEGER REFERENCES person_fact_claims(id) ON DELETE CASCADE,
+    decision_key       TEXT NOT NULL,
+    action             TEXT NOT NULL CHECK (action IN (
+                           'applied', 'retained', 'superseded', 'invalid',
+                           'identity-rejected', 'policy-rejected', 'conflict-rejected',
+                           'ambiguous-retained')),
+    reason             TEXT NOT NULL CHECK (reason IN (
+                           'malformed-value', 'unsupported-target', 'stale-target-revision',
+                           'unaligned-evidence', 'identity-mismatch', 'sensitive-policy',
+                           'pin-retained', 'below-threshold', 'insufficient-margin',
+                           'competing-tie', 'explicit-contradiction', 'explicit-supersession',
+                           'organization-ambiguous', 'applied-projection', 'evidence-unsupported',
+                           'outside-validity')),
+    score_json         JSON NOT NULL,
+    competing_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
+    projection_kind    TEXT,
+    projection_row_id  INTEGER,
+    resolved_organization_id INTEGER,
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(person_id, decision_key),
+    CHECK ((projection_kind IS NULL) = (projection_row_id IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS person_fact_pin_events (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    target_kind     TEXT NOT NULL CHECK (target_kind IN ('attribute', 'employment')),
+    target_key      TEXT NOT NULL,
+    target_revision TEXT NOT NULL,
+    pinned          INTEGER NOT NULL CHECK (pinned IN (0, 1)),
+    actor           TEXT NOT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_fact_generations_person
+    ON person_fact_generations(person_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_evidence_person
+    ON person_fact_evidence(person_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_evidence_status_latest
+    ON person_fact_evidence_status_events(person_id, evidence_key, source_version, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_claims_person_target
+    ON person_fact_claims(person_id, target_kind, target_key, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_claim_evidence_evidence
+    ON person_fact_claim_evidence(evidence_id, claim_id);
+CREATE INDEX IF NOT EXISTS idx_person_fact_resolutions_person_target
+    ON person_fact_resolutions(person_id, target_kind, target_key, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_decisions_person
+    ON person_fact_decisions(person_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_fact_decisions_projection
+    ON person_fact_decisions(person_id, projection_kind, projection_row_id);
+CREATE INDEX IF NOT EXISTS idx_person_fact_pin_events_latest
+    ON person_fact_pin_events(person_id, target_kind, target_key, id DESC);
 
 -- Lossless native vCard resources. Typed profile tables remain the semantic
 -- source of truth; this table retains exact wire bodies and normalized
@@ -943,6 +1314,22 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_before TEXT,
     cursor_after TEXT
 );
+
+-- Exact journal cut owned by one source sync publication. The lower bound is
+-- captured with StartSync; successful completion publishes only the bounded
+-- interval and records its upper bound in the same transaction.
+CREATE TABLE IF NOT EXISTS person_sweep_sync_publications (
+    sync_run_id INTEGER PRIMARY KEY REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    lower_sequence INTEGER NOT NULL CHECK (lower_sequence >= 0),
+    upper_sequence INTEGER CHECK (
+        upper_sequence IS NULL OR upper_sequence >= lower_sequence
+    ),
+    published_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_sweep_sync_publications_source
+    ON person_sweep_sync_publications(source_id, sync_run_id);
 
 -- Per-item sync outcomes, for diagnosing partial sync completion.
 -- status='error' is actionable and contributes to sync_runs.errors_count.
@@ -2195,6 +2582,10 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     units_processed       INTEGER,
     returned_model        TEXT,
     manifest_checksum     TEXT,
+    normalization_version INTEGER,
+    document_family       TEXT,
+    unit_kind             TEXT,
+    normalized_truncated  BOOLEAN NOT NULL DEFAULT FALSE,
     terminal_reason       TEXT,
     source_sequence       INTEGER NOT NULL DEFAULT 0,
     created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2209,6 +2600,8 @@ CREATE INDEX IF NOT EXISTS idx_document_extractions_owner
     ON document_extractions(profile_id, canonical_blob_hash, extraction_input_key, state);
 CREATE INDEX IF NOT EXISTS idx_document_extractions_lease
     ON document_extractions(state, lease_until);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_extractions_vector_identity
+    ON document_extractions(id, profile_id, canonical_blob_hash, extraction_input_key, source_sequence);
 
 -- One renewable claim per stable content owner. The monotonic fence prevents
 -- an expired worker from publishing after a later worker has taken ownership.
@@ -2249,6 +2642,7 @@ CREATE TABLE IF NOT EXISTS document_units (
     checksum              TEXT NOT NULL,
     char_count            INTEGER NOT NULL,
     truncated             BOOLEAN NOT NULL DEFAULT FALSE,
+    heading_marks         JSON NOT NULL DEFAULT '[]',
     PRIMARY KEY (extraction_id, unit_index),
     CHECK (unit_index >= 0),
     CHECK (char_count >= 0)
@@ -2275,6 +2669,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     CHECK (first_unit_index >= 0 AND last_unit_index >= first_unit_index),
     CHECK (synthetic_prefix_len >= 0 AND char_count >= 0)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_chunks_vector_identity
+    ON document_chunks(id, extraction_id, chunk_key, checksum);
 
 CREATE TABLE IF NOT EXISTS document_chunk_spans (
     extraction_id         TEXT NOT NULL,
@@ -2325,6 +2721,85 @@ CREATE TABLE IF NOT EXISTS document_index_state (
     updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 INSERT OR IGNORE INTO document_index_state(singleton, revision) VALUES (1, 0);
+
+-- Document vectors are a corpus separate from message embeddings. The main
+-- archive database owns generation and publication authority; vector backends
+-- only store the opaque token below.
+CREATE TABLE IF NOT EXISTS document_vector_generations (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint                  TEXT NOT NULL,
+    target_extraction_profile_id TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    state                        TEXT NOT NULL CHECK (state IN ('building', 'active', 'retired')),
+    created_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    activated_at                 DATETIME,
+    retired_at                   DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_building
+    ON document_vector_generations(state) WHERE state = 'building';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_vector_generations_active
+    ON document_vector_generations(state) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_document_vector_generations_live_fingerprint
+    ON document_vector_generations(fingerprint) WHERE state <> 'retired';
+
+-- Hosted embedding consent is bound to both the reusable generation policy
+-- and a separate canonical egress destination fingerprint. It deliberately
+-- contains no credentials, raw endpoints, or provider payloads.
+CREATE TABLE IF NOT EXISTS document_vector_consents (
+    egress_fingerprint           TEXT PRIMARY KEY,
+    purpose                      TEXT NOT NULL CHECK (purpose IN ('document_embedding', 'query_embedding')),
+    generation_fingerprint       TEXT NOT NULL,
+    target_extraction_profile_id  TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE RESTRICT,
+    embedding_profile            TEXT NOT NULL,
+    model                        TEXT NOT NULL,
+    dimension                    INTEGER NOT NULL CHECK (dimension > 0),
+    consented_at                 DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_provider_usage (
+    fingerprint          TEXT PRIMARY KEY,
+    provider_calls       INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
+    provider_documents   INTEGER NOT NULL DEFAULT 0 CHECK (provider_documents >= 0),
+    provider_chunks      INTEGER NOT NULL DEFAULT 0 CHECK (provider_chunks >= 0),
+    provider_input_chars INTEGER NOT NULL DEFAULT 0 CHECK (provider_input_chars >= 0),
+    updated_at           DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_vector_build_progress (
+    generation_id  INTEGER PRIMARY KEY REFERENCES document_vector_generations(id) ON DELETE CASCADE,
+    after_chunk_id INTEGER NOT NULL CHECK (after_chunk_id > 0),
+    updated_at     DATETIME NOT NULL
+);
+
+-- Publication rows are deliberately complete before a vector backend exists:
+-- the durable token is the only identifier a backend receives.
+CREATE TABLE IF NOT EXISTS document_vector_publications (
+    generation_id                INTEGER NOT NULL REFERENCES document_vector_generations(id) ON DELETE RESTRICT,
+    extraction_id                TEXT NOT NULL,
+    extraction_profile_id        TEXT NOT NULL,
+    canonical_blob_hash          TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
+    extraction_input_key         TEXT NOT NULL,
+    chunk_id                     INTEGER NOT NULL,
+    chunk_key                    TEXT NOT NULL,
+    chunk_checksum               TEXT NOT NULL,
+    source_sequence              INTEGER NOT NULL,
+    token                        TEXT NOT NULL UNIQUE,
+    state                        TEXT NOT NULL CHECK (state IN ('pending', 'ready', 'failed')),
+    lease_owner                  TEXT,
+    lease_fence                  INTEGER NOT NULL DEFAULT 0,
+    lease_until                  DATETIME,
+    attempt_count                INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_retry_at                DATETIME,
+    error_code                   TEXT,
+    backend_cleaned_at           DATETIME,
+    created_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (generation_id, extraction_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_vector_publications_cleanup
+    ON document_vector_publications(generation_id, backend_cleaned_at, token);
 
 -- Foreign-key cascades can remove occurrences before asynchronous attachment
 -- reconciliation observes the deletion. Invalidate search cursors at the

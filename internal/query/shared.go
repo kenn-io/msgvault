@@ -471,6 +471,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			m.received_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
+			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
@@ -492,6 +493,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		&receivedAt,
 		&msg.SizeEstimate,
 		&msg.HasAttachments,
+		&msg.IsFromMe,
 		&deletedAt,
 	)
 	if err == sql.ErrNoRows {

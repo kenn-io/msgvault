@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Spinner } from '@kenn-io/kit-ui';
+  import { Button, Chip, Spinner, Table, TableHeaderCell, type ChipTone } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -215,6 +215,23 @@
     return run.status.replaceAll('_', ' ');
   }
 
+  function statusTone(run: SyncRun): ChipTone {
+    if (run.status === 'completed') return 'success';
+    if (run.status === 'failed') return 'danger';
+    return 'info';
+  }
+
+  function resultTimestamp(run: SyncRun | null | undefined): string | undefined {
+    return run?.completed_at ?? run?.started_at;
+  }
+
+  function formatTimestamp(value: string | null | undefined): string {
+    if (!value) return 'Not available';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  }
+
   function staleLastResult(source: Source): boolean {
     const resultAt = source.latest_sync?.completed_at ?? source.latest_sync?.started_at;
     if (!resultAt) return false;
@@ -237,30 +254,47 @@
   {#if loading}<p role="status">Loading source status…</p>
   {:else if sources.length === 0}<p class="notice" role="status">No archived sources are available.</p>
   {:else}
-    <section class="source-list" aria-label="Source status list">
+    <Table ariaLabel="Source status" zebra={false} class="source-table">
+      {#snippet header()}
+        <TableHeaderCell label="Source" />
+        <TableHeaderCell label="Schedule" />
+        <TableHeaderCell label="Latest result" />
+        <TableHeaderCell label="Last successful sync" />
+        <TableHeaderCell label="Action" />
+      {/snippet}
       {#each sources as source (source.id)}
-        <article>
-          <div class="identity">
-            <h2>{label(source)}</h2>
-            <span>{source.source_type} · {source.identifier}</span>
-            <span>Updated {source.updated_at}</span>
+        <tr>
+          <td>
+            <div class="source-cell">
+              <strong class="source-name">{label(source)}</strong>
+              <span>{source.source_type} · {source.identifier}</span>
+              <span>Updated <time datetime={source.updated_at} title={source.updated_at}>{formatTimestamp(source.updated_at)}</time></span>
+            </div>
+          </td>
+          <td>
+            <div class="cell-stack">
             {#if source.scheduled}
-              <span>Scheduled · {source.schedule ?? 'schedule unavailable'}</span>
-              {#if source.next_sync_at}<span>Next {source.next_sync_at}</span>{/if}
+              <strong>{source.schedule ?? 'Schedule unavailable'}</strong>
+              {#if source.next_sync_at}
+                <span>Next <time datetime={source.next_sync_at} title={source.next_sync_at}>{formatTimestamp(source.next_sync_at)}</time></span>
+              {/if}
             {:else if isOnDemandSource(source)}
               <span>On demand · imported through the API</span>
             {:else}<span>Not scheduled</span>{/if}
             {#if source.scheduler_last_error}<span class="error-copy">Scheduler: {source.scheduler_last_error}</span>{/if}
-          </div>
-          <div class="run-state">
+            </div>
+          </td>
+          <td>
+            <div class="cell-stack">
             {#if source.active_sync}
               <span class="working"><Spinner size={12} label={`Syncing ${label(source)}`} /> Syncing</span>
               <strong>{source.active_sync.messages_processed.toLocaleString()} processed</strong>
               <span>{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>
             {:else}
-              <span>Latest result</span>
               {#if source.latest_sync}
-                <strong>{statusLabel(source.latest_sync)}</strong>
+                <Chip size="sm" tone={statusTone(source.latest_sync)} uppercase={false}>{statusLabel(source.latest_sync)}</Chip>
+                {@const latestAt = resultTimestamp(source.latest_sync)}
+                {#if latestAt}<time datetime={latestAt} title={latestAt}>{formatTimestamp(latestAt)}</time>{/if}
                 {#if staleLastResult(source)}<span class="reason">stale_last_result</span>{/if}
                 {#if source.latest_sync.error_message}<span class="error-copy">{source.latest_sync.error_message}</span>{/if}
                 {#if source.latest_sync.item_errors?.length}
@@ -273,12 +307,18 @@
                 {/if}
               {:else}<strong>No prior sync result</strong>{/if}
             {/if}
-          </div>
-          <div class="last-success">
-            <span>Last successful sync</span>
-            <strong>{source.last_successful_sync?.completed_at ?? 'No successful sync result'}</strong>
-          </div>
-          <div class="action">
+            </div>
+          </td>
+          <td>
+            {#if source.last_successful_sync?.completed_at}
+              <time datetime={source.last_successful_sync.completed_at} title={source.last_successful_sync.completed_at}>
+                {formatTimestamp(source.last_successful_sync.completed_at)}
+              </time>
+            {:else}
+              <span>No successful sync result</span>
+            {/if}
+          </td>
+          <td class="action-cell">
             {#if source.can_sync}
               <Button size="sm" tone="info" surface="soft" label={`Sync now ${label(source)}`} disabled={Boolean(triggering) || awaitingSourceID === source.id} onclick={() => void syncNow(source)} />
             {:else if isOnDemandSource(source)}
@@ -286,27 +326,31 @@
             {:else}
               <span class="reason">{source.sync_unavailable_reason ?? 'sync_unavailable'}</span>
             {/if}
-          </div>
-        </article>
+          </td>
+        </tr>
       {/each}
-    </section>
+    </Table>
   {/if}
 </main>
 
 <style>
   .sources { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
-  header, article { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  header p, h1, h2 { margin: 0; }
-  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  header span, article span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .source-list { display: grid; border-top: 1px solid var(--border-muted); }
-  article { min-height: 72px; padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
-  .identity, .run-state, .last-success, details { display: grid; min-width: 0; gap: var(--space-1); }
-  .identity { flex: 1; }
-  .run-state, .last-success { width: min(22vw, 240px); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+  header p, h1 { margin: 0; }
+  header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  header span, td span, td time { color: var(--text-muted); font-size: var(--font-size-xs); }
+  :global(.source-table) { overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
+  :global(.source-table .kit-table) { min-width: 980px; }
+  :global(.source-table tbody td) { vertical-align: middle; }
+  :global(.source-table tbody td:first-child) { width: 30%; }
+  :global(.source-table tbody td:nth-child(2)) { width: 20%; }
+  :global(.source-table tbody td:nth-child(3)) { width: 18%; }
+  :global(.source-table tbody td:nth-child(4)) { width: 18%; }
+  .source-cell, .cell-stack, details { display: grid; min-width: 0; gap: var(--space-1); }
+  .source-name { color: var(--text-primary); font-size: var(--font-size-md); }
   .working { display: flex; align-items: center; gap: var(--space-2); color: var(--accent-teal); }
+  .action-cell { text-align: right; white-space: nowrap; }
   .reason, .error-copy { color: var(--text-danger); }
-  .notice { padding: var(--space-3); border-left: 3px solid var(--accent-amber); background: var(--bg-subtle); }
+  .notice { padding: var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); background: var(--status-warning-bg); }
   .notice--error { border-color: var(--accent-red); color: var(--text-danger); }
-  @media (max-width: 760px) { article { align-items: stretch; flex-direction: column; } .run-state, .last-success { width: auto; } }
 </style>

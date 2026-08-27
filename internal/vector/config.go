@@ -203,6 +203,39 @@ func (e EmbeddingsConfig) EffectiveAPIFormat() EmbeddingAPIFormat {
 	return e.APIFormat
 }
 
+// Validate checks embedding-provider settings without requiring the ordinary
+// message-vector lane to be enabled. Document vectors use the same provider
+// policy under their own enablement and consent controls.
+func (e EmbeddingsConfig) Validate() error {
+	switch e.EffectiveAPIFormat() {
+	case APIFormatOpenAI, APIFormatVoyageContextual:
+	default:
+		return fmt.Errorf("vector.embeddings.api_format: unknown format %q (supported: %q, %q)",
+			e.APIFormat, APIFormatOpenAI, APIFormatVoyageContextual)
+	}
+	if e.EffectiveAPIFormat() == APIFormatVoyageContextual && e.Model != "voyage-context-4" {
+		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
+			APIFormatVoyageContextual, "voyage-context-4", e.Model)
+	}
+	if e.Endpoint == "" {
+		return errors.New("vector.embeddings.endpoint: required")
+	}
+	u, err := url.Parse(e.Endpoint)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("vector.embeddings.endpoint: must be an http or https URL with a host (got %q)", e.Endpoint)
+	}
+	if e.Model == "" {
+		return fmt.Errorf("vector.embeddings.model: required (the index generation fingerprint is %q, which is ambiguous without a model name)", e.Fingerprint())
+	}
+	if e.Dimension <= 0 {
+		return fmt.Errorf("vector.embeddings.dimension: must be positive, got %d", e.Dimension)
+	}
+	if e.BatchSize <= 0 {
+		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", e.BatchSize)
+	}
+	return nil
+}
+
 // PreprocessConfig controls message text preprocessing before embedding.
 //
 // Fields are pointers so the decoder can distinguish "unset" (nil,
@@ -490,32 +523,8 @@ func (c *Config) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	switch c.Embeddings.EffectiveAPIFormat() {
-	case APIFormatOpenAI, APIFormatVoyageContextual:
-	default:
-		return fmt.Errorf("vector.embeddings.api_format: unknown format %q (supported: %q, %q)",
-			c.Embeddings.APIFormat, APIFormatOpenAI, APIFormatVoyageContextual)
-	}
-	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual &&
-		c.Embeddings.Model != "voyage-context-4" {
-		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
-			APIFormatVoyageContextual, "voyage-context-4", c.Embeddings.Model)
-	}
-	if c.Embeddings.Endpoint == "" {
-		return errors.New("vector.embeddings.endpoint: required")
-	}
-	u, err := url.Parse(c.Embeddings.Endpoint)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("vector.embeddings.endpoint: must be an http or https URL with a host (got %q)", c.Embeddings.Endpoint)
-	}
-	if c.Embeddings.Model == "" {
-		return fmt.Errorf("vector.embeddings.model: required (the index generation fingerprint is %q, which is ambiguous without a model name)", c.Embeddings.Fingerprint())
-	}
-	if c.Embeddings.Dimension <= 0 {
-		return fmt.Errorf("vector.embeddings.dimension: must be positive, got %d", c.Embeddings.Dimension)
-	}
-	if c.Embeddings.BatchSize <= 0 {
-		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", c.Embeddings.BatchSize)
+	if err := c.Embeddings.Validate(); err != nil {
+		return err
 	}
 	if c.People.Enabled {
 		if _, err := c.SemanticPersonEmbeddingProfile(); err != nil {

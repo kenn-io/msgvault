@@ -38,6 +38,8 @@ type Importer struct {
 	store  *store.Store
 	hooks  Hooks
 	logger *slog.Logger
+
+	beforeCheckpointForTest func()
 }
 
 func NewImporter(s *store.Store, hooks Hooks) *Importer {
@@ -104,6 +106,9 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 	if err != nil {
 		return result, fmt.Errorf("start meeting import sync: %w", err)
 	}
+	scoped := *i
+	scoped.store = i.store.ScopedToSync(source.ID, syncID)
+	i = &scoped
 	checkpoint := &store.Checkpoint{}
 	defer func() {
 		if retErr == nil {
@@ -144,6 +149,9 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 					return result, err
 				}
 				checkpoint.MessagesProcessed = 1
+				if i.beforeCheckpointForTest != nil {
+					i.beforeCheckpointForTest()
+				}
 				if err := i.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 					return result, fmt.Errorf("checkpoint meeting import sync: %w", err)
 				}
@@ -274,6 +282,9 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		checkpoint.MessagesUpdated = 1
 	}
 
+	if i.beforeCheckpointForTest != nil {
+		i.beforeCheckpointForTest()
+	}
 	if err := i.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 		return result, fmt.Errorf("checkpoint meeting import sync: %w", err)
 	}

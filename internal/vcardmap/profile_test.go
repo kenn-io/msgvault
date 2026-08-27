@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
@@ -69,6 +70,38 @@ func TestProjectTemporalValuesUseVCardWireSyntax(t *testing.T) {
 		projectedByOwner(t, properties, "person_attribute_values", 3, "value").Property.RawValue)
 	assert.Equal("20260730T123456Z",
 		projectedByOwner(t, properties, "person_attribute_values", 4, "value").Property.RawValue)
+}
+
+func TestPersonNotesProjectToVCard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipant(
+		"notes@example.test", "Notes Person", "example.test",
+	)
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	note := "line one\nline two"
+	written, err := st.SetPersonAttributeValueContext(t.Context(),
+		store.PersonAttributeValueInput{
+			PersonID: person.ID, DefinitionSlug: store.AttributeSlugNotes,
+			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &note},
+			Source: store.ProvenanceUser,
+		})
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
+
+	properties, _, err := projectPersonProperties(*snapshot)
+	require.NoError(err)
+	projected := projectedByOwner(
+		t, properties, "person_attribute_values", written.Value.ID, "value",
+	)
+	assert.Equal("NOTE", projected.Property.Name)
+	decoded, err := vcard.UnescapeText(projected.Property.RawValue)
+	require.NoError(err)
+	assert.Equal(note, decoded)
 }
 
 func TestProjectPersonEnvelopePrefersPersistedMappingAndPreservesUnownedParameters(t *testing.T) {

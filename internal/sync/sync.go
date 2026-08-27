@@ -832,6 +832,9 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	if err != nil {
 		return nil, err
 	}
+	scoped := *s
+	scoped.store = s.store.ScopedToSync(source.ID, state.syncID)
+	s = &scoped
 	summary.SyncRunID = state.syncID
 	summary.WasResumed = state.wasResumed
 	summary.ResumedFromToken = state.pageToken
@@ -1248,10 +1251,7 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 			s.logger.Warn("failed to count stored attachments",
 				"message", messageID, "error", err)
 		} else if storedCount != len(data.attachments) {
-			if _, err := s.store.DB().Exec(
-				s.store.Rebind(`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`),
-				storedCount > 0, storedCount, messageID,
-			); err != nil {
+			if err := s.store.RecomputeMessageAttachmentStats(messageID); err != nil {
 				s.logger.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err)
 			}

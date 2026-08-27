@@ -186,6 +186,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 			Body:           message.Body,
 			BodyHTML:       message.BodyHTML,
 			BodyOmitted:    message.BodyOmitted,
+			IsFromMe:       message.IsFromMe,
 			Attachments:    make([]AttachmentInfo, 0, len(message.Attachments)),
 		}
 		for _, attachment := range message.Attachments {

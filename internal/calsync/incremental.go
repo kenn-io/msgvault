@@ -78,7 +78,6 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 		err := s.incrementalCalendar(ctx, src, cal, &result)
 		if errors.Is(err, ErrSyncTokenExpired) {
 			s.logger.Warn("calendar sync token expired; running full resync", "calendar", cal.ID)
-			_ = s.store.UpdateSourceSyncCursor(src.ID, "")
 			if ferr := s.syncCalendarFull(ctx, cal, &result); ferr != nil {
 				recordErr(ferr)
 				continue
@@ -107,6 +106,9 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 	if err != nil {
 		return fmt.Errorf("start sync: %w", err)
 	}
+	scoped := *s
+	scoped.store = s.store.ScopedToSync(src.ID, syncID)
+	s = &scoped
 	fail := func(e error) error {
 		_ = s.store.FailSync(syncID, e.Error())
 		return e
@@ -130,7 +132,11 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 		})
 		if err != nil {
 			if _, ok := errors.AsType[*gcal.GoneError](err); ok {
-				_ = s.store.FailSync(syncID, ErrSyncTokenExpired.Error())
+				if failErr := s.store.FailSyncAndClearSourceCursorContext(
+					ctx, syncID, src.ID, ErrSyncTokenExpired.Error(),
+				); failErr != nil {
+					return fmt.Errorf("expire calendar sync token: %w", failErr)
+				}
 				return ErrSyncTokenExpired
 			}
 			return fail(fmt.Errorf("events.list: %w", err))
@@ -178,16 +184,19 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 		return fail(fmt.Errorf("%d calendar event(s) failed to persist; sync token not advanced so they retry on the next sync", cp.ErrorsCount))
 	}
 
-	if finalToken != "" {
-		if err := s.store.UpdateSourceSyncCursor(src.ID, finalToken); err != nil {
-			return fail(fmt.Errorf("update cursor: %w", err))
-		}
-	}
-	if err := s.store.CompleteSync(syncID, finalToken); err != nil {
-		return fail(fmt.Errorf("complete sync: %w", err))
-	}
 	if err := s.store.RecomputeConversationStats(src.ID); err != nil {
 		s.logger.Warn("recompute conversation stats failed", "calendar", cal.ID, "error", err)
+	}
+	var completeErr error
+	if finalToken != "" {
+		completeErr = s.store.CompleteSyncAndUpdateSourceCursorContext(
+			ctx, syncID, src.ID, finalToken,
+		)
+	} else {
+		completeErr = s.store.CompleteSyncContext(ctx, syncID, finalToken)
+	}
+	if completeErr != nil {
+		return fail(fmt.Errorf("complete sync: %w", completeErr))
 	}
 	_ = s.store.CheckpointWAL()
 	s.logger.Info("calendar incremental sync complete",

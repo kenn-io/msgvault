@@ -20,6 +20,7 @@ const (
 	AttributeUniversalIDContactFrequency      = "34b52841-dcf5-40c6-a24e-628b049e85b2"
 	AttributeUniversalIDAskMeAbout            = "93c658a1-2346-4a6e-98c2-abfa29209334"
 	AttributeUniversalIDLastContacted         = "6e843902-1685-4e23-a107-819220c7dd8d"
+	AttributeUniversalIDNotes                 = "b72b3cf7-509f-4286-a0f0-bb039c85ff40"
 	AttributeUniversalIDLocation              = "2068efb0-9808-498b-ac3a-8e0a87d4513a"
 	AttributeUniversalIDBirthplace            = "cd5aaad0-4368-4686-85e1-4dbdb86cc54b"
 	AttributeUniversalIDMembership            = "fbf748ac-585a-4f79-aac3-f7eda023b5e4"
@@ -38,6 +39,7 @@ const (
 	AttributeSlugContactFrequency      = "contact_frequency"
 	AttributeSlugAskMeAbout            = "ask_me_about"
 	AttributeSlugLastContacted         = "last_contacted"
+	AttributeSlugNotes                 = "notes"
 	AttributeSlugLocation              = "location"
 	AttributeSlugBirthplace            = "birthplace"
 	AttributeSlugMembership            = "membership"
@@ -134,6 +136,26 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			IsDeletable:   false,
 			HistoryExempt: true,
 			DerivedSource: stringPtr(AttributeDerivedSourceActivitySpine),
+		},
+		{
+			UniversalID:   AttributeUniversalIDNotes,
+			ObjectType:    AttributeObjectPerson,
+			Slug:          AttributeSlugNotes,
+			Label:         "Notes",
+			Description:   stringPtr("General notes about this person"),
+			ValueType:     AttributeValueText,
+			FieldType:     AttributeFieldTextarea,
+			Cardinality:   AttributeCardinalitySingle,
+			DisplayOrder:  45,
+			Ownership:     AttributeOwnershipSystem,
+			UICreatable:   true,
+			UIEditable:    true,
+			APIMutable:    true,
+			IsSearchable:  false,
+			IsSensitive:   true,
+			IsAudited:     true,
+			IsDeletable:   false,
+			VCardProperty: stringPtr("NOTE"),
 		},
 	}
 	profileText := func(

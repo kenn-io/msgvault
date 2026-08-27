@@ -318,7 +318,7 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 
 	src := config.SynctechSMSSource{
 		Name:       "pixel-local",
-		Backend:    "local",
+		Backend:    localValue,
 		Path:       importDir,
 		OwnerPhone: "+15550000001",
 		IncludeSMS: true,
@@ -354,7 +354,7 @@ func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from local" read="1" status="-1" contact_name="Alice" />
 </smses>`), 0o600), "write sms fixture")
 	src := synctechDriveTestSource()
-	src.Backend = "local"
+	src.Backend = localValue
 	src.Path = xmlPath
 
 	err := runConfiguredSynctechSMSSourceWithStore(context.Background(), f.Store, src)

@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -422,6 +423,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
+	}
+	if cfg.People.Sweep.Enabled {
+		if err := cfg.People.Sweep.Validate(); err != nil {
+			return fmt.Errorf("validate people sweep: %w", err)
+		}
+	}
+	if err := addPeopleSweepJob(
+		sched, cfg.People.Sweep, newPeopleSweepScheduledRun(cfg.People.Sweep, s),
+	); err != nil {
+		return fmt.Errorf("schedule people sweep: %w", err)
 	}
 
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
@@ -1125,6 +1136,7 @@ type storeAPIAdapter struct {
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
+var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -1147,6 +1159,7 @@ var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.PersonCompletionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
@@ -1162,6 +1175,7 @@ var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
+var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ContactStateContext(
@@ -1278,6 +1292,24 @@ func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
 ) (int64, error) {
 	return a.store.CountIncompleteDocumentExtractionRebuild(
 		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
+	)
+}
+
+func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
+	return a.store.GetDocumentVectorTargetProfileID(ctx)
+}
+
+func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
+	ctx context.Context,
+	configured store.DocumentVectorGenerationSpec,
+	documentEgressFingerprint, queryEgressFingerprint string,
+	generationID int64,
+	afterToken string,
+	limit int,
+) (store.DocumentVectorOperationsStatus, error) {
+	return a.store.GetDocumentVectorOperationsStatus(
+		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
+		generationID, afterToken, limit,
 	)
 }
 
@@ -2094,6 +2126,49 @@ func (a *storeAPIAdapter) SetPersonTrackingContext(
 	return a.store.SetPersonTrackingContext(ctx, id, tracked)
 }
 
+func (a *storeAPIAdapter) BuildPersonFactCatalogContext(
+	ctx context.Context, includeSensitive bool,
+) (personfacts.Catalog, error) {
+	return a.store.BuildPersonFactCatalogContext(ctx, includeSensitive)
+}
+
+func (a *storeAPIAdapter) ListPersonFactEvidenceContext(
+	ctx context.Context, personID int64, filter personfacts.EvidenceFilter,
+) ([]personfacts.Evidence, error) {
+	return a.store.ListPersonFactEvidenceContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactEvidenceStatusEventsContext(
+	ctx context.Context, personID int64, filter personfacts.EvidenceStatusFilter,
+) ([]personfacts.EvidenceStatusEvent, error) {
+	return a.store.ListPersonFactEvidenceStatusEventsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactClaimsContext(
+	ctx context.Context, personID int64, filter personfacts.ClaimFilter,
+) ([]personfacts.Claim, error) {
+	return a.store.ListPersonFactClaimsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
+	ctx context.Context, personID int64, filter personfacts.DecisionFilter,
+) ([]personfacts.Decision, error) {
+	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) ListPersonFactPinsContext(
+	ctx context.Context, personID int64,
+) ([]personfacts.PinState, error) {
+	return a.store.ListPersonFactPinsContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) SetPersonFactPinContext(
+	ctx context.Context, personID int64, target personfacts.TargetRef,
+	pinned bool, actor string,
+) (*personfacts.PinWrite, error) {
+	return a.store.SetPersonFactPinContext(ctx, personID, target, pinned, actor)
+}
+
 func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Person, error) {
 	return a.store.ListPersonsContext(ctx)
 }
@@ -2148,6 +2223,12 @@ func (a *storeAPIAdapter) DecidePersonMergeCandidateContext(
 	ctx context.Context, request store.PersonMergeCandidateDecisionRequest,
 ) (*store.PersonMergeCandidateDecisionResult, error) {
 	return a.store.DecidePersonMergeCandidateContext(ctx, request)
+}
+
+func (a *storeAPIAdapter) CompletePersonProfilesContext(
+	ctx context.Context, request store.PersonCompletionQuery,
+) ([]store.PersonCompletion, error) {
+	return a.store.CompletePersonProfilesContext(ctx, request)
 }
 
 func (a *storeAPIAdapter) GetPersonProfileContext(
@@ -2234,6 +2315,12 @@ func (a *storeAPIAdapter) SetPersonAttributeValueContext(
 	ctx context.Context, input store.PersonAttributeValueInput,
 ) (*store.PersonAttributeWrite, error) {
 	return a.store.SetPersonAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) AppendPersonNoteContext(
+	ctx context.Context, input store.PersonNoteAppendInput,
+) (*store.PersonAttributeWrite, error) {
+	return a.store.AppendPersonNoteContext(ctx, input)
 }
 
 func (a *storeAPIAdapter) SupersedePersonAttributeValueContext(

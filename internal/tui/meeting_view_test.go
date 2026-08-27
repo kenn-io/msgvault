@@ -176,7 +176,7 @@ func TestMeetingHelpOnlyShowsReadOnlyActions(t *testing.T) {
 
 	assert.Contains(help, "Search titles, people, transcripts, and notes")
 	assert.Contains(help, "Select meeting source")
-	assert.Contains(help, "Cycle Email/Texts/Meetings")
+	assert.Contains(help, "Cycle Email/Texts/Meetings/People")
 	assert.NotContains(help, "Stage for deletion")
 	assert.NotContains(help, "Toggle selection")
 }

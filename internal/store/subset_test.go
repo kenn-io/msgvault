@@ -3882,6 +3882,12 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 
 	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
+	// This fixture starts from today's schema and reverses column migrations to
+	// reproduce an upgraded archive's physical order. Real upgrades add these
+	// columns before installing person-sweep triggers; mirror that order so
+	// SQLite does not validate current trigger bodies against an intermediate
+	// historical table shape.
+	require.NoError(dropPersonSweepSQLiteTriggers(db), "drop sweep triggers before reverse migration")
 
 	// Rebuild each table into the shape the legacy ADD COLUMN migrations
 	// produce: the late-added columns re-appended at the end, in migration
@@ -3922,6 +3928,10 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 	} {
 		_, err = db.Exec(stmt)
 		require.NoError(err, "rebuild upgraded order: %s", stmt)
+	}
+	for _, stmt := range personSweepSQLiteTriggerStatements() {
+		_, err = db.Exec(stmt)
+		require.NoError(err, "restore sweep triggers after reverse migration: %s", stmt)
 	}
 
 	_, err = db.Exec(`UPDATE labels
@@ -4090,6 +4100,10 @@ func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) 
 
 	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
+	// A source old enough to lack the envelope column predates person-sweep
+	// triggers. The fixture is constructed backwards from today's schema, so
+	// remove those later triggers before rebuilding the legacy table.
+	require.NoError(dropPersonSweepSQLiteTriggers(db), "drop sweep triggers before legacy recipient rebuild")
 	for _, stmt := range []string{
 		`DROP INDEX IF EXISTS idx_message_recipients_envelope`,
 		`DROP INDEX IF EXISTS idx_message_recipients_message`,

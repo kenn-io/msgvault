@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -114,6 +115,9 @@ func Validate(
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.file_count
+			    OR (SELECT sum(item.meeting_count)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.meeting_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.first_at
@@ -123,6 +127,43 @@ func Validate(
 			    OR (SELECT sum(item.count)::BIGINT
 			        FROM unnest(p.source_counts) AS source(item))
 			       IS DISTINCT FROM p.activity_count`,
+		},
+		{
+			DatasetPeople,
+			"invalid relationship temperature summary",
+			`SELECT count(*)
+			 FROM ` + people + ` p
+			 WHERE p.current_temperature NOT BETWEEN 0 AND 100
+			    OR p.current_temperature_rank < 0
+			    OR p.current_temperature_population < 0
+			    OR (p.current_temperature_population = 0
+			        AND (p.current_temperature_rank != 0 OR p.current_temperature != 0))
+			    OR (p.current_temperature_population > 0
+			        AND (p.current_temperature_rank < 1
+			             OR p.current_temperature_rank > p.current_temperature_population))
+			    OR NOT isfinite(p.current_raw_score) OR p.current_raw_score < 0
+			    OR NOT isfinite(p.current_sent_signal) OR p.current_sent_signal < 0
+			    OR NOT isfinite(p.current_received_volume) OR p.current_received_volume < 0
+			    OR NOT isfinite(p.current_meeting_signal) OR p.current_meeting_signal < 0
+			    OR p.current_modalities NOT BETWEEN 0 AND 3
+			    OR p.temperature_effective_date IS NULL
+			    OR p.temperature_effective_at IS NULL
+			    OR p.temperature_effective_at::DATE != p.temperature_effective_date
+			    OR p.temperature_score_version != ` + strconv.Itoa(RelationshipScoreVersion) + `
+			    OR p.peak_temperature NOT BETWEEN 0 AND 100
+			    OR p.peak_year < 0
+			    OR EXISTS (
+			        SELECT 1 FROM unnest(p.annual_temperatures) AS annual(item)
+			        WHERE annual.item.year < 1970
+			           OR annual.item.temperature NOT BETWEEN 0 AND 100
+			           OR annual.item.rank < 1
+			           OR annual.item.population < annual.item.rank
+			           OR NOT isfinite(annual.item.raw_score) OR annual.item.raw_score < 0
+			           OR NOT isfinite(annual.item.sent_signal) OR annual.item.sent_signal < 0
+			           OR NOT isfinite(annual.item.received_volume) OR annual.item.received_volume < 0
+			           OR NOT isfinite(annual.item.meeting_signal) OR annual.item.meeting_signal < 0
+			           OR annual.item.modalities NOT BETWEEN 1 AND 3
+			    )`,
 		},
 		{
 			DatasetDomains,
@@ -220,16 +261,38 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"partial_label", duckDBTypeBoolean},
 		{"member_ids", "BIGINT[]"},
 		{"search_values", "VARCHAR[]"},
+		{
+			"search_primitives",
+			"STRUCT(kind VARCHAR, match_value VARCHAR, display_value VARCHAR, \"source\" VARCHAR, participant_id BIGINT)[]",
+		},
 		{"is_owner", duckDBTypeBoolean},
 		{"activity_count", duckDBTypeBigInt},
+		{"meeting_count", duckDBTypeBigInt},
 		{"file_count", duckDBTypeBigInt},
 		{"first_at", "TIMESTAMP"},
 		{"last_at", "TIMESTAMP"},
 		{"source_counts", "STRUCT(source_type VARCHAR, count BIGINT)[]"},
 		{
 			"source_rollups",
-			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
+			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, meeting_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
 		},
+		{"current_temperature", "INTEGER"},
+		{"current_temperature_rank", duckDBTypeBigInt},
+		{"current_temperature_population", duckDBTypeBigInt},
+		{"current_raw_score", "DOUBLE"},
+		{"current_sent_signal", "DOUBLE"},
+		{"current_received_volume", "DOUBLE"},
+		{"current_meeting_signal", "DOUBLE"},
+		{"current_modalities", "INTEGER"},
+		{"temperature_effective_date", "DATE"},
+		{"temperature_effective_at", "TIMESTAMP"},
+		{"temperature_score_version", "INTEGER"},
+		{
+			"annual_temperatures",
+			"STRUCT(\"year\" INTEGER, temperature INTEGER, rank BIGINT, population BIGINT, raw_score DOUBLE, sent_signal DOUBLE, received_volume DOUBLE, meeting_signal DOUBLE, modalities INTEGER)[]",
+		},
+		{"peak_temperature", "INTEGER"},
+		{"peak_year", "INTEGER"},
 	},
 	DatasetDomains: {
 		{"domain", "VARCHAR"},

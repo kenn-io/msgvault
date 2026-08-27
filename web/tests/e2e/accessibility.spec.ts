@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { expectKitTheme, selectKitOption, setKitTheme } from '../kit-ui';
 import { installMixedArchive } from './fixtures/mixed-archive';
 
 async function assertNoViolations(page: Page, label: string) {
@@ -33,8 +34,8 @@ for (const theme of ['light', 'dark'] as const) {
         } });
       });
       await page.goto('/');
-      await page.getByLabel('Temporary theme').selectOption(theme);
-      await page.getByLabel('Temporary density').selectOption(density);
+      await setKitTheme(page, theme);
+      await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
 
       // The Relationships hub is the default landing workspace; walk its
       // three panes (list, timeline, reading pane) open one at a time so
@@ -52,7 +53,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.getByRole('button', { name: 'Files 1' }).click();
       await expect(page.getByRole('grid', { name: 'Files results' }).getByText('archive-notes.pdf')).toBeVisible();
       await assertNoViolations(page, `Person files ${theme}/${density}`);
-      await page.getByRole('button', { name: 'Media view' }).click();
+      await page.getByRole('radio', { name: 'Media' }).click();
       await expect(page.getByRole('button', { name: 'Open archive-photo.png' })).toBeVisible();
       await assertNoViolations(page, `Person media ${theme}/${density}`);
       await page.getByRole('button', { name: 'Files 1' }).click();
@@ -81,7 +82,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       for (const workspace of ['Files', 'Saved Views', 'Sources', 'Deletions', 'Settings']) {
         await page.getByRole('button', { name: workspace, exact: true }).click();
-        await expect(page.getByRole('heading', { level: 1, name: workspace, exact: true })).toBeVisible();
+        await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
         if (workspace === 'Files') {
           const files = page.getByRole('grid', { name: 'Files results' });
@@ -132,7 +133,7 @@ for (const theme of ['light', 'dark'] as const) {
       // states, not the Relationships hub, so it lands there explicitly
       // rather than relying on whatever the default landing workspace is.
       await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await expectKitTheme(page, theme);
       await expect(page.locator('html')).toHaveAttribute('data-density', density);
       await expect(page.getByRole('main', { name: 'Authentication' })).toBeVisible();
       await expect(page.getByLabel('API key')).toBeVisible();

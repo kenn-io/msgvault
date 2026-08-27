@@ -232,13 +232,15 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		hadActiveSync, packedMappingsRemoved, removeErr = s.RemoveSourceSerialized(cmd.Context(), source.ID)
 	}
 
-	var cacheRefreshErr error
-	if isSQLite {
+	refreshCache := func() error {
+		if !isSQLite {
+			return nil
+		}
 		if removeAccountAfterCascadeHook != nil {
 			removeAccountAfterCascadeHook()
 		}
 		fmt.Println("\nRebuilding analytics cache...")
-		_, cacheRefreshErr = buildCacheLocked(
+		_, refreshErr := buildCacheLocked(
 			cfg.DatabaseDSN(),
 			cfg.AnalyticsDir(),
 			true,
@@ -246,12 +248,13 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		)
-		cacheRefreshErr = errors.Join(
-			cacheRefreshErr,
+		return errors.Join(
+			refreshErr,
 			wrapError(unlockCache(), "release analytics cache lock"),
 		)
 	}
 	if removeErr != nil {
+		cacheRefreshErr := refreshCache()
 		return errors.Join(
 			fmt.Errorf("remove account: %w", removeErr),
 			wrapError(cacheRefreshErr, "restore analytics cache after failed account removal"),
@@ -411,6 +414,12 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// DuckDB's sqlite_scanner embeds a separate SQLite library. On macOS,
+	// loading it while this Store remains open can leave the Store with a stale
+	// WAL view. Finish every cleanup that queries the Store before rebuilding
+	// the analytics cache. The command runs in a short-lived subprocess, so it
+	// performs no further database work after the rebuild.
+	cacheRefreshErr := refreshCache()
 	if cacheRefreshErr != nil {
 		return fmt.Errorf(
 			"account was removed, but analytics cache refresh failed: %w",

@@ -111,6 +111,16 @@ func TestAttributeDefinitionCreateDryRunValidatesLocally(t *testing.T) {
 	assert.Contains(output, `"is_sensitive": true`)
 }
 
+func TestAttributeDefinitionCreateDryRunAllowsOmittedSlug(t *testing.T) {
+	output, err := runAttributeCommand(t, attributeDefinitionCreateCmd,
+		"--definition", `{"object_type":"person","label":"Favorite color",
+			"value_type":"text","field_type":"text","cardinality":"single"}`,
+		"--dry-run")
+	require.NoError(t, err)
+	assert.Contains(t, output, "Would create attribute definition")
+	assert.Contains(t, output, "Favorite color")
+}
+
 func TestAttributeDefinitionCreateDryRunAppliesServerValidationLocally(t *testing.T) {
 	tests := []struct {
 		name     string

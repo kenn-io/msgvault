@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { selectKitOption } from './kit-ui';
 
 test('Strict session cookie returns on same-origin bootstrap after a cross-site navigation', async ({
   context,
@@ -108,7 +109,7 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
-  await page.getByRole('main', { name: 'Settings' }).getByLabel('Theme').selectOption('dark');
+  await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save settings' }).click();
 
   const patch = await patchCaptured;

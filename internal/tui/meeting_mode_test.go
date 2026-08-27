@@ -50,16 +50,29 @@ func (meetingModeTextEngine) GetTextStats(
 	return &query.TotalStats{MessageCount: 1}, nil
 }
 
+type restoredTimelineTextEngine struct {
+	meetingModeTextEngine
+
+	loads int
+}
+
+func (e *restoredTimelineTextEngine) ListConversationMessages(
+	context.Context, int64, query.TextFilter,
+) ([]query.MessageSummary, error) {
+	e.loads++
+	return []query.MessageSummary{{ID: 42, ConversationID: 701}}, nil
+}
+
 func TestNextModeCyclesThroughMeetings(t *testing.T) {
 	t.Run("with texts available", func(t *testing.T) {
-		assert.Equal(t, modeTexts, nextMode(modeEmail, true))
-		assert.Equal(t, modeMeetings, nextMode(modeTexts, true))
-		assert.Equal(t, modeEmail, nextMode(modeMeetings, true))
+		assert.Equal(t, modeTexts, nextMode(modeEmail, true, false))
+		assert.Equal(t, modeMeetings, nextMode(modeTexts, true, false))
+		assert.Equal(t, modeEmail, nextMode(modeMeetings, true, false))
 	})
 
 	t.Run("without texts available", func(t *testing.T) {
-		assert.Equal(t, modeMeetings, nextMode(modeEmail, false))
-		assert.Equal(t, modeEmail, nextMode(modeMeetings, false))
+		assert.Equal(t, modeMeetings, nextMode(modeEmail, false, false))
+		assert.Equal(t, modeEmail, nextMode(modeMeetings, false, false))
 	})
 }
 
@@ -491,6 +504,104 @@ func TestTextKeyTransitionKeepsRequestOwnerOnReturnedModel(t *testing.T) {
 	assert.False(updated.loading, "the real key transition completion must settle loading")
 }
 
+func TestReturningToTextsReloadsPreservedTimeline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	textEngine := &restoredTimelineTextEngine{}
+	model := NewBuilder().Build()
+	model.mode = modeTexts
+	model.textEngine = textEngine
+	model.textState.level = textLevelTimeline
+	model.textState.selectedConvID = 701
+
+	pending := model.loadTextMessages()
+	model, _, _ = model.handleGlobalKeys(key('m'))
+	model = sendMsg(t, model, pending())
+	assert.Empty(model.textState.messages, "the completion from the parked generation is discarded")
+
+	var restore tea.Cmd
+	for range 2 {
+		var handled bool
+		model, restore, handled = model.handleGlobalKeys(key('m'))
+		require.True(handled)
+	}
+	require.Equal(modeTexts, model.mode)
+	for _, msg := range runBatchCommand(t, restore) {
+		model = sendMsg(t, model, msg)
+	}
+
+	require.Len(model.textState.messages, 1)
+	assert.Equal(int64(42), model.textState.messages[0].ID)
+	assert.Equal(2, textEngine.loads)
+}
+
+func TestReturningToTextsPreservesGlobalSearchTimeline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	textEngine := &restoredTimelineTextEngine{}
+	model := NewBuilder().Build()
+	model.mode = modeTexts
+	model.textEngine = textEngine
+	model.textState.level = textLevelTimeline
+	model.textState.selectedConvID = 701
+	model.textState.globalSearchTimeline = true
+	model.textState.messages = []query.MessageSummary{{ID: 99, Subject: "Global result"}}
+
+	var restore tea.Cmd
+	for range 3 {
+		var handled bool
+		model, restore, handled = model.handleGlobalKeys(key('m'))
+		require.True(handled)
+	}
+	require.Equal(modeTexts, model.mode)
+	if restore != nil {
+		for _, msg := range runBatchCommand(t, restore) {
+			model = sendMsg(t, model, msg)
+		}
+	}
+
+	require.Len(model.textState.messages, 1)
+	assert.Equal(int64(99), model.textState.messages[0].ID)
+	assert.True(model.textState.globalSearchTimeline)
+	assert.Zero(textEngine.loads)
+}
+
+func TestReturningToTextsReloadsIncompleteDetail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	requested := make([]int64, 0, 2)
+	engine := &querytest.MockEngine{}
+	engine.GetMessageFunc = func(_ context.Context, id int64) (*query.MessageDetail, error) {
+		requested = append(requested, id)
+		return &query.MessageDetail{ID: id, ConversationID: 701}, nil
+	}
+	model := New(engine, Options{TextEngine: meetingModeTextEngine{}})
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedConvID = 701
+	model.textState.selectedMessageID = 42
+
+	pending := model.loadTextMessage(42)
+	model, _, _ = model.handleGlobalKeys(key('m'))
+	model = sendMsg(t, model, pending())
+	assert.Nil(model.messageDetail, "the completion from the parked generation is discarded")
+
+	var restore tea.Cmd
+	for range 2 {
+		var handled bool
+		model, restore, handled = model.handleGlobalKeys(key('m'))
+		require.True(handled)
+	}
+	require.Equal(modeTexts, model.mode)
+	for _, msg := range runBatchCommand(t, restore) {
+		model = sendMsg(t, model, msg)
+	}
+
+	require.NotNil(model.messageDetail)
+	assert.Equal(int64(42), model.messageDetail.ID)
+	assert.Equal([]int64{42, 42}, requested)
+}
+
 func runBatchCommand(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	t.Helper()
 	require.NotNil(t, cmd)
@@ -751,7 +862,7 @@ func TestModeSwitchScopesPreviousModeCompletions(t *testing.T) {
 		message func(Model) tea.Msg
 	}{
 		{
-			name: "email",
+			name: emailMessageType,
 			mode: modeEmail,
 			message: func(model Model) tea.Msg {
 				return dataLoadedMsg{

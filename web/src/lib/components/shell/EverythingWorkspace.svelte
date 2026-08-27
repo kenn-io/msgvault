@@ -481,10 +481,10 @@
       <h1>Everything</h1>
     </div>
     <p class="result-count" aria-live="polite" data-mono>
-      {#if loader.result?.totalCount !== undefined}
+      {#if loader.result?.candidatePoolSaturated}
+        {loader.rows.length.toLocaleString()} {loader.rows.length === 1 ? 'result' : 'results'} shown
+      {:else if loader.result?.totalCount !== undefined}
         {loader.result.totalCount.toLocaleString()} items
-      {:else if loader.result?.candidatePoolSaturated}
-        Candidate pool capped
       {:else}
         Modality-neutral archive
       {/if}
@@ -514,6 +514,21 @@
     />
     <Button type="submit" label="Search" tone="info" surface="solid" />
   </form>
+
+  {#if loader.result?.candidatePoolSaturated}
+    <div class="search-limit" role="status">
+      <p>
+        <span class="search-limit__title">More results may match.</span>
+        Narrow with from:alice@example.com, after:2025-01-01, or label:important.
+      </p>
+      <Button
+        label="Refine search"
+        size="sm"
+        surface="soft"
+        onclick={() => searchInput?.focus()}
+      />
+    </div>
+  {/if}
 
   {#if session.coverage}
     <SearchCoverage
@@ -756,6 +771,33 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+
+  .search-limit {
+    display: flex;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-inset);
+    border: var(--border-width) solid var(--border-muted);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+
+  .search-limit p {
+    min-width: 0;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .search-limit__title {
+    margin-right: var(--space-1);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
   }
 
   .results-split {

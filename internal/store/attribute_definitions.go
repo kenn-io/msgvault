@@ -228,6 +228,48 @@ func ValidateAttributeSlug(slug string) error {
 	return nil
 }
 
+func deriveAttributeSlug(label string) string {
+	var b strings.Builder
+	separator := false
+	for _, r := range strings.ToLower(strings.TrimSpace(label)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if separator && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			separator = false
+			b.WriteRune(r)
+		default:
+			separator = b.Len() > 0
+		}
+	}
+	base := strings.Trim(b.String(), "_")
+	if base == "" {
+		base = "field"
+	}
+	if base[0] < 'a' || base[0] > 'z' {
+		base = "field_" + base
+	}
+	return base[:min(len(base), 63)]
+}
+
+func derivedAttributeSlugCandidate(base string, attempt int) string {
+	if attempt == 1 {
+		return base
+	}
+	suffix := "_" + strconv.Itoa(attempt)
+	return base[:min(len(base), 63-len(suffix))] + suffix
+}
+
+// PrepareAttributeDefinitionInput applies server-side create defaults shared
+// by persistent and local validation paths.
+func PrepareAttributeDefinitionInput(input AttributeDefinitionInput) AttributeDefinitionInput {
+	if input.Slug == "" {
+		input.Slug = deriveAttributeSlug(input.Label)
+	}
+	return input
+}
+
 // ValidateAttributeDefinitionInput runs the full definition validation
 // without touching a database, so local dry-run previews reject exactly what
 // the server-side create path rejects — except conflicts with existing
@@ -241,6 +283,7 @@ func ValidateAttributeDefinitionInput(
 func validateAttributeDefinitionInput(
 	input AttributeDefinitionInput,
 ) (AttributeDefinitionInput, error) {
+	input = PrepareAttributeDefinitionInput(input)
 	invalid := func(format string, args ...any) (AttributeDefinitionInput, error) {
 		return AttributeDefinitionInput{}, fmt.Errorf(
 			"%w: %s", ErrAttributeDefinitionInvalid, fmt.Sprintf(format, args...))
@@ -323,15 +366,23 @@ func validateAttributeDefinitionInput(
 		input.UIEditable = false
 		input.DerivedSource = &derived
 	}
-	if input.Description != nil {
-		description := strings.TrimSpace(*input.Description)
-		if description == "" {
-			input.Description = nil
-		} else {
-			input.Description = &description
-		}
+	description, present := normalizeAttributeDescription(input.Description)
+	input.Description = nil
+	if present {
+		input.Description = &description
 	}
 	return input, nil
+}
+
+func normalizeAttributeDescription(value *string) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return "", false
+	}
+	return normalized, true
 }
 
 func validateAttributeWidget(input AttributeDefinitionInput) error {
@@ -530,18 +581,28 @@ const attributeDefinitionColumns = `
 func (s *Store) CreateAttributeDefinitionContext(
 	ctx context.Context, input AttributeDefinitionInput,
 ) (*AttributeDefinition, error) {
+	generatedSlug := input.Slug == ""
 	validated, err := validateAttributeDefinitionInput(input)
 	if err != nil {
 		return nil, err
 	}
 	var definition *AttributeDefinition
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		var createErr error
-		definition, createErr = s.createAttributeDefinitionTx(ctx, tx, validated)
-		if createErr != nil {
-			return createErr
+		for attempt := 1; ; attempt++ {
+			candidate := validated
+			if generatedSlug {
+				candidate.Slug = derivedAttributeSlugCandidate(validated.Slug, attempt)
+			}
+			var createErr error
+			definition, createErr = s.createAttributeDefinitionTx(ctx, tx, candidate)
+			if errors.Is(createErr, ErrAttributeDefinitionSlugConflict) && generatedSlug {
+				continue
+			}
+			if createErr != nil {
+				return createErr
+			}
+			return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 		}
-		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, definition)
 	})
 	if err != nil {
 		return nil, err
@@ -653,6 +714,24 @@ func (s *Store) getAttributeDefinitionBySlugTx(
 	return definition, nil
 }
 
+// getAttributeDefinitionByUniversalIDTx loads the archive-local definition
+// for a portable field identifier while holding the same write lock used by
+// slug-addressed attribute mutations.
+func (s *Store) getAttributeDefinitionByUniversalIDTx(
+	ctx context.Context, tx *loggedTx, universalID string,
+) (*AttributeDefinition, error) {
+	definition, err := scanAttributeDefinition(tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM attribute_definitions WHERE universal_id = ?%s
+	`, attributeDefinitionColumns, s.dialect.SelectForUpdate()), universalID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrAttributeDefinitionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get attribute definition by universal id %q: %w", universalID, err)
+	}
+	return definition, nil
+}
+
 // ListAttributeDefinitionsContext lists definitions in display order.
 func (s *Store) ListAttributeDefinitionsContext(
 	ctx context.Context, filter AttributeDefinitionFilter,
@@ -716,17 +795,13 @@ func (s *Store) UpdateAttributeDefinitionContext(
 		args = append(args, label)
 	}
 	if update.Description != nil {
-		description := *update.Description
-		if description != nil {
-			trimmed := strings.TrimSpace(*description)
-			if trimmed == "" {
-				description = nil
-			} else {
-				description = &trimmed
-			}
-		}
+		description, present := normalizeAttributeDescription(*update.Description)
 		assignments = append(assignments, "description = ?")
-		args = append(args, description)
+		if present {
+			args = append(args, description)
+		} else {
+			args = append(args, nil)
+		}
 	}
 	if update.DisplayOrder != nil {
 		if *update.DisplayOrder < 0 {

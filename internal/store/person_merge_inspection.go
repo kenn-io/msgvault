@@ -505,7 +505,7 @@ func (s *Store) acceptPersonMergeCandidateValueTx(
 			PersonID: candidate.PersonID, DefinitionSlug: absorbed.DefinitionSlug,
 			Ordinal: &ordinal, Value: absorbed.Value, Source: absorbed.Source,
 			SourceRef: absorbed.SourceRef, Confidence: absorbed.Confidence, Actor: &actor,
-		}, absorbed.Ordinal, now)
+		}, absorbed.Ordinal, now, now)
 	if err != nil {
 		return 0, err
 	}

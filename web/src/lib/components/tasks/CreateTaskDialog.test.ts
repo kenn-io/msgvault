@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
 function deferredFetch(): { fetchFn: typeof fetch; respond: (response: Response) => void } {
@@ -44,7 +45,7 @@ describe('CreateTaskDialog', () => {
     expect(screen.getByText(/Bodies and attachments are never sent/i)).toBeDefined();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
-    await fireEvent.change(screen.getByLabelText('Priority'), { target: { value: 'high' } });
+    await chooseSelectOption(screen.getByLabelText('Priority'), 'High');
     await fireEvent.input(screen.getByLabelText('Labels'), { target: { value: 'mail, follow-up' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncreated).toHaveBeenCalledOnce());
@@ -81,7 +82,7 @@ describe('CreateTaskDialog', () => {
   it.each([
     ['title', async () => fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Changed title' } })],
     ['description', async () => fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Changed notes' } })],
-    ['priority', async () => fireEvent.change(screen.getByLabelText('Priority'), { target: { value: 'high' } })],
+    ['priority', async () => chooseSelectOption(screen.getByLabelText('Priority'), 'High')],
     ['labels', async () => fireEvent.input(screen.getByLabelText('Labels'), { target: { value: 'changed' } })]
   ])('rotates request identity before sending an edited %s retry', async (_field, edit) => {
     const requests: Request[] = [];

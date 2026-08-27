@@ -165,6 +165,7 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(m.snippet, ''),
 			m.has_attachments,
 			COALESCE(m.size_estimate, 0),
+			m.is_from_me,
 			m.deleted_from_source_at,
 			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
 			selected.position,
@@ -200,6 +201,7 @@ func (s *Store) GetConversationWindowContext(
 	for rows.Next() {
 		var message APIMessage
 		var sentAt, deletedAt nullableTimestamp
+		var isFromMe sql.NullBool
 		var position, bodySize int64
 		if err := rows.Scan(
 			&message.ID,
@@ -217,6 +219,7 @@ func (s *Store) GetConversationWindowContext(
 			&message.Snippet,
 			&message.HasAttachments,
 			&message.SizeEstimate,
+			&isFromMe,
 			&deletedAt,
 			&bodySize,
 			&position,
@@ -225,6 +228,7 @@ func (s *Store) GetConversationWindowContext(
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
 		}
+		message.IsFromMe = isFromMe.Bool
 		if sentAt.Valid {
 			message.SentAt = sentAt.Time
 		}
@@ -383,11 +387,14 @@ func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMess
 // SetConversationMetadata writes the conversations.metadata JSON/JSONB column.
 // Passing an invalid sql.NullString clears the column.
 func (s *Store) SetConversationMetadata(conversationID int64, metadata sql.NullString) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE conversations
-		SET metadata = %s
-		WHERE id = ?
-	`, s.dialect.JSONBindExpr()), metadata, conversationID)
+	err := s.withSyncConversationWriteContext(context.Background(), conversationID, func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			UPDATE conversations
+			SET metadata = %s
+			WHERE id = ?
+		`, s.dialect.JSONBindExpr()), metadata, conversationID)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("set conversation metadata (id=%d): %w", conversationID, err)
 	}

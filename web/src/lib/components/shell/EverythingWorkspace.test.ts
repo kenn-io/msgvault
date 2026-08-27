@@ -41,6 +41,39 @@ describe('EverythingWorkspace', () => {
     };
   }
 
+  it('explains how to refine a semantic search when the candidate pool is capped', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/coverage')) return Response.json({
+        status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
+        cache_revision: 'cache-1', actions: []
+      });
+      return Response.json(exploreResponse({
+        rows: [entry(1), entry(2)],
+        candidate_pool_saturated: true
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'vacation plans', searchMode: 'semantic' });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByText('2 results shown')).toBeDefined();
+    expect(screen.getByText(/More results may match\./)).toBeDefined();
+    expect(screen.queryByText('Warning')).toBeNull();
+    expect(screen.getByText(/from:alice@example\.com/)).toBeDefined();
+    expect(screen.getByText(/after:2025-01-01/)).toBeDefined();
+    expect(screen.getByText(/label:important/)).toBeDefined();
+
+    const searchInput = screen.getByRole('searchbox', { name: 'Search everything' });
+    const refineButton = screen.getByRole('button', { name: 'Refine search' });
+    await fireEvent.click(refineButton);
+    expect(document.activeElement).toBe(searchInput);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
   it('keeps requested Semantic mode selected while showing incomplete coverage and a search error', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -2099,7 +2132,7 @@ describe('EverythingWorkspace', () => {
     expect(document.querySelector('.kit-detail-drawer-overlay')).toBeNull();
 
     // Keyboard resize on the split handle persists the size locally (not in the URL).
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize reading pane' }), { key: 'ArrowUp' });
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize reading pane' }), { key: 'ArrowUp' });
     const persisted = window.localStorage.getItem('msgvault.reading-pane.size');
     expect(persisted).not.toBeNull();
     expect(parseExploreURLState(window.location.search)).not.toHaveProperty('inspectorWidth');

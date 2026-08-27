@@ -15,6 +15,33 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestImporterScopesEveryStoreOwningHelper(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "account-a")
+	requirements.NoError(err)
+	runID, err := st.StartSync(source.ID, sourceTypeBeeper)
+	requirements.NoError(err)
+	imp := NewImporter(st, nil)
+	imp.res = newParticipantResolver(st, "account-a")
+	scoped := imp.scopedToSync(source.ID, runID)
+	_, err = st.StartSync(source.ID, sourceTypeBeeper)
+	requirements.NoError(err)
+
+	_, err = scoped.res.resolveID("user-a", "User A")
+	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+	for name, helperStore := range map[string]*store.Store{
+		"observation recorder": scoped.obs.store,
+		"service resolver":     scoped.obs.services.store,
+		"identity matcher":     scoped.matcher.store,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, writeErr := helperStore.EnsureParticipantByIdentifier("beeper-test", name, "")
+			require.ErrorIs(t, writeErr, store.ErrSyncRunSuperseded)
+		})
+	}
+}
+
 // e2eChat builds a chat exercising every persist path: replies, reactions,
 // deletions, hidden events, edits, transcriptions, and mentions. Timestamps
 // are older than the reconcile window so head re-walks terminate immediately.

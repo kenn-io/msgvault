@@ -3986,6 +3986,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 				ID:              42,
 				SourceMessageID: "source-42",
 				Subject:         "HTML Email",
+				IsFromMe:        true,
 				From:            []query.Address{{Email: "sender@example.com", Name: "Sender"}},
 				To:              []query.Address{{Email: "rcpt@example.com"}},
 				SentAt:          time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
@@ -4010,6 +4011,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	assert.Equal("source-42", resp["source_message_id"], "source_message_id")
 	assert.Equal("HTML Email", resp["subject"], "subject")
 	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
+	assert.Equal(true, resp["is_from_me"], "is_from_me")
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
 }
 
@@ -5463,6 +5465,18 @@ type contextErrorTextEngine struct {
 	err error
 }
 
+func (e *contextErrorTextEngine) TextSnapshotRevision(context.Context, query.TextSnapshotScope) (string, error) {
+	return "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) ListConversationsSnapshot(context.Context, query.TextFilter) ([]query.ConversationRow, string, error) {
+	return nil, "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) ListConversationMessagesSnapshot(context.Context, int64, query.TextFilter) ([]query.MessageSummary, string, error) {
+	return nil, "", fmt.Errorf("acquire query slot: %w", e.err)
+}
+
 func (e *contextErrorTextEngine) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
 }
@@ -5481,6 +5495,61 @@ func (e *contextErrorTextEngine) TextSearch(context.Context, string, int, int) (
 
 func (e *contextErrorTextEngine) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+type textEngineWithoutSnapshot struct {
+	*querytest.MockEngine
+}
+
+func (*textEngineWithoutSnapshot) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
+	return []query.ConversationRow{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextAggregate(context.Context, query.TextViewType, query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) ListConversationMessages(context.Context, int64, query.TextFilter) ([]query.MessageSummary, error) {
+	return []query.MessageSummary{}, nil
+}
+
+func (*textEngineWithoutSnapshot) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (*textEngineWithoutSnapshot) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
+	return &query.TotalStats{}, nil
+}
+
+func TestTextRevisionMissingCapabilityReturnsServiceUnavailable(t *testing.T) {
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	for _, path := range []string{
+		"/api/v1/text/conversations",
+		"/api/v1/text/conversations/1/messages",
+	} {
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		var body ErrorResponse
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		assert.Equal(t, "text_snapshot_unavailable", body.Error)
+	}
+}
+
+func TestTextSearchDoesNotPublishConversationSnapshotRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := &textEngineWithoutSnapshot{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/text/search?q=hello", nil))
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body map[string]json.RawMessage
+	require.NoError(json.NewDecoder(response.Body).Decode(&body))
+	assert.NotContains(body, "cache_revision")
+	assert.JSONEq(`[]`, string(body["messages"]))
 }
 
 // TestTextEndpointsContextErrorReturns503 verifies that a context

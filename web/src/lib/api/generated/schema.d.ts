@@ -1079,6 +1079,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/vectors/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get document vector generation, consent, usage, and failure status */
+        get: operations["getDocumentVectorStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/domains/search": {
         parameters: {
             query?: never;
@@ -1951,6 +1968,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/participants/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete observed people by typed contact primitives
+         * @description Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
+         */
+        post: operations["completeParticipants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/participants/search": {
         parameters: {
             query?: never;
@@ -1996,6 +2033,23 @@ export interface paths {
         put?: never;
         /** Search one participant cluster's analytical files */
         post: operations["searchParticipantFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participants/{id}/inboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one participant cluster's messaging inboxes */
+        get: operations["listParticipantInboxes"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2205,6 +2259,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{id}/fact-claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact claims */
+        get: operations["listPersonFactClaims"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact decisions */
+        get: operations["listPersonFactDecisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable person fact evidence */
+        get: operations["listPersonFactEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-evidence-status-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List person fact evidence status history */
+        get: operations["listPersonFactEvidenceStatusEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-pins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List effective person fact pins */
+        get: operations["listPersonFactPins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/fact-pins/{kind}/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace an effective person fact pin */
+        put: operations["setPersonFactPin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/{id}/files/search": {
         parameters: {
             query?: never;
@@ -2250,6 +2406,23 @@ export interface paths {
         get: operations["listPersonMerges"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/notes/append": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append to a person's notes */
+        post: operations["appendPersonNote"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2365,6 +2538,23 @@ export interface paths {
         get: operations["getPersonTracking"];
         /** Replace a person's tracking state */
         put: operations["setPersonTracking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-fact-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List eligible automatic person fact targets */
+        get: operations["listPersonFactTargets"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2541,6 +2731,23 @@ export interface paths {
         put?: never;
         /** Rank counterparts by reciprocity-weighted interaction */
         post: operations["listRelationships"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/relationships/{id}/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get one counterpart's timezone-aware relationship calendar */
+        post: operations["getRelationshipCalendar"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3049,11 +3256,35 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        AnnualTemperatureSummary: {
+            /** Format: int64 */
+            population: number;
+            /** Format: int64 */
+            rank: number;
+            /** Format: double */
+            raw_score: number;
+            signals: components["schemas"]["TemperatureSignals"];
+            /** Format: int64 */
+            temperature: number;
+            /** Format: int64 */
+            year: number;
+        } & {
+            [key: string]: unknown;
+        };
         ApiHTTPError: {
             error: string;
             message?: string;
         } & {
             [key: string]: unknown;
+        };
+        AppendPersonNoteRequest: {
+            actor?: string;
+            /** Format: double */
+            confidence?: number;
+            /** @enum {string} */
+            source?: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string;
+            text: string;
         };
         AttachmentInfo: {
             content_hash?: string;
@@ -3505,6 +3736,13 @@ export interface components {
         CardDAVSyncRequest: {
             full?: boolean;
         };
+        Catalog: {
+            fingerprint: string;
+            targets: components["schemas"]["TargetDescriptor"][] | null;
+            version: string;
+        } & {
+            [key: string]: unknown;
+        };
         ChangedMessageJSON: {
             /** Format: int64 */
             attachment_count: number;
@@ -3550,6 +3788,12 @@ export interface components {
             next_cursor: string;
             /** Format: date-time */
             server_time: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ChoiceDescriptor: {
+            label: string;
+            value: string;
         } & {
             [key: string]: unknown;
         };
@@ -3776,6 +4020,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        ConfidenceInputs: {
+            /** Format: int64 */
+            reported_score: number;
+        } & {
+            [key: string]: unknown;
+        };
         ContactState: {
             /** Format: date-time */
             cadence_due_at?: string;
@@ -3836,7 +4086,7 @@ export interface components {
             object_type: "person" | "organization";
             options?: components["schemas"]["AttributeOptions"];
             record_target?: string;
-            slug: string;
+            slug?: string;
             value_type: string;
             vcard_property?: string;
         };
@@ -4121,11 +4371,15 @@ export interface components {
             [key: string]: unknown;
         };
         DocumentSearchResponse: {
+            effective_mode?: string;
             next_cursor?: string;
             results: components["schemas"]["DocumentSearchResult"][] | null;
             /** Format: int64 */
             revision: number;
             truncated?: boolean;
+            vector_generation_fingerprint?: string;
+            /** Format: int64 */
+            vector_generation_id?: number;
         } & {
             [key: string]: unknown;
         };
@@ -4144,6 +4398,8 @@ export interface components {
             filename?: string;
             /** Format: int64 */
             first_unit_index: number;
+            /** Format: double */
+            fusion_score?: number;
             heading_path?: string[] | null;
             /** Format: int64 */
             highlight_end: number;
@@ -4151,6 +4407,8 @@ export interface components {
             highlight_start: number;
             /** Format: int64 */
             last_unit_index: number;
+            /** Format: int64 */
+            lexical_rank?: number;
             matched_signals: string[] | null;
             /** Format: int64 */
             message_id: number;
@@ -4167,10 +4425,146 @@ export interface components {
             /** Format: int64 */
             rank: number;
             /** Format: int64 */
+            semantic_rank?: number;
+            /** Format: double */
+            semantic_score?: number;
+            /** Format: int64 */
             source_id: number;
             source_message_id?: string;
             source_part_key?: string;
             truncated: boolean;
+            /** Format: int64 */
+            vector_dimension?: number;
+            vector_embedding_profile?: string;
+            vector_generation_fingerprint?: string;
+            /** Format: int64 */
+            vector_generation_id?: number;
+            vector_model?: string;
+            vector_token?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorConsent: {
+            /** Format: date-time */
+            consented_at: string;
+            /** Format: int64 */
+            dimension: number;
+            egress_fingerprint: string;
+            embedding_profile: string;
+            fingerprint: string;
+            model: string;
+            purpose: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorCoverage: {
+            /** Format: int64 */
+            ready: number;
+            /** Format: int64 */
+            required: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorFailureDiagnostic: {
+            /** Format: int64 */
+            attempt_count: number;
+            error_code: string;
+            /** Format: date-time */
+            next_retry_at?: string;
+            terminal: boolean;
+            token: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGeneration: {
+            /** Format: date-time */
+            activated_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            dimension: number;
+            embedding_profile: string;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            model: string;
+            /** Format: date-time */
+            retired_at?: string;
+            state: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGenerationSpec: {
+            /** Format: int64 */
+            dimension: number;
+            embedding_profile: string;
+            fingerprint: string;
+            model: string;
+            target_extraction_profile_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorGenerationStatus: {
+            blocked: boolean;
+            /** Format: int64 */
+            cleanup_pending: number;
+            /** Format: int64 */
+            failure_after_generation_id?: number;
+            failure_after_token?: string;
+            failures: components["schemas"]["DocumentVectorFailureDiagnostic"][] | null;
+            failures_exhausted: boolean;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            ready_live: number;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            stale_obsolete: number;
+            state: string;
+            /** Format: int64 */
+            terminal: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorOperationsResponse: {
+            configured: boolean;
+            enabled: boolean;
+            scheduled_registration_requires_restart?: boolean;
+            status?: components["schemas"]["DocumentVectorOperationsStatus"];
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorOperationsStatus: {
+            active?: components["schemas"]["DocumentVectorGeneration"];
+            building?: components["schemas"]["DocumentVectorGeneration"];
+            configured_document_egress_fingerprint: string;
+            configured_query_egress_fingerprint: string;
+            configured_spec: components["schemas"]["DocumentVectorGenerationSpec"];
+            coverage?: components["schemas"]["DocumentVectorCoverage"];
+            document_consent?: components["schemas"]["DocumentVectorConsent"];
+            query_consent?: components["schemas"]["DocumentVectorConsent"];
+            selected?: components["schemas"]["DocumentVectorGenerationStatus"];
+            usage: components["schemas"]["DocumentVectorProviderUsage"];
+        } & {
+            [key: string]: unknown;
+        };
+        DocumentVectorProviderUsage: {
+            fingerprint: string;
+            /** Format: int64 */
+            provider_calls: number;
+            /** Format: int64 */
+            provider_chunks: number;
+            /** Format: int64 */
+            provider_documents: number;
+            /** Format: int64 */
+            provider_input_chars: number;
+            /** Format: date-time */
+            updated_at?: string;
         } & {
             [key: string]: unknown;
         };
@@ -4545,6 +4939,14 @@ export interface components {
         ExploreUnavailableAction: {
             action: string;
             reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        FieldDescriptor: {
+            cardinality: string;
+            name: string;
+            required: boolean;
+            value_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -5023,6 +5425,7 @@ export interface components {
             has_attachments: boolean;
             /** Format: int64 */
             id: number;
+            is_from_me?: boolean;
             labels: string[] | null;
             message_type?: string;
             sent_at: string;
@@ -5443,6 +5846,28 @@ export interface components {
             /** Format: int64 */
             year?: number;
         };
+        ParticipantCompletionHTTPRequest: {
+            /** Format: int64 */
+            limit?: number;
+            query: string;
+        };
+        ParticipantCompletionHTTPResponse: {
+            cache_revision: string;
+            rows: components["schemas"]["ParticipantCompletionHTTPRow"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ParticipantCompletionHTTPRow: {
+            display_label: string;
+            /** @enum {string} */
+            kind: "name" | "phone" | "email" | "username" | "impp" | "organization" | "title" | "role";
+            /** Format: int64 */
+            participant_id: number;
+            source: string;
+            value: string;
+        } & {
+            [key: string]: unknown;
+        };
         ParticipantContactObservation: {
             address_kind: string;
             envelope: components["schemas"]["ValueEnvelope"];
@@ -5578,6 +6003,15 @@ export interface components {
         PersonAddressPatchRequest: {
             add?: components["schemas"]["PersonAddressInputRequest"][] | null;
             supersede?: number[] | null;
+        };
+        PersonAttributeConflictResponse: {
+            current_value?: components["schemas"]["PersonAttributeValue"];
+            /** Format: int64 */
+            current_value_id?: number;
+            error: string;
+            message?: string;
+        } & {
+            [key: string]: unknown;
         };
         PersonAttributeGroup: {
             current: components["schemas"]["PersonAttributeValue"][] | null;
@@ -5749,6 +6183,158 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonFactClaim: {
+            claim_key: string;
+            confidence: components["schemas"]["ConfidenceInputs"];
+            /** Format: date-time */
+            created_at: string;
+            evidence_ids: number[] | null;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            id: number;
+            normalized_value?: string | null;
+            origin: string;
+            program_fingerprint: string;
+            program_id: string;
+            program_version: string;
+            relation: string;
+            submitted_value: string;
+            target: components["schemas"]["TargetRef"];
+            /** Format: date-time */
+            valid_from?: string | null;
+            /** Format: date-time */
+            valid_until?: string | null;
+            value_fingerprint?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactClaimsResponse: {
+            claims: components["schemas"]["PersonFactClaim"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactDecision: {
+            action: string;
+            claim_key: string;
+            competing_claim_key?: string;
+            /** Format: date-time */
+            created_at: string;
+            decision_key: string;
+            /** Format: int64 */
+            id: number;
+            projection?: components["schemas"]["ProjectionRef"];
+            reason: string;
+            /** Format: int64 */
+            resolution_id: number;
+            score: components["schemas"]["PersonFactScoreBreakdown"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactDecisionsResponse: {
+            decisions: components["schemas"]["PersonFactDecision"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidence: {
+            authority: string;
+            content_sha256: string | null;
+            /** Format: date-time */
+            created_at: string;
+            directness: string;
+            /** Format: date-time */
+            event_time: string;
+            evidence_key: string;
+            excerpt: string | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            identity_score: number;
+            latest_status?: components["schemas"]["PersonFactEvidenceStatusEvent"];
+            /** Format: date-time */
+            recorded_time: string;
+            source_class: string;
+            source_ref: string | null;
+            source_url: string | null;
+            source_version: string | null;
+            /** Format: int64 */
+            span_end?: number | null;
+            /** Format: int64 */
+            span_start?: number | null;
+            /** Format: int64 */
+            subject_person_id?: number | null;
+            subject_ref: string | null;
+            supported: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceResponse: {
+            evidence: components["schemas"]["PersonFactEvidence"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceStatusEvent: {
+            /** Format: date-time */
+            created_at: string;
+            evidence_key: string;
+            /** Format: int64 */
+            generation_id: number;
+            /** Format: int64 */
+            id: number;
+            reason: string;
+            source_version: string | null;
+            supported: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactEvidenceStatusEventsResponse: {
+            events: components["schemas"]["PersonFactEvidenceStatusEvent"][];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactPinWrite: {
+            projections: components["schemas"]["ProjectionRef"][] | null;
+            resolutions: components["schemas"]["PersonFactResolutionResult"][] | null;
+            state: components["schemas"]["PinState"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactPinsResponse: {
+            pins: components["schemas"]["PinState"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactResolutionResult: {
+            decisions: components["schemas"]["PersonFactDecision"][] | null;
+            /** Format: int64 */
+            id: number;
+            input_fingerprint: string;
+            projections: components["schemas"]["ProjectionRef"][] | null;
+            /** Format: date-time */
+            resolved_at: string;
+            resolver_version: string;
+            target: components["schemas"]["TargetRef"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonFactScoreBreakdown: {
+            /** Format: int64 */
+            authority: number;
+            /** Format: int64 */
+            confidence: number;
+            /** Format: int64 */
+            corroboration: number;
+            /** Format: int64 */
+            directness: number;
+            /** Format: int64 */
+            freshness: number;
+            /** Format: int64 */
+            source_class: number;
+            /** Format: int64 */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
         PersonFileProvenance: {
             directions: ("from_person" | "to_person" | "group")[] | null;
             participant_ids: number[] | null;
@@ -5819,6 +6405,34 @@ export interface components {
             provenance: string;
             type: string;
             value: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonInboxResponse: {
+            cache_revision: string;
+            /** Format: int64 */
+            identity_revision: number;
+            rows: components["schemas"]["PersonInboxRow"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonInboxRow: {
+            /** Format: int64 */
+            conversation_count: number;
+            /** Format: date-time */
+            latest_at: string;
+            /** Format: date-time */
+            latest_received_at?: string;
+            /** Format: date-time */
+            latest_sent_at?: string;
+            /** Format: int64 */
+            received_count: number;
+            /** Format: int64 */
+            sent_count: number;
+            /** Format: int64 */
+            source_id: number;
+            source_identifier: string;
+            source_type: string;
         } & {
             [key: string]: unknown;
         };
@@ -6192,6 +6806,8 @@ export interface components {
             activity_count: number;
             cache_revision: string;
             cluster?: components["schemas"]["PersonCluster"];
+            /** Format: int64 */
+            current_relationship_temperature: number;
             display_label: string;
             display_name?: string;
             /** Format: int64 */
@@ -6203,7 +6819,13 @@ export interface components {
             identifiers: components["schemas"]["PersonIdentifier"][] | null;
             /** Format: date-time */
             last_at: string;
+            /** Format: int64 */
+            meeting_count: number;
             partial_label: boolean;
+            /** Format: int64 */
+            peak_relationship_temperature: number;
+            /** Format: int64 */
+            peak_relationship_year: number;
             profile?: components["schemas"]["PersonProfile"];
             source_counts: components["schemas"]["SourceCount"][] | null;
         } & {
@@ -6215,6 +6837,15 @@ export interface components {
             tracked: boolean;
             /** Format: date-time */
             tracked_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PinState: {
+            actor?: string;
+            /** Format: int64 */
+            event_id?: number;
+            pinned: boolean;
+            target: components["schemas"]["TargetRef"];
         } & {
             [key: string]: unknown;
         };
@@ -6232,6 +6863,13 @@ export interface components {
             done: number;
             /** Format: int64 */
             total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        ProjectionRef: {
+            kind: string;
+            /** Format: int64 */
+            row_id: number;
         } & {
             [key: string]: unknown;
         };
@@ -6270,6 +6908,57 @@ export interface components {
         RejectedCandidate: {
             identifier: string;
             reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        RelationshipCalendarDay: {
+            /** Format: int64 */
+            chat: number;
+            date: string;
+            /** Format: int64 */
+            email: number;
+            /** @enum {string} */
+            level: "NONE" | "FIRST_QUARTILE" | "SECOND_QUARTILE" | "THIRD_QUARTILE" | "FOURTH_QUARTILE";
+            /** Format: int64 */
+            meetings: number;
+            /** Format: int32 */
+            modality_mask: number;
+            /** Format: int64 */
+            received: number;
+            /** Format: int64 */
+            sent: number;
+            /** Format: int64 */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        RelationshipCalendarHTTPRequest: {
+            timezone?: string;
+            /** Format: int64 */
+            year: number;
+        };
+        RelationshipCalendarHTTPResponse: {
+            annual: components["schemas"]["AnnualTemperatureSummary"][] | null;
+            cache_revision: string;
+            /** Format: int64 */
+            canonical_id: number;
+            current: components["schemas"]["TemperatureSummary"];
+            days: components["schemas"]["RelationshipCalendarDay"][] | null;
+            effective_date: string;
+            /** Format: int64 */
+            identity_revision: number;
+            /** Format: int64 */
+            participant_id: number;
+            /** Format: int64 */
+            peak_temperature: number;
+            /** Format: int64 */
+            peak_year: number;
+            /** Format: int64 */
+            score_version: number;
+            scoring_timezone: string;
+            timezone: string;
+            /** Format: int64 */
+            year: number;
         } & {
             [key: string]: unknown;
         };
@@ -6610,6 +7299,9 @@ export interface components {
             source_ref?: string;
             value: components["schemas"]["AttributeValue"];
         };
+        SetPersonFactPinRequest: {
+            pinned: boolean;
+        };
         Setting: {
             /** @enum {string} */
             group: "browser" | "server" | "archive" | "search" | "sources" | "integrations";
@@ -6910,6 +7602,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        TargetDescriptor: {
+            cardinality: string;
+            choices: components["schemas"]["ChoiceDescriptor"][] | null;
+            description: string;
+            fields: components["schemas"]["FieldDescriptor"][] | null;
+            key: string;
+            kind: string;
+            /** Format: int64 */
+            max_length?: number;
+            record_target?: string;
+            revision: string;
+            sensitive: boolean;
+            slug: string;
+            universal_id: string;
+            value_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        TargetRef: {
+            key: string;
+            kind: string;
+            revision: string;
+        } & {
+            [key: string]: unknown;
+        };
         TaskIntegrationStatusResponse: {
             /** @description Credential-free status explanation */
             message: string;
@@ -6987,6 +7704,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        TemperatureSignals: {
+            /** Format: double */
+            meeting_signal: number;
+            /** Format: int64 */
+            modalities: number;
+            /** Format: double */
+            received_volume: number;
+            /** Format: double */
+            sent_signal: number;
+        } & {
+            [key: string]: unknown;
+        };
+        TemperatureSummary: {
+            /** Format: int64 */
+            population: number;
+            /** Format: int64 */
+            rank: number;
+            /** Format: double */
+            raw_score: number;
+            signals: components["schemas"]["TemperatureSignals"];
+            /** Format: int64 */
+            temperature: number;
+        } & {
+            [key: string]: unknown;
+        };
         TextConversationRow: {
             /** Format: int64 */
             conversation_id: number;
@@ -7002,6 +7744,7 @@ export interface components {
             [key: string]: unknown;
         };
         TextConversationsResponse: {
+            cache_revision: string;
             conversations: components["schemas"]["TextConversationRow"][] | null;
             /** Format: int64 */
             count: number;
@@ -7014,6 +7757,19 @@ export interface components {
             [key: string]: unknown;
         };
         TextMessagesResponse: {
+            cache_revision: string;
+            /** Format: int64 */
+            count: number;
+            has_more: boolean;
+            /** Format: int64 */
+            limit: number;
+            messages: components["schemas"]["CLIQueryMessageSummary"][] | null;
+            /** Format: int64 */
+            offset: number;
+        } & {
+            [key: string]: unknown;
+        };
+        TextSearchResponse: {
             /** Format: int64 */
             count: number;
             has_more: boolean;
@@ -11248,6 +12004,10 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque cursor from the previous document search page */
                 cursor?: string;
+                /** @description Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider */
+                mode?: string;
+                /** @description Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000) */
+                candidate_limit?: number;
             };
             header?: never;
             path?: never;
@@ -11354,6 +12114,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentIndexStatusResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getDocumentVectorStatus: {
+        parameters: {
+            query?: {
+                /** @description Generation whose bounded failures to inspect */
+                generation_id?: number;
+                /** @description Stable failure cursor token */
+                after_token?: string;
+                /** @description Maximum failure diagnostics (default 20, max 1000) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentVectorOperationsResponse"];
                 };
             };
             /** @description Error */
@@ -14672,6 +15504,66 @@ export interface operations {
             };
         };
     };
+    completeParticipants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParticipantCompletionHTTPRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantCompletionHTTPResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     searchParticipants: {
         parameters: {
             query?: never;
@@ -14832,6 +15724,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listParticipantInboxes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Observed participant cluster member ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonInboxResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -15356,6 +16289,8 @@ export interface operations {
                 history?: boolean;
                 /** @description Restrict the response to one definition slug */
                 slug?: string;
+                /** @description Restrict the response to one portable definition identifier */
+                universal_id?: string;
             };
             header?: never;
             path: {
@@ -15452,13 +16387,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Error */
+            /** @description Conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["PersonAttributeConflictResponse"];
                 };
             };
             /** @description Error */
@@ -15529,13 +16464,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Error */
+            /** @description Conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["PersonAttributeConflictResponse"];
                 };
             };
             /** @description Error */
@@ -15902,6 +16837,407 @@ export interface operations {
             };
         };
     };
+    listPersonFactClaims: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactClaimsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactDecisions: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactDecisionsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactEvidence: {
+        parameters: {
+            query?: {
+                /** @description Exact target as kind:key:sha256:<64 lowercase hex characters> */
+                target?: string;
+                /** @description Maximum rows to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based row offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactEvidenceResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactEvidenceStatusEvents: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one immutable evidence key */
+                evidence_key?: string;
+                /** @description Restrict to supported or unsupported events */
+                supported?: boolean;
+                /** @description Maximum events to return (default 50, max 200) */
+                limit?: number;
+                /** @description Zero-based event offset */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactEvidenceStatusEventsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactPins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactPinsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setPersonFactPin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+                /** @description Closed person fact target kind */
+                kind: "attribute" | "employment";
+                /** @description Exact person fact target key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPersonFactPinRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonFactPinWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     searchPersonFiles: {
         parameters: {
             query?: never;
@@ -16117,6 +17453,81 @@ export interface operations {
             };
             /** @description Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    appendPersonNote: {
+        parameters: {
+            query?: {
+                /** @description Validate and preview without writing */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppendPersonNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16675,6 +18086,56 @@ export interface operations {
             };
             /** @description Error */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonFactTargets: {
+        parameters: {
+            query?: {
+                /** @description Include sensitive targets */
+                include_sensitive?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description Error */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17658,6 +19119,69 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreCacheUnavailableResponse"] | components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getRelationshipCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Any member participant ID of the counterpart's identity cluster */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelationshipCalendarHTTPRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipCalendarHTTPResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18886,6 +20410,8 @@ export interface operations {
             query?: {
                 /** @description Source ID */
                 source_id?: number;
+                /** @description Exact participant cluster member IDs */
+                participant_id?: number[];
                 /** @description Sender phone/address filter */
                 contact_phone?: string;
                 /** @description Sender display-name filter */
@@ -18940,8 +20466,12 @@ export interface operations {
     listTextConversationMessages: {
         parameters: {
             query?: {
+                /** @description Full-text search within the conversation */
+                search_query?: string;
                 /** @description Source ID */
                 source_id?: number;
+                /** @description Exact participant cluster member IDs */
+                participant_id?: number[];
                 /** @description Sender phone/address filter */
                 contact_phone?: string;
                 /** @description Sender display-name filter */
@@ -19018,7 +20548,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TextMessagesResponse"];
+                    "application/json": components["schemas"]["TextSearchResponse"];
                 };
             };
             /** @description Error */

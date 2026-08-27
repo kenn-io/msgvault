@@ -114,6 +114,8 @@ type PatchOrganizationBody = OrganizationBody
 
 type PutOrganizationProfileBody = OrganizationProfileBody
 
+type CompleteParticipantsBody = ParticipantCompletionHTTPRequest
+
 type SearchParticipantsBody = IdentitySearchHTTPRequest
 
 type SearchParticipantFilesBody = PersonFileSearchHTTPRequest
@@ -130,9 +132,13 @@ type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
+type SetPersonFactPinBody = SetPersonFactPinRequest
+
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
 
 type MergePersonsBody = MergePersonRequest
+
+type AppendPersonNoteBody = AppendPersonNoteRequest
 
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 
@@ -153,6 +159,8 @@ type CreateRelationshipTypeBody = CreateRelationshipTypeRequest
 type PatchRelationshipTypeBody = PatchRelationshipTypeRequest
 
 type ListRelationshipsBody = RelationshipsHTTPRequest
+
+type GetRelationshipCalendarBody = RelationshipCalendarHTTPRequest
 
 type GetRelationshipTimelineBody = RelationshipTimelineHTTPRequest
 

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,60 @@ func personTextDefinition(slug string) store.AttributeDefinitionInput {
 		IsAudited:   true,
 		IsDeletable: true,
 	}
+}
+
+func TestAttributeDescriptionAcceptsExactly280UnicodeRunes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := strings.Repeat("🙂", 280)
+	input := personTextDefinition("maximum_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	require.NotNil(t, created.Description)
+	assert.Equal(t, description, *created.Description)
+}
+
+func TestAttributeDescriptionCreateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := strings.Repeat("🙂", 281)
+	input := personTextDefinition("too_long_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	require.NotNil(t, created.Description)
+	assert.Equal(t, description, *created.Description)
+}
+
+func TestAttributeDescriptionUpdateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	created, err := st.CreateAttributeDefinitionContext(
+		t.Context(), personTextDefinition("update_description"))
+	require.NoError(err)
+
+	description := strings.Repeat("🙂", 281)
+	descriptionUpdate := &description
+	updated, err := st.UpdateAttributeDefinitionContext(t.Context(), created.ID, created.Revision,
+		store.AttributeDefinitionUpdate{Description: &descriptionUpdate})
+	require.NoError(err)
+	require.NotNil(updated.Description)
+	assert.Equal(description, *updated.Description)
+	assert.Equal(created.Revision+1, updated.Revision)
+}
+
+func TestAttributeDescriptionBlankNormalizesToNil(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	description := " \n\t "
+	input := personTextDefinition("blank_description")
+	input.Description = &description
+
+	created, err := st.CreateAttributeDefinitionContext(t.Context(), input)
+	require.NoError(t, err)
+	assert.Nil(t, created.Description)
 }
 
 func onlyTestDefinitions(
@@ -496,6 +551,79 @@ func TestCreateAttributeDefinitionRejectsDuplicateSlugAndUniversalID(t *testing.
 	sameUniversalID.UniversalID = "test-nickname_note"
 	_, err = st.CreateAttributeDefinitionContext(ctx, sameUniversalID)
 	require.ErrorIs(t, err, store.ErrAttributeDefinitionUniversalIDConflict)
+}
+
+func TestCreateAttributeDefinitionDerivesUniqueSlug(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+
+	first := personTextDefinition("unused")
+	first.Slug = ""
+	first.Label = "Favorite café"
+	first.UniversalID = "test-derived-first"
+	created, err := st.CreateAttributeDefinitionContext(ctx, first)
+	require.NoError(err)
+	assert.Equal("favorite_caf", created.Slug)
+
+	second := first
+	second.UniversalID = "test-derived-second"
+	created, err = st.CreateAttributeDefinitionContext(ctx, second)
+	require.NoError(err)
+	assert.Equal("favorite_caf_2", created.Slug)
+
+	digits := first
+	digits.UniversalID = "test-derived-digits"
+	digits.Label = "2026 notes"
+	created, err = st.CreateAttributeDefinitionContext(ctx, digits)
+	require.NoError(err)
+	assert.Equal("field_2026_notes", created.Slug)
+
+	punctuation := first
+	punctuation.UniversalID = "test-derived-punctuation"
+	punctuation.Label = "?! —"
+	created, err = st.CreateAttributeDefinitionContext(ctx, punctuation)
+	require.NoError(err)
+	assert.Equal("field", created.Slug)
+
+	long := first
+	long.UniversalID = "test-derived-long-first"
+	long.Label = strings.Repeat("a", 63)
+	created, err = st.CreateAttributeDefinitionContext(ctx, long)
+	require.NoError(err)
+	assert.Equal(strings.Repeat("a", 63), created.Slug)
+
+	long.UniversalID = "test-derived-long-second"
+	created, err = st.CreateAttributeDefinitionContext(ctx, long)
+	require.NoError(err)
+	assert.Equal(strings.Repeat("a", 61)+"_2", created.Slug)
+}
+
+func TestCreateAttributeDefinitionKeepsExplicitSlug(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+
+	first := personTextDefinition("favorite_color")
+	first.Label = "Favorite color"
+	created, err := st.CreateAttributeDefinitionContext(ctx, first)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_color", created.Slug)
+
+	conflicting := first
+	conflicting.UniversalID = "test-conflicting-explicit-slug"
+	_, err = st.CreateAttributeDefinitionContext(ctx, conflicting)
+	require.ErrorIs(t, err, store.ErrAttributeDefinitionSlugConflict)
+}
+
+func TestValidateAttributeDefinitionInputDerivesOmittedSlug(t *testing.T) {
+	input := personTextDefinition("unused")
+	input.Slug = ""
+	input.Label = "Favorite café"
+
+	validated, err := store.ValidateAttributeDefinitionInput(input)
+	require.NoError(t, err)
+	assert.Equal(t, "favorite_caf", validated.Slug)
 }
 
 func TestUpdateAttributeDefinitionRenamesLabelAndKeepsIdentity(t *testing.T) {

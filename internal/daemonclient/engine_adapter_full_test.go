@@ -327,6 +327,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 			})
 		case "/api/v1/text/conversations/77/messages":
 			assert.Equal("10", r.URL.Query().Get("limit"), "limit")
+			assert.Equal("hiddenneedle", r.URL.Query().Get("search_query"), "search_query")
 			writeJSONResponse(t, w, textMessagesResponseJSON("timeline body"))
 		case "/api/v1/text/search":
 			assert.Equal("dinner", r.URL.Query().Get("q"), "q")
@@ -373,7 +374,8 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(3), aggregates[0].Count)
 
 	timeline, err := textEngine.ListConversationMessages(context.Background(), 77, query.TextFilter{
-		Pagination: query.Pagination{Limit: 10},
+		SearchQuery: "hiddenneedle",
+		Pagination:  query.Pagination{Limit: 10},
 	})
 	require.NoError(err, "ListConversationMessages")
 	require.Len(timeline, 1, "timeline")

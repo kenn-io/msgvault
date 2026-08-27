@@ -33,7 +33,11 @@ function person(id: number): PersonSummary {
     partial_label: false,
     identifiers: [],
     activity_count: 1,
+    meeting_count: 0,
     file_count: 0,
+    current_relationship_temperature: 0,
+    peak_relationship_temperature: 0,
+    peak_relationship_year: 0,
     source_counts: [],
     first_at: when,
     last_at: when,
@@ -706,6 +710,7 @@ describe('RelationshipsController text-query consistency', () => {
       '/api/v1/participants/12/summary',
       '/api/v1/participants/search',
       '/api/v1/relationships',
+    '/api/v1/relationships/12/calendar',
       '/api/v1/relationships/12/timeline'
     ]);
     for (const post of posts) {
@@ -725,6 +730,240 @@ describe('RelationshipsController text-query consistency', () => {
 });
 
 describe('RelationshipsController.openTarget', () => {
+  function calendar(id: number, year: number, cacheRevision = 'cache-rel', identityRevision = 3) {
+    return {
+      participant_id: id, canonical_id: id, year, timezone: 'UTC',
+      days: [{ date: `${year}-01-01`, sent: 1, received: 0, email: 1, chat: 0, meetings: 0, total: 1, modality_mask: 1, level: 'FIRST_QUARTILE' }],
+      current: { temperature: 62, rank: 4, population: 20, raw_score: 3, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
+      annual: [], peak_temperature: 87, peak_year: 2018, scoring_timezone: 'UTC',
+      score_version: 1, effective_date: `${year}-08-22`, cache_revision: cacheRevision,
+      identity_revision: identityRevision
+    };
+  }
+
+  it('loads, caches, and revisits exact person/year/timezone calendar revisions', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') return Response.json({ ...person(12), first_at: '2018-01-02T00:00:00Z' });
+      if (path === '/api/v1/relationships/12/timeline') return Response.json({
+        canonical_id: 12, identity_revision: 3, rows: [], total_count: 0, cache_revision: 'cache-rel'
+      });
+      if (path === '/api/v1/relationships/12/calendar') {
+        const body = await request.clone().json() as { year: number };
+        return Response.json(calendar(12, body.year));
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+    expect(controller.relationshipCalendar?.current.temperature).toBe(62);
+    expect(controller.relationshipCalendarFirstYear).toBe(2018);
+
+    await controller.loadRelationshipYear(2025);
+    expect(controller.relationshipCalendar?.year).toBe(2025);
+    await controller.loadRelationshipYear(2026);
+    expect(controller.relationshipCalendar?.year).toBe(2026);
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+    const calendarRequests = requests.filter((request) => pathOf(request).endsWith('/calendar'));
+    expect(calendarRequests).toHaveLength(2);
+    await expect(calendarRequests[0]!.clone().json()).resolves.toEqual({ year: 2026, timezone: 'UTC' });
+  });
+
+  it('reopens the full target once on calendar revision drift while preserving the selected year', async () => {
+    let detailCalls = 0;
+    let timelineCalls = 0;
+    let calendarCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') {
+        detailCalls += 1;
+        return Response.json({
+          ...person(12),
+          activity_count: detailCalls,
+          first_at: '2018-01-02T00:00:00Z',
+          cache_revision: `cache-rel-${detailCalls}`
+        });
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        timelineCalls += 1;
+        return Response.json({
+          canonical_id: 12,
+          identity_revision: timelineCalls,
+          rows: [timelineRow(`timeline-${timelineCalls}`)],
+          total_count: 1,
+          cache_revision: `cache-rel-${timelineCalls}`
+        });
+      }
+      if (path === '/api/v1/relationships/12/calendar') {
+        calendarCalls += 1;
+        const body = await request.clone().json() as { year: number };
+        const revision = calendarCalls === 1 ? 1 : 2;
+        return Response.json(calendar(12, body.year, `cache-rel-${revision}`, revision));
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+
+    await controller.loadRelationshipYear(2025);
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2025));
+
+    expect(detailCalls).toBe(2);
+    expect(timelineCalls).toBe(2);
+    expect(calendarCalls).toBe(3);
+    expect(controller.detail).toMatchObject({ activity_count: 2, cache_revision: 'cache-rel-2' });
+    expect(controller.timelineRows).toEqual([timelineRow('timeline-2')]);
+    expect(controller.identityRevision).toBe(2);
+    expect(controller.relationshipCalendar?.cache_revision).toBe('cache-rel-2');
+    expect(controller.relationshipCalendarError).toBeNull();
+  });
+
+  it('clamps a preserved calendar year when revision drift moves first activity later', async () => {
+    const currentYear = new Date().getUTCFullYear();
+    let detailCalls = 0;
+    let timelineCalls = 0;
+    let calendarCalls = 0;
+    const requestedYears: number[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') {
+        detailCalls += 1;
+        return Response.json({
+          ...person(12),
+          first_at: detailCalls === 1 ? '2018-01-02T00:00:00Z' : `${currentYear}-01-02T00:00:00Z`,
+          cache_revision: `cache-rel-${detailCalls}`
+        });
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        timelineCalls += 1;
+        return Response.json({
+          canonical_id: 12, identity_revision: timelineCalls, rows: [], total_count: 0,
+          cache_revision: `cache-rel-${timelineCalls}`
+        });
+      }
+      if (path === '/api/v1/relationships/12/calendar') {
+        calendarCalls += 1;
+        const body = await request.clone().json() as { year: number };
+        requestedYears.push(body.year);
+        const revision = calendarCalls === 1 ? 1 : 2;
+        return Response.json(calendar(12, body.year, `cache-rel-${revision}`, revision));
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(currentYear));
+    await controller.loadRelationshipYear(currentYear - 1);
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.cache_revision).toBe('cache-rel-2'));
+
+    expect(requestedYears).toEqual([currentYear, currentYear - 1, currentYear]);
+    expect(controller.relationshipCalendarFirstYear).toBe(currentYear);
+    expect(controller.relationshipCalendarYear).toBe(currentYear);
+    expect(controller.relationshipCalendar?.year).toBe(currentYear);
+  });
+
+  it('clamps future-only contacts to the current supported calendar year', async () => {
+    const currentYear = new Date().getUTCFullYear();
+    const requestedYears: number[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') {
+        return Response.json({ ...person(12), first_at: '2099-01-02T00:00:00Z' });
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({
+          canonical_id: 12, identity_revision: 3, rows: [], total_count: 0,
+          cache_revision: 'cache-rel'
+        });
+      }
+      if (path === '/api/v1/relationships/12/calendar') {
+        const body = await request.clone().json() as { year: number };
+        requestedYears.push(body.year);
+        return Response.json(calendar(12, body.year));
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(currentYear));
+
+    expect(requestedYears).toEqual([currentYear]);
+    expect(controller.relationshipCalendarFirstYear).toBe(currentYear);
+    expect(controller.relationshipCalendarYear).toBe(currentYear);
+  });
+
+  it('accepts the first calendar identity revision when the timeline request fails', async () => {
+    let detailCalls = 0;
+    let calendarCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') {
+        detailCalls += 1;
+        return Response.json(person(12));
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ error: 'internal_error', message: 'timeline unavailable' }, { status: 500 });
+      }
+      if (path === '/api/v1/relationships/12/calendar') {
+        calendarCalls += 1;
+        return Response.json(calendar(12, 2026));
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+
+    expect(detailCalls).toBe(1);
+    expect(calendarCalls).toBe(1);
+    expect(controller.identityRevision).toBeNull();
+    expect(controller.relationshipCalendar?.identity_revision).toBe(3);
+    expect(controller.relationshipCalendarError).toBeNull();
+    expect(controller.timelineError).toBe('timeline unavailable');
+  });
+
+  it('rejects a stale calendar completion after switching to a domain target', async () => {
+    let resolveCalendar: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') return Response.json(person(12));
+      if (path === '/api/v1/relationships/12/timeline') return Response.json({
+        canonical_id: 12, identity_revision: 3, rows: [], total_count: 0, cache_revision: 'cache-rel'
+      });
+      if (path === '/api/v1/relationships/12/calendar') {
+        return new Promise<Response>((resolve) => { resolveCalendar = resolve; });
+      }
+      if (path === '/api/v1/domains/example.com') return Response.json(domainSummary('example.com'));
+      if (path === '/api/v1/domains/example.com/timeline') return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(resolveCalendar).toBeTypeOf('function'));
+    await controller.openTarget('domain:example.com', { filters: [], presentation: 'table' });
+    resolveCalendar?.(Response.json(calendar(12, 2026)));
+    await Promise.resolve();
+
+    expect(controller.relationshipCalendar).toBeNull();
+    expect(controller.relationshipCalendarLoading).toBe(false);
+  });
   it('recovers a deep-linked cluster detail after cache initialization finishes', async () => {
     vi.useFakeTimers();
     const calls = new Map<string, number>();
@@ -919,6 +1158,7 @@ describe('RelationshipsController filtered header metrics', () => {
     expect(detail.first_at).toBe('2026-01-05T00:00:00Z');
     expect(detail.cluster).toEqual(clusterPerson(12).cluster);
     expect(detail.identifiers).toEqual(clusterPerson(12).identifiers);
+    expect(controller.relationshipCalendarFirstYear).toBe(2010);
     expect(controller.timelineError).toBeNull();
     const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/participants/12/summary');
     await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });

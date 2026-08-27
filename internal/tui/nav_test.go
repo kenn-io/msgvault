@@ -158,9 +158,9 @@ func TestNavigateList(t *testing.T) {
 		{"unhandled key", "x", 5, 0, 0, false},
 		{"empty list down", "j", 0, 0, 0, true},
 		{"empty list up", "k", 0, 0, 0, true},
-		{"home", "home", 5, 3, 0, true},
-		{"end", "end", 5, 0, 4, true},
-		{"end empty list", "end", 0, 0, 0, true},
+		{keyNameHome, keyNameHome, 5, 3, 0, true},
+		{keyNameEnd, keyNameEnd, 5, 0, 4, true},
+		{"end empty list", keyNameEnd, 0, 0, 0, true},
 	}
 
 	for _, tt := range tests {
@@ -244,7 +244,7 @@ func TestNavigateListPageDown(t *testing.T) {
 			m.cursor = tt.initCursor
 			m.scrollOffset = tt.initScrollOffset
 
-			handled := m.navigateList("pgdown", tt.itemCount)
+			handled := m.navigateList(keyNamePageDown, tt.itemCount)
 			require.True(t, handled, "expected pgdown to be handled")
 			assert.Equal(t, tt.wantCursor, m.cursor)
 			assert.Equal(t, tt.wantScrollOffset, m.scrollOffset)
@@ -306,7 +306,7 @@ func TestNavigateListPageUp(t *testing.T) {
 			m.cursor = tt.initCursor
 			m.scrollOffset = tt.initScrollOffset
 
-			handled := m.navigateList("pgup", tt.itemCount)
+			handled := m.navigateList(keyNamePageUp, tt.itemCount)
 			require.True(t, handled, "expected pgup to be handled")
 			assert.Equal(t, tt.wantCursor, m.cursor)
 			assert.Equal(t, tt.wantScrollOffset, m.scrollOffset)

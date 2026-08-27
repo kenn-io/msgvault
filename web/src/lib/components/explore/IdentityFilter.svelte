@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -29,6 +30,18 @@
   const selectedIdentity = $derived(validIdentityFilter(filters, sourceID));
   const identifier = $derived(selectedIdentity?.values[1] ?? '');
   const direction = $derived(identityDirection(selectedIdentity?.values[2]));
+  const identityOptions = $derived([
+    { value: '', label: 'Any confirmed identity' },
+    ...(identifier && !loading && !identities.some((identity) => identity.identifier === identifier)
+      ? [{ value: identifier, label: `${identifier} (unavailable)` }]
+      : []),
+    ...identities.map((identity) => ({ value: identity.identifier, label: identity.identifier }))
+  ]);
+  const directionOptions = [
+    { value: 'any', label: 'Any' },
+    { value: 'sender', label: 'Sent via' },
+    { value: 'recipient', label: 'Received via' }
+  ];
 
   $effect(() => {
     const currentFilters = filters;
@@ -118,39 +131,29 @@
   <div class="identity-filter">
     <label>
       <span>Identity</span>
-      <select
-        aria-label="Identity"
+      <SelectDropdown
+        title="Identity"
         value={identifier}
+        options={identityOptions}
         disabled={loading || (Boolean(error) && !identifier)}
-        onchange={(event) => replaceIdentity(
-          event.currentTarget.value,
+        onchange={(value) => replaceIdentity(
+          value,
           identifier ? direction : 'any'
         )}
-      >
-        <option value="">Any confirmed identity</option>
-        {#if identifier && !loading && !identities.some((identity) => identity.identifier === identifier)}
-          <option value={identifier}>{identifier} (unavailable)</option>
-        {/if}
-        {#each identities as identity (identity.identifier)}
-          <option value={identity.identifier}>{identity.identifier}</option>
-        {/each}
-      </select>
+      />
     </label>
     <label>
       <span>Direction</span>
-      <select
-        aria-label="Identity direction"
+      <SelectDropdown
+        title="Identity direction"
         value={direction}
+        options={directionOptions}
         disabled={!identifier}
-        onchange={(event) => replaceIdentity(
+        onchange={(value) => replaceIdentity(
           identifier,
-          event.currentTarget.value as IdentityDirection
+          value as IdentityDirection
         )}
-      >
-        <option value="any">Any</option>
-        <option value="sender">Sent via</option>
-        <option value="recipient">Received via</option>
-      </select>
+      />
     </label>
     {#if loading}
       <span role="status">Loading identities…</span>
@@ -179,11 +182,4 @@
     color: var(--text-muted);
   }
 
-  .identity-filter select {
-    min-height: var(--control-height);
-    border: 1px solid var(--control-border);
-    border-radius: var(--radius-sm);
-    background: var(--control-bg);
-    color: var(--text-primary);
-  }
 </style>

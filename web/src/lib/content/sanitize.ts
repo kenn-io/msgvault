@@ -1,3 +1,4 @@
+// kit-ui-check-ignore: this sanitizer handles archived email HTML, not Markdown.
 import DOMPurify from 'dompurify';
 
 import { sanitizeInlineStyle } from './style-allowlist';

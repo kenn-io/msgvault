@@ -429,6 +429,11 @@ func (s *Store) mergePersonsOnce(
 		); err != nil {
 			return err
 		}
+		if err := s.markAbsorbedPersonFactPinEventsDeletedTx(
+			ctx, tx, mergeID, absorbed.ID,
+		); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE id = ?`, absorbed.ID); err != nil {
 			return fmt.Errorf("delete absorbed person: %w", err)
 		}
@@ -470,6 +475,25 @@ func (s *Store) mergePersonsOnce(
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Store) markAbsorbedPersonFactPinEventsDeletedTx(
+	ctx context.Context, tx *loggedTx, mergeID, absorbedID int64,
+) error {
+	eventIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT id
+		FROM person_fact_pin_events WHERE person_id = ? ORDER BY id`, absorbedID)
+	if err != nil {
+		return fmt.Errorf("load absorbed person fact pin events: %w", err)
+	}
+	for _, eventID := range eventIDs {
+		if err := s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, "person_fact_pin_events", eventID,
+			"deleted_snapshot", nil,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func personMergeRequestHash(request PersonMergeRequest) (string, error) {

@@ -2118,6 +2118,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 	for _, table := range []string{
 		"person_names", "person_addresses",
 		"person_dates", "person_categories", "person_media",
+		"person_fact_pin_events",
 	} {
 		if _, err := copyByName(tx, table, `person_id IN (SELECT id FROM persons)`); err != nil {
 			return 0, fmt.Errorf("copy %s: %w", table, err)

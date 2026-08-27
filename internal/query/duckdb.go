@@ -734,6 +734,12 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		),
 		conv AS (
 			%s
+		),
+		cp AS (
+			SELECT
+				CAST(conversation_id AS BIGINT) AS conversation_id,
+				CAST(participant_id AS BIGINT) AS participant_id
+			FROM read_parquet('%s')
 		)
 		`, msgCTE,
 		e.parquetPath("message_recipients"),
@@ -742,7 +748,8 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		e.parquetPath("message_labels"),
 		e.parquetPath("attachments"),
 		srcCTE,
-		convCTE)
+		convCTE,
+		e.parquetPath(datasetConversationParticipants))
 }
 
 // duckDBMessageTypeCondition builds a message_type predicate for the parquet

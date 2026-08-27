@@ -312,6 +312,44 @@ func TestBackdatedReplacementSeparatesValidityAndAuditTimes(t *testing.T) {
 	assert.Equal(replacementActiveFrom, *replacement.Superseded.ActiveUntil)
 	assert.True(replacement.Superseded.SupersededAt.After(beforeWrite))
 	assert.True(replacement.Superseded.SupersededAt.Before(afterWrite))
+	assert.Equal(replacement.Value.CreatedAt, *replacement.Superseded.SupersededAt,
+		"one transaction timestamp must bind the old audit close and new audit open")
+}
+
+func TestPersonAttributePublicDryRunAndCASDoNotPersistPins(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+	person := mustAttributePerson(t, st)
+
+	preview, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel,
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: new("email")},
+		Source: store.ProvenanceUser, DryRun: true,
+	})
+	require.NoError(err)
+	assert.Zero(preview.Value.ID)
+	pins, err := st.ListPersonFactPinsContext(ctx, person)
+	require.NoError(err)
+	assert.Empty(pins)
+
+	committed, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel,
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: new("email")},
+		Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	stale := committed.Value.ID + 1000
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel,
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: new("chat")},
+		Source: store.ProvenanceUser, ExpectedValueID: &stale,
+	})
+	require.ErrorIs(err, store.ErrAttributeValueConflict)
+	pins, err = st.ListPersonFactPinsContext(ctx, person)
+	require.NoError(err)
+	require.Len(pins, 1)
 }
 
 func TestMultiCardinalityAppendsPerOrdinalAndDerivedConfidenceIsAllowed(t *testing.T) {

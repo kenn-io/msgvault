@@ -26,6 +26,7 @@ import (
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -1248,7 +1249,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		req.GrantDecided = true
 	}
 	for name := range req.Env {
-		if !s.cliRunEnvAllowed(name) {
+		if !s.cliRunEnvAllowedForCommand(req.Args, name) {
 			writeError(w, http.StatusBadRequest, "env_not_allowed", fmt.Sprintf("env %q is not allowed through the daemon CLI runner", name))
 			return
 		}
@@ -1265,6 +1266,22 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	if err := writeEvent(CLIRunEvent{Type: cliStreamEventTypeComplete}); err != nil {
 		s.logger.Error("failed to stream CLI run completion event", "error", err)
 	}
+}
+
+func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if len(args) >= 3 && args[0] == cliRunPersonCommand {
+		providerCall := args[1] == "provider" && args[2] == "check"
+		sweepCall := args[1] == "sweep" && args[2] == "run"
+		if !providerCall && !sweepCall {
+			return false
+		}
+		keyEnv := s.configuredPeopleProviderKeyEnv()
+		return keyEnv != "" && keyEnv == name
+	}
+	if keyEnv := s.configuredPeopleProviderKeyEnv(); keyEnv != "" && keyEnv == name {
+		return false
+	}
+	return s.cliRunEnvAllowed(name)
 }
 
 func cliRunArgsContainFlag(args []string, name string) bool {
@@ -1414,7 +1431,7 @@ const cliRunPersonCommand = "person"
 // alone; command groups whose subcommand matters are checked against their
 // nested command path. Backup admits only the frozen create path, documents
 // admits only mutations that must run under the daemon's writer lock, and
-// person admits only the provider consent boundary.
+// person admits only the provider consent boundary and sweep operations.
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -1426,6 +1443,17 @@ func cliRunCommandAllowed(args []string) bool {
 		if len(args) < 2 {
 			return false
 		}
+		if args[1] == "vectors" {
+			if len(args) < 3 {
+				return false
+			}
+			switch args[2] {
+			case "build", "consent", "rebuild", "resume", "retire", "retry", "status":
+				return true
+			default:
+				return false
+			}
+		}
 		switch args[1] {
 		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
 			return true
@@ -1434,15 +1462,22 @@ func cliRunCommandAllowed(args []string) bool {
 		}
 	}
 	if args[0] == cliRunPersonCommand {
-		if len(args) < 3 || args[1] != "provider" {
+		if len(args) < 3 {
 			return false
 		}
-		switch args[2] {
-		case "status", "consent", "revoke", "check":
-			return true
-		default:
-			return false
+		switch args[1] {
+		case "provider":
+			switch args[2] {
+			case "status", "consent", "revoke", "check", "login", "models":
+				return true
+			}
+		case "sweep":
+			switch args[2] {
+			case "run", "status", "history":
+				return true
+			}
 		}
+		return false
 	}
 	switch args[0] {
 	case "add-account",
@@ -1535,13 +1570,21 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 	for _, keyEnv := range []string{
 		s.cfg.Vector.Embeddings.APIKeyEnv,
 		s.cfg.Attachments.Documents.APIKeyEnv,
-		s.cfg.People.Sweep.Provider.APIKeyEnv,
+		s.configuredPeopleProviderKeyEnv(),
 	} {
 		if keyEnv != "" && name == keyEnv {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) configuredPeopleProviderKeyEnv() string {
+	if s.cfg == nil ||
+		s.cfg.People.Sweep.Provider.Kind != peoplesweep.ProviderOpenAICompatible {
+		return ""
+	}
+	return s.cfg.People.Sweep.Provider.APIKeyEnv
 }
 
 func (s *Server) cliDedupDeleteStore() (CLIDedupDeleteStore, *apiHTTPError) {

@@ -99,6 +99,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return nil, err
 	}
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(src.ID, syncID)
+	imp = &scoped
 	defer func() {
 		if err != nil {
 			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), &store.Checkpoint{

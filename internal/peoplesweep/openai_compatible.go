@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -59,6 +62,7 @@ type chatCompletionJSONSchema struct {
 }
 
 type chatCompletionsResponse struct {
+	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
@@ -70,20 +74,13 @@ type chatCompletionsResponse struct {
 	} `json:"usage"`
 }
 
-// GenerateJSON performs one request without retries and returns parsed JSON.
-// Consent, source policy, credential lookup, timeout, and schema validation are
-// owned by Runner.
-func (t *OpenAICompatibleTransport) GenerateJSON(
-	ctx context.Context,
+// PrepareJSON deterministically encodes the complete Chat Completions body.
+func (t *OpenAICompatibleTransport) PrepareJSON(
 	profile ProviderProfile,
-	credential string,
 	request StructuredRequest,
-) (StructuredResponse, error) {
+) (PreparedStructuredRequest, error) {
 	if err := profile.Validate(); err != nil {
-		return StructuredResponse{}, err
-	}
-	if profile.APIKeyEnv != "" && credential == "" {
-		return StructuredResponse{}, errors.New("inference provider credential is empty")
+		return PreparedStructuredRequest{}, err
 	}
 	payload, err := json.Marshal(chatCompletionsRequest{
 		Model: profile.Model,
@@ -100,11 +97,38 @@ func (t *OpenAICompatibleTransport) GenerateJSON(
 		MaxCompletionTokens: request.MaxOutputTokens,
 	})
 	if err != nil {
-		return StructuredResponse{}, errors.New("encode inference provider request")
+		return PreparedStructuredRequest{}, errors.New("encode inference provider request")
+	}
+	return NewPreparedStructuredRequest(request, payload)
+}
+
+// GeneratePreparedJSON performs one request without retries using only the
+// bytes prepared before budget reservation.
+func (t *OpenAICompatibleTransport) GeneratePreparedJSON(
+	ctx context.Context,
+	profile ProviderProfile,
+	credential string,
+	prepared PreparedStructuredRequest,
+) (StructuredResponse, error) {
+	if err := profile.Validate(); err != nil {
+		return StructuredResponse{}, err
+	}
+	if profile.APIKeyEnv != "" && credential == "" {
+		return StructuredResponse{}, errors.New("inference provider credential is empty")
+	}
+	if err := prepared.validateWireHash(); err != nil {
+		return StructuredResponse{}, err
+	}
+	expected, err := t.PrepareJSON(profile, prepared.Request())
+	if err != nil {
+		return StructuredResponse{}, fmt.Errorf("re-encode prepared inference provider request: %w", err)
+	}
+	if !bytes.Equal(prepared.WireRequest(), expected.WireRequest()) {
+		return StructuredResponse{}, errors.New("prepared structured request does not match deterministic provider encoding")
 	}
 	target := strings.TrimRight(profile.Endpoint, "/") + "/chat/completions"
 	httpRequest, err := http.NewRequestWithContext( // #nosec G704 -- exact operator-configured endpoint validated by ProviderProfile.
-		ctx, http.MethodPost, target, bytes.NewReader(payload))
+		ctx, http.MethodPost, target, bytes.NewReader(prepared.WireRequest()))
 	if err != nil {
 		return StructuredResponse{}, fmt.Errorf("create inference provider request: %w", err)
 	}
@@ -119,11 +143,19 @@ func (t *OpenAICompatibleTransport) GenerateJSON(
 	}
 	defer func() { _ = response.Body.Close() }()
 	requestID := response.Header.Get("x-request-id")
+	if !safeProviderMetadata(requestID) {
+		requestID = ""
+	}
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 32<<10))
+		retryAfter := time.Duration(0)
+		if retryableProviderStatus(response.StatusCode) {
+			retryAfter = parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		}
 		return StructuredResponse{}, &ProviderError{
 			StatusCode: response.StatusCode,
 			RequestID:  requestID,
+			RetryAfter: retryAfter,
 		}
 	}
 
@@ -131,29 +163,79 @@ func (t *OpenAICompatibleTransport) GenerateJSON(
 	if err != nil {
 		return StructuredResponse{}, fmt.Errorf("read inference provider response: %w", err)
 	}
+	// A client deadline can arrive after response headers and make the body
+	// appear as an empty EOF. Preserve cancellation rather than reclassifying
+	// that transport failure as provider-completed invalid JSON.
+	if requestErr := httpRequest.Context().Err(); requestErr != nil {
+		return StructuredResponse{}, fmt.Errorf("read inference provider response: %w", requestErr)
+	}
 	if len(body) > maxProviderResponseBytes {
-		return StructuredResponse{}, errors.New("inference provider response is too large")
+		return StructuredResponse{}, fmt.Errorf("%w: provider response is too large", ErrInvalidStructuredOutput)
 	}
 	var envelope chatCompletionsResponse
 	if err := decodeSingleJSON(body, &envelope); err != nil {
-		return StructuredResponse{}, errors.New("decode inference provider response")
+		return StructuredResponse{}, fmt.Errorf("%w: decode provider response", ErrInvalidStructuredOutput)
 	}
-	if len(envelope.Choices) == 0 || strings.TrimSpace(envelope.Choices[0].Message.Content) == "" {
-		return StructuredResponse{}, errors.New("inference provider response has no structured content")
-	}
-	content := []byte(envelope.Choices[0].Message.Content)
-	var decoded any
-	if err := decodeSingleJSONUseNumber(content, &decoded); err != nil {
-		return StructuredResponse{}, errors.New("inference provider returned invalid structured JSON")
-	}
-	return StructuredResponse{
-		Output:            json.RawMessage(append([]byte(nil), content...)),
+	result := StructuredResponse{
 		ProviderRequestID: requestID,
+		ProviderVersion:   OpenAICompatibleProviderVersion,
 		Usage: TokenUsage{
 			InputTokens:  envelope.Usage.PromptTokens,
 			OutputTokens: envelope.Usage.CompletionTokens,
 		},
-	}, nil
+	}
+	if envelope.Usage.PromptTokens < 0 || envelope.Usage.CompletionTokens < 0 {
+		return result, fmt.Errorf("%w: provider returned invalid token usage", ErrInvalidStructuredOutput)
+	}
+	if len(envelope.Choices) == 0 || strings.TrimSpace(envelope.Choices[0].Message.Content) == "" {
+		return result, fmt.Errorf("%w: provider response has no structured content", ErrInvalidStructuredOutput)
+	}
+	if !safeProviderMetadata(envelope.Model) {
+		return result, fmt.Errorf("%w: provider response is missing model version", ErrInvalidStructuredOutput)
+	}
+	result.ModelVersion = envelope.Model
+	content := []byte(envelope.Choices[0].Message.Content)
+	var decoded any
+	if err := decodeSingleJSONUseNumber(content, &decoded); err != nil {
+		return result, fmt.Errorf("%w: provider returned invalid structured JSON", ErrInvalidStructuredOutput)
+	}
+	result.Output = json.RawMessage(append([]byte(nil), content...))
+	return result, nil
+}
+
+func retryableProviderStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
+		(status >= http.StatusInternalServerError && status <= 599)
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	deltaSeconds := true
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			deltaSeconds = false
+			break
+		}
+	}
+	if deltaSeconds {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	when, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	delay := when.Sub(now)
+	if delay <= 0 {
+		return 0
+	}
+	return delay
 }
 
 func decodeSingleJSON(data []byte, destination any) error {

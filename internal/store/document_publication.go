@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 var (
@@ -39,17 +42,18 @@ type DocumentExtractionClaim struct {
 }
 
 type DocumentPublishedUnit struct {
-	Index     int
-	Kind      string
-	Text      string
-	Header    string
-	Footer    string
-	Width     int
-	Height    int
-	DPI       int
-	Checksum  string
-	CharCount int
-	Truncated bool
+	Index        int
+	Kind         string
+	Text         string
+	Header       string
+	Footer       string
+	Width        int
+	Height       int
+	DPI          int
+	Checksum     string
+	CharCount    int
+	Truncated    bool
+	HeadingMarks []document.HeadingMark
 }
 
 type DocumentPublishedSpan struct {
@@ -92,6 +96,10 @@ type DocumentExtractionPublication struct {
 	RetryCount             int
 	ProviderLatencyMS      int64
 	ManifestChecksum       string
+	NormalizationVersion   int
+	DocumentFamily         string
+	UnitKind               string
+	NormalizedTruncated    bool
 	Units                  []DocumentPublishedUnit
 	Chunks                 []DocumentPublishedChunk
 }
@@ -390,6 +398,21 @@ func (s *Store) PublishDocumentExtraction(
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.lockDocumentPublicationHashTx(
+			ctx, tx, publication.CanonicalBlobHash,
+		); err != nil {
+			return err
+		}
+		var replacesHead bool
+		if err := q.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM document_extraction_heads
+				WHERE profile_id = ? AND canonical_blob_hash = ?
+				  AND extraction_input_key = ?
+			)`, publication.ProfileID, publication.CanonicalBlobHash,
+			publication.ExtractionInputKey).Scan(&replacesHead); err != nil {
+			return fmt.Errorf("check document extraction replacement head: %w", err)
+		}
 		claimQuery := `
 			SELECT EXISTS (
 				SELECT 1 FROM document_extraction_claims
@@ -439,15 +462,19 @@ func (s *Store) PublishDocumentExtraction(
 			return fmt.Errorf("clear staged document units: %w", err)
 		}
 		for _, unit := range publication.Units {
+			headingMarks, err := json.Marshal(unit.HeadingMarks)
+			if err != nil {
+				return fmt.Errorf("encode document unit heading marks: %w", err)
+			}
 			if _, err := q.Exec(`
 				INSERT INTO document_units
 					(extraction_id, unit_index, unit_kind, text, header_text,
-					 footer_text, width, height, dpi, checksum, char_count, truncated)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					 footer_text, width, height, dpi, checksum, char_count, truncated, heading_marks)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`)`,
 				publication.ExtractionID, unit.Index, unit.Kind, unit.Text,
 				nullIfEmpty(unit.Header), nullIfEmpty(unit.Footer), nullIfZero(int64(unit.Width)),
 				nullIfZero(int64(unit.Height)), nullIfZero(int64(unit.DPI)), unit.Checksum,
-				unit.CharCount, unit.Truncated,
+				unit.CharCount, unit.Truncated, string(headingMarks),
 			); err != nil {
 				return fmt.Errorf("publish document unit %d: %w", unit.Index, err)
 			}
@@ -492,13 +519,16 @@ func (s *Store) PublishDocumentExtraction(
 			SET state = 'ready', lease_owner = NULL, lease_until = NULL,
 				provider_bytes = ?, units_processed = ?, returned_model = ?,
 				request_count = ?, retry_count = ?, provider_latency_ms = ?,
-				manifest_checksum = ?, source_sequence = ?,
+				manifest_checksum = ?, normalization_version = ?, document_family = ?,
+				unit_kind = ?, normalized_truncated = ?, source_sequence = ?,
 				updated_at = `+s.dialect.Now()+`, published_at = `+s.dialect.Now()+`
 			WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
 			  AND extraction_input_key = ? AND state = 'staging'`,
 			providerBytes, publication.UnitsProcessed, publication.ReturnedModel,
 			publication.RequestCount, publication.RetryCount, publication.ProviderLatencyMS,
-			publication.ManifestChecksum, sourceSequence, publication.ExtractionID,
+			publication.ManifestChecksum, publication.NormalizationVersion,
+			publication.DocumentFamily, publication.UnitKind, publication.NormalizedTruncated,
+			sourceSequence, publication.ExtractionID,
 			publication.ProfileID, publication.CanonicalBlobHash,
 			publication.ExtractionInputKey,
 		)
@@ -542,7 +572,15 @@ func (s *Store) PublishDocumentExtraction(
 		if err != nil || deleted != 1 {
 			return ErrDocumentExtractionFenceLost
 		}
-		return bumpDocumentIndexRevision(q)
+		if err := bumpDocumentIndexRevision(q); err != nil {
+			return err
+		}
+		effect := peoplesweep.EvidenceEffectNone
+		if replacesHead {
+			effect = peoplesweep.EvidenceEffectSourceEdited
+		}
+		return s.publishDocumentPersonSweepChangesTx(
+			ctx, tx, publication.CanonicalBlobHash, effect)
 	})
 }
 
@@ -577,6 +615,11 @@ func validateDocumentPublication(publication DocumentExtractionPublication) erro
 	if publication.RequestCount < 0 || publication.RetryCount < 0 ||
 		publication.RetryCount > publication.RequestCount || publication.ProviderLatencyMS < 0 {
 		return errors.New("document extraction publication has invalid provider request accounting")
+	}
+	if err := validateDocumentNormalizedIdentity(
+		publication.NormalizationVersion, publication.DocumentFamily, publication.UnitKind,
+	); err != nil {
+		return fmt.Errorf("document extraction publication has invalid normalized identity: %w", err)
 	}
 	for index, unit := range publication.Units {
 		if unit.Index != index || unit.Kind == "" || !utf8.ValidString(unit.Text) ||

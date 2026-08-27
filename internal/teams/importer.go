@@ -41,6 +41,13 @@ func NewImporter(s *store.Store, c *Client) *Importer {
 	return &Importer{store: s, client: c, res: newParticipantResolver(s, c)}
 }
 
+func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(sourceID, syncID)
+	scoped.res = newParticipantResolver(scoped.store, scoped.client)
+	return &scoped
+}
+
 // Import runs a full or incremental import of Teams chats (and optionally channels)
 // for the account identified by opts.Email. Returns a summary of the run.
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSummary, error) {
@@ -77,6 +84,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return nil, err
 	}
+	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
 			_ = imp.store.FailSync(syncID, err.Error())

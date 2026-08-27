@@ -1831,6 +1831,70 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
+func TestSchedulerSetDocumentVectorJobUsesEmbeddingSchedulePolicy(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	s := New(func(context.Context, string) error { return nil })
+	t.Cleanup(func() { <-s.Stop().Done() })
+	called := 0
+	requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
+		called++
+		return nil
+	}, "*/5 * * * *", true))
+	assertions.True(s.documentVectorEntrySet)
+	assertions.True(s.runDocumentVectorAfterSync)
+	requirements.ErrorContains(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "invalid", false), "invalid")
+	assertions.True(s.documentVectorEntrySet, "invalid replacement preserves the prior job")
+	assertions.Zero(called)
+}
+
+func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		syncErr  error
+		wantRuns int64
+	}{
+		{name: "successful sync", wantRuns: 1},
+		{name: "failed sync", syncErr: errors.New("sync failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			syncDone := make(chan struct{})
+			s := New(func(context.Context, string) error {
+				close(syncDone)
+				return test.syncErr
+			})
+			var runs atomic.Int64
+			documentDone := make(chan struct{}, 1)
+			requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
+				runs.Add(1)
+				documentDone <- struct{}{}
+				return nil
+			}, "", true))
+			requirements.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
+			s.Start()
+			t.Cleanup(func() { <-s.Stop().Done() })
+			requirements.NoError(s.TriggerSync("test@example.test"))
+			select {
+			case <-syncDone:
+			case <-time.After(time.Second):
+				requirements.Fail("sync did not complete")
+			}
+			if test.wantRuns == 1 {
+				select {
+				case <-documentDone:
+				case <-time.After(time.Second):
+					requirements.Fail("document vector job did not run")
+				}
+			} else {
+				assertions.Never(func() bool { return runs.Load() != 0 }, 100*time.Millisecond, 5*time.Millisecond)
+			}
+			assertions.Equal(test.wantRuns, runs.Load())
+		})
+	}
+}
+
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -132,6 +132,17 @@ describe('EverythingTable', () => {
     expect(screen.queryByText('Sent via: hidden-non-email@example.test')).toBeNull();
   });
 
+  it('omits blank participant labels instead of rendering a leading comma', () => {
+    render(EverythingTable, {
+      rows: [row(1, { participant_labels: ['', 'Charlie'] })],
+      selection: new ExploreSelectionState()
+    });
+
+    const rendered = screen.getByRole('row', { name: /Synthetic subject 1/ });
+    expect(within(rendered).getByText('Charlie')).toBeDefined();
+    expect(rendered.textContent).not.toContain(', Charlie');
+  });
+
   it('exposes size through the column picker without showing it initially', async () => {
     const onColumnsChange = vi.fn();
     render(EverythingTable, {

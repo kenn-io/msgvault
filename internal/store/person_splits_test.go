@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -26,6 +27,13 @@ type personSplitFixture struct {
 }
 
 func newPersonSplitFixture(t *testing.T) personSplitFixture {
+	t.Helper()
+	return newPersonSplitFixtureWithAbsorbedSetup(t, nil)
+}
+
+func newPersonSplitFixtureWithAbsorbedSetup(
+	t *testing.T, setup func(*store.Store, *store.Person),
+) personSplitFixture {
 	t.Helper()
 	require := require.New(t)
 	ctx := context.Background()
@@ -55,6 +63,9 @@ func newPersonSplitFixture(t *testing.T) personSplitFixture {
 		TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "test",
 	})
 	require.NoError(err)
+	if setup != nil {
+		setup(st, absorbed)
+	}
 	survivor, err = st.GetPersonContext(ctx, survivor.ID)
 	require.NoError(err)
 	absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
@@ -72,6 +83,75 @@ func newPersonSplitFixture(t *testing.T) personSplitFixture {
 		absorbedParticipants: []int64{firstAbsorbed, secondAbsorbed},
 		absorbedNameID:       name.Envelope.ID, absorbedUID: absorbed.VCardUID, merge: merged,
 	}
+}
+
+func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+		for _, event := range []struct {
+			pinned bool
+			actor  string
+		}{
+			{pinned: true, actor: "split-pin-test-initial"},
+			{pinned: false, actor: "split-pin-test"},
+		} {
+			_, err := st.DB().ExecContext(ctx, st.Rebind(`
+				INSERT INTO person_fact_pin_events
+					(person_id, target_kind, target_key, target_revision, pinned, actor)
+				VALUES (?, ?, ?, ?, ?, ?)`),
+				absorbed.ID, personfacts.TargetAttribute, store.AttributeUniversalIDPrimaryChannel,
+				"test-revision", event.pinned, event.actor)
+			require.NoError(err)
+		}
+	})
+
+	var mergedEvents int
+	err := f.store.DB().QueryRowContext(ctx, f.store.Rebind(`
+		SELECT COUNT(*) FROM person_fact_pin_events
+		WHERE person_id = ? AND target_kind = ? AND target_key = ?`),
+		f.survivor.ID, personfacts.TargetAttribute,
+		store.AttributeUniversalIDPrimaryChannel).Scan(&mergedEvents)
+	require.NoError(err)
+	assert.Zero(mergedEvents)
+	var postMergeEventID int64
+	err = f.store.DB().QueryRowContext(ctx, f.store.Rebind(`
+		INSERT INTO person_fact_pin_events
+			(person_id, target_kind, target_key, target_revision, pinned, actor)
+		VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id`),
+		f.survivor.ID, personfacts.TargetAttribute, store.AttributeUniversalIDPrimaryChannel,
+		"post-merge-revision", true, "post-merge-pin-test").Scan(&postMergeEventID)
+	require.NoError(err)
+
+	result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
+		ParticipantIDs:         f.absorbedParticipants,
+		ExpectedSourceRevision: f.survivor.Revision,
+		IdempotencyKey:         "split-explicit-fact-pin", Actor: "test",
+	})
+	require.NoError(err)
+	assert.True(result.ExactReversal)
+	assert.Empty(result.UnrestoredRows)
+
+	pins, err := f.store.ListPersonFactPinsContext(ctx, result.NewPerson.ID)
+	require.NoError(err)
+	require.Len(pins, 1)
+	assert.Equal(personfacts.TargetAttribute, pins[0].Target.Kind)
+	assert.Equal(store.AttributeUniversalIDPrimaryChannel, pins[0].Target.Key)
+	assert.False(pins[0].Pinned)
+	assert.Equal("split-pin-test", pins[0].Actor)
+	require.NotNil(pins[0].EventID)
+	assert.NotEqual(postMergeEventID, *pins[0].EventID)
+
+	sourcePins, err := f.store.ListPersonFactPinsContext(ctx, result.SourcePerson.ID)
+	require.NoError(err)
+	require.Len(sourcePins, 1)
+	assert.True(sourcePins[0].Pinned)
+	assert.Equal("post-merge-pin-test", sourcePins[0].Actor)
+	require.NotNil(sourcePins[0].EventID)
+	assert.Equal(postMergeEventID, *sourcePins[0].EventID)
 }
 
 func TestSplitPersonMerge_ExactReversal(t *testing.T) {

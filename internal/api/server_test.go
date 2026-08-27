@@ -26,11 +26,88 @@ import (
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const cliTimeoutTestAPIKey = "cli-timeout-test-key"
+
+type participantFilterTextEngine struct {
+	*querytest.MockEngine
+
+	filter query.TextFilter
+}
+
+func (e *participantFilterTextEngine) ListConversations(_ context.Context, filter query.TextFilter) ([]query.ConversationRow, error) {
+	e.filter = filter
+	return []query.ConversationRow{{ConversationID: 1}}, nil
+}
+
+func (e *participantFilterTextEngine) ListConversationsSnapshot(_ context.Context, filter query.TextFilter) ([]query.ConversationRow, string, error) {
+	e.filter = filter
+	return []query.ConversationRow{{ConversationID: 1}}, "text-test-fixed", nil
+}
+
+func (e *participantFilterTextEngine) ListConversationMessagesSnapshot(_ context.Context, _ int64, filter query.TextFilter) ([]query.MessageSummary, string, error) {
+	e.filter = filter
+	return nil, "text-test-fixed", nil
+}
+
+func (*participantFilterTextEngine) TextAggregate(context.Context, query.TextViewType, query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	return nil, nil
+}
+
+func (e *participantFilterTextEngine) ListConversationMessages(_ context.Context, _ int64, filter query.TextFilter) ([]query.MessageSummary, error) {
+	e.filter = filter
+	return nil, nil
+}
+
+func (*participantFilterTextEngine) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (*participantFilterTextEngine) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
+	return &query.TotalStats{}, nil
+}
+
+// TestTextConversationsParticipantIDs verifies repeated participant IDs reach
+// the text engine and malformed or non-positive IDs are rejected at the HTTP
+// boundary rather than widening the conversation scope.
+func TestTextConversationsParticipantIDs(t *testing.T) {
+	engine := &participantFilterTextEngine{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/text/conversations?participant_id=11&participant_id=14", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, []int64{11, 14}, engine.filter.ParticipantIDs)
+
+	for _, target := range []string{
+		"/api/v1/text/conversations?participant_id=0",
+		"/api/v1/text/conversations?participant_id=invalid",
+	} {
+		response = httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	}
+}
+
+func TestTextConversationMessagesPassesScopedSearchQuery(t *testing.T) {
+	engine := &participantFilterTextEngine{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/text/conversations/701/messages?search_query=hiddenneedle",
+		nil,
+	))
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "hiddenneedle", engine.filter.SearchQuery)
+}
 
 // syncBuffer is a concurrency-safe buffer for capturing slog output written
 // from the logger goroutine while the test goroutine reads it.

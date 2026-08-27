@@ -365,6 +365,12 @@ type SearchDocumentsQuery struct {
 
 	// Cursor Opaque cursor from the previous document search page
 	Cursor *string `json:"cursor,omitempty"`
+
+	// Mode Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider
+	Mode *string `json:"mode,omitempty"`
+
+	// CandidateLimit Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)
+	CandidateLimit *int64 `json:"candidate_limit,omitempty"`
 }
 
 func (s SearchDocumentsQuery) Validate() error {
@@ -387,6 +393,17 @@ type GetDocumentIndexStatusQuery struct {
 
 func (g GetDocumentIndexStatusQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetDocumentVectorStatusQuery struct {
+	// GenerationID Generation whose bounded failures to inspect
+	GenerationID *int64 `json:"generation_id,omitempty"`
+
+	// AfterToken Stable failure cursor token
+	AfterToken *string `json:"after_token,omitempty"`
+
+	// Limit Maximum failure diagnostics (default 20, max 1000)
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListIdentityMatchCandidatesQuery struct {
@@ -608,6 +625,9 @@ type ListPersonAttributesQuery struct {
 
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
+
+	// UniversalID Restrict the response to one portable definition identifier
+	UniversalID *string `json:"universal_id,omitempty"`
 }
 
 type ClearPersonAttributeQuery struct {
@@ -673,6 +693,53 @@ type ListPersonEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonFactClaimsQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactDecisionsQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactEvidenceQuery struct {
+	// Target Exact target as kind:key:sha256:<64 lowercase hex characters>
+	Target *string `json:"target,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonFactEvidenceStatusEventsQuery struct {
+	// EvidenceKey Restrict to one immutable evidence key
+	EvidenceKey *string `json:"evidence_key,omitempty"`
+
+	// Supported Restrict to supported or unsupported events
+	Supported *bool `json:"supported,omitempty"`
+
+	// Limit Maximum events to return (default 50, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Zero-based event offset
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type ListPersonMergesQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`
@@ -681,8 +748,18 @@ type ListPersonMergesQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type AppendPersonNoteQuery struct {
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
+}
+
 type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
+}
+
+type ListPersonFactTargetsQuery struct {
+	// IncludeSensitive Include sensitive targets
+	IncludeSensitive *bool `json:"include_sensitive,omitempty"`
 }
 
 type ListPersonRelationshipReviewsQuery struct {
@@ -1031,6 +1108,9 @@ type ListTextConversationsQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
+
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`
 
@@ -1069,8 +1149,14 @@ type ListTextConversationsQuery struct {
 }
 
 type ListTextConversationMessagesQuery struct {
+	// SearchQuery Full-text search within the conversation
+	SearchQuery *string `json:"search_query,omitempty"`
+
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
+
+	// ParticipantID Exact participant cluster member IDs
+	ParticipantID []int64 `json:"participant_id,omitempty"`
 
 	// ContactPhone Sender phone/address filter
 	ContactPhone *string `json:"contact_phone,omitempty"`

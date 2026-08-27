@@ -1,3 +1,10 @@
+import {
+  cleanupTheme,
+  initTheme,
+  setThemeMode,
+  type ThemeMode
+} from '@kenn-io/kit-ui';
+
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type DensityPreference = 'compact' | 'comfortable';
 
@@ -11,6 +18,7 @@ export interface AppearanceSnapshot extends AppearanceDefaults {
 }
 
 const STORAGE_KEY = 'msgvault.appearance.override';
+const KIT_THEME_STORAGE_KEY = 'msgvault.appearance.theme';
 const ROW_GEOMETRY_READINESS_FRAMES = 300;
 
 export class RowGeometry {
@@ -66,17 +74,11 @@ export class RowGeometry {
 export class AppearancePreferences {
   #defaults = $state<AppearanceDefaults>({ theme: 'system', density: 'compact' });
   #override = $state<Partial<AppearanceDefaults>>({});
-  #media: MediaQueryList | undefined;
-  #mediaListener: ((event: MediaQueryListEvent) => void) | undefined;
 
   constructor(defaults: AppearanceDefaults) {
     this.#defaults = validDefaults(defaults);
     this.#override = readOverride();
-    if (typeof matchMedia === 'function') {
-      this.#media = matchMedia('(prefers-color-scheme: dark)');
-      this.#mediaListener = () => this.#apply();
-      this.#media.addEventListener('change', this.#mediaListener);
-    }
+    initTheme({ storageKey: KIT_THEME_STORAGE_KEY });
     this.#apply();
   }
 
@@ -123,17 +125,14 @@ export class AppearancePreferences {
   }
 
   destroy(): void {
-    if (this.#media && this.#mediaListener) this.#media.removeEventListener('change', this.#mediaListener);
+    cleanupTheme();
   }
 
   #apply(): void {
     if (typeof document === 'undefined') return;
     const current = this.current;
-    const dark = current.theme === 'dark' || (current.theme === 'system' && (this.#media?.matches ?? false));
-    const resolvedTheme = dark ? 'dark' : 'light';
-    document.documentElement.dataset.theme = resolvedTheme;
+    setThemeMode(current.theme as ThemeMode);
     document.documentElement.dataset.density = current.density;
-    document.documentElement.classList.toggle('dark', dark);
   }
 }
 

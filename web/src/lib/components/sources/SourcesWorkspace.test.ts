@@ -33,14 +33,15 @@ describe('SourcesWorkspace', () => {
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
-    expect(await screen.findByRole('heading', { name: 'Archive' })).toBeDefined();
-    expect(screen.getAllByText('Last successful sync')).toHaveLength(2);
+    expect(await screen.findByRole('table', { name: 'Source status' })).toBeDefined();
+    expect(screen.getByText('Archive')).toBeDefined();
+    expect(screen.getByRole('columnheader', { name: 'Last successful sync' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now readonly@example.com' })).toBeNull();
     expect(screen.getByText('sync_not_configured')).toBeDefined();
     expect(screen.getAllByText('Not scheduled')).toHaveLength(2);
     expect(screen.getAllByText('No prior sync result')).toHaveLength(2);
-    expect(screen.getAllByText(/Updated 2026-07-19T10:00:00Z/)).toHaveLength(2);
+    expect(screen.getAllByTitle('2026-07-19T10:00:00Z')).toHaveLength(2);
   });
 
   it('presents generic meeting imports as on-demand API sources', async () => {
@@ -76,8 +77,8 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
-    expect(await screen.findByText('Scheduled · 0 */6 * * *')).toBeDefined();
-    expect(screen.getByText('Next 2026-07-19T18:00:00Z')).toBeDefined();
+    expect(await screen.findByText('0 */6 * * *')).toBeDefined();
+    expect(screen.getByTitle('2026-07-19T18:00:00Z')).toBeDefined();
     expect(screen.queryByText('stale_last_result')).toBeNull();
     expect(screen.getByText('1 item error')).toBeDefined();
     expect(screen.getByText('Malformed MIME header')).toBeDefined();
@@ -277,7 +278,7 @@ describe('SourcesWorkspace', () => {
     // relies on the error path bypassing the active-sync gate.
     await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(reads).toBe(2));
-    expect(await screen.findByRole('heading', { name: 'Archive' })).toBeDefined();
+    expect(await screen.findByText('Archive')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     rendered.unmount();
   });

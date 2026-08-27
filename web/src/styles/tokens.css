@@ -1,15 +1,31 @@
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Kit's default muted ink is below AA contrast on the archive's dense,
+   * small metadata labels. Keep the quiet hierarchy while making those
+   * labels readable on app surfaces in both themes. */
+  --text-muted: color-mix(in srgb, var(--text-primary) 66%, var(--bg-surface));
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
-  --focus-ring: 2px solid var(--focus-color);
-  --transition-fast: 0.12s;
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
+  --bg-canvas: var(--bg-surface);
+  --bg-subtle: var(--bg-inset);
+  --surface-raised: var(--bg-surface);
+  --border-strong: var(--border-default);
+  --hairline-sheen: var(--border-muted);
+  --control-bg: var(--bg-surface);
+  --control-border: var(--border-default);
+  --text-danger: var(--accent-red);
+  --active-ink: var(--accent-blue);
+  --link-ink: var(--accent-blue);
+  --focus-color: var(--accent-blue);
+  --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
+  --selected-border: var(--accent-blue);
+  --artifact-ink: var(--accent-purple);
+  --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
+  --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
+  --status-warning-bg: color-mix(in srgb, var(--accent-amber) 10%, var(--bg-surface));
+  --status-warning-ink: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
+  --status-error-bg: color-mix(in srgb, var(--accent-red) 10%, var(--bg-surface));
+  --status-error-ink: color-mix(in srgb, var(--accent-red) 72%, var(--text-primary));
+  --status-destructive-bg: var(--status-error-bg);
+  --status-destructive-ink: var(--status-error-ink);
 }
 
 :where(body, button, input, select, textarea) {
@@ -56,6 +72,13 @@
 
 :where(a, [data-link]) {
   color: var(--link-ink);
+}
+
+/* Kit darkens expanded info buttons against black. On the dark app surface,
+ * retain slightly more of the blue so the label clears AA contrast. */
+:root.dark .kit-button--solid.kit-button--info[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--accent-blue) 80%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--accent-blue) 80%, var(--bg-primary));
 }
 
 :where([data-artifact]) {

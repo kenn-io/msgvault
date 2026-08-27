@@ -89,13 +89,17 @@ type Scheduler struct {
 
 	// Embed job state (optional). Set via SetEmbedJob; cron.EntryID 0
 	// may be valid, so embedEntrySet tracks whether an entry exists.
-	embedJob          *EmbedJob
-	embedEntry        cron.EntryID
-	embedEntrySet     bool
-	runEmbedAfterSync bool
-	visualPostSync    func(context.Context) error
-	visualPostRunning bool
-	visualPostPending bool
+	embedJob                   *EmbedJob
+	embedEntry                 cron.EntryID
+	embedEntrySet              bool
+	runEmbedAfterSync          bool
+	visualPostSync             func(context.Context) error
+	visualPostRunning          bool
+	visualPostPending          bool
+	documentVectorJob          func(context.Context) error
+	documentVectorEntry        cron.EntryID
+	documentVectorEntrySet     bool
+	runDocumentVectorAfterSync bool
 
 	ctx     context.Context    // cancelled on Stop
 	cancel  context.CancelFunc // cancels ctx
@@ -318,6 +322,50 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 	return nil
 }
 
+// SetDocumentVectorJob installs the bounded document-vector convergence job
+// on the same cron/post-sync policy used by message embeddings.
+func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
+	if job != nil && schedule != "" {
+		if err := ValidateCronExpr(schedule); err != nil {
+			return fmt.Errorf("invalid document vector cron expression %q: %w", schedule, err)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.documentVectorEntrySet {
+		s.cron.Remove(s.documentVectorEntry)
+		s.documentVectorEntrySet = false
+	}
+	s.documentVectorJob = job
+	s.runDocumentVectorAfterSync = runAfterSync && job != nil
+	if job == nil || schedule == "" {
+		return nil
+	}
+	entry, err := s.cron.AddFunc(schedule, func() {
+		if s.isStopped() {
+			return
+		}
+		done, ok := s.beginWork()
+		if !ok {
+			return
+		}
+		defer done()
+		runCtx, endRun := s.jobContext()
+		defer endRun()
+		if runErr := job(runCtx); runErr != nil {
+			s.logger.Error("scheduled document vector reconciliation failed", "error", runErr)
+		}
+	})
+	if err != nil {
+		s.documentVectorJob = nil
+		s.runDocumentVectorAfterSync = false
+		return fmt.Errorf("register document vector cron: %w", err)
+	}
+	s.documentVectorEntry = entry
+	s.documentVectorEntrySet = true
+	return nil
+}
+
 // isStopped reports s.stopped under a read lock. Used by cron
 // callbacks that only need to abort on shutdown.
 func (s *Scheduler) isStopped() bool {
@@ -445,6 +493,19 @@ func (s *Scheduler) runSync(email string) {
 		embedCtx, endEmbed := s.jobContext()
 		postSync.Run(embedCtx)
 		endEmbed()
+	}
+	var documentVectorPostSync func(context.Context) error
+	s.mu.RLock()
+	if s.runDocumentVectorAfterSync && s.documentVectorJob != nil && !s.stopped {
+		documentVectorPostSync = s.documentVectorJob
+	}
+	s.mu.RUnlock()
+	if documentVectorPostSync != nil {
+		documentCtx, endDocument := s.jobContext()
+		if documentErr := documentVectorPostSync(documentCtx); documentErr != nil {
+			s.logger.Error("post-sync document vector reconciliation failed", "error", documentErr)
+		}
+		endDocument()
 	}
 	s.startVisualPostSync()
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
@@ -84,7 +85,7 @@
     <p class="eyebrow">msgvault</p>
     <h1>Can't reach the msgvault daemon</h1>
     <p role="alert">{session.error}</p>
-    <button type="button" onclick={() => void session.bootstrap()}>Retry</button>
+    <Button tone="info" surface="solid" label="Retry" onclick={() => void session.bootstrap()} />
   </main>
 {:else}
   <main class="boot" aria-label="Connecting">

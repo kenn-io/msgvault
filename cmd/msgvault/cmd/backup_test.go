@@ -80,6 +80,21 @@ func TestBackupRestoreTargetCoordinatorMatchesConfiguredDatabasePath(t *testing.
 		"separate database target must not receive the write lock artifact")
 }
 
+func TestBackupRestoreTargetCoordinatorRejectsPrimaryDatabaseAsVectorBackend(t *testing.T) {
+	require := require.New(t)
+	target := t.TempDir()
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = filepath.Join(target, "msgvault.db")
+
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.ErrorContains(err, "vector database path resolves to the restored archive database")
+	require.Nil(coordinator)
+	require.False(coordinated)
+}
+
 func TestBackupRestoreTargetCoordinatorDefersMissingCaseVariantMatch(t *testing.T) {
 	require := require.New(t)
 	parent := t.TempDir()
@@ -152,6 +167,31 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	require.NoError(os.WriteFile(loosePath, content, 0o600))
 	require.NoError(st.UpsertAttachment(messageID, "restore-cli.bin", "application/octet-stream",
 		hash[:2]+"/"+hash, hash, len(content)))
+	profileFingerprint := strings.Repeat("d", 64)
+	profile := store.DocumentExtractionProfile{
+		ID: "profile-" + profileFingerprint, Fingerprint: profileFingerprint,
+		Provider: "synthetic", Endpoint: "https://documents.example.test/v1",
+		Region: localValue, Model: "extract-test", RetentionPosture: "standard",
+		TrainingPosture: "opted-out", AllowedMediaTypes: []string{"application/pdf"},
+		PolicyJSON: []byte(`{"policy":1}`),
+	}
+	_, err = st.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	var vectorGenerationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		INSERT INTO document_vector_generations
+			(fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state)
+		VALUES (?, ?, 'vector.embeddings', 'embed-test', 3, 'active') RETURNING id`),
+		strings.Repeat("e", 64), profile.ID).Scan(&vectorGenerationID))
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO document_vector_publications
+			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
+			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence,
+			 token, state, created_at, updated_at)
+		VALUES (?, 'extraction-restore', ?, ?, 'input-restore', 1, 'chunk-restore', ?, 1,
+		        'token-restore', 'ready', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`),
+		vectorGenerationID, profile.ID, strings.Repeat("f", 64), strings.Repeat("a", 64))
+	require.NoError(err)
 	layout, err := packstore.NewLayout(attachmentsDir, packstore.LayoutOptions{
 		Staging: packstore.StagingSameDirectory,
 	})
@@ -208,8 +248,13 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	assert.Contains(packedOutput.String(), "page and blob hashes verified; manifest stats match")
 	assert.NotContains(packedOutput.String(), "SQLite integrity_check")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, true)
+	assertRestoredDocumentVectorsInvalidated(t, backupRestoreTarget)
 
 	backupRestoreTarget = filepath.Join(t.TempDir(), "loose-target")
+	require.NoError(os.MkdirAll(backupRestoreTarget, 0o700))
+	staleVectorPath := filepath.Join(backupRestoreTarget, "vectors.db")
+	require.NoError(os.WriteFile(staleVectorPath, []byte("stale derived vectors"), 0o600))
+	backupRestoreOverwrite = true
 	backupRestoreLooseAttachments = true
 	backupRestoreIntegrityCheck = true
 	var looseOutput bytes.Buffer
@@ -220,6 +265,8 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	assert.Contains(looseOutput.String(), "Pack metadata cleared")
 	assert.Contains(looseOutput.String(), "SQLite integrity_check ok")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, false)
+	assertRestoredDocumentVectorsInvalidated(t, backupRestoreTarget)
+	assert.NoFileExists(staleVectorPath, "overwrite restore removes the excluded derived vector backend")
 }
 
 func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
@@ -360,6 +407,7 @@ func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
 
 func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestore(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
@@ -378,7 +426,24 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 	require.NoError(err, "create source snapshot")
 
 	target := t.TempDir()
-	coordinator := newDaemonRestoreTargetCoordinator(target, true)
+	customVectorPath := filepath.Join(t.TempDir(), "custom-vectors.db")
+	for _, path := range []string{
+		customVectorPath,
+		customVectorPath + "-wal",
+		customVectorPath + "-shm",
+		customVectorPath + "-journal",
+	} {
+		require.NoError(os.WriteFile(path, []byte("stale vector backend"), 0o600),
+			"seed excluded custom vector backend")
+	}
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = customVectorPath
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.NoError(err, "select configured restore coordination")
+	require.True(coordinated, "configured archive restore requires ownership coordination")
+	require.NotNil(coordinator, "configured archive restore receives a coordinator")
 	checkedDuringRestore := false
 	_, err = backup.Restore(ctx, repo, backupapp.New("test"), backup.RestoreOptions{
 		TargetDir:         target,
@@ -407,12 +472,74 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 	})
 	require.NoError(err, "restore with daemon target coordination")
 	require.True(checkedDuringRestore, "ownership was checked during restore")
+	assert.NoFileExists(customVectorPath,
+		"restore lease removes the configured vector backend before releasing ownership")
+	assert.NoFileExists(customVectorPath+"-wal", "restore lease removes the vector WAL")
+	assert.NoFileExists(customVectorPath+"-shm", "restore lease removes the vector shared-memory file")
+	assert.NoFileExists(customVectorPath+"-journal", "restore lease removes the vector journal")
 	owner, err := tryAcquireDaemonOwnerLock(target)
 	require.NoError(err, "target coordination releases after restore")
 	require.NoError(owner.Close(), "release post-restore ownership")
 	writer, err := tryAcquireWriteOwnerLock(target)
 	require.NoError(err, "target coordination releases direct-writer exclusion after restore")
 	require.NoError(writer.Close(), "release post-restore direct-writer ownership")
+}
+
+func TestDaemonRestoreTargetCoordinatorPreservesVectorsWithoutPublication(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	target := t.TempDir()
+	databasePath := filepath.Join(target, "msgvault.db")
+	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
+		"seed current database")
+	customVectorPath := filepath.Join(t.TempDir(), "custom-vectors.db")
+	require.NoError(os.WriteFile(customVectorPath, []byte("current vectors"), 0o600),
+		"seed current vector backend")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	cfg.Vector.DBPath = customVectorPath
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.NoError(err, "select configured restore coordination")
+	require.True(coordinated, "configured archive restore requires ownership coordination")
+
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
+	lease, err := coordinator.AcquireRestoreTarget(t.Context(), root)
+	require.NoError(err, "acquire restore coordination")
+	require.NoError(lease.Release(), "release without publishing a restored database")
+
+	assert.FileExists(customVectorPath,
+		"a failed restore must preserve the vector backend for the unchanged database")
+}
+
+func TestDaemonRestoreTargetLeaseRefusesToRemovePublishedDatabase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	target := t.TempDir()
+	databasePath := filepath.Join(target, "msgvault.db")
+	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
+		"seed current database")
+
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
+	coordinator := &daemonRestoreTargetCoordinator{
+		overwrite:            true,
+		configuredVectorPath: databasePath,
+	}
+	lease, err := coordinator.newRestoreTargetLease(root, pinnedRestoreTargetDataDir)
+	require.NoError(err, "capture pre-restore database identity")
+	replacementPath := filepath.Join(target, "replacement.db")
+	require.NoError(os.WriteFile(replacementPath, []byte("restored database"), 0o600),
+		"write replacement database")
+	require.NoError(os.Rename(replacementPath, databasePath), "publish replacement database")
+
+	err = lease.Release()
+	require.ErrorContains(err, "vector database path resolves to the restored archive database")
+	assert.FileExists(databasePath, "vector cleanup must not remove the published archive database")
 }
 
 func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *testing.T) {
@@ -512,6 +639,21 @@ func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packe
 	require.NoError(blobs.Close())
 	assert.Equal(int64(len(want)), size)
 	assert.Equal(want, got)
+}
+
+func assertRestoredDocumentVectorsInvalidated(t *testing.T, target string) {
+	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
+	restored, err := store.OpenForTest(filepath.Join(target, "msgvault.db"))
+	require.NoError(err)
+	defer func() { require.NoError(restored.Close()) }()
+	active, err := restored.GetActiveDocumentVectorGeneration(t.Context())
+	require.NoError(err)
+	assert.Nil(active)
+	var publications int64
+	require.NoError(restored.DB().QueryRow(`SELECT COUNT(*) FROM document_vector_publications`).Scan(&publications))
+	assert.Zero(publications)
 }
 
 func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T) {

@@ -42,6 +42,11 @@ const cmdUseList = "list"
 // cmdUseResume is the shared Cobra use/name for resume subcommands.
 const cmdUseResume = "resume"
 
+// cmdUseConsent is the shared Cobra use/name for consent subcommands.
+const cmdUseConsent = "consent"
+
+const localValue = "local"
+
 // outputFormatJSON is the "json" value accepted by the --format flag.
 const outputFormatJSON = "json"
 

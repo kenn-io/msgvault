@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
 )
@@ -21,11 +22,13 @@ var deprecatedTUIForceSQL bool
 var deprecatedTUISkipCacheBuild bool
 var deprecatedTUINoSQLiteScanner bool
 
+var _ peoplebrowser.Backend = (*daemonclient.PeopleBrowser)(nil)
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
 	Long: `Open an interactive terminal UI for browsing email, text messages,
-and meeting transcripts.
+meeting transcripts, and people.
 
 Email mode provides aggregate views by:
   - Senders: Who sends you the most email
@@ -34,16 +37,17 @@ Email mode provides aggregate views by:
   - Labels: Gmail label distribution
   - Time: Message volume over time
 
-Press 'm' to cycle through Email, Texts, and Meetings. Texts is skipped when
-its engine is unavailable. Meetings shows a read-only list of Granola and
-Circleback transcripts and remains available before a source is configured.
+Press 'm' to cycle through Email, Texts, Meetings, and People. Texts is skipped
+when its engine is unavailable. Meetings remains available before a source is
+configured. People browses every observed contact and remains available when
+Texts is absent.
 
 Navigation:
   ↑/k, ↓/j    Move up/down
   PgUp/PgDn   Page up/down
   Enter       Drill down / view message
   Esc         Go back
-  m           Cycle Email / Texts / Meetings
+  m           Cycle Email / Texts / Meetings / People
   g           Cycle aggregate view (Email and Texts)
   /           Search; Tab adds active-message-only Semantic mode when enabled
   A           Filter by account, or meeting source in Meetings mode
@@ -78,11 +82,10 @@ HTTP Mode:
 			fmt.Printf("Connected to remote: %s\n", cfg.Remote.URL)
 		}
 
-		// Check if engine supports text queries
-		var textEngine query.TextEngine
-		if te, ok := backend.engine.(query.TextEngine); ok {
-			textEngine = te
-		}
+		// The shipped daemon engine provides Texts directly. People uses the
+		// focused wrapper because Engine.Search has a different query contract.
+		var textEngine query.TextEngine = backend.engine
+		peopleBackend := tuiPeopleBackend(cmd.Context(), backend.client, backend.engine)
 
 		notice := analyticsCacheNotice(cmd.Context(), backend.client)
 		if notice != "" {
@@ -95,6 +98,7 @@ HTTP Mode:
 			DataDir:          cfg.Data.DataDir,
 			Version:          Version,
 			TextEngine:       textEngine,
+			PeopleBackend:    peopleBackend,
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
 			SemanticSearch:   semanticSearch,
@@ -152,8 +156,24 @@ func tuiSemanticSearcher(
 	return searcher
 }
 
+func tuiPeopleBackend(
+	ctx context.Context,
+	client *daemonclient.Client,
+	engine *daemonclient.Engine,
+) *daemonclient.PeopleBrowser {
+	if client == nil || engine == nil {
+		return nil
+	}
+	compatible, err := client.SupportsAPISchemaVersion(ctx, peopleMinAPISchemaVersion)
+	if err != nil || !compatible {
+		return nil
+	}
+	return daemonclient.NewPeopleBrowser(engine)
+}
+
 const (
 	semanticSearchMinAPISchemaVersion = "2.7.0"
+	peopleMinAPISchemaVersion         = "2.10.0"
 	tuiSemanticMessageType            = "email"
 )
 
@@ -166,7 +186,7 @@ func (o tuiAttachmentOpener) OpenAttachment(ctx context.Context, contentHash str
 }
 
 type tuiBackend struct {
-	engine  query.Engine
+	engine  *daemonclient.Engine
 	client  *daemonclient.Client
 	info    HTTPStoreInfo
 	cleanup func()
@@ -259,7 +279,7 @@ func openTUIBackend(ctx context.Context) (*tuiBackend, error) {
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
-	tuiCmd.Flags().BoolVar(&forceLocalTUI, "local", false, "Use the local daemon instead of the configured remote server")
+	tuiCmd.Flags().BoolVar(&forceLocalTUI, localValue, false, "Use the local daemon instead of the configured remote server")
 	tuiCmd.Flags().BoolVar(&deprecatedTUIForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	tuiCmd.Flags().BoolVar(&deprecatedTUISkipCacheBuild, "no-cache-build", false, "Deprecated in 0.17.0: set [analytics].auto_build_cache = false in config.toml")
 	tuiCmd.Flags().BoolVar(&deprecatedTUINoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")

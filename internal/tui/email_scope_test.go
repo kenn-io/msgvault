@@ -17,8 +17,8 @@ func TestEmailModeMixedTypeSQLiteResults(t *testing.T) {
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
 	const term = "zzemailmodescope"
-	typedEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " typed", MessageType: "email"})
-	legacyEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " legacy", MessageType: "email"})
+	typedEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " typed", MessageType: emailMessageType})
+	legacyEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " legacy", MessageType: emailMessageType})
 	meetingID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " meeting", MessageType: "meeting_transcript"})
 	textID := tdb.AddMessage(dbtest.MessageOpts{Subject: term + " text", MessageType: "sms"})
 	_, err := tdb.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyEmailID)
@@ -74,7 +74,7 @@ func TestEmailModeScopesMessageQueries(t *testing.T) {
 		msg, ok := model.loadMessages()().(messagesLoadedMsg)
 		require.True(t, ok)
 		require.NoError(t, msg.err)
-		assert.Equal(t, "email", captured.MessageType)
+		assert.Equal(t, emailMessageType, captured.MessageType)
 	})
 
 	t.Run("fast search", func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestEmailModeScopesMessageQueries(t *testing.T) {
 		msg, ok := model.loadSearch("shared term")().(searchResultsMsg)
 		require.True(t, ok)
 		require.NoError(t, msg.err)
-		assert.Equal(t, "email", captured.MessageType)
+		assert.Equal(t, emailMessageType, captured.MessageType)
 	})
 
 	t.Run("deep search", func(t *testing.T) {
@@ -115,7 +115,7 @@ func TestEmailModeScopesMessageQueries(t *testing.T) {
 		require.True(ok)
 		require.NoError(msg.err)
 		require.NotNil(captured)
-		assert.Equal([]string{"email"}, captured.MessageTypes)
+		assert.Equal([]string{emailMessageType}, captured.MessageTypes)
 	})
 
 	t.Run("thread", func(t *testing.T) {
@@ -130,6 +130,6 @@ func TestEmailModeScopesMessageQueries(t *testing.T) {
 		msg, ok := model.loadThreadMessages(42)().(threadMessagesLoadedMsg)
 		require.True(t, ok)
 		require.NoError(t, msg.err)
-		assert.Equal(t, "email", captured.MessageType)
+		assert.Equal(t, emailMessageType, captured.MessageType)
 	})
 }

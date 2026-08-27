@@ -1273,7 +1273,7 @@ func reconcileIdentityMatchCandidateMergeState(
 	generatedConflict := state != IdentityMatchStateConflict && hasAccepted && hasRejected
 	if generatedConflict {
 		return IdentityMatchStateConflict,
-			sql.NullString{String: "system", Valid: true},
+			sql.NullString{String: string(AttributeOwnershipSystem), Valid: true},
 			sql.NullTime{Time: time.Now().UTC(), Valid: true},
 			sql.NullString{
 				String: conflictNote,

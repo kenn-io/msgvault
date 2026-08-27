@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectKitTheme } from './kit-ui';
 
 test('interactive login refreshes daemon appearance once while the session override wins', async ({ page }) => {
   let settingsRequests = 0;
@@ -28,7 +29,7 @@ test('interactive login refreshes daemon appearance once while the session overr
   await page.getByLabel('API key').fill('test-key');
   await page.getByRole('button', { name: 'Log in' }).click();
 
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expectKitTheme(page, 'light');
   await expect(page.locator('html')).toHaveAttribute('data-density', 'comfortable');
   await expect.poll(() => settingsRequests).toBe(1);
 });

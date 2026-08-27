@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button, SettingsSection, TextInput, Toggle } from '@kenn-io/kit-ui';
+
   import type { APIClient } from '../../api/client';
   import type { components } from '../../api/generated/schema';
   import type { SettingState } from '../../settings/catalog';
@@ -116,63 +118,63 @@
   }
 </script>
 
-<section class="carddav" aria-labelledby="carddav-account-heading">
-  <h2 id="carddav-account-heading">CardDAV account</h2>
-  <p>
-    Connect an address-book account.
-    {#if canReusePersistedPassword()}Leave the password blank to keep the stored credential.{:else}A password is required for a new or changed account.{/if}
-  </p>
-
+<SettingsSection
+  title="CardDAV account"
+  description={canReusePersistedPassword()
+    ? 'Connect an address-book account. Leave the password blank to keep the stored credential.'
+    : 'Connect an address-book account. A password is required for a new or changed account.'}
+>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
   <form onsubmit={(event) => { event.preventDefault(); void saveAccount(); }}>
     <label>
       Base URL
-      <input type="url" bind:value={baseURL} required />
+      <TextInput type="url" bind:value={baseURL} required block />
     </label>
     <label>
       Username
-      <input type="text" autocomplete="username" bind:value={username} required />
+      <TextInput autocomplete="username" bind:value={username} required block />
     </label>
     <label>
       Password
-      <input
+      <TextInput
         type="password"
         autocomplete="current-password"
         bind:value={password}
         required={!canReusePersistedPassword()}
         placeholder={canReusePersistedPassword() ? 'Leave blank to keep current password' : ''}
+        block
       />
     </label>
-    <label class="checkbox">
-      <input type="checkbox" bind:checked={enabled} />
-      Enabled
-    </label>
+    <Toggle bind:checked={enabled} label="Enabled" />
     <label>
       Schedule
-      <input type="text" bind:value={schedule} placeholder="0 2 * * *" />
+      <TextInput bind:value={schedule} placeholder="0 2 * * *" block />
     </label>
 
     <div class="actions">
-      <button type="button" disabled={activeAction !== undefined} onclick={() => void testConnection()}>
-        {activeAction === 'test' ? 'Testing…' : 'Test CardDAV connection'}
-      </button>
-      <button type="submit" disabled={activeAction !== undefined}>
-        {activeAction === 'save' ? 'Saving…' : 'Save CardDAV account'}
-      </button>
+      <Button
+        disabled={activeAction !== undefined}
+        label={activeAction === 'test' ? 'Testing…' : 'Test CardDAV connection'}
+        onclick={() => void testConnection()}
+      />
+      <Button
+        type="submit"
+        disabled={activeAction !== undefined}
+        tone="success"
+        surface="solid"
+        label={activeAction === 'save' ? 'Saving…' : 'Save CardDAV account'}
+      />
     </div>
   </form>
-</section>
+</SettingsSection>
 
 <style>
-  .carddav { margin-block: 2rem; padding-block-start: 1rem; border-top: 1px solid var(--border-default); }
-  form { display: grid; max-width: 40rem; gap: 1rem; }
-  label { display: grid; gap: 0.35rem; }
-  input:not([type='checkbox']) { width: 100%; min-height: 2.25rem; }
-  .checkbox { display: flex; align-items: center; gap: 0.5rem; }
-  .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-  .error, .status { padding: 0.75rem 1rem; border-left: 0.25rem solid; }
-  .error { border-left-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
-  .status { border-left-color: var(--status-success-ink); background: var(--status-success-bg); color: var(--status-success-ink); }
+  form { display: grid; gap: var(--space-5); }
+  label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 500; }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+  .error, .status { margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid; border-radius: var(--radius-md); }
+  .error { border-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
+  .status { border-color: var(--status-success-ink); background: var(--status-success-bg); color: var(--status-success-ink); }
 </style>

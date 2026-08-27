@@ -1367,9 +1367,311 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		               OR pending_vector_token IS NOT NULL OR outcome_kind IS NOT NULL);
 		    END`,
 	)
+	stmts = append(stmts, personSweepSQLiteTriggerStatements()...)
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
 			return fmt.Errorf("ensure content_changed_at triggers: %w", err)
+		}
+	}
+	return nil
+}
+
+func personSweepSQLiteTriggerStatements() []string {
+	messageScope := func(row string) string {
+		recipientRole := personSweepRecipientRolePredicate("mr.recipient_type")
+		roster := personSweepRosterPredicateValuesSQL(
+			row+".id", row+".is_from_me", row+".sender_id",
+			"c.conversation_type", "pp.person_id",
+		)
+		return fmt.Sprintf(`
+			SELECT pp.person_id,
+			       CASE WHEN %[1]s.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END AS source_lane,
+			       %[1]s.source_id AS source_id, %[1]s.id AS message_id
+			FROM person_participants pp
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE pp.participant_id = %[1]s.sender_id
+			UNION
+			SELECT pp.person_id,
+			       CASE WHEN %[1]s.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END,
+			       %[1]s.source_id, %[1]s.id
+			FROM message_recipients mr
+			JOIN person_participants pp ON pp.participant_id = mr.participant_id
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE mr.message_id = %[1]s.id AND %[2]s
+			UNION
+			SELECT pp.person_id,
+			       CASE WHEN %[1]s.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END,
+			       %[1]s.source_id, %[1]s.id
+			FROM conversations c
+			JOIN conversation_participants cp ON cp.conversation_id = c.id
+			JOIN person_participants pp ON pp.participant_id = cp.participant_id
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE c.id = %[1]s.conversation_id AND %[3]s`, row, recipientRole, roster)
+	}
+	currentMessageForParticipant := func(message, participant, recipientType string) string {
+		return fmt.Sprintf(`
+			SELECT pp.person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END AS source_lane,
+			       m.source_id AS source_id, m.id AS message_id
+			FROM messages m
+			JOIN person_participants pp ON pp.participant_id = %[2]s
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE m.id = %[1]s AND m.deleted_at IS NULL
+			  AND m.deleted_from_source_at IS NULL AND %[3]s`, message, participant,
+			personSweepRecipientRolePredicate(recipientType))
+	}
+	currentMessageScope := func(message string) string {
+		recipientRole := personSweepRecipientRolePredicate("mr.recipient_type")
+		roster := personSweepRosterPredicateSQL("pp.person_id")
+		return fmt.Sprintf(`
+			SELECT pp.person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END AS source_lane,
+			       m.source_id AS source_id, m.id AS message_id
+			FROM messages m
+			JOIN person_participants pp ON pp.participant_id = m.sender_id
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE m.id = %[1]s AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			UNION
+			SELECT pp.person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END,
+			       m.source_id, m.id
+			FROM messages m
+			JOIN message_recipients mr ON mr.message_id = m.id
+			JOIN person_participants pp ON pp.participant_id = mr.participant_id
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE m.id = %[1]s AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			  AND %[2]s
+			UNION
+			SELECT pp.person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END,
+			       m.source_id, m.id
+			FROM messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			JOIN conversation_participants cp ON cp.conversation_id = c.id
+			JOIN person_participants pp ON pp.participant_id = cp.participant_id
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE m.id = %[1]s AND %[3]s
+			  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`,
+			message, recipientRole, roster)
+	}
+	currentConversationForParticipant := func(conversation, participant string) string {
+		return fmt.Sprintf(`
+			SELECT pp.person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END AS source_lane,
+			       m.source_id AS source_id, m.id AS message_id
+			FROM conversations c
+			JOIN messages m ON m.conversation_id = c.id
+			JOIN person_participants pp ON pp.participant_id = %[2]s
+			JOIN person_tracking pt ON pt.person_id = pp.person_id
+			WHERE c.id = %[1]s AND %[3]s
+			  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`,
+			conversation, participant, personSweepRosterPredicateSQL("pp.person_id"))
+	}
+	currentMessagesForBinding := func(person, participant string) string {
+		return fmt.Sprintf(`
+			SELECT %[1]s AS person_id,
+			       CASE WHEN m.message_type = 'meeting_transcript'
+			            THEN 'meeting_text' ELSE 'conversation_text' END AS source_lane,
+			       m.source_id AS source_id, m.id AS message_id
+			FROM messages m
+			JOIN person_tracking pt ON pt.person_id = %[1]s
+			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			  AND (m.sender_id = %[2]s
+			       OR EXISTS (SELECT 1 FROM message_recipients mr
+			                  WHERE mr.message_id = m.id AND mr.participant_id = %[2]s
+			                    AND %[3]s)
+			       OR EXISTS (SELECT 1 FROM conversations c
+			                  JOIN conversation_participants cp ON cp.conversation_id = c.id
+			                  WHERE c.id = m.conversation_id
+			                    AND %[4]s
+			                    AND cp.participant_id = %[2]s))`, person, participant,
+			personSweepRecipientRolePredicate("mr.recipient_type"),
+			personSweepRosterPredicateSQL(person))
+	}
+
+	appendTrigger := func(
+		name, timing, action, table, when, scope, mode, kind, effect string,
+	) []string {
+		whenClause := " WHEN EXISTS (SELECT 1 FROM person_tracking)"
+		if when != "" {
+			whenClause = " WHEN EXISTS (SELECT 1 FROM person_tracking) AND (" + when + ")"
+		}
+		messageRows := `SELECT affected.person_id,affected.source_lane,
+			affected.source_id,affected.message_id,0 AS attachment_id,'' AS occurrence_key
+			FROM (` + scope + `) affected`
+		documentRows := `SELECT affected.person_id,'document_text' AS source_lane,
+			o.source_id,o.message_id,o.attachment_id,o.occurrence_key
+			FROM (` + scope + `) affected
+			JOIN document_occurrences o ON o.message_id=affected.message_id`
+		switch mode {
+		case "both":
+			scope = messageRows + " UNION " + documentRows
+		case "document":
+			scope = documentRows
+		default:
+			scope = messageRows
+		}
+		return []string{
+			"DROP TRIGGER IF EXISTS " + name,
+			fmt.Sprintf(`CREATE TRIGGER %s
+			    %s %s ON %s FOR EACH ROW%s
+			    BEGIN
+			        UPDATE person_sweep_change_clock
+			           SET sequence = sequence + (SELECT COUNT(*) FROM (%s) affected)
+			         WHERE singleton = TRUE AND enabled = TRUE;
+			        INSERT INTO person_sweep_changes
+			            (sequence, person_id, source_lane, change_kind, evidence_effect,
+			             source_id, message_id, attachment_id, occurrence_key, recorded_at)
+			        SELECT c.sequence - totals.total +
+			                   ROW_NUMBER() OVER (ORDER BY affected.person_id,
+			                                                affected.source_id,
+			                                                affected.message_id,
+			                                                affected.attachment_id,
+			                                                affected.occurrence_key),
+			               affected.person_id, affected.source_lane, %s, %s,
+			               affected.source_id, affected.message_id,
+			               NULLIF(affected.attachment_id,0),affected.occurrence_key,CURRENT_TIMESTAMP
+			          FROM (%s) affected
+			          CROSS JOIN (SELECT COUNT(*) AS total FROM (%s)) totals
+			          JOIN person_sweep_change_clock c ON c.singleton = TRUE
+			         WHERE c.enabled = TRUE;
+			    END`, name, timing, action, table, whenClause, scope, kind, effect, scope, scope),
+		}
+	}
+
+	stmts := make([]string, 0, 40)
+	add := func(parts []string) { stmts = append(stmts, parts...) }
+	// Fresh message INSERTs publish from upsertMessageWith. Retaining even an
+	// inert SQLite row trigger here adds a trigger subprogram and statement
+	// journal to the hottest bulk-ingest path.
+	stmts = append(stmts, "DROP TRIGGER IF EXISTS trg_person_sweep_messages_insert")
+	add(appendTrigger("trg_person_sweep_messages_update", "AFTER",
+		"UPDATE OF "+contentChangedTriggerColumnList(), "messages",
+		contentChangedValueGuard("IS NOT"),
+		`SELECT * FROM (`+messageScope("OLD")+`)
+		 WHERE OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		 UNION
+		 SELECT * FROM (`+messageScope("NEW")+`)
+		 WHERE NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL`,
+		"message", `CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		       THEN 'delete'
+		       WHEN OLD.sender_id IS NOT NEW.sender_id
+		         OR OLD.conversation_id IS NOT NEW.conversation_id THEN 'scope'
+		       ELSE 'upsert' END`,
+		`CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		       THEN 'source-deleted'
+		       WHEN (OLD.deleted_at IS NOT NULL OR OLD.deleted_from_source_at IS NOT NULL)
+		            AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		       THEN 'source-reimported'
+		       WHEN OLD.sender_id IS NOT NEW.sender_id
+		         OR OLD.conversation_id IS NOT NEW.conversation_id THEN 'identity-reassigned'
+		       ELSE 'source-edited' END`))
+	add(appendTrigger("trg_person_sweep_messages_delete", "BEFORE", "DELETE", "messages",
+		"OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL",
+		messageScope("OLD"), "both", "'delete'", "'source-deleted'"))
+	add(appendTrigger("trg_person_sweep_documents_message_update", "AFTER",
+		"UPDATE OF sender_id, conversation_id, deleted_at, deleted_from_source_at", "messages",
+		`OLD.sender_id IS NOT NEW.sender_id
+		 OR OLD.conversation_id IS NOT NEW.conversation_id
+		 OR OLD.deleted_at IS NOT NEW.deleted_at
+		 OR OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at`,
+		`SELECT * FROM (`+messageScope("OLD")+`)
+		 WHERE OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		 UNION
+		 SELECT * FROM (`+messageScope("NEW")+`)
+		 WHERE NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL`,
+		"document",
+		`CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		       THEN 'delete' ELSE 'scope' END`,
+		`CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
+		       THEN 'source-deleted'
+		       WHEN (OLD.deleted_at IS NOT NULL OR OLD.deleted_from_source_at IS NOT NULL)
+		            AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		       THEN 'source-reimported'
+		       ELSE 'identity-reassigned' END`))
+
+	add(appendTrigger("trg_person_sweep_bodies_insert", "AFTER", "INSERT", "message_bodies", "",
+		currentMessageScope("NEW.message_id"),
+		"message", "'upsert'", "''"))
+	add(appendTrigger("trg_person_sweep_bodies_update", "AFTER", "UPDATE", "message_bodies",
+		"OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html",
+		currentMessageScope("NEW.message_id"),
+		"message", "'upsert'", "'source-edited'"))
+	add(appendTrigger("trg_person_sweep_bodies_delete", "BEFORE", "DELETE", "message_bodies", "",
+		currentMessageScope("OLD.message_id"),
+		"message", "'upsert'", "'source-edited'"))
+
+	add(appendTrigger("trg_person_sweep_recipients_insert", "AFTER", "INSERT", "message_recipients", "",
+		currentMessageForParticipant("NEW.message_id", "NEW.participant_id", "NEW.recipient_type"),
+		"both", "'scope'", "'scope-relinked'"))
+	add(appendTrigger("trg_person_sweep_recipients_update", "AFTER", "UPDATE", "message_recipients",
+		"OLD.message_id IS NOT NEW.message_id OR OLD.participant_id IS NOT NEW.participant_id OR OLD.recipient_type IS NOT NEW.recipient_type",
+		currentMessageForParticipant("OLD.message_id", "OLD.participant_id", "OLD.recipient_type")+" UNION "+
+			currentMessageForParticipant("NEW.message_id", "NEW.participant_id", "NEW.recipient_type"),
+		"both",
+		`CASE WHEN OLD.message_id IS NOT NEW.message_id
+		            OR OLD.participant_id IS NOT NEW.participant_id
+		       THEN 'scope' ELSE `+personSweepRecipientRoleChangeKindSQL(
+			"OLD.recipient_type", "NEW.recipient_type")+` END`,
+		`CASE WHEN OLD.message_id IS NOT NEW.message_id
+		            OR OLD.participant_id IS NOT NEW.participant_id
+		       THEN 'identity-reassigned' ELSE `+personSweepRecipientRoleChangeEffectSQL(
+			"OLD.recipient_type", "NEW.recipient_type")+` END`))
+	add(appendTrigger("trg_person_sweep_recipients_delete", "BEFORE", "DELETE", "message_recipients", "",
+		currentMessageForParticipant("OLD.message_id", "OLD.participant_id", "OLD.recipient_type"),
+		"both", "'scope'", "'scope-unlinked'"))
+
+	add(appendTrigger("trg_person_sweep_roster_insert", "AFTER", "INSERT", "conversation_participants", "",
+		currentConversationForParticipant("NEW.conversation_id", "NEW.participant_id"),
+		"both", "'scope'", "'scope-relinked'"))
+	add(appendTrigger("trg_person_sweep_roster_update", "AFTER", "UPDATE", "conversation_participants",
+		"OLD.conversation_id IS NOT NEW.conversation_id OR OLD.participant_id IS NOT NEW.participant_id OR OLD.role IS NOT NEW.role OR OLD.joined_at IS NOT NEW.joined_at OR OLD.left_at IS NOT NEW.left_at",
+		currentConversationForParticipant("OLD.conversation_id", "OLD.participant_id")+" UNION "+
+			currentConversationForParticipant("NEW.conversation_id", "NEW.participant_id"),
+		"both",
+		`CASE WHEN OLD.conversation_id IS NOT NEW.conversation_id
+		            OR OLD.participant_id IS NOT NEW.participant_id
+		       THEN 'scope' ELSE 'upsert' END`,
+		`CASE WHEN OLD.conversation_id IS NOT NEW.conversation_id
+		            OR OLD.participant_id IS NOT NEW.participant_id
+		       THEN 'identity-reassigned' ELSE 'source-edited' END`))
+	add(appendTrigger("trg_person_sweep_roster_delete", "BEFORE", "DELETE", "conversation_participants", "",
+		currentConversationForParticipant("OLD.conversation_id", "OLD.participant_id"),
+		"both", "'scope'", "'scope-unlinked'"))
+
+	add(appendTrigger("trg_person_sweep_bindings_insert", "AFTER", "INSERT", "person_participants", "",
+		currentMessagesForBinding("NEW.person_id", "NEW.participant_id"),
+		"both", "'scope'", "'scope-relinked'"))
+	add(appendTrigger("trg_person_sweep_bindings_update", "AFTER", "UPDATE", "person_participants",
+		"OLD.person_id IS NOT NEW.person_id OR OLD.participant_id IS NOT NEW.participant_id",
+		currentMessagesForBinding("OLD.person_id", "OLD.participant_id")+" UNION "+
+			currentMessagesForBinding("NEW.person_id", "NEW.participant_id"),
+		"both", "'scope'", "'identity-reassigned'"))
+	add(appendTrigger("trg_person_sweep_bindings_delete", "BEFORE", "DELETE", "person_participants", "",
+		currentMessagesForBinding("OLD.person_id", "OLD.participant_id"),
+		"both", "'scope'", "'scope-unlinked'"))
+	return stmts
+}
+
+func dropPersonSweepSQLiteTriggers(q querier) error {
+	for _, stmt := range personSweepSQLiteTriggerStatements() {
+		if !strings.HasPrefix(stmt, "DROP TRIGGER IF EXISTS ") {
+			continue
+		}
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("drop person sweep trigger for recipient table rebuild: %w", err)
 		}
 	}
 	return nil
@@ -1389,7 +1691,10 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 // column list comes from MessagesActivityColumns, shared with the PostgreSQL
 // dialect so the two backends cannot drift, and because DROP + CREATE replaces
 // the blanket definition an earlier build left on an existing archive where
-// CREATE TRIGGER IF NOT EXISTS silently would not. It runs after
+// CREATE TRIGGER IF NOT EXISTS silently would not. The recipient triggers are
+// repaired here in addition to their fresh-schema bootstrap definitions
+// because the legacy envelope migration rebuilds their table and must restore
+// them inside the same transaction. This installer runs after
 // LegacyColumnMigrations, so every column it names already exists.
 func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 	stmts := []string{
@@ -1402,9 +1707,48 @@ func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
 		         VALUES (NEW.id, 1, CURRENT_TIMESTAMP)
 		         ON CONFLICT(message_id) DO UPDATE SET
+			         revision = activity_projection_queue.revision + 1,
+			         queued_at = CURRENT_TIMESTAMP;
+			 END`, activityTriggerColumnList(), activityValueGuard("IS NOT")),
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_insert`,
+		`CREATE TRIGGER trg_activity_queue_recipients_insert
+		     AFTER INSERT ON message_recipients FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+		         ON CONFLICT(message_id) DO UPDATE SET
 		             revision = activity_projection_queue.revision + 1,
 		             queued_at = CURRENT_TIMESTAMP;
-		     END`, activityTriggerColumnList(), activityValueGuard("IS NOT")),
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_update`,
+		`CREATE TRIGGER trg_activity_queue_recipients_update
+		     AFTER UPDATE ON message_recipients FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         SELECT id, 1, CURRENT_TIMESTAMP
+		         FROM messages
+		         WHERE id = OLD.message_id
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         VALUES (NEW.message_id, 1, CURRENT_TIMESTAMP)
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_recipients_delete`,
+		`CREATE TRIGGER trg_activity_queue_recipients_delete
+		     AFTER DELETE ON message_recipients FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_queue (message_id, revision, queued_at)
+		         SELECT id, 1, CURRENT_TIMESTAMP
+		         FROM messages
+		         WHERE id = OLD.message_id
+		         ON CONFLICT(message_id) DO UPDATE SET
+		             revision = activity_projection_queue.revision + 1,
+		             queued_at = CURRENT_TIMESTAMP;
+		     END`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update
 		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
@@ -1542,6 +1886,11 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN backstop_upper_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_upper_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN backstop_after_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_after_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN optimistic_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.optimistic_document_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN reconcile_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.reconcile_document_key"},
+		{`ALTER TABLE person_sweep_cursors ADD COLUMN backstop_document_key TEXT NOT NULL DEFAULT ''`, "person_sweep_cursors.backstop_document_key"},
 		{`ALTER TABLE carddav_address_books ADD COLUMN needs_full_reconcile BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_address_books.needs_full_reconcile"},
 		{`ALTER TABLE carddav_address_books ADD COLUMN sync_token TEXT NOT NULL DEFAULT ''`, "carddav_address_books.sync_token"},
 		{`ALTER TABLE carddav_conflicts ADD COLUMN pending_operation TEXT CHECK (pending_operation IN ('delete'))`, "carddav_conflicts.pending_operation"},
@@ -1614,6 +1963,11 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN provider_latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
+		{`ALTER TABLE document_extractions ADD COLUMN normalization_version INTEGER`, "document_extractions.normalization_version"},
+		{`ALTER TABLE document_extractions ADD COLUMN document_family TEXT`, "document_extractions.document_family"},
+		{`ALTER TABLE document_extractions ADD COLUMN unit_kind TEXT`, "document_extractions.unit_kind"},
+		{`ALTER TABLE document_extractions ADD COLUMN normalized_truncated BOOLEAN NOT NULL DEFAULT FALSE`, "document_extractions.normalized_truncated"},
+		{`ALTER TABLE document_units ADD COLUMN heading_marks JSON NOT NULL DEFAULT '[]'`, "document_units.heading_marks"},
 		{`ALTER TABLE document_index_state ADD COLUMN target_profile_id TEXT`, "document_index_state.target_profile_id"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_state TEXT`, "attachments.attachment_state"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},

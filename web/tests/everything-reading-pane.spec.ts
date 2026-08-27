@@ -70,7 +70,7 @@ test('the bottom reading pane opens on a single click, resizes, and persists its
   const gridBox = await grid.boundingBox();
   expect(paneBox!.y).toBeGreaterThan(gridBox!.y);
 
-  const resize = page.getByRole('button', { name: 'Resize reading pane' });
+  const resize = page.getByRole('separator', { name: 'Resize reading pane' });
   const beforeResize = paneBox!.height;
   await resize.press('ArrowUp');
   await resize.press('ArrowUp');

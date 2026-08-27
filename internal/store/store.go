@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,16 @@ type Store struct {
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
 
+	// syncGeneration is immutable metadata on a per-run Store view.
+	// Mutating transactions on that view fence the exact running source
+	// generation before touching archive rows. The shared Store remains
+	// unscoped so unrelated maintenance and concurrent source syncs do not
+	// share mutable run state.
+	syncGeneration *syncGeneration
+	syncBase       *Store
+
+	sqliteOptimizeMu          sync.Mutex
+	documentVectorOperationMu sync.Mutex
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from export_test.go. They belong to the
 	// Store rather than the package because more than one Store can be
@@ -144,6 +155,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	// Ensure directory exists (skip for in-memory databases)
 	if dbPath != ":memory:" && !strings.Contains(dbPath, ":memory:") {
 		dir := filepath.Dir(dbPath)
+		// #nosec G703 -- dbPath is the caller-selected database location; creating its parent is intentional.
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("create db directory: %w", err)
 		}
@@ -410,9 +422,24 @@ func OpenPostgresDB(dbURL string) (*sql.DB, func(), error) {
 	return openPostgresDB(dbURL, false)
 }
 
+const sqliteOptimizeTimeout = time.Second
+
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
+		if !s.IsPostgreSQL() {
+			// Persist statistics for short-lived commands without draining a pool
+			// that may still have a checked-out connection during shutdown.
+			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
+			if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+				slog.Warn("SQLite planner statistics maintenance failed",
+					"trigger", "store close",
+					"error", err.Error(),
+				)
+			}
+			cancel()
+		}
+
 		// Checkpoint WAL before closing to fold it back into the main
 		// database. This prevents WAL accumulation across sessions and
 		// reduces the risk of corruption from stale WAL entries.
@@ -432,6 +459,63 @@ func (s *Store) Close() error {
 // No-op for non-SQLite backends.
 func (s *Store) CheckpointWAL() error {
 	return s.dialect.CheckpointWAL(s.db.DB)
+}
+
+// optimizeSQLite refreshes persistent query-planner statistics when SQLite
+// decides they are missing or stale. The 0x10000 bit makes SQLite consider all
+// tables instead of relying on query history from whichever pooled connection
+// database/sql selects. PostgreSQL maintains planner statistics server-side.
+func (s *Store) optimizeSQLite(ctx context.Context) error {
+	if s.IsPostgreSQL() || s.readOnly {
+		return nil
+	}
+	// Maintenance is best-effort, and an active call is already performing the
+	// same update. Skip duplicates instead of making cancellation wait on it.
+	if !s.sqliteOptimizeMu.TryLock() {
+		return nil
+	}
+	defer s.sqliteOptimizeMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, sqliteOptimizeTimeout)
+	defer cancel()
+
+	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
+	// results only into the SQLite connection that runs it; holding every slot
+	// lets us reload each existing connection and prevents database/sql from
+	// opening an unrefreshed one concurrently. Connections opened after this
+	// point load the persistent sqlite_stat tables when they read the schema.
+	poolSize := max(1, s.db.Stats().MaxOpenConnections)
+	connections := make([]*sql.Conn, 0, poolSize)
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for range poolSize {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("reserve SQLite connection pool for planner statistics: %w", err)
+		}
+		connections = append(connections, conn)
+	}
+
+	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
+	}
+	for _, conn := range connections {
+		if _, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema"); err != nil {
+			return fmt.Errorf("reload SQLite planner statistics: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
+	if err := s.optimizeSQLite(ctx); err != nil {
+		slog.Warn("SQLite planner statistics maintenance failed",
+			"trigger", trigger,
+			"error", err.Error(),
+		)
+	}
 }
 
 // DB returns the underlying *sql.DB for consumers that need to
@@ -587,6 +671,12 @@ func (s *Store) withTxOptionsContext(
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
+	}
+	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
+		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
@@ -1151,6 +1241,19 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
+	// Organization domains written before IDNA normalization may still contain
+	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
+	// references with persisted roots and identifiers.
+	if err := s.runOnceMigration(
+		ctx, migrationOrganizationDomainIDNA, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.canonicalizeLegacyOrganizationDomains(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("canonicalize organization domains: %w", err)
+	}
 	// Recovery reads only acceptances whose link transaction may not have
 	// committed. Create this after the legacy-column loop: schema.sql is
 	// executed before that loop, so an upgraded table does not have the column
@@ -1178,6 +1281,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// because upgraded archives do not have source_part_key before this point.
 	if err := s.ensureAttachmentOccurrenceUniqueIndexes(ctx); err != nil {
 		return err
+	}
+
+	// Relax message_recipients uniqueness to include the normalized envelope
+	// address before installing triggers that read the table. SQLite rebuilds a
+	// legacy table-level UNIQUE away; installing the triggers first lets SQLite
+	// rewrite their definitions during that swap and leaves them pointing at a
+	// temporary table after it is dropped. The migration itself restores any
+	// pre-existing sweep definitions transactionally, while this ordering keeps
+	// fresh and normally upgraded archives on the simple repair-before-install
+	// path. PostgreSQL does not rebuild the table but shares the ordering.
+	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
+		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
 	}
 
 	// Create the message watermark, contextual embedding journal, and attachment
@@ -1260,6 +1375,22 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
 	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepChangeTriggers, false,
+		func(ctx context.Context) error {
+			// Fresh archives installed the current definitions with the watermark
+			// triggers above. Existing archives and explicit repair runs need a
+			// second pass because EnsureTriggers owns the shared mutation tables.
+			if !watermarkTriggersAlreadyApplied {
+				return nil
+			}
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
@@ -1313,15 +1444,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return err
-	}
-
-	// Relax message_recipients uniqueness to include the normalized envelope
-	// address, so alias snapshots of one participant can coexist per message.
-	// Must run after the legacy ADD COLUMN loop above (the unique index
-	// expression reads email_address) and before any participant merge under
-	// the new email-aware collision rules can run.
-	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
-		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
 	}
 
 	// Identity discovery scans one source in message-ID order. On SQLite the
@@ -1634,6 +1756,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
+
+	// Schema initialization can add indexes to an existing archive. Refresh
+	// statistics after all schema work so SQLite can cost those indexes against
+	// the archive's actual data distribution.
+	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
 	return nil
 }

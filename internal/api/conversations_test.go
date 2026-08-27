@@ -40,6 +40,7 @@ func seedConversation(t *testing.T, messageType string, count int) (*Server, int
 			SentAt:          sql.NullTime{Time: sentAt, Valid: true},
 			Subject:         sql.NullString{String: fmt.Sprintf("Message %02d", i), Valid: true},
 			Snippet:         sql.NullString{String: fmt.Sprintf("Preview %02d", i), Valid: true},
+			IsFromMe:        i == 1,
 		})
 		require.NoError(t, upsertErr)
 		ids = append(ids, id)
@@ -94,6 +95,7 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&response))
 	require.Len(response.Messages, 3)
 	assert.Equal("imessage", response.Messages[0].MessageType)
+	assert.True(response.Messages[1].IsFromMe)
 	assert.Equal(ids[1], response.AnchorID)
 }
 

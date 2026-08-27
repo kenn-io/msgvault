@@ -208,6 +208,33 @@ components:
         - attachment_count
         - total_unique
       type: object
+    AnnualTemperatureSummary:
+      properties:
+        population:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        raw_score:
+          format: double
+          type: number
+        signals:
+          $ref: "#/components/schemas/TemperatureSignals"
+        temperature:
+          format: int64
+          type: integer
+        year:
+          format: int64
+          type: integer
+      required:
+        - year
+        - temperature
+        - rank
+        - population
+        - raw_score
+        - signals
+      type: object
     ApiHTTPError:
       properties:
         error:
@@ -216,6 +243,39 @@ components:
           type: string
       required:
         - error
+      type: object
+    AppendPersonNoteRequest:
+      additionalProperties: false
+      properties:
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+          x-enum-names:
+            - AppendPersonNoteRequestSourceUser
+            - AppendPersonNoteRequestSourceCarddavImport
+            - AppendPersonNoteRequestSourceVcardImport
+            - AppendPersonNoteRequestSourceArchiveObservation
+            - AppendPersonNoteRequestSourceExtraction
+            - AppendPersonNoteRequestSourceEnrichment
+            - AppendPersonNoteRequestSourceSystem
+        source_ref:
+          type: string
+        text:
+          type: string
+      required:
+        - text
       type: object
     AttachmentInfo:
       properties:
@@ -1123,6 +1183,22 @@ components:
         full:
           type: boolean
       type: object
+    Catalog:
+      properties:
+        fingerprint:
+          type: string
+        targets:
+          items:
+            $ref: "#/components/schemas/TargetDescriptor"
+          nullable: true
+          type: array
+        version:
+          type: string
+      required:
+        - version
+        - fingerprint
+        - targets
+      type: object
     ChangedMessageJSON:
       properties:
         attachment_count:
@@ -1206,6 +1282,16 @@ components:
         - next_cursor
         - server_time
         - complete_through
+      type: object
+    ChoiceDescriptor:
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+      required:
+        - value
+        - label
       type: object
     CliAccountResponse:
       properties:
@@ -1677,6 +1763,14 @@ components:
       required:
         - services
       type: object
+    ConfidenceInputs:
+      properties:
+        reported_score:
+          format: int64
+          type: integer
+      required:
+        - reported_score
+      type: object
     ContactState:
       properties:
         cadence_due_at:
@@ -1801,7 +1895,6 @@ components:
           type: string
       required:
         - object_type
-        - slug
         - label
         - value_type
         - field_type
@@ -2432,6 +2525,8 @@ components:
       type: object
     DocumentSearchResponse:
       properties:
+        effective_mode:
+          type: string
         next_cursor:
           type: string
         results:
@@ -2444,6 +2539,11 @@ components:
           type: integer
         truncated:
           type: boolean
+        vector_generation_fingerprint:
+          type: string
+        vector_generation_id:
+          format: int64
+          type: integer
       required:
         - results
         - revision
@@ -2474,6 +2574,9 @@ components:
         first_unit_index:
           format: int64
           type: integer
+        fusion_score:
+          format: double
+          type: number
         heading_path:
           items:
             type: string
@@ -2486,6 +2589,9 @@ components:
           format: int64
           type: integer
         last_unit_index:
+          format: int64
+          type: integer
+        lexical_rank:
           format: int64
           type: integer
         matched_signals:
@@ -2517,6 +2623,12 @@ components:
         rank:
           format: int64
           type: integer
+        semantic_rank:
+          format: int64
+          type: integer
+        semantic_score:
+          format: double
+          type: number
         source_id:
           format: int64
           type: integer
@@ -2526,6 +2638,20 @@ components:
           type: string
         truncated:
           type: boolean
+        vector_dimension:
+          format: int64
+          type: integer
+        vector_embedding_profile:
+          type: string
+        vector_generation_fingerprint:
+          type: string
+        vector_generation_id:
+          format: int64
+          type: integer
+        vector_model:
+          type: string
+        vector_token:
+          type: string
       required:
         - attachment_id
         - message_id
@@ -2548,6 +2674,245 @@ components:
         - matched_signals
         - truncated
         - rank
+      type: object
+    DocumentVectorConsent:
+      properties:
+        consented_at:
+          format: date-time
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        egress_fingerprint:
+          type: string
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        model:
+          type: string
+        purpose:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - consented_at
+        - egress_fingerprint
+        - purpose
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorCoverage:
+      properties:
+        ready:
+          format: int64
+          type: integer
+        required:
+          format: int64
+          type: integer
+      required:
+        - required
+        - ready
+      type: object
+    DocumentVectorFailureDiagnostic:
+      properties:
+        attempt_count:
+          format: int64
+          type: integer
+        error_code:
+          type: string
+        next_retry_at:
+          format: date-time
+          type: string
+        terminal:
+          type: boolean
+        token:
+          type: string
+      required:
+        - token
+        - attempt_count
+        - terminal
+        - error_code
+      type: object
+    DocumentVectorGeneration:
+      properties:
+        activated_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        retired_at:
+          format: date-time
+          type: string
+        state:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - id
+        - state
+        - created_at
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorGenerationSpec:
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        embedding_profile:
+          type: string
+        fingerprint:
+          type: string
+        model:
+          type: string
+        target_extraction_profile_id:
+          type: string
+      required:
+        - fingerprint
+        - target_extraction_profile_id
+        - embedding_profile
+        - model
+        - dimension
+      type: object
+    DocumentVectorGenerationStatus:
+      properties:
+        blocked:
+          type: boolean
+        cleanup_pending:
+          format: int64
+          type: integer
+        failure_after_generation_id:
+          format: int64
+          type: integer
+        failure_after_token:
+          type: string
+        failures:
+          items:
+            $ref: "#/components/schemas/DocumentVectorFailureDiagnostic"
+          nullable: true
+          type: array
+        failures_exhausted:
+          type: boolean
+        generation_id:
+          format: int64
+          type: integer
+        pending:
+          format: int64
+          type: integer
+        ready_live:
+          format: int64
+          type: integer
+        retryable:
+          format: int64
+          type: integer
+        stale_obsolete:
+          format: int64
+          type: integer
+        state:
+          type: string
+        terminal:
+          format: int64
+          type: integer
+      required:
+        - generation_id
+        - state
+        - blocked
+        - pending
+        - retryable
+        - terminal
+        - ready_live
+        - stale_obsolete
+        - cleanup_pending
+        - failures
+        - failures_exhausted
+      type: object
+    DocumentVectorOperationsResponse:
+      properties:
+        configured:
+          type: boolean
+        enabled:
+          type: boolean
+        scheduled_registration_requires_restart:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/DocumentVectorOperationsStatus"
+      required:
+        - enabled
+        - configured
+      type: object
+    DocumentVectorOperationsStatus:
+      properties:
+        active:
+          $ref: "#/components/schemas/DocumentVectorGeneration"
+        building:
+          $ref: "#/components/schemas/DocumentVectorGeneration"
+        configured_document_egress_fingerprint:
+          type: string
+        configured_query_egress_fingerprint:
+          type: string
+        configured_spec:
+          $ref: "#/components/schemas/DocumentVectorGenerationSpec"
+        coverage:
+          $ref: "#/components/schemas/DocumentVectorCoverage"
+        document_consent:
+          $ref: "#/components/schemas/DocumentVectorConsent"
+        query_consent:
+          $ref: "#/components/schemas/DocumentVectorConsent"
+        selected:
+          $ref: "#/components/schemas/DocumentVectorGenerationStatus"
+        usage:
+          $ref: "#/components/schemas/DocumentVectorProviderUsage"
+      required:
+        - configured_spec
+        - configured_document_egress_fingerprint
+        - configured_query_egress_fingerprint
+        - usage
+      type: object
+    DocumentVectorProviderUsage:
+      properties:
+        fingerprint:
+          type: string
+        provider_calls:
+          format: int64
+          type: integer
+        provider_chunks:
+          format: int64
+          type: integer
+        provider_documents:
+          format: int64
+          type: integer
+        provider_input_chars:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - fingerprint
+        - provider_calls
+        - provider_documents
+        - provider_chunks
+        - provider_input_chars
       type: object
     DomainContextSummaryHTTPResponse:
       properties:
@@ -3479,6 +3844,22 @@ components:
       required:
         - action
         - reason
+      type: object
+    FieldDescriptor:
+      properties:
+        cardinality:
+          type: string
+        name:
+          type: string
+        required:
+          type: boolean
+        value_type:
+          type: string
+      required:
+        - name
+        - value_type
+        - cardinality
+        - required
       type: object
     FileGroupsHTTPRequest:
       additionalProperties: false
@@ -4541,6 +4922,8 @@ components:
         id:
           format: int64
           type: integer
+        is_from_me:
+          type: boolean
         labels:
           items:
             type: string
@@ -5611,6 +5994,61 @@ components:
           format: int64
           type: integer
       type: object
+    ParticipantCompletionHTTPRequest:
+      additionalProperties: false
+      properties:
+        limit:
+          format: int64
+          maximum: 20
+          minimum: 0
+          type: integer
+        query:
+          type: string
+      required:
+        - query
+      type: object
+    ParticipantCompletionHTTPResponse:
+      properties:
+        cache_revision:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/ParticipantCompletionHTTPRow"
+          nullable: true
+          type: array
+      required:
+        - rows
+        - cache_revision
+      type: object
+    ParticipantCompletionHTTPRow:
+      properties:
+        display_label:
+          type: string
+        kind:
+          enum:
+            - name
+            - phone
+            - email
+            - username
+            - impp
+            - organization
+            - title
+            - role
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        source:
+          type: string
+        value:
+          type: string
+      required:
+        - participant_id
+        - display_label
+        - kind
+        - value
+        - source
+      type: object
     ParticipantContactObservation:
       properties:
         address_kind:
@@ -5901,6 +6339,20 @@ components:
             type: integer
           nullable: true
           type: array
+      type: object
+    PersonAttributeConflictResponse:
+      properties:
+        current_value:
+          $ref: "#/components/schemas/PersonAttributeValue"
+        current_value_id:
+          format: int64
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
       type: object
     PersonAttributeGroup:
       properties:
@@ -6270,6 +6722,341 @@ components:
         - days
         - total_count
       type: object
+    PersonFactClaim:
+      properties:
+        claim_key:
+          type: string
+        confidence:
+          $ref: "#/components/schemas/ConfidenceInputs"
+        created_at:
+          format: date-time
+          type: string
+        evidence_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+        generation_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        normalized_value:
+          nullable: true
+          type: string
+        origin:
+          type: string
+        program_fingerprint:
+          type: string
+        program_id:
+          type: string
+        program_version:
+          type: string
+        relation:
+          type: string
+        submitted_value:
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        valid_from:
+          format: date-time
+          nullable: true
+          type: string
+        valid_until:
+          format: date-time
+          nullable: true
+          type: string
+        value_fingerprint:
+          nullable: true
+          type: string
+      required:
+        - id
+        - generation_id
+        - claim_key
+        - program_id
+        - program_version
+        - program_fingerprint
+        - target
+        - relation
+        - submitted_value
+        - evidence_ids
+        - origin
+        - confidence
+        - created_at
+      type: object
+    PersonFactClaimsResponse:
+      properties:
+        claims:
+          items:
+            $ref: "#/components/schemas/PersonFactClaim"
+          type: array
+      required:
+        - claims
+      type: object
+    PersonFactDecision:
+      properties:
+        action:
+          type: string
+        claim_key:
+          type: string
+        competing_claim_key:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        decision_key:
+          type: string
+        id:
+          format: int64
+          type: integer
+        projection:
+          $ref: "#/components/schemas/ProjectionRef"
+        reason:
+          type: string
+        resolution_id:
+          format: int64
+          type: integer
+        score:
+          $ref: "#/components/schemas/PersonFactScoreBreakdown"
+      required:
+        - id
+        - resolution_id
+        - decision_key
+        - claim_key
+        - action
+        - reason
+        - score
+        - created_at
+      type: object
+    PersonFactDecisionsResponse:
+      properties:
+        decisions:
+          items:
+            $ref: "#/components/schemas/PersonFactDecision"
+          type: array
+      required:
+        - decisions
+      type: object
+    PersonFactEvidence:
+      properties:
+        authority:
+          type: string
+        content_sha256:
+          nullable: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        directness:
+          type: string
+        event_time:
+          format: date-time
+          type: string
+        evidence_key:
+          type: string
+        excerpt:
+          nullable: true
+          type: string
+        id:
+          format: int64
+          type: integer
+        identity_score:
+          format: int64
+          type: integer
+        latest_status:
+          $ref: "#/components/schemas/PersonFactEvidenceStatusEvent"
+        recorded_time:
+          format: date-time
+          type: string
+        source_class:
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        source_url:
+          nullable: true
+          type: string
+        source_version:
+          nullable: true
+          type: string
+        span_end:
+          format: int64
+          nullable: true
+          type: integer
+        span_start:
+          format: int64
+          nullable: true
+          type: integer
+        subject_person_id:
+          format: int64
+          nullable: true
+          type: integer
+        subject_ref:
+          nullable: true
+          type: string
+        supported:
+          type: boolean
+      required:
+        - id
+        - evidence_key
+        - source_class
+        - directness
+        - authority
+        - source_ref
+        - source_url
+        - subject_ref
+        - excerpt
+        - content_sha256
+        - source_version
+        - event_time
+        - recorded_time
+        - identity_score
+        - supported
+        - created_at
+      type: object
+    PersonFactEvidenceResponse:
+      properties:
+        evidence:
+          items:
+            $ref: "#/components/schemas/PersonFactEvidence"
+          type: array
+      required:
+        - evidence
+      type: object
+    PersonFactEvidenceStatusEvent:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        evidence_key:
+          type: string
+        generation_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        source_version:
+          nullable: true
+          type: string
+        supported:
+          type: boolean
+      required:
+        - id
+        - generation_id
+        - evidence_key
+        - source_version
+        - supported
+        - reason
+        - created_at
+      type: object
+    PersonFactEvidenceStatusEventsResponse:
+      properties:
+        events:
+          items:
+            $ref: "#/components/schemas/PersonFactEvidenceStatusEvent"
+          type: array
+      required:
+        - events
+      type: object
+    PersonFactPinWrite:
+      properties:
+        projections:
+          items:
+            $ref: "#/components/schemas/ProjectionRef"
+          nullable: true
+          type: array
+        resolutions:
+          items:
+            $ref: "#/components/schemas/PersonFactResolutionResult"
+          nullable: true
+          type: array
+        state:
+          $ref: "#/components/schemas/PinState"
+      required:
+        - state
+        - resolutions
+        - projections
+      type: object
+    PersonFactPinsResponse:
+      properties:
+        pins:
+          items:
+            $ref: "#/components/schemas/PinState"
+          nullable: true
+          type: array
+      required:
+        - pins
+      type: object
+    PersonFactResolutionResult:
+      properties:
+        decisions:
+          items:
+            $ref: "#/components/schemas/PersonFactDecision"
+          nullable: true
+          type: array
+        id:
+          format: int64
+          type: integer
+        input_fingerprint:
+          type: string
+        projections:
+          items:
+            $ref: "#/components/schemas/ProjectionRef"
+          nullable: true
+          type: array
+        resolved_at:
+          format: date-time
+          type: string
+        resolver_version:
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetRef"
+      required:
+        - id
+        - target
+        - resolver_version
+        - input_fingerprint
+        - resolved_at
+        - decisions
+        - projections
+      type: object
+    PersonFactScoreBreakdown:
+      properties:
+        authority:
+          format: int64
+          type: integer
+        confidence:
+          format: int64
+          type: integer
+        corroboration:
+          format: int64
+          type: integer
+        directness:
+          format: int64
+          type: integer
+        freshness:
+          format: int64
+          type: integer
+        source_class:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - source_class
+        - directness
+        - authority
+        - confidence
+        - freshness
+        - corroboration
+        - total
+      type: object
     PersonFileProvenance:
       properties:
         directions:
@@ -6472,6 +7259,59 @@ components:
         - is_primary
         - provenance
         - participant_id
+      type: object
+    PersonInboxResponse:
+      properties:
+        cache_revision:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonInboxRow"
+          nullable: true
+          type: array
+      required:
+        - rows
+        - cache_revision
+        - identity_revision
+      type: object
+    PersonInboxRow:
+      properties:
+        conversation_count:
+          format: int64
+          type: integer
+        latest_at:
+          format: date-time
+          type: string
+        latest_received_at:
+          format: date-time
+          type: string
+        latest_sent_at:
+          format: date-time
+          type: string
+        received_count:
+          format: int64
+          type: integer
+        sent_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - conversation_count
+        - received_count
+        - sent_count
+        - latest_at
       type: object
     PersonMedia:
       properties:
@@ -7268,6 +8108,9 @@ components:
           type: string
         cluster:
           $ref: "#/components/schemas/PersonCluster"
+        current_relationship_temperature:
+          format: int64
+          type: integer
         display_label:
           type: string
         display_name:
@@ -7289,8 +8132,17 @@ components:
         last_at:
           format: date-time
           type: string
+        meeting_count:
+          format: int64
+          type: integer
         partial_label:
           type: boolean
+        peak_relationship_temperature:
+          format: int64
+          type: integer
+        peak_relationship_year:
+          format: int64
+          type: integer
         profile:
           $ref: "#/components/schemas/PersonProfile"
         source_counts:
@@ -7304,7 +8156,11 @@ components:
         - partial_label
         - identifiers
         - activity_count
+        - meeting_count
         - file_count
+        - current_relationship_temperature
+        - peak_relationship_temperature
+        - peak_relationship_year
         - source_counts
         - first_at
         - last_at
@@ -7328,6 +8184,21 @@ components:
         - person_id
         - tracked
         - tracked_at
+      type: object
+    PinState:
+      properties:
+        actor:
+          type: string
+        event_id:
+          format: int64
+          type: integer
+        pinned:
+          type: boolean
+        target:
+          $ref: "#/components/schemas/TargetRef"
+      required:
+        - target
+        - pinned
       type: object
     PingInfo:
       properties:
@@ -7354,6 +8225,17 @@ components:
       required:
         - done
         - total
+      type: object
+    ProjectionRef:
+      properties:
+        kind:
+          type: string
+        row_id:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - row_id
       type: object
     Provenance:
       properties:
@@ -7455,6 +8337,122 @@ components:
       required:
         - identifier
         - reason
+      type: object
+    RelationshipCalendarDay:
+      properties:
+        chat:
+          format: int64
+          type: integer
+        date:
+          type: string
+        email:
+          format: int64
+          type: integer
+        level:
+          enum:
+            - NONE
+            - FIRST_QUARTILE
+            - SECOND_QUARTILE
+            - THIRD_QUARTILE
+            - FOURTH_QUARTILE
+          type: string
+        meetings:
+          format: int64
+          type: integer
+        modality_mask:
+          format: int32
+          minimum: 0
+          type: integer
+        received:
+          format: int64
+          type: integer
+        sent:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - date
+        - sent
+        - received
+        - email
+        - chat
+        - meetings
+        - total
+        - modality_mask
+        - level
+      type: object
+    RelationshipCalendarHTTPRequest:
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+        year:
+          format: int64
+          minimum: 1970
+          type: integer
+      required:
+        - year
+      type: object
+    RelationshipCalendarHTTPResponse:
+      properties:
+        annual:
+          items:
+            $ref: "#/components/schemas/AnnualTemperatureSummary"
+          nullable: true
+          type: array
+        cache_revision:
+          type: string
+        canonical_id:
+          format: int64
+          type: integer
+        current:
+          $ref: "#/components/schemas/TemperatureSummary"
+        days:
+          items:
+            $ref: "#/components/schemas/RelationshipCalendarDay"
+          nullable: true
+          type: array
+        effective_date:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        participant_id:
+          format: int64
+          type: integer
+        peak_temperature:
+          format: int64
+          type: integer
+        peak_year:
+          format: int64
+          type: integer
+        score_version:
+          format: int64
+          type: integer
+        scoring_timezone:
+          type: string
+        timezone:
+          type: string
+        year:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - canonical_id
+        - year
+        - timezone
+        - days
+        - current
+        - annual
+        - peak_temperature
+        - peak_year
+        - scoring_timezone
+        - score_version
+        - effective_date
+        - cache_revision
+        - identity_revision
       type: object
     RelationshipReview:
       properties:
@@ -8193,6 +9191,14 @@ components:
       required:
         - value
       type: object
+    SetPersonFactPinRequest:
+      additionalProperties: false
+      properties:
+        pinned:
+          type: boolean
+      required:
+        - pinned
+      type: object
     Setting:
       properties:
         group:
@@ -8901,6 +9907,67 @@ components:
         - cursor_before
         - cursor_after
       type: object
+    TargetDescriptor:
+      properties:
+        cardinality:
+          type: string
+        choices:
+          items:
+            $ref: "#/components/schemas/ChoiceDescriptor"
+          nullable: true
+          type: array
+        description:
+          type: string
+        fields:
+          items:
+            $ref: "#/components/schemas/FieldDescriptor"
+          nullable: true
+          type: array
+        key:
+          type: string
+        kind:
+          type: string
+        max_length:
+          format: int64
+          type: integer
+        record_target:
+          type: string
+        revision:
+          type: string
+        sensitive:
+          type: boolean
+        slug:
+          type: string
+        universal_id:
+          type: string
+        value_type:
+          type: string
+      required:
+        - kind
+        - key
+        - revision
+        - universal_id
+        - slug
+        - description
+        - value_type
+        - cardinality
+        - choices
+        - fields
+        - sensitive
+      type: object
+    TargetRef:
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+        revision:
+          type: string
+      required:
+        - kind
+        - key
+        - revision
+      type: object
     TaskIntegrationStatusResponse:
       properties:
         message:
@@ -9053,6 +10120,49 @@ components:
         - id
         - title
       type: object
+    TemperatureSignals:
+      properties:
+        meeting_signal:
+          format: double
+          type: number
+        modalities:
+          format: int64
+          type: integer
+        received_volume:
+          format: double
+          type: number
+        sent_signal:
+          format: double
+          type: number
+      required:
+        - sent_signal
+        - received_volume
+        - meeting_signal
+        - modalities
+      type: object
+    TemperatureSummary:
+      properties:
+        population:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        raw_score:
+          format: double
+          type: number
+        signals:
+          $ref: "#/components/schemas/TemperatureSignals"
+        temperature:
+          format: int64
+          type: integer
+      required:
+        - temperature
+        - rank
+        - population
+        - raw_score
+        - signals
+      type: object
     TextConversationRow:
       properties:
         conversation_id:
@@ -9082,6 +10192,8 @@ components:
       type: object
     TextConversationsResponse:
       properties:
+        cache_revision:
+          type: string
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
@@ -9099,6 +10211,7 @@ components:
           format: int64
           type: integer
       required:
+        - cache_revision
         - count
         - has_more
         - offset
@@ -9106,6 +10219,34 @@ components:
         - conversations
       type: object
     TextMessagesResponse:
+      properties:
+        cache_revision:
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          nullable: true
+          type: array
+        offset:
+          format: int64
+          type: integer
+      required:
+        - cache_revision
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    TextSearchResponse:
       properties:
         count:
           format: int64
@@ -9511,7 +10652,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.9.0
+  version: 2.11.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -13051,6 +14192,17 @@ paths:
           name: cursor
           schema:
             type: string
+        - description: "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider"
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: "Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)"
+          in: query
+          name: candidate_limit
+          schema:
+            format: int64
+            type: integer
       responses:
         "200":
           content:
@@ -13176,6 +14328,69 @@ paths:
       security:
         - apiKey: []
       summary: Get extracted document index status
+      tags:
+        - API
+  /api/v1/documents/vectors/status:
+    get:
+      operationId: getDocumentVectorStatus
+      parameters:
+        - description: Generation whose bounded failures to inspect
+          in: query
+          name: generation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Stable failure cursor token
+          in: query
+          name: after_token
+          schema:
+            type: string
+        - description: Maximum failure diagnostics (default 20, max 1000)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentVectorOperationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get document vector generation, consent, usage, and failure status
       tags:
         - API
   /api/v1/domains/search:
@@ -16076,6 +17291,52 @@ paths:
       summary: Download stored inline content for one organization profile media value
       tags:
         - API
+  /api/v1/participants/completions:
+    post:
+      description: Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
+      operationId: completeParticipants
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ParticipantCompletionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParticipantCompletionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Complete observed people by typed contact primitives
+      tags:
+        - API
   /api/v1/participants/search:
     post:
       operationId: searchParticipants
@@ -16227,6 +17488,43 @@ paths:
       summary: Search one participant cluster's analytical files
       tags:
         - Exploration
+  /api/v1/participants/{id}/inboxes:
+    get:
+      operationId: listParticipantInboxes
+      parameters:
+        - description: Observed participant cluster member ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonInboxResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one participant cluster's messaging inboxes
+      tags:
+        - API
   /api/v1/participants/{id}/summary:
     post:
       operationId: getParticipantContextSummary
@@ -16663,6 +17961,11 @@ paths:
           name: slug
           schema:
             type: string
+        - description: Restrict the response to one portable definition identifier
+          in: query
+          name: universal_id
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -16750,8 +18053,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/PersonAttributeConflictResponse"
+          description: Conflict
         "503":
           content:
             application/json:
@@ -16819,8 +18122,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/PersonAttributeConflictResponse"
+          description: Conflict
         "503":
           content:
             application/json:
@@ -17170,6 +18473,388 @@ paths:
       summary: List a person's employment history
       tags:
         - API
+  /api/v1/people/{id}/fact-claims:
+    get:
+      operationId: listPersonFactClaims
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactClaimsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact claims
+      tags:
+        - API
+  /api/v1/people/{id}/fact-decisions:
+    get:
+      operationId: listPersonFactDecisions
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactDecisionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact decisions
+      tags:
+        - API
+  /api/v1/people/{id}/fact-evidence:
+    get:
+      operationId: listPersonFactEvidence
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact target as kind:key:sha256:<64 lowercase hex characters>
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: Maximum rows to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactEvidenceResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List immutable person fact evidence
+      tags:
+        - API
+  /api/v1/people/{id}/fact-evidence-status-events:
+    get:
+      operationId: listPersonFactEvidenceStatusEvents
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Restrict to one immutable evidence key
+          in: query
+          name: evidence_key
+          schema:
+            type: string
+        - description: Restrict to supported or unsupported events
+          in: query
+          name: supported
+          schema:
+            type: boolean
+        - description: Maximum events to return (default 50, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based event offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactEvidenceStatusEventsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List person fact evidence status history
+      tags:
+        - API
+  /api/v1/people/{id}/fact-pins:
+    get:
+      operationId: listPersonFactPins
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactPinsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List effective person fact pins
+      tags:
+        - API
+  /api/v1/people/{id}/fact-pins/{kind}/{key}:
+    put:
+      operationId: setPersonFactPin
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Closed person fact target kind
+          in: path
+          name: kind
+          required: true
+          schema:
+            enum:
+              - attribute
+              - employment
+            type: string
+        - description: Exact person fact target key
+          in: path
+          name: key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPersonFactPinRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFactPinWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace an effective person fact pin
+      tags:
+        - API
   /api/v1/people/{id}/files/search:
     post:
       operationId: searchPersonFiles
@@ -17384,6 +19069,70 @@ paths:
       security:
         - apiKey: []
       summary: List merge history for a durable person
+      tags:
+        - API
+  /api/v1/people/{id}/notes/append:
+    post:
+      operationId: appendPersonNote
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendPersonNoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Append to a person's notes
       tags:
         - API
   /api/v1/people/{id}/profile:
@@ -17868,6 +19617,45 @@ paths:
       security:
         - apiKey: []
       summary: Replace a person's tracking state
+      tags:
+        - API
+  /api/v1/person-fact-targets:
+    get:
+      operationId: listPersonFactTargets
+      parameters:
+        - description: Include sensitive targets
+          in: query
+          name: include_sensitive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Catalog"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List eligible automatic person fact targets
       tags:
         - API
   /api/v1/person-merge-candidates/{candidate_id}/decision:
@@ -18687,6 +20475,61 @@ paths:
       security:
         - apiKey: []
       summary: Rank counterparts by reciprocity-weighted interaction
+      tags:
+        - Exploration
+  /api/v1/relationships/{id}/calendar:
+    post:
+      operationId: getRelationshipCalendar
+      parameters:
+        - description: Any member participant ID of the counterpart's identity cluster
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelationshipCalendarHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipCalendarHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one counterpart's timezone-aware relationship calendar
       tags:
         - Exploration
   /api/v1/relationships/{id}/timeline:
@@ -20031,6 +21874,14 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -20122,12 +21973,25 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Full-text search within the conversation
+          in: query
+          name: search_query
+          schema:
+            type: string
         - description: Source ID
           in: query
           name: source_id
           schema:
             format: int64
             type: integer
+        - description: Exact participant cluster member IDs
+          in: query
+          name: participant_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Sender phone/address filter
           in: query
           name: contact_phone
@@ -20235,7 +22099,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TextMessagesResponse"
+                $ref: "#/components/schemas/TextSearchResponse"
           description: OK
         default:
           content:

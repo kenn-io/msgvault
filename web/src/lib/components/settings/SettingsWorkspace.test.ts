@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
+import { chooseSelectOption } from '../../../test/kit-ui';
 
 const initialSettings = {
   settings: [
@@ -51,7 +52,7 @@ describe('SettingsWorkspace', () => {
       );
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } });
+    await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
@@ -80,12 +81,12 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     const theme = await screen.findByLabelText('Theme');
-    await fireEvent.change(theme, { target: { value: 'dark' } });
+    await chooseSelectOption(theme, 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('changed on disk');
     expect(fetchFn).toHaveBeenCalledTimes(3);
-    expect((screen.getByLabelText('Theme') as HTMLSelectElement).value).toBe('dark');
+    expect(screen.getByRole('combobox', { name: 'Theme: Dark' })).toBeDefined();
   });
 
   it('requires explicit API-key restart confirmation before sending the secret', async () => {
@@ -95,6 +96,7 @@ describe('SettingsWorkspace', () => {
       .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('Server access');
     await fireEvent.input(await screen.findByLabelText('New daemon API key'), {
       target: { value: 'replacement-key' }
     });
@@ -124,11 +126,13 @@ describe('SettingsWorkspace', () => {
       .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('Search and vectors');
     expect(await screen.findByText('MSGVAULT_EMBED_API_KEY')).toBeDefined();
     expect(screen.getByText('Set via config.toml on the daemon host.')).toBeDefined();
     expect(screen.queryByLabelText('Embedding key environment variable')).toBeNull();
 
-    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'dark' } });
+    await openSettingsCategory('Browser experience');
+    await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
     const request = fetchFn.mock.calls[1]?.[0] as Request;
@@ -155,7 +159,9 @@ describe('SettingsWorkspace', () => {
       .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn), onTestConnection });
 
+    await openSettingsCategory('Optional integrations');
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
+    await openSettingsCategory('Search and vectors');
     await fireEvent.click(screen.getByRole('button', { name: 'Test embedding endpoint connection' }));
     expect(onTestConnection).toHaveBeenCalledWith('vector.embeddings.endpoint');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
@@ -173,7 +179,7 @@ describe('SettingsWorkspace', () => {
       .mockRejectedValueOnce(new Error('network unavailable'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } });
+    await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('network unavailable');
@@ -198,6 +204,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('CardDAV account');
     expect(await screen.findByRole('heading', { name: 'CardDAV account' })).toBeDefined();
     expect(screen.getByLabelText('Base URL')).toBeDefined();
     expect(screen.getByLabelText('Username')).toBeDefined();
@@ -246,6 +253,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('CardDAV account');
     await screen.findByLabelText('Base URL');
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
@@ -275,6 +283,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('CardDAV account');
     await fireEvent.input(await screen.findByLabelText('Base URL'), {
       target: { value: 'https://dav.example.test/' }
     });
@@ -296,6 +305,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('CardDAV account');
     const baseURL = await screen.findByLabelText('Base URL');
     const password = screen.getByLabelText('Password') as HTMLInputElement;
     expect(password.required).toBe(false);
@@ -329,6 +339,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
+    await openSettingsCategory('CardDAV account');
     await fireEvent.input(await screen.findByLabelText('Base URL'), {
       target: { value: 'https://dav.example.test/' }
     });
@@ -354,6 +365,10 @@ describe('SettingsWorkspace', () => {
     });
   });
 });
+
+async function openSettingsCategory(label: string): Promise<void> {
+  await fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${label}`) }));
+}
 
 function cardDAVSettings(): object {
   return {

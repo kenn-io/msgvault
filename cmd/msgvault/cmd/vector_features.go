@@ -6,6 +6,8 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -42,11 +44,15 @@ type vectorFeatures struct {
 	HybridEngine *hybrid.Engine
 	// PersonSearchEngine shares Backend and Cfg with HybridEngine, but searches
 	// only the person-owned corpus through a separately gated provider client.
-	PersonSearchEngine *personsearch.Engine
-	Runner             scheduler.EmbedRunner
-	Convergence        scheduler.ConvergenceChecker
-	Cfg                vector.Config
-	Visual             *visualFeatures
+	PersonSearchEngine  *personsearch.Engine
+	Runner              scheduler.EmbedRunner
+	Convergence         scheduler.ConvergenceChecker
+	DocumentBackend     vectordocument.Backend
+	DocumentSearch      *vectordocument.SearchService
+	SemanticClient      embed.SemanticClient
+	DocumentQueryClient embed.SemanticClient
+	Cfg                 vector.Config
+	Visual              *visualFeatures
 	// Close releases the backend's resources: on SQLite it closes the
 	// vectors.db handle (so WAL checkpoints complete); on PostgreSQL it is
 	// a no-op because the pgvector backend shares the main store's handle,

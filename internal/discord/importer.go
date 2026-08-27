@@ -135,6 +135,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err != nil {
 		return nil, fmt.Errorf("start Discord sync: %w", err)
 	}
+	scoped := *imp
+	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
+	imp = &scoped
 	summary = &ImportSummary{
 		SourceID: source.ID, SyncRunID: syncID,
 		processedMessageIDs: make(map[string]struct{}),

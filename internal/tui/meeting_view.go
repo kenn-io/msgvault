@@ -124,7 +124,7 @@ func (m Model) meetingListView() string {
 	}
 	for i := m.meetingState.scrollOffset; i < end; i++ {
 		meeting := m.meetingState.messages[i]
-		indicator := "   "
+		indicator := listIndicatorBlank
 		style := m.styles.normalRow
 		if i == m.meetingState.cursor {
 			indicator = "▶  "
@@ -170,14 +170,14 @@ func (m Model) meetingListView() string {
 }
 
 func (m Model) meetingFooterView() string {
-	keys := []string{"↑/k", "↓/j", "Enter", "A source", "/ search", "m mode", "? help"}
+	keys := []string{"↑/k", "↓/j", helpLabelEnter, "A source", "/ search", "m mode", helpLabelHelp}
 	if m.width < 60 {
-		keys = []string{"↑/↓", "Enter", "/", "m", "?"}
+		keys = []string{helpLabelVertical, helpLabelEnter, "/", "m", "?"}
 	}
 	if m.meetingState.level == meetingLevelDetail {
-		keys = []string{"↑/k", "↓/j", "←/h prev", "→/l next", "/ find", "Esc back", "m mode", "? help"}
+		keys = []string{"↑/k", "↓/j", "←/h prev", "→/l next", "/ find", helpLabelBack, "m mode", helpLabelHelp}
 		if m.width < 60 {
-			keys = []string{"↑/↓", "←/→", "/", "Esc", "?"}
+			keys = []string{helpLabelVertical, "←/→", "/", helpLabelEsc, "?"}
 		}
 		if m.meetingState.detailSearchActive {
 			keys = []string{"[Find]/" + m.meetingState.detailSearchInput.View(), "Enter find", "Esc cancel"}

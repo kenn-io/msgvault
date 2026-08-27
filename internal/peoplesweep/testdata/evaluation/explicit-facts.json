@@ -1,0 +1,38 @@
+{
+  "name": "explicit facts and unsupported implications",
+  "allow_sensitive": false,
+  "description_overrides": {},
+  "max_requests": 2,
+  "steps": [
+    {
+      "name": "explicit location",
+      "excerpt": "I live in Oslo.",
+      "subject": "scoped",
+      "event_time": "2026-01-10T09:00:00Z",
+      "resolved_at": "2026-01-10T10:00:00Z",
+      "expected_span": [0, 15],
+      "provider_claims": [
+        {"target_slug":"location","relation":"support","value":"Oslo","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":950}
+      ],
+      "expected_claims": [
+        {"target_slug":"location","relation":"support","value":"Oslo","evidence_steps":[0],"valid_from":null,"valid_until":null,"confidence_basis_points":950}
+      ],
+      "expected_current": {"location":["Oslo"]},
+      "retained_values": {"location":["Oslo"]},
+      "stale_resolution": false
+    },
+    {
+      "name": "unsupported purchase implication",
+      "excerpt": "I bought a red bicycle.",
+      "subject": "scoped",
+      "event_time": "2026-01-11T09:00:00Z",
+      "resolved_at": "2026-01-11T10:00:00Z",
+      "expected_span": [0, 23],
+      "provider_claims": [],
+      "expected_claims": [],
+      "expected_current": {"location":["Oslo"]},
+      "retained_values": {"location":["Oslo"]},
+      "stale_resolution": false
+    }
+  ]
+}

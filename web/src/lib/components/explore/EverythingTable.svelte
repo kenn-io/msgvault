@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, EmptyState, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type {
@@ -11,7 +11,6 @@
   import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
-  import EmptyState from '../common/EmptyState.svelte';
   import IdentityBadge from './IdentityBadge.svelte';
   import RowKind from './RowKind.svelte';
 
@@ -238,7 +237,9 @@
   }
 
   function people(row: EntryRow): string {
-    const labels = row.participant_labels ?? [];
+    const labels = (row.participant_labels ?? [])
+      .map((label) => label.trim())
+      .filter((label) => label !== '');
     return labels.length > 0 ? labels.join(', ') : row.source_identifier;
   }
 
@@ -426,14 +427,11 @@
       <summary>Columns</summary>
       <div class="column-picker kit-popover-card">
         {#each ALL_COLUMNS as column (column.id)}
-          <label>
-            <input
-              type="checkbox"
-              checked={visibleColumns.includes(column.id)}
-              onchange={() => toggleColumn(column.id)}
-            />
-            {column.label === 'Size' ? 'Size' : column.label}
-          </label>
+          <Checkbox
+            checked={visibleColumns.includes(column.id)}
+            label={column.label === 'Size' ? 'Size' : column.label}
+            onchange={() => toggleColumn(column.id)}
+          />
         {/each}
       </div>
     </details>
@@ -510,7 +508,7 @@
         </div>
       {:else if rows.length === 0}
         <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length}>
-          <EmptyState glyph="search" label="No items match this view" hint="Adjust the search or clear filters to widen the view." role="presentation" />
+          <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
         </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><p class="empty" role="status">Preparing table layout…</p></div></div>
@@ -650,7 +648,7 @@
     padding: var(--space-4);
   }
 
-  .column-picker label {
+  .column-picker :global(.kit-checkbox) {
     display: flex;
     align-items: center;
     gap: var(--space-3);
@@ -674,8 +672,7 @@
   }
 
   .table-grid:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: -2px;
+    outline: none;
   }
 
   /* Column headers speak the small-caps label voice; the sheen under the
@@ -750,6 +747,10 @@
 
   .data-row--active {
     box-shadow: inset 2px 0 0 var(--accent-blue);
+  }
+
+  .table-grid:focus-visible .data-row--active:not(.data-row--selected):not(.data-row--inspected) {
+    background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
   .data-row--selected {
@@ -836,7 +837,9 @@
     place-content: center;
     gap: var(--space-4);
     padding: var(--space-7);
-    border-left: 4px solid var(--accent-amber);
+    border: 1px solid var(--accent-amber);
+    border-radius: var(--radius-md);
+    background: var(--status-warning-bg);
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
@@ -851,7 +854,9 @@
     min-height: 200px;
     place-content: center;
     padding: var(--space-7);
-    border-left: 4px solid var(--accent-red);
+    border: 1px solid var(--accent-red);
+    border-radius: var(--radius-md);
+    background: var(--status-error-bg);
     color: var(--text-primary);
     font-size: var(--font-size-sm);
   }

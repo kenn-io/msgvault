@@ -12,19 +12,19 @@
 </script>
 
 <script lang="ts">
-  import { appShortcuts, Button, ROOT_SCOPE } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, DetailDrawer, EmptyState, ROOT_SCOPE } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
   import type { RelationshipFacet, RelationshipTimelineRow } from '../../relationships/models';
-  import { debounce } from '../../util/debounce';
-  import EmptyState from '../common/EmptyState.svelte';
+  import { bufferedCallback } from '../../util/buffered-callback';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
   import ReadingPane, { type ReadingPaneSelection } from '../reader/ReadingPane.svelte';
   import RelationshipHeader from './RelationshipHeader.svelte';
+  import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
@@ -91,7 +91,6 @@
   let fileFilenameQuery = $state('');
   let fileMIMEFamilies = $state<FileMIMEFamily[]>([]);
   let rootElement = $state<HTMLElement>();
-  let listPaneElement = $state<HTMLDivElement>();
   let containerWidth = $state(1200);
   // Mirrors controller.query for immediate display: the debounce below only
   // delays *writing* controller.query (and so the search fetch it drives),
@@ -102,7 +101,7 @@
   // A dedicated instance per component, never shared — LinkIdentityDialog's
   // own debounced search is a separate instance for the same reason; sharing
   // one across components previously caused a cross-component bug.
-  const debouncedSetQuery = debounce((value: string) => { controller.query = value; }, QUERY_DEBOUNCE_MS);
+  const debouncedSetQuery = bufferedCallback((value: string) => { controller.query = value; }, QUERY_DEBOUNCE_MS);
 
   // Flush, not cancel: the controller (owned by AppShell) outlives this
   // component across a workspace round-trip, so a flushed write is not
@@ -123,18 +122,6 @@
   const TIMELINE_GRID_SELECTOR = '[role="grid"][aria-label="Relationship activity"]';
   const FILES_GRID_SELECTOR = '[role="grid"][aria-label="Files results"]';
   const LIST_GRID_SELECTOR = '[role="grid"][aria-label="Relationship results"]';
-  // Excludes tabindex="-1" on every branch, not just the catch-all, so
-  // roving-tabindex widgets (e.g. the facet SegmentedControl) only
-  // contribute their one active segment as a stop.
-  const DRAWER_FOCUSABLE_SELECTOR = [
-    'a[href]:not([tabindex="-1"])',
-    'button:not([disabled]):not([tabindex="-1"])',
-    'input:not([disabled]):not([tabindex="-1"])',
-    'select:not([disabled]):not([tabindex="-1"])',
-    'textarea:not([disabled]):not([tabindex="-1"])',
-    '[tabindex]:not([tabindex="-1"])'
-  ].join(', ');
-
   const layout = $derived(computeHubLayout(containerWidth));
   const predicateFingerprint = $derived(JSON.stringify(predicate));
   const selectedRowKey = $derived(selection?.kind === 'entry' ? selection.row.key : null);
@@ -277,43 +264,17 @@
     conversationBounds = undefined;
   });
 
-  function drawerFocusables(): HTMLElement[] {
-    return listPaneElement ? Array.from(listPaneElement.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE_SELECTOR)) : [];
-  }
-
-  function closeDrawer(): void {
+  async function closeDrawer(): Promise<void> {
     mobileListOpen = false;
-    rootElement?.querySelector<HTMLButtonElement>('.drawer-toggle')?.focus();
+    await tick();
+    rootElement?.querySelector<HTMLElement>('.drawer-toggle')?.focus();
   }
 
-  function handleDrawerKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      closeDrawer();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const focusables = drawerFocusables();
-    if (focusables.length === 0) return;
-    const first = focusables[0]!;
-    const last = focusables[focusables.length - 1]!;
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
-  // Moves focus into the drawer's first focusable (the search input) the
-  // moment it opens; the corresponding trap/Esc-close lives in
-  // handleDrawerKeydown above.
+  // Keep the hub's raw Escape handler inactive while Kit owns the open
+  // drawer's focus trap and dismissal.
   $effect(() => {
-    if (layout === 'narrow' && mobileListOpen) {
-      void tick().then(() => drawerFocusables()[0]?.focus());
-    }
+    if (layout !== 'narrow' || !mobileListOpen) return;
+    return appShortcuts.pushScope('relationships-list-drawer');
   });
 
   // Every row opens its conversation thread directly in the reading pane.
@@ -370,6 +331,7 @@
     {facet}
     query={queryInput}
     {showAll}
+    autofocusSearch={layout === 'narrow' && mobileListOpen}
     activeTarget={target}
     onQueryChange={handleQueryChange}
     {onFacetChange}
@@ -396,9 +358,8 @@
           {#if target === null && controller.target === null}
             <div class="hub-empty">
               <EmptyState
-                glyph="conversations"
-                label="Select a person or domain"
-                hint="Choose someone from the list to see your shared history across mail, chat, and files."
+                title="Select a person or domain"
+                description="Choose someone from the list to see your shared history across mail, chat, and files."
               />
             </div>
           {:else}
@@ -412,6 +373,17 @@
                 onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                 onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
               />
+              {#if target !== null && domainOf(target) === undefined}
+                <RelationshipCalendar
+                  calendar={controller.relationshipCalendar}
+                  loading={controller.relationshipCalendarLoading}
+                  error={controller.relationshipCalendarError}
+                  year={controller.relationshipCalendarYear}
+                  firstYear={controller.relationshipCalendarFirstYear}
+                  currentYear={controller.relationshipCalendarCurrentYear}
+                  onYearChange={(year) => { void controller.loadRelationshipYear(year); }}
+                />
+              {/if}
               {#if filesOpen && filesReady}
                 <FilesWorkspace
                   {client}
@@ -485,17 +457,19 @@
       ariaExpanded={mobileListOpen}
       onclick={() => (mobileListOpen = !mobileListOpen)}
     />
-    <!-- svelte-ignore a11y_no_static_element_interactions -- drawer-mode focus trap/inert host; not a control itself. -->
-    <div
-      class="pane-list drawer"
-      class:drawer-open={mobileListOpen}
-      inert={!mobileListOpen}
-      bind:this={listPaneElement}
-      onkeydown={handleDrawerKeydown}
-    >
-      {@render listPane()}
-    </div>
     {@render centerAndReading()}
+    {#if mobileListOpen}
+      <DetailDrawer
+        title="Contacts"
+        ariaLabel="Relationship search and results"
+        width="min(390px, 100vw)"
+        onclose={closeDrawer}
+      >
+        <div class="pane-list">
+          {@render listPane()}
+        </div>
+      </DetailDrawer>
+    {/if}
   {:else}
     <SplitPane
       ariaLabel="Resize relationship list"
@@ -505,7 +479,7 @@
       maxPrimary={440}
     >
       {#snippet primary()}
-        <div class="pane-list" bind:this={listPaneElement}>
+        <div class="pane-list">
           {@render listPane()}
         </div>
       {/snippet}
@@ -550,22 +524,6 @@
   .relationships-hub :global(.kit-split-resize-handle:hover),
   .relationships-hub :global(.kit-split-resize-handle:focus-visible) {
     background: var(--accent-blue);
-  }
-
-  .pane-list.drawer {
-    position: absolute;
-    z-index: var(--z-popover, 20);
-    inset: 0 auto 0 0;
-    width: 280px;
-    transform: translateX(-100%);
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border-default);
-    box-shadow: var(--shadow-md);
-    transition: transform var(--transition-fast);
-  }
-
-  .pane-list.drawer.drawer-open {
-    transform: translateX(0);
   }
 
   .pane-center-and-reading {

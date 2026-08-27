@@ -75,10 +75,16 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
   expect(
     await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent-blue').trim())
-  ).toBe('#2257d6');
+  ).toBe('#2563eb');
   const mutedContrast = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const luminance = (color: string) => {
+      const srgb = color.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+      if (srgb) {
+        const channels = srgb.slice(1, 4).map(Number);
+        const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+      }
       // The production CSS minifier emits shorthand hex (#fff for #ffffff).
       const hex = color.replace('#', '');
       const expanded = hex.length === 3 ? [...hex].map((digit) => digit + digit).join('') : hex;

@@ -240,10 +240,14 @@ func TestGetMessage(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
+	_, err := env.DB.Exec(`UPDATE messages SET is_from_me = TRUE WHERE id = 1`)
+	require.NoError(err, "mark message as sent by the account owner")
+
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "expected message")
 	assert.Equal("Hello World", msg.Subject)
+	assert.True(msg.IsFromMe)
 	require.Len(msg.From, 1, "from list")
 	assert.Equal("alice@example.com", msg.From[0].Email)
 	assert.Len(msg.To, 2, "recipients")

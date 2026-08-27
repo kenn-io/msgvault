@@ -380,7 +380,7 @@ describe('ContentFrame', () => {
   });
 
   it('rebuilds the themed frame in the dark scheme when the shell theme flips', async () => {
-    document.documentElement.dataset.theme = 'light';
+    document.documentElement.classList.remove('dark');
     const { container } = render(ContentFrame, {
       props: { messageId: 42, html: '<p>Plain reply</p>', title: 'Archived message' }
     });
@@ -388,13 +388,13 @@ describe('ContentFrame', () => {
       expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('data-scheme="light"')
     );
 
-    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.classList.add('dark');
     try {
       await waitFor(() =>
         expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('data-scheme="dark"')
       );
     } finally {
-      delete document.documentElement.dataset.theme;
+      document.documentElement.classList.remove('dark');
     }
   });
 });

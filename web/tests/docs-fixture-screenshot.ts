@@ -15,8 +15,7 @@ const stabilizationTimeoutMs = 5_000;
 
 export async function captureScreenshot(
   page: ScreenshotPage,
-  outputPath: string,
-  compare?: (screenshot: Buffer) => Promise<void>
+  outputPath: string
 ): Promise<void> {
   const startedAt = Date.now();
   let previous: Buffer | undefined;
@@ -33,6 +32,5 @@ export async function captureScreenshot(
     previous = screenshot;
     attempt += 1;
   }
-  if (compare) await compare(screenshot);
   await writeFile(outputPath, screenshot);
 }
