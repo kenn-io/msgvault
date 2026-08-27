@@ -631,3 +631,46 @@ func TestListMessagesToleratesBoundaryUIDAboveHighWaterMark(t *testing.T) {
 	assert.Equal([]uint32{1, 2}, deltas[0].State.KnownUIDs)
 	assert.Contains(joinedCommands(server.commandsFor(2)), "UID SEARCH UID 3:*")
 }
+
+// TestListMessagesCondStoreOnlyFlagChangeForcesFullEnumeration covers a server
+// that advertises CONDSTORE but not QRESYNC. A flags-only change advances
+// HIGHESTMODSEQ while UIDNEXT and the message count both stay put, so the
+// UIDNEXT high water mark alone would never look at the modified message. The
+// mod-sequence is the signal that something below the mark moved.
+func TestListMessagesCondStoreOnlyFlagChangeForcesFullEnumeration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	numMessages := uint32(2)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE CONDSTORE"},
+		mailboxes:     []string{"INBOX"},
+		uidValidity:   1,
+		uidNext:       3, // unchanged
+		numMessages:   &numMessages,
+		highestModSeq: 20, // a flag changed on an existing message
+		searchUIDs:    []imapv2.UID{1, 2},
+	})
+
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity:   1,
+			UIDNext:       3,
+			HighestModSeq: 10,
+			KnownUIDs:     []uint32{1, 2},
+		},
+	})
+
+	assert.Equal([]string{"INBOX|1", "INBOX|2"}, listQresyncMessages(t, client),
+		"an advanced mod-sequence must re-read the mailbox, not just its tail")
+
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(deltas, 1)
+	assert.True(deltas[0].Reset,
+		"a flags-only change is invisible to UIDNEXT and the message count")
+	assert.Equal(uint64(20), deltas[0].State.HighestModSeq)
+
+	commands := joinedCommands(server.commandsFor(2))
+	assert.Contains(commands, "UID SEARCH UID 1:*")
+	assert.NotContains(commands, "UID SEARCH UID 3:*")
+}

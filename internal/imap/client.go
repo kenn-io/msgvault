@@ -507,6 +507,16 @@ func (c *Client) planMailboxScan(
 		return mailboxScan{skip: true, known: cloneKnownUIDs(prior.KnownUIDs)}
 	}
 
+	// A server that reports mod-sequences can change flags on an existing
+	// message without moving UIDNEXT or the message count, and those messages
+	// sit below the high water mark where the search below cannot see them.
+	// Only servers that report no mod-sequence at all can be summarised by
+	// UIDNEXT plus a count; a QRESYNC server never reaches here, because
+	// CHANGEDSINCE handles it.
+	if status.HighestModSeq != prior.HighestModSeq {
+		return full()
+	}
+
 	uids, err := c.enumerateMailbox(ctx, mailbox, imap.UID(prior.UIDNext))
 	if err != nil {
 		return mailboxScan{err: err}
