@@ -243,68 +243,75 @@ func (s *Store) revokePersonEnrichmentConsentOnce(
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT p.id FROM persons p
+		var err error
+		changed, err = s.revokePersonEnrichmentConsentTx(ctx, tx, fingerprint, actor)
+		return err
+	})
+	return changed, err
+}
+
+func (s *Store) revokePersonEnrichmentConsentTx(
+	ctx context.Context, tx *loggedTx, fingerprint, actor string,
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM persons p
 			WHERE EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = p.id)
 			   OR EXISTS (SELECT 1 FROM person_enrichment_work w
 			              WHERE w.person_id = p.id AND w.profile_fingerprint = ?)
 			ORDER BY p.id`, fingerprint)
-		if err != nil {
-			return fmt.Errorf("list people affected by person enrichment consent revocation: %w", err)
-		}
-		personIDs := make([]int64, 0)
-		for rows.Next() {
-			var personID int64
-			if err := rows.Scan(&personID); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("read person affected by person enrichment consent revocation: %w", err)
-			}
-			personIDs = append(personIDs, personID)
-		}
-		if err := rows.Err(); err != nil {
+	if err != nil {
+		return false, fmt.Errorf("list people affected by person enrichment consent revocation: %w", err)
+	}
+	personIDs := make([]int64, 0)
+	for rows.Next() {
+		var personID int64
+		if err := rows.Scan(&personID); err != nil {
 			_ = rows.Close()
-			return fmt.Errorf("iterate people affected by person enrichment consent revocation: %w", err)
+			return false, fmt.Errorf("read person affected by person enrichment consent revocation: %w", err)
 		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close people affected by person enrichment consent revocation: %w", err)
+		personIDs = append(personIDs, personID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate people affected by person enrichment consent revocation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close people affected by person enrichment consent revocation: %w", err)
+	}
+	if s.personEnrichmentTxBarrier != nil {
+		s.personEnrichmentTxBarrier("revoke_affected_people_snapshotted")
+	}
+	for _, personID := range personIDs {
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("revoke_before_person_lock")
+		}
+		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID); err != nil {
+			return false, err
 		}
 		if s.personEnrichmentTxBarrier != nil {
-			s.personEnrichmentTxBarrier("revoke_affected_people_snapshotted")
+			s.personEnrichmentTxBarrier("revoke_person_locked")
 		}
-		for _, personID := range personIDs {
-			if s.personEnrichmentTxBarrier != nil {
-				s.personEnrichmentTxBarrier("revoke_before_person_lock")
-			}
-			if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID); err != nil {
-				return err
-			}
-			if s.personEnrichmentTxBarrier != nil {
-				s.personEnrichmentTxBarrier("revoke_person_locked")
-			}
-		}
-		var id int64
-		err = tx.QueryRowContext(ctx, `
+	}
+	var id int64
+	err = tx.QueryRowContext(ctx, `
 			UPDATE person_enrichment_consents
 			SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
 			WHERE profile_fingerprint = ? AND revoked_at IS NULL
 			RETURNING id`, actor, fingerprint).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("revoke person enrichment consent: %w", err)
+	}
+	if s.personEnrichmentTxBarrier != nil {
+		s.personEnrichmentTxBarrier("revoke_authority_removed")
+	}
+	for _, personID := range personIDs {
+		if err := s.cancelPersonEnrichmentTx(ctx, tx, personID, fingerprint); err != nil {
+			return false, err
 		}
-		if err != nil {
-			return fmt.Errorf("revoke person enrichment consent: %w", err)
-		}
-		changed = true
-		if s.personEnrichmentTxBarrier != nil {
-			s.personEnrichmentTxBarrier("revoke_authority_removed")
-		}
-		for _, personID := range personIDs {
-			if err := s.cancelPersonEnrichmentTx(ctx, tx, personID, fingerprint); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return changed, err
+	}
+	return true, nil
 }
 
 // RevokeAllPersonEnrichmentConsents revokes each currently active exact
@@ -314,36 +321,62 @@ func (s *Store) RevokeAllPersonEnrichmentConsents(ctx context.Context, actor str
 	if actor == "" {
 		return 0, errors.New("person enrichment consent actor is required")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT profile_fingerprint
-		FROM person_enrichment_consents WHERE revoked_at IS NULL
-		ORDER BY profile_fingerprint`)
+	revoked, err := retryContendedWrite(ctx, s, "revoke all person enrichment consents", func() (*int64, error) {
+		count, revokeErr := s.revokeAllPersonEnrichmentConsentsOnce(ctx, actor)
+		return &count, revokeErr
+	})
 	if err != nil {
-		return 0, fmt.Errorf("list active person enrichment consents: %w", err)
+		return 0, err
 	}
-	fingerprints := make([]string, 0)
-	for rows.Next() {
-		var fingerprint string
-		if err := rows.Scan(&fingerprint); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("read active person enrichment consent: %w", err)
-		}
-		fingerprints = append(fingerprints, fingerprint)
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close active person enrichment consents: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate active person enrichment consents: %w", err)
-	}
+	return *revoked, nil
+}
+
+func (s *Store) revokeAllPersonEnrichmentConsentsOnce(
+	ctx context.Context, actor string,
+) (int64, error) {
 	var revoked int64
-	for _, fingerprint := range fingerprints {
-		changed, err := s.RevokePersonEnrichmentConsent(ctx, fingerprint, actor)
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT profile_fingerprint
+			FROM person_enrichment_consents WHERE revoked_at IS NULL
+			ORDER BY profile_fingerprint`)
 		if err != nil {
-			return revoked, err
+			return fmt.Errorf("list active person enrichment consents: %w", err)
 		}
-		if changed {
-			revoked++
+		fingerprints := make([]string, 0)
+		for rows.Next() {
+			var fingerprint string
+			if err := rows.Scan(&fingerprint); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("read active person enrichment consent: %w", err)
+			}
+			fingerprints = append(fingerprints, fingerprint)
 		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate active person enrichment consents: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close active person enrichment consents: %w", err)
+		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("revoke_all_consents_snapshotted")
+		}
+		for _, fingerprint := range fingerprints {
+			changed, err := s.revokePersonEnrichmentConsentTx(ctx, tx, fingerprint, actor)
+			if err != nil {
+				return err
+			}
+			if changed {
+				revoked++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return revoked, nil
 }

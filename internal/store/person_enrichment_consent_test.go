@@ -250,4 +250,74 @@ func TestPersonEnrichmentConsentConcurrentGrantAndRevoke(t *testing.T) {
 	assert.Equal(int64(1), changedCount.Load())
 }
 
+func TestRevokeAllPersonEnrichmentConsentsSerializesRacingGrant(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	first := enrichmentTriggerProfile(t, "revoke-all-first", "https://first.example.test/search")
+	second := enrichmentTriggerProfile(t, "revoke-all-second", "https://second.example.test/search")
+	for _, profile := range []personenrichment.ProviderProfile{first, second} {
+		_, err := st.EnsurePersonEnrichmentProfile(t.Context(), profile)
+		requirements.NoError(err)
+	}
+	_, _, err := st.GrantPersonEnrichmentConsent(t.Context(), first.Fingerprint, "test")
+	requirements.NoError(err)
+
+	snapshotted := make(chan struct{})
+	release := make(chan struct{})
+	var snapshotOnce sync.Once
+	store.SetPersonEnrichmentTxBarrierForTest(st, func(phase string) {
+		if phase == "revoke_all_consents_snapshotted" {
+			snapshotOnce.Do(func() { close(snapshotted) })
+			<-release
+		}
+	})
+	type revokeResult struct {
+		count int64
+		err   error
+	}
+	revokeDone := make(chan revokeResult, 1)
+	go func() {
+		count, revokeErr := st.RevokeAllPersonEnrichmentConsents(t.Context(), "privacy-test")
+		revokeDone <- revokeResult{count: count, err: revokeErr}
+	}()
+	<-snapshotted
+
+	type grantResult struct {
+		created bool
+		err     error
+	}
+	grantStarted := make(chan struct{})
+	grantDone := make(chan grantResult, 1)
+	go func() {
+		close(grantStarted)
+		_, created, grantErr := st.GrantPersonEnrichmentConsent(
+			t.Context(), second.Fingerprint, "racing-grant")
+		grantDone <- grantResult{created: created, err: grantErr}
+	}()
+	<-grantStarted
+	var grant grantResult
+	grantFinishedBeforeRelease := false
+	select {
+	case grant = <-grantDone:
+		grantFinishedBeforeRelease = true
+	case <-time.After(time.Second):
+	}
+	close(release)
+	revoked := <-revokeDone
+	if !grantFinishedBeforeRelease {
+		grant = <-grantDone
+	}
+
+	requirements.NoError(revoked.err)
+	requirements.NoError(grant.err)
+	checks.False(grantFinishedBeforeRelease,
+		"grant must wait until revoke-all releases the authority lock")
+	checks.Equal(int64(1), revoked.count)
+	checks.True(grant.created)
+	active, err := st.HasActivePersonEnrichmentConsent(t.Context(), second.Fingerprint)
+	requirements.NoError(err)
+	checks.True(active, "the serialized grant occurs after revoke-all")
+}
+
 var _ personenrichment.ConsentChecker = (*store.Store)(nil)
