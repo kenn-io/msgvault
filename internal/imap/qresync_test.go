@@ -26,6 +26,7 @@ type qresyncServerConfig struct {
 	selectHighestModSeq      uint64
 	selectFailureConnection  int
 	selectFailureAt          int
+	numMessages              *uint32
 	searchUIDs               []imapv2.UID
 	fetchChanged             []imapv2.UID
 	fetchVanished            []imapv2.UID
@@ -107,9 +108,13 @@ func serveQresyncTestConn(
 			_, _ = fmt.Fprintf(conn, "%s OK LIST completed\r\n", tag)
 		case strings.HasPrefix(upper, "STATUS"):
 			mailbox := scriptedCommandMailbox(command, "STATUS")
+			messages := ""
+			if cfg.numMessages != nil {
+				messages = fmt.Sprintf("MESSAGES %d ", *cfg.numMessages)
+			}
 			_, _ = fmt.Fprintf(conn,
-				"* STATUS %q (UIDNEXT %d UIDVALIDITY %d HIGHESTMODSEQ %d)\r\n%s OK STATUS completed\r\n",
-				mailbox, cfg.uidNext, cfg.uidValidity, cfg.highestModSeq, tag)
+				"* STATUS %q (%sUIDNEXT %d UIDVALIDITY %d HIGHESTMODSEQ %d)\r\n%s OK STATUS completed\r\n",
+				mailbox, messages, cfg.uidNext, cfg.uidValidity, cfg.highestModSeq, tag)
 		case strings.HasPrefix(upper, "ENABLE"):
 			_, _ = fmt.Fprintf(conn, "* ENABLED QRESYNC\r\n%s OK ENABLE completed\r\n", tag)
 		case strings.HasPrefix(upper, "SELECT"):
@@ -589,4 +594,40 @@ func TestObservedSnapshotsPreserveEmptyKnownUIDBaseline(t *testing.T) {
 
 	assert.NotNil(t, client.ObservedFolderStates()["Empty"].KnownUIDs)
 	assert.NotNil(t, client.ObservedMailboxDeltas()[0].State.KnownUIDs)
+}
+
+// TestListMessagesToleratesBoundaryUIDAboveHighWaterMark pins the union-based
+// deletion check. RFC 3501 6.4.8 makes "UID SEARCH UID n:*" return the last
+// message in the mailbox even when n is past it, so a search above the saved
+// high water mark can re-report a UID the baseline already holds. Adding the
+// two counts would read that as a deletion; merging them does not. The
+// in-memory server resolves "*" to UIDNEXT-1 instead, so only a scripted
+// server can exercise this.
+func TestListMessagesToleratesBoundaryUIDAboveHighWaterMark(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	numMessages := uint32(2)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities: []string{"IMAP4rev1"},
+		mailboxes:    []string{"INBOX"},
+		uidValidity:  1,
+		uidNext:      4, // a message arrived and was expunged
+		numMessages:  &numMessages,
+		searchUIDs:   []imapv2.UID{2}, // "3:*" re-reports the last message
+	})
+
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {UIDValidity: 1, UIDNext: 3, KnownUIDs: []uint32{1, 2}},
+	})
+	// Re-listing the boundary UID is harmless: it is already archived, so the
+	// syncer skips it. Re-enumerating the whole mailbox would not be.
+	assert.Equal([]string{"INBOX|2"}, listQresyncMessages(t, client))
+
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(deltas, 1)
+	assert.False(deltas[0].Reset,
+		"a re-reported boundary UID is not evidence of a deletion")
+	assert.Equal([]uint32{1, 2}, deltas[0].State.KnownUIDs)
+	assert.Contains(joinedCommands(server.commandsFor(2)), "UID SEARCH UID 3:*")
 }

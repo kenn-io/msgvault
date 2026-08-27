@@ -46,6 +46,25 @@ func listedIMAPClient(t *testing.T, addr string, opts ...imaplib.Option) *imapli
 	}
 }
 
+func imapMembershipRowCount(t *testing.T, st *store.Store, sourceID int64) int {
+	t.Helper()
+	var count int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?`,
+	), sourceID).Scan(&count))
+	return count
+}
+
+func imapTombstonedMessageCount(t *testing.T, st *store.Store, sourceID int64) int {
+	t.Helper()
+	var count int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages
+		 WHERE source_id = ? AND deleted_from_source_at IS NOT NULL`,
+	), sourceID).Scan(&count))
+	return count
+}
+
 func seedObservedIMAPMessages(
 	t *testing.T, st *store.Store, src *store.Source, client *imaplib.Client,
 ) {
@@ -259,7 +278,7 @@ func TestSaveIMAPFolderStates_NonIMAPClientIsNoOp(t *testing.T) {
 	assert.Empty(t, loaded)
 }
 
-func TestIMAPFolderStateOptions_RoundTripFallsBackWithoutModSeq(t *testing.T) {
+func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
 	st := testutil.NewTestStore(t)
@@ -272,6 +291,9 @@ func TestIMAPFolderStateOptions_RoundTripFallsBackWithoutModSeq(t *testing.T) {
 		context.Background(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
 	require.NoError(first.Close())
 
+	beforeMemberships := imapMembershipRowCount(t, st, src.ID)
+	require.NotZero(beforeMemberships)
+
 	opts := imapFolderStateOptions(st, src, false)
 	require.NotEmpty(opts, "saved states must produce a client option")
 
@@ -280,8 +302,18 @@ func TestIMAPFolderStateOptions_RoundTripFallsBackWithoutModSeq(t *testing.T) {
 	defer cancel()
 	resp, err := second.ListMessages(ctx, "", "")
 	require.NoError(err)
-	assert.Len(t, resp.Messages, 5,
-		"a stored baseline without mod-sequences must be rebuilt completely")
+	assert.Empty(t, resp.Messages,
+		"a stored baseline plus a matching message count proves nothing changed")
+
+	// The whole point of the skip is that it costs nothing durable: applying
+	// the resulting deltas must leave every membership row and every message
+	// exactly as the first sync left them.
+	require.NoError(saveIMAPFolderStates(
+		context.Background(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
+	assert.Equal(t, beforeMemberships, imapMembershipRowCount(t, st, src.ID),
+		"skipping a mailbox must not delete its memberships")
+	assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID),
+		"skipping a mailbox must not tombstone its messages")
 }
 
 func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing.T) {

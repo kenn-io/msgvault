@@ -69,7 +69,7 @@ func TestListMessages_RecordsFolderStates(t *testing.T) {
 	assert.NotZero(states["INBOX"].UIDValidity)
 }
 
-func TestListMessages_FallsBackWhenSavedStatesLackModSeq(t *testing.T) {
+func TestListMessages_SkipsUnchangedFoldersWithoutModSeq(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
@@ -81,12 +81,24 @@ func TestListMessages_FallsBackWhenSavedStatesLackModSeq(t *testing.T) {
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Len(ids, 5, "a baseline without mod-sequences must be rebuilt completely")
+	assert.Empty(ids,
+		"UIDNEXT and the message count together prove nothing changed")
 	assert.Equal(saved, second.ObservedFolderStates(),
-		"the full fallback publishes the same complete baseline")
+		"skipping still republishes the same complete baseline")
+
+	// Every mailbox must still appear in the delta set: the store retires --
+	// and tombstones the messages of -- any mailbox missing from it.
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 2)
+	for _, delta := range deltas {
+		assert.False(delta.Reset, delta.Mailbox)
+		assert.Empty(delta.ChangedUIDs, delta.Mailbox)
+		assert.Empty(delta.VanishedUIDs, delta.Mailbox)
+		assert.Equal(saved[delta.Mailbox].KnownUIDs, delta.State.KnownUIDs, delta.Mailbox)
+	}
 }
 
-func TestListMessages_FullFallbackIncludesExistingAndNewMessages(t *testing.T) {
+func TestListMessages_FetchesOnlyNewMessagesWithoutModSeq(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
@@ -100,13 +112,25 @@ func TestListMessages_FullFallbackIncludesExistingAndNewMessages(t *testing.T) {
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Equal([]string{
-		"Archive|1", "Archive|2", "Archive|3", "INBOX|1", "INBOX|2", "INBOX|3",
-	}, ids, "a baseline without mod-sequences must be rebuilt completely")
+	assert.Equal([]string{"INBOX|3"}, ids,
+		"only the appended message is above the saved high water mark")
 
 	states := second.ObservedFolderStates()
 	assert.Equal(uint32(4), states["INBOX"].UIDNext)
+	assert.Equal([]uint32{1, 2, 3}, states["INBOX"].KnownUIDs)
 	assert.Equal(saved["Archive"], states["Archive"])
+
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 2)
+	for _, delta := range deltas {
+		assert.False(delta.Reset, delta.Mailbox,
+			"an additive change must not republish the whole mailbox")
+		if delta.Mailbox == "INBOX" {
+			assert.Equal([]imapv2.UID{3}, delta.ChangedUIDs)
+		} else {
+			assert.Empty(delta.ChangedUIDs)
+		}
+	}
 }
 
 type listProgressCall struct {
@@ -141,15 +165,16 @@ func TestListMessages_ReportsListProgress(t *testing.T) {
 	assert.Equal(5, final.found)
 	assert.Equal(0, final.unchanged)
 
-	// A resync without usable mod-sequences reports a complete full fallback.
+	// A resync without usable mod-sequences skips the mailboxes whose UIDNEXT
+	// and message count both match the saved baseline.
 	saved := first.ObservedFolderStates()
 	require.NoError(first.Close())
 	calls = nil
 	second := newTestClient(t, addr, WithListProgress(record), WithFolderStates(saved))
-	require.Len(listAllMessages(t, second), 5)
+	require.Empty(listAllMessages(t, second))
 	final = calls[len(calls)-1]
-	assert.Equal(5, final.found)
-	assert.Equal(0, final.unchanged)
+	assert.Equal(0, final.found)
+	assert.Equal(2, final.unchanged)
 }
 
 func TestListMessages_UIDValidityChangeForcesFullRescan(t *testing.T) {
@@ -211,10 +236,11 @@ func TestListMessages_AllMailboxUnsupportedQresyncUsesFullFallback(t *testing.T)
 	second.mailboxCache = []string{"All Mail", "Projects"}
 	second.allMailFolder = "All Mail"
 	ids := listAllMessages(t, second)
-	assert.Len(ids, 3, "unsupported QRESYNC must force authoritative enumeration")
+	assert.Empty(ids,
+		"unsupported QRESYNC still skips mailboxes proven unchanged by UIDNEXT and count")
 	assert.Equal(saved, second.ObservedFolderStates())
 	assert.NotNil(second.msgIDToLabels,
-		"authoritative fallback must rebuild the All Mail label map")
+		"authoritative fallback must still publish a label map")
 }
 
 func TestAcknowledgeMessagesFlushesFolderStateWhenFolderComplete(t *testing.T) {
@@ -908,11 +934,10 @@ func TestClientRebuildsCompleteSnapshotWithoutAllMailboxOrModSeq(t *testing.T) {
 
 	testutil.AppendIMAPMessage(t, user, "Archive")
 	second := newTestClient(t, addr, WithFolderStates(saved))
-	require.Equal([]string{"Archive|1", "Archive|2", "INBOX|1"},
-		listAllMessages(t, second))
+	require.Equal([]string{"Archive|2"}, listAllMessages(t, second))
 
 	assert.True(t, second.LabelsSnapshotComplete(),
-		"the conservative full fallback sees every mailbox membership")
+		"skipping unchanged mailboxes still yields an authoritative snapshot")
 }
 
 func TestClientReportsIncompleteMailboxMembershipCollection(t *testing.T) {
@@ -976,4 +1001,114 @@ func TestWithFolderFilter_GmailCanonicalMailboxesHonorFilters(t *testing.T) {
 			assert.False(t, strings.HasPrefix(id, "[Gmail]/Trash|"), "Trash must not be enumerated: %q", id)
 		}
 	})
+}
+
+// TestListMessages_ResetsFolderAfterExpunge covers the case UIDNEXT alone gets
+// wrong: a message removed with nothing appended leaves the high water mark
+// exactly where it was, so only the message count reveals the change.
+func TestListMessages_ResetsFolderAfterExpunge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 3, "Archive": 2})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 5)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+
+	second := newTestClient(t, addr, WithFolderStates(saved))
+	assert.Equal([]string{"INBOX|2", "INBOX|3"}, listAllMessages(t, second),
+		"a shrunken mailbox must be re-enumerated in full")
+
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 2)
+	for _, delta := range deltas {
+		if delta.Mailbox == "INBOX" {
+			assert.True(delta.Reset,
+				"only a full republish lets the store retire the expunged UID")
+			assert.Equal([]uint32{2, 3}, delta.State.KnownUIDs)
+		} else {
+			assert.False(delta.Reset, "an untouched mailbox stays untouched")
+		}
+	}
+}
+
+// TestListMessages_AdvancedUIDNextWithSteadyCountDoesNotReset covers a message
+// that arrived and was expunged between syncs: UIDNEXT moved but the mailbox
+// still holds the same messages, so nothing needs republishing.
+//
+// This does not exercise the RFC 3501 6.4.8 boundary rule -- the in-memory
+// server resolves "*" to UIDNEXT-1 rather than the last message, so the search
+// comes back empty here. TestListMessagesToleratesBoundaryUIDAboveHighWaterMark
+// covers that against a scripted server.
+func TestListMessages_AdvancedUIDNextWithSteadyCountDoesNotReset(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 2)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	// Append then expunge the same message: UIDNEXT advances, the count does
+	// not, and the search above the high water mark finds only old UID 2.
+	testutil.AppendIMAPMessage(t, user, "INBOX")
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 3)
+
+	second := newTestClient(t, addr, WithFolderStates(saved))
+	assert.Empty(listAllMessages(t, second),
+		"a message that came and went leaves nothing to archive")
+
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 1)
+	assert.False(deltas[0].Reset,
+		"an advanced UIDNEXT with a steady count is not a deletion")
+	assert.Equal([]uint32{1, 2}, deltas[0].State.KnownUIDs)
+}
+
+func TestListMessages_FullyEnumeratesWithoutKnownUIDBaseline(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 2)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	// A cursor saved before the membership table existed: the counts would
+	// match a zero-length baseline, but nothing is actually known.
+	stale := map[string]FolderState{"INBOX": {
+		UIDValidity: saved["INBOX"].UIDValidity,
+		UIDNext:     saved["INBOX"].UIDNext,
+	}}
+	require.Nil(stale["INBOX"].KnownUIDs)
+
+	second := newTestClient(t, addr, WithFolderStates(stale))
+	assert.Len(listAllMessages(t, second), 2,
+		"a missing baseline must be rebuilt, not assumed empty")
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 1)
+	assert.True(deltas[0].Reset)
+}
+
+func TestListMessages_LimitedSyncDisablesFolderSkipping(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 5)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	// A limited sync cannot defer label reconciliation, so it must see every
+	// mailbox membership rather than trusting the stored ones.
+	second := newTestClient(t, addr, WithFolderStates(saved))
+	second.ForceFullEnumerationForLimitedSync()
+	assert.Len(listAllMessages(t, second), 5,
+		"a limited sync must not take folder shortcuts")
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	imap "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/stretchr/testify/require"
@@ -262,4 +263,27 @@ func startIMAPMemServer(
 	t.Cleanup(func() { _ = server.Close() })
 
 	return ln.Addr().String(), user
+}
+
+// ExpungeIMAPMessage permanently removes one UID from a mailbox on a server
+// returned by StartIMAPMemServer. The mailbox's STATUS MESSAGES count drops by
+// one while UIDNEXT stays put — the shape of a change that a cursor without
+// CONDSTORE cannot detect from UIDNEXT alone.
+func ExpungeIMAPMessage(t *testing.T, addr, mailbox string, uid imap.UID) {
+	t.Helper()
+	client, err := imapclient.DialInsecure(addr, nil)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Login(IMAPTestUsername, IMAPTestPassword).Wait())
+	_, err = client.Select(mailbox, nil).Wait()
+	require.NoError(t, err)
+
+	var uidSet imap.UIDSet
+	uidSet.AddNum(uid)
+	require.NoError(t, client.Store(uidSet, &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagDeleted},
+	}, nil).Close())
+	require.NoError(t, client.Expunge().Close())
 }

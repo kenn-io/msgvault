@@ -137,7 +137,12 @@ func New(client gmail.API, store *store.Store, opts *Options) *Syncer {
 		opts = DefaultOptions()
 	}
 
-	if opts.Limit > 0 {
+	// Folder shortcuts leave this session's label map covering only the
+	// mailboxes that changed, which is safe only because the post-sync
+	// mailbox-delta transaction is what reconciles labels. A limited run cannot
+	// publish that transaction, and a client that reconciles immediately does
+	// not wait for it; either way the session's own view has to be complete.
+	if opts.Limit > 0 || !defersAuthoritativeLabelReconciliation(client) {
 		if forcer, ok := client.(limitedFullEnumerationForcer); ok {
 			forcer.ForceFullEnumerationForLimitedSync()
 		}
@@ -169,14 +174,21 @@ func (s *Syncer) labelsSnapshotComplete() bool {
 	return !ok || completeness.LabelsSnapshotComplete()
 }
 
+// defersAuthoritativeLabelReconciliation reports whether client leaves
+// authoritative label reconciliation to the post-sync mailbox-delta
+// transaction. Clients that do not implement the seam reconcile immediately.
+func defersAuthoritativeLabelReconciliation(client gmail.API) bool {
+	deferrer, ok := client.(authoritativeLabelReconciliationDeferrer)
+	return ok && deferrer.DefersAuthoritativeLabelReconciliation()
+}
+
 func (s *Syncer) defersAuthoritativeLabelReconciliation() bool {
 	// Only an unlimited run can publish the deferred mailbox snapshot. Limited
 	// runs must reconcile each processed message before returning.
 	if s.opts.SourceType != sourceTypeIMAP || s.opts.Limit > 0 || !s.labelsSnapshotComplete() {
 		return false
 	}
-	deferrer, ok := s.client.(authoritativeLabelReconciliationDeferrer)
-	return ok && deferrer.DefersAuthoritativeLabelReconciliation()
+	return defersAuthoritativeLabelReconciliation(s.client)
 }
 
 // WithSuccessfulSyncHook installs one best-effort post-completion hook.

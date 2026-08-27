@@ -81,6 +81,13 @@ type FolderState struct {
 	UIDNext       uint32
 	HighestModSeq uint64
 	KnownUIDs     []uint32
+
+	// NumMessages is the STATUS MESSAGES count observed this session, or nil
+	// when the server did not report one. It is the deletion detector a server
+	// without CONDSTORE cannot otherwise provide. Transient: never loaded from
+	// or written to the store, so a state restored by WithFolderStates always
+	// carries nil here.
+	NumMessages *uint32
 }
 
 func cloneKnownUIDs(uids []uint32) []uint32 {
@@ -262,6 +269,7 @@ func (c *Client) AcknowledgeMessages(_ context.Context, messageIDs []string) {
 // Caller must hold mu.
 func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState, error) {
 	opts := &imap.StatusOptions{
+		NumMessages:   true,
 		UIDNext:       true,
 		UIDValidity:   true,
 		HighestModSeq: c.conn.Caps().Has(imap.CapCondStore),
@@ -285,9 +293,13 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 	if data.UIDNext == 0 {
 		return FolderState{}, fmt.Errorf("STATUS %q returned no UIDNEXT", mailbox)
 	}
+	// A missing MESSAGES is not an error: it costs the caller the folder
+	// shortcuts and nothing else, so degrade to full enumeration rather than
+	// failing a STATUS the rest of which is usable.
 	return FolderState{
 		UIDValidity:   data.UIDValidity,
 		UIDNext:       uint32(data.UIDNext),
 		HighestModSeq: data.HighestModSeq,
+		NumMessages:   data.NumMessages,
 	}, nil
 }
