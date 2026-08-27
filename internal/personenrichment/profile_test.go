@@ -243,6 +243,21 @@ func TestSixtyfourProviderProfileRejectsStructuredTargets(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestExaPeopleProviderProfileAcceptsCatalogEmploymentTarget(t *testing.T) {
+	requirements := require.New(t)
+	catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
+	requirements.NoError(err)
+	provider := validProviderConfig(personenrichment.ProviderExa)
+	provider.TargetKeys = []string{"system:employment"}
+
+	profile, err := provider.Profile(catalog)
+	requirements.NoError(err)
+	requirements.Len(profile.Targets, 1)
+	assert.Equal(t, catalog.Targets[0], profile.Targets[0])
+	_, err = personenrichment.BuildExaOutputSchema(profile.Targets)
+	requirements.NoError(err)
+}
+
 func TestExaPeopleProviderProfileRejectsUnsupportedTargets(t *testing.T) {
 	provider := validProviderConfig(personenrichment.ProviderExa)
 	provider.TargetKeys = []string{"attribute:biography"}

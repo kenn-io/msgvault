@@ -230,6 +230,35 @@ func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *tes
 		personenrichment.ErrConsentRequired)
 }
 
+func TestPersonEnrichmentDispatchAuthorizationRejectsStaleIdentityRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "dispatch-stale-identity")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "dispatch-stale-identity-worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "e"))
+	require.NoError(err)
+
+	name := "Changed Work Person"
+	_, err = f.store.AddPersonNameContext(t.Context(), f.person.ID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: &name, OriginalValue: name,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+
+	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	require.NoError(err)
+	assert.Equal("terminal", stored.State)
+	work := f.work(t)
+	require.Len(work, 1)
+	assert.Nil(work[0].RunID)
+	assert.Nil(work[0].ActiveAttemptID)
+	assert.False(work[0].HasFreshTrigger)
+}
+
 func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

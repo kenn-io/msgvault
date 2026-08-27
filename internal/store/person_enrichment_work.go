@@ -962,11 +962,14 @@ func (s *Store) AuthorizeAttemptDispatch(
 	if token.AttemptID <= 0 {
 		return errors.New("person enrichment dispatch authorization requires an active attempt")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	staleRevision := false
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, token.WorkPersonID); err != nil {
+		currentRevision, err := lockPersonEnrichmentPersonTx(
+			ctx, tx, s.dialect, token.WorkPersonID)
+		if err != nil {
 			return err
 		}
 		if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
@@ -983,6 +986,50 @@ func (s *Store) AuthorizeAttemptDispatch(
 		}
 		if !active {
 			return personenrichment.ErrConsentRequired
+		}
+		var attemptRevision int64
+		if err := tx.QueryRowContext(ctx, `SELECT person_revision
+			FROM person_enrichment_attempts
+			WHERE id = ? AND run_id = ? AND person_id = ? AND profile_fingerprint = ?
+			  AND lease_owner = ? AND lease_fence = ? AND state = 'starting'`,
+			token.AttemptID, token.RunID, token.WorkPersonID, token.ProfileFingerprint,
+			token.Owner, token.Fence).Scan(&attemptRevision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStaleLease
+			}
+			return fmt.Errorf("load person enrichment dispatch revision: %w", err)
+		}
+		if attemptRevision != currentRevision {
+			now := s.personEnrichmentTime()
+			if err := s.putPersonEnrichmentWorkTx(ctx, tx, EnrichmentTriggerInput{
+				PersonID: token.WorkPersonID, ProfileFingerprint: token.ProfileFingerprint,
+				Kind:       personenrichment.TriggerIdentity,
+				Generation: "revision:" + strconv.FormatInt(currentRevision, 10),
+				DueAt:      now,
+			}); err != nil {
+				return err
+			}
+			if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect,
+				token.AttemptID, personenrichment.Cost{Currency: "USD"}, false, now); err != nil {
+				return err
+			}
+			result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+				SET state = 'terminal', completed_at = ?, failure_class = ?,
+				    next_action_at = NULL, lease_owner = NULL, lease_until = NULL
+				WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?
+				  AND state = 'starting'`, now, personenrichment.FailurePolicy,
+				token.AttemptID, token.RunID, token.Owner, token.Fence)
+			if err != nil {
+				return fmt.Errorf("terminalize stale person enrichment dispatch: %w", err)
+			}
+			if err := requireOneLeaseRow(result); err != nil {
+				return err
+			}
+			if err := settleTerminalEnrichmentWorkTx(ctx, tx, token, nil); err != nil {
+				return err
+			}
+			staleRevision = true
+			return nil
 		}
 		digests, err := s.loadPersonEnrichmentAttemptIdentifiersTx(ctx, tx, token.AttemptID)
 		if err != nil {
@@ -1001,6 +1048,10 @@ func (s *Store) AuthorizeAttemptDispatch(
 		}
 		return requireOneLeaseRow(result)
 	})
+	if err == nil && staleRevision {
+		return ErrStaleLease
+	}
+	return err
 }
 
 func (s *Store) SchedulePoll(

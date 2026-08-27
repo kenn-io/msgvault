@@ -290,9 +290,6 @@ func canonicalTarget(target personfacts.TargetDescriptor) personfacts.TargetDesc
 		return target.Choices[i].Label < target.Choices[j].Label
 	})
 	target.Fields = slices.Clone(target.Fields)
-	sort.Slice(target.Fields, func(i, j int) bool {
-		return target.Fields[i].Name < target.Fields[j].Name
-	})
 	return target
 }
 
