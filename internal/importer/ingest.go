@@ -34,14 +34,7 @@ func IngestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger,
 ) error {
-	parsed, parseErr := mime.Parse(raw)
-	if parseErr != nil {
-		errMsg := textutil.FirstLine(parseErr.Error())
-		parsed = &mime.Message{
-			Subject:  "(MIME parse error)",
-			BodyText: fmt.Sprintf("[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.", errMsg),
-		}
-	}
+	parsed, _ := mime.ParseWithRecovery(raw, "(MIME parse error)")
 
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())

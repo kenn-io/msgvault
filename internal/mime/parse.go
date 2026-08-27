@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	stdmime "mime"
+	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -16,9 +18,10 @@ import (
 )
 
 const (
-	defaultContentType   = "text/plain"
-	fallbackContentType  = "application/octet-stream"
-	malformedContentType = "application/x-msgvault-malformed"
+	defaultContentType     = "text/plain"
+	fallbackContentType    = "application/octet-stream"
+	malformedContentType   = "application/x-msgvault-malformed"
+	maxRecoveryHeaderBytes = 256 * 1024
 )
 
 var envelopeParser = enmime.NewParser(
@@ -127,6 +130,157 @@ func Parse(raw []byte) (*Message, error) {
 	}
 
 	return msg, nil
+}
+
+// ParseWithRecovery parses a message and salvages its top-level headers when
+// malformed MIME structure prevents full envelope parsing. Body content and
+// attachments remain unavailable after a fatal parse error.
+func ParseWithRecovery(raw []byte, fallbackSubject string) (*Message, error) {
+	msg, err := Parse(raw)
+	if err == nil {
+		return msg, nil
+	}
+
+	msg = salvageHeaders(raw)
+	if msg.Subject == "" {
+		msg.Subject = fallbackSubject
+	}
+	errMsg, _, _ := strings.Cut(err.Error(), "\n")
+	msg.BodyText = fmt.Sprintf(
+		"[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.",
+		errMsg,
+	)
+	return msg, err
+}
+
+func salvageHeaders(raw []byte) *Message {
+	headers := tokenizeHeaders(raw)
+	msg := &Message{
+		Subject:   decodeHeader(firstHeader(headers, "subject")),
+		MessageID: firstHeader(headers, "message-id"),
+		InReplyTo: firstHeader(headers, "in-reply-to"),
+	}
+
+	if dateHeader := firstHeader(headers, "date"); dateHeader != "" {
+		msg.RawDateHeader = dateHeader
+		msg.Date = parseDate(dateHeader)
+	}
+	msg.From = parseSalvagedAddressList(joinHeaders(headers, "from"))
+	msg.To = parseSalvagedAddressList(joinHeaders(headers, "to"))
+	msg.Cc = parseSalvagedAddressList(joinHeaders(headers, "cc"))
+	msg.Bcc = parseSalvagedAddressList(joinHeaders(headers, "bcc"))
+	msg.ReplyTo = parseSalvagedAddressList(joinHeaders(headers, "reply-to"))
+	msg.References = parseReferences(firstHeader(headers, "references"))
+	return msg
+}
+
+func tokenizeHeaders(raw []byte) map[string][]string {
+	truncated := len(raw) > maxRecoveryHeaderBytes
+	if truncated {
+		raw = raw[:maxRecoveryHeaderBytes]
+	}
+
+	type header struct {
+		name  string
+		value []byte
+	}
+
+	var parsed []header
+	current := -1
+	for len(raw) > 0 {
+		lineEnd := bytes.IndexByte(raw, '\n')
+		var line []byte
+		if lineEnd < 0 {
+			if truncated {
+				break
+			}
+			line, raw = raw, nil
+		} else {
+			line, raw = raw[:lineEnd], raw[lineEnd+1:]
+		}
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		if len(bytes.TrimSpace(line)) == 0 {
+			break
+		}
+
+		if line[0] == ' ' || line[0] == '\t' {
+			if current >= 0 {
+				parsed[current].value = append(parsed[current].value, ' ')
+				parsed[current].value = append(parsed[current].value, bytes.TrimSpace(line)...)
+			}
+			continue
+		}
+
+		colon := bytes.IndexByte(line, ':')
+		if colon <= 0 || !validHeaderName(line[:colon]) {
+			current = -1
+			continue
+		}
+		current = len(parsed)
+		parsed = append(parsed, header{
+			name:  strings.ToLower(string(line[:colon])),
+			value: append([]byte(nil), bytes.TrimSpace(line[colon+1:])...),
+		})
+	}
+
+	headers := make(map[string][]string)
+	for _, header := range parsed {
+		headers[header.name] = append(headers[header.name], string(header.value))
+	}
+	return headers
+}
+
+func validHeaderName(name []byte) bool {
+	for _, b := range name {
+		if b < 33 || b > 126 || b == ':' {
+			return false
+		}
+	}
+	return len(name) > 0
+}
+
+func firstHeader(headers map[string][]string, name string) string {
+	values := headers[name]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func joinHeaders(headers map[string][]string, name string) string {
+	return strings.Join(headers[name], ", ")
+}
+
+func decodeHeader(value string) string {
+	decoded, err := new(stdmime.WordDecoder).DecodeHeader(value)
+	if err != nil {
+		return value
+	}
+	return decoded
+}
+
+func parseSalvagedAddressList(value string) []Address {
+	if value == "" {
+		return nil
+	}
+	list, err := mail.ParseAddressList(value)
+	if err != nil {
+		return fallbackAddressList(value)
+	}
+
+	addresses := make([]Address, 0, len(list))
+	for _, addr := range list {
+		if addr.Address == "" {
+			continue
+		}
+		email := strings.ToLower(addr.Address)
+		addresses = append(addresses, Address{
+			Name:   addr.Name,
+			Email:  email,
+			Domain: extractDomain(email),
+		})
+	}
+	return addresses
 }
 
 func parseMediaTypeLenient(value string) (

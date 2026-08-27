@@ -1261,20 +1261,16 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		}
 	}
 
-	// Parse MIME - on failure, store with placeholder body
+	// Parse MIME - on failure, salvage headers and store a placeholder body
 	// (threading override for IMAP happens after parsing below)
-	parsed, parseErr := mime.Parse(raw.Raw)
+	parsed, parseErr := mime.ParseWithRecovery(
+		raw.Raw,
+		extractSubjectFromSnippet(raw.Snippet),
+	)
 	if parseErr != nil {
 		// Extract just the first line of error (enmime includes full stack traces)
 		errMsg := textutil.FirstLine(parseErr.Error())
-
-		// Create placeholder message for MIME parse failures
-		// This preserves the raw data for potential future re-parsing
-		parsed = &mime.Message{
-			Subject:  extractSubjectFromSnippet(raw.Snippet),
-			BodyText: fmt.Sprintf("[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.", errMsg),
-		}
-		s.logger.Warn("MIME parse failed, storing with placeholder",
+		s.logger.Warn("MIME parse failed, storing partial message",
 			"id", raw.ID,
 			"error", errMsg)
 	}

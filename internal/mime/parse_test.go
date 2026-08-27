@@ -1,6 +1,7 @@
 package mime
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +166,117 @@ func TestParse_InvalidMultipartContentTypeWithBoundaryRemainsFatal(t *testing.T)
 	msg, err := Parse(raw)
 	assert.Nil(t, msg)
 	require.ErrorContains(t, err, "expected slash after first token")
+}
+
+func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: Sender Example <sender@example.test>\r\n" +
+		"To: Recipient Example <recipient@example.test>\r\n" +
+		"Cc: Copy Example <copy@example.test>\r\n" +
+		"Subject: =?UTF-8?Q?Recovered_=E2=9C=93?=\r\n" +
+		"Date: Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
+		"Message-ID: <message@example.test>\r\n" +
+		"In-Reply-To: <parent@example.test>\r\n" +
+		"References: <root@example.test>\r\n" +
+		"\t<parent@example.test>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer--\r\n")
+
+	msg, err := ParseWithRecovery(raw, "snippet fallback")
+	require.ErrorContains(err, "expected slash after first token")
+	require.NotNil(msg)
+	assert.Equal("Recovered ✓", msg.Subject)
+	assert.Equal(time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC), msg.Date)
+	assert.Equal("Tue, 02 Jan 2024 15:04:05 +0000", msg.RawDateHeader)
+	assert.Equal([]Address{{
+		Name: "Sender Example", Email: "sender@example.test", Domain: "example.test",
+	}}, msg.From)
+	assert.Equal([]Address{{
+		Name: "Recipient Example", Email: "recipient@example.test", Domain: "example.test",
+	}}, msg.To)
+	assert.Equal([]Address{{
+		Name: "Copy Example", Email: "copy@example.test", Domain: "example.test",
+	}}, msg.Cc)
+	assert.Equal("<message@example.test>", msg.MessageID)
+	assert.Equal("<parent@example.test>", msg.InReplyTo)
+	assert.Equal([]string{"root@example.test", "parent@example.test"}, msg.References)
+	assert.Contains(msg.BodyText, "MIME parsing failed")
+	assert.Contains(msg.BodyText, "Raw MIME data is preserved")
+	assert.Empty(msg.BodyHTML)
+	assert.Empty(msg.Attachments)
+}
+
+func TestParseWithRecovery_UsesFallbackWithoutRecoverableHeaders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	msg, err := ParseWithRecovery(
+		[]byte("not valid mime at all - just garbage"),
+		"snippet fallback",
+	)
+
+	require.Error(err)
+	require.NotNil(msg)
+	assert.Equal("snippet fallback", msg.Subject)
+	assert.Empty(msg.From)
+	assert.True(msg.Date.IsZero())
+	assert.Contains(msg.BodyText, "MIME parsing failed")
+}
+
+func TestParseWithRecovery_DoesNotSalvageHeadersFromBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"Subject: body spoof\r\n" +
+		"From: body@example.test\r\n")
+
+	msg, err := ParseWithRecovery(raw, "snippet fallback")
+
+	require.Error(err)
+	require.NotNil(msg)
+	assert.Equal("snippet fallback", msg.Subject)
+	assert.Empty(msg.From)
+}
+
+func TestParseWithRecovery_SkipsMalformedTopLevelHeaderLine(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("this is not a header\r\n" +
+		"From: sender@example.test\r\n" +
+		"Subject: recovered after malformed line\r\n\r\n" +
+		"body\r\n")
+
+	msg, err := ParseWithRecovery(raw, "snippet fallback")
+
+	require.Error(err)
+	require.NotNil(msg)
+	assert.Equal("recovered after malformed line", msg.Subject)
+	assert.Equal([]Address{{
+		Email: "sender@example.test", Domain: "example.test",
+	}}, msg.From)
+}
+
+func TestTokenizeHeaders_FoldedHeaderUsesBoundedAllocations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var raw strings.Builder
+	raw.WriteString("References: <root@example.test>\r\n")
+	for range 4096 {
+		raw.WriteString("\t<next@example.test>\r\n")
+	}
+	raw.WriteString("\r\n")
+	rawBytes := []byte(raw.String())
+
+	headers := tokenizeHeaders(rawBytes)
+	require.Len(headers["references"], 1)
+	assert.Contains(headers["references"][0], "<root@example.test> <next@example.test>")
+
+	allocations := testing.AllocsPerRun(1, func() {
+		tokenizeHeaders(rawBytes)
+	})
+	assert.Less(allocations, 100.0)
 }
 
 // assertAddress checks that got has exactly wantLen elements and got[idx] has the expected email and (optionally) domain.

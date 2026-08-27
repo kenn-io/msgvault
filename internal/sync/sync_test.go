@@ -2246,6 +2246,54 @@ func TestFullSyncWithMIMEParseError(t *testing.T) {
 	assertRawDataExists(t, env.Store, "msg-bad")
 }
 
+func TestFullSyncWithFatalMIMEParseSalvagesHeaders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	raw := []byte("From: Sender Example <sender@example.test>\r\n" +
+		"To: Recipient Example <recipient@example.test>\r\n" +
+		"Subject: Recovered sync\r\n" +
+		"Date: Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
+		"Message-ID: <recovered-sync@example.test>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer--\r\n")
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.AddMessage("msg-recovered", raw, []string{"INBOX"})
+
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
+	assertBodyContains(t, env.Store, "msg-recovered", "MIME parsing failed")
+	assertRawDataExists(t, env.Store, "msg-recovered")
+
+	var subject, sender string
+	var sentAt time.Time
+	err := env.Store.DB().QueryRow(
+		`SELECT m.subject, m.sent_at, p.email_address
+		 FROM messages m
+		 JOIN participants p ON p.id = m.sender_id
+		 WHERE m.source_message_id = ?`,
+		"msg-recovered",
+	).Scan(&subject, &sentAt, &sender)
+	require.NoError(err, "query recovered message")
+	assert.Equal("Recovered sync", subject)
+	assert.Equal(time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC), sentAt.UTC())
+	assert.Equal("sender@example.test", sender)
+
+	var recipients int
+	err = env.Store.DB().QueryRow(
+		`SELECT COUNT(*)
+		 FROM message_recipients mr
+		 JOIN messages m ON m.id = mr.message_id
+		 WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`,
+		"msg-recovered",
+	).Scan(&recipients)
+	require.NoError(err, "query recovered recipients")
+	assert.Equal(1, recipients)
+}
+
 func TestFullSyncMessageFetchError(t *testing.T) {
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2

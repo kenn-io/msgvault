@@ -125,6 +125,62 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 	require.NoError(rows2.Err(), "conversations rows")
 }
 
+func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "init schema")
+
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	require.NoError(err, "get/create source")
+	raw := []byte("From: Sender Example <sender@example.test>\r\n" +
+		"To: Owner Example <owner@example.test>\r\n" +
+		"Subject: Recovered import\r\n" +
+		"Date: Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
+		"Message-ID: <recovered-import@example.test>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer--\r\n")
+
+	err = IngestRawMessage(
+		context.Background(), st,
+		src.ID, "owner@example.test", "",
+		nil, "source-msg-recovery", "fakehash",
+		raw, time.Time{}, slog.Default(),
+	)
+	require.NoError(err, "IngestRawMessage")
+
+	var subject, body, sender string
+	var sentAt time.Time
+	err = st.DB().QueryRow(
+		`SELECT m.subject, mb.body_text, m.sent_at, p.email_address
+		 FROM messages m
+		 JOIN message_bodies mb ON mb.message_id = m.id
+		 JOIN participants p ON p.id = m.sender_id
+		 WHERE m.source_message_id = ?`,
+		"source-msg-recovery",
+	).Scan(&subject, &body, &sentAt, &sender)
+	require.NoError(err, "query recovered message")
+	assert.Equal("Recovered import", subject)
+	assert.Contains(body, "MIME parsing failed")
+	assert.Equal(time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC), sentAt.UTC())
+	assert.Equal("sender@example.test", sender)
+
+	var recipients int
+	err = st.DB().QueryRow(
+		`SELECT COUNT(*)
+		 FROM message_recipients mr
+		 JOIN messages m ON m.id = mr.message_id
+		 WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`,
+		"source-msg-recovery",
+	).Scan(&recipients)
+	require.NoError(err, "query recovered recipients")
+	assert.Equal(1, recipients)
+}
+
 func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
