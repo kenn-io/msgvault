@@ -189,6 +189,9 @@ type SearchCLIQuery struct {
 	// MessageType Message type filter; repeat or comma-separate for multiple values
 	MessageType *string `json:"message_type,omitempty"`
 
+	// DeletionScope Source deletion scope: active (default), deleted, or any
+	DeletionScope *string `json:"deletion_scope,omitempty"`
+
 	// Account Restrict to one account/source
 	Account *string `json:"account,omitempty"`
 

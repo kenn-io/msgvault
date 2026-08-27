@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
@@ -64,6 +64,107 @@ func TestParsePreservesAuthoritativeAttachmentEvidence(t *testing.T) {
 	assert.Empty(ambiguous.Disposition)
 	assert.False(ambiguous.IsInline)
 	assert.Equal("mime:4", ambiguous.PartKey)
+}
+
+func TestParse_InvalidPartContentType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: Statement ready\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nAttached is a synthetic statement.\r\n" +
+		"--outer\r\nContent-Type: cannot open (No such file or directory)\r\n" +
+		"Content-Disposition: attachment; filename=statement.pdf\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nAAH+/w==\r\n" +
+		"--outer--\r\n")
+
+	msg, err := Parse(raw)
+	require.NoError(err)
+	assert.Equal("Statement ready", msg.Subject)
+	assert.Equal("Attached is a synthetic statement.", msg.BodyText)
+	require.Len(msg.Attachments, 1)
+	assert.Equal("statement.pdf", msg.Attachments[0].Filename)
+	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Equal([]byte{0, 1, 254, 255}, msg.Attachments[0].Content)
+}
+
+func TestParse_InvalidTextPartContentTypeDefaultsToBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: malformed body type\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text plain\r\n\r\nsearchable body\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	assert.Equal("searchable body", msg.BodyText)
+	assert.Empty(msg.Attachments)
+	require.Len(msg.Errors, 1)
+	assert.Contains(msg.Errors[0], "invalid Content-Type treated as text/plain")
+}
+
+func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: name parameter\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer\r\nContent-Type: invalid value; name=named.pdf\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nc3ludGhldGljIHBkZiBieXRlcw==\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	require.Len(msg.Attachments, 1)
+	assert.Equal("named.pdf", msg.Attachments[0].Filename)
+	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Empty(msg.Attachments[0].Disposition)
+	assert.False(msg.Attachments[0].IsInline)
+	assert.Equal([]byte("synthetic pdf bytes"), msg.Attachments[0].Content)
+}
+
+func TestParse_InvalidPartContentTypePreservesContentIDAsInline(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: inline resource\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/related; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:image-1\">\r\n" +
+		"--outer\r\nContent-Type: invalid value\r\n" +
+		"Content-ID: <image-1>\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nAAH+/w==\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	require.Len(msg.Attachments, 1)
+	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Equal("image-1", msg.Attachments[0].ContentID)
+	assert.Empty(msg.Attachments[0].Disposition)
+	assert.True(msg.Attachments[0].IsInline)
+	assert.Equal([]byte{0, 1, 254, 255}, msg.Attachments[0].Content)
+}
+
+func TestParse_InvalidMultipartContentTypeWithBoundaryRemainsFatal(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: malformed multipart\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--outer--\r\n")
+
+	msg, err := Parse(raw)
+	assert.Nil(t, msg)
+	require.ErrorContains(t, err, "expected slash after first token")
 }
 
 // assertAddress checks that got has exactly wantLen elements and got[idx] has the expected email and (optionally) domain.

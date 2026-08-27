@@ -582,6 +582,22 @@ func TestHideDeletedFromSourceStats(t *testing.T) {
 	assert.Equal(t, int64(4), hiddenStats.MessageCount, "messages (deleted hidden)")
 }
 
+// TestHideDeletedFromSourceStatsWithSearchQuery pins that a SearchQuery keeps
+// the same source-deletion visibility as plain stats: only
+// HideDeletedFromSource gates it, never a deletion scope the caller never set.
+func TestHideDeletedFromSourceStatsWithSearchQuery(t *testing.T) {
+	env := newTestEnv(t)
+
+	// "Hello" matches messages 1 and 2; mark message 1 source-deleted.
+	env.MarkDeletedByID(1)
+
+	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "Hello"})
+	assert.Equal(t, int64(2), stats.MessageCount, "search stats (deleted included)")
+
+	hiddenStats := env.MustGetTotalStats(StatsOptions{SearchQuery: "Hello", HideDeletedFromSource: true})
+	assert.Equal(t, int64(1), hiddenStats.MessageCount, "search stats (deleted hidden)")
+}
+
 func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)

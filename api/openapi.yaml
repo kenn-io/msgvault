@@ -11245,7 +11245,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.11.0
+  version: 2.12.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -13847,6 +13847,11 @@ paths:
         - description: Message type filter; repeat or comma-separate for multiple values
           in: query
           name: message_type
+          schema:
+            type: string
+        - description: "Source deletion scope: active (default), deleted, or any"
+          in: query
+          name: deletion_scope
           schema:
             type: string
         - description: Restrict to one account/source

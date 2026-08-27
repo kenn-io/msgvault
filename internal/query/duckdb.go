@@ -2033,9 +2033,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	var args []any
 	var joins []string
 
-	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
-	// q.HideDeleted via the helper.
-	conditions = append(conditions, store.LiveMessagesWhere("m", q.HideDeleted))
+	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
 
 	// From filter
 	if len(q.FromAddrs) > 0 {

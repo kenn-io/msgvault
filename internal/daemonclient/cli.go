@@ -157,12 +157,13 @@ type CLIInitDB struct {
 }
 
 type CLISearchRequest struct {
-	Query        string
-	Account      string
-	Collection   string
-	MessageTypes []string
-	Limit        int
-	Offset       int
+	Query         string
+	Account       string
+	Collection    string
+	DeletionScope string
+	MessageTypes  []string
+	Limit         int
+	Offset        int
 }
 
 type CLISearch struct {
@@ -437,7 +438,10 @@ func (c *Client) RunCLISync(
 	}, output)
 }
 
-const sourceIDSyncMinAPISchemaVersion = "2.4.0"
+const (
+	sourceIDSyncMinAPISchemaVersion   = "2.4.0"
+	searchDeletionMinAPISchemaVersion = "2.12.0"
+)
 
 func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
 	version, err := c.daemonAPISchemaVersion(ctx)
@@ -811,15 +815,28 @@ func (c *Client) GetCLIStats(
 }
 
 func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISearch, error) {
+	if req.DeletionScope != "" {
+		version, err := c.daemonAPISchemaVersion(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("check daemon search deletion-scope capability: %w", err)
+		}
+		if !apiSchemaVersionAtLeast(version, searchDeletionMinAPISchemaVersion) {
+			return nil, fmt.Errorf(
+				"search deletion scope requires daemon API schema %s or newer (daemon reports %q)",
+				searchDeletionMinAPISchemaVersion, version,
+			)
+		}
+	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchCLIResp, error) {
 		return client.SearchCLIWithResponse(ctx, &generated.SearchCLIRequestOptions{
 			Query: &generated.SearchCLIQuery{
-				Q:           req.Query,
-				Account:     optionalString(req.Account),
-				Collection:  optionalString(req.Collection),
-				MessageType: optionalMessageTypes(req.MessageTypes),
-				Limit:       optionalPositiveInt64(req.Limit),
-				Offset:      optionalPositiveInt64(req.Offset),
+				Q:             req.Query,
+				Account:       optionalString(req.Account),
+				Collection:    optionalString(req.Collection),
+				DeletionScope: optionalString(req.DeletionScope),
+				MessageType:   optionalMessageTypes(req.MessageTypes),
+				Limit:         optionalPositiveInt64(req.Limit),
+				Offset:        optionalPositiveInt64(req.Offset),
 			},
 		})
 	})

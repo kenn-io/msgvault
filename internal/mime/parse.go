@@ -11,7 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
+	"github.com/jhillyerd/enmime/v2/mediatype"
+)
+
+const (
+	defaultContentType   = "text/plain"
+	fallbackContentType  = "application/octet-stream"
+	malformedContentType = "application/x-msgvault-malformed"
+)
+
+var envelopeParser = enmime.NewParser(
+	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
 )
 
 // Message represents a parsed email message.
@@ -59,9 +70,18 @@ type Attachment struct {
 
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
-	env, err := enmime.ReadEnvelope(bytes.NewReader(raw))
+	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("read MIME envelope: Failed to ReadParts: %w", err)
+	}
+	normalizeMalformedContentTypes(root)
+
+	env, err := envelopeParser.EnvelopeFromPart(root)
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: %w", err)
+	}
+	if err := env.GatherNestedErrors(); err != nil {
+		return nil, fmt.Errorf("read MIME envelope: gather nested errors: %w", err)
 	}
 
 	msg := &Message{
@@ -99,6 +119,7 @@ func Parse(raw []byte) (*Message, error) {
 	// explicit Content-Disposition: attachment
 	msg.Attachments = append(msg.Attachments, processParts(env.Attachments, false)...)
 	msg.Attachments = append(msg.Attachments, processParts(env.Inlines, true)...)
+	msg.Attachments = append(msg.Attachments, processMalformedOtherParts(env.OtherParts)...)
 
 	// Collect any parsing errors
 	for _, e := range env.Errors {
@@ -106,6 +127,88 @@ func Parse(raw []byte) (*Message, error) {
 	}
 
 	return msg, nil
+}
+
+func parseMediaTypeLenient(value string) (
+	mediaType string,
+	params map[string]string,
+	invalidParams []string,
+	err error,
+) {
+	mediaType, params, invalidParams, err = mediatype.Parse(value)
+	if err == nil {
+		return mediaType, params, invalidParams, nil
+	}
+
+	params = salvageMediaTypeParams(value)
+	if looksLikeMultipart(value) {
+		return "", nil, nil, fmt.Errorf("parse media type: %w", err)
+	}
+	delete(params, "boundary")
+
+	return malformedContentType, params, nil, nil
+}
+
+func salvageMediaTypeParams(value string) map[string]string {
+	separator := strings.IndexByte(value, ';')
+	if separator < 0 {
+		return nil
+	}
+
+	_, params, _, err := mediatype.Parse(fallbackContentType + value[separator:])
+	if err != nil {
+		return nil
+	}
+	return params
+}
+
+func looksLikeMultipart(value string) bool {
+	baseType, _, _ := strings.Cut(value, ";")
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(baseType)), "multipart")
+}
+
+// normalizeMalformedContentTypes applies the RFC 2045 default after enmime has
+// parsed the headers that can identify a binary part. Keep the sentinel for
+// those parts so EnvelopeFromPart does not select them as a text body.
+func normalizeMalformedContentTypes(root *enmime.Part) {
+	parts := root.BreadthMatchAll(func(*enmime.Part) bool { return true })
+	for _, part := range parts {
+		if part.Disposition == malformedContentType {
+			part.Disposition = ""
+		}
+		if part.ContentType != malformedContentType {
+			continue
+		}
+
+		recoveredType := fallbackContentType
+		if part.Disposition == "" && part.FileName == "" && part.ContentID == "" {
+			recoveredType = defaultContentType
+			part.ContentType = defaultContentType
+		}
+
+		part.Errors = append(part.Errors, &enmime.Error{
+			Name:   enmime.ErrorMalformedHeader,
+			Detail: "invalid Content-Type treated as " + recoveredType,
+		})
+	}
+}
+
+// processMalformedOtherParts recovers malformed binary parts that enmime did
+// not classify from Content-Disposition. A filename identifies an attachment,
+// while a Content-ID identifies an inline resource. Neither changes the
+// sender's original disposition metadata.
+func processMalformedOtherParts(parts []*enmime.Part) []Attachment {
+	var result []Attachment
+	for _, part := range parts {
+		if part.ContentType != malformedContentType {
+			continue
+		}
+		if part.FileName == "" && part.ContentID == "" {
+			continue
+		}
+		result = append(result, makeAttachment(part, part.ContentID != ""))
+	}
+	return result
 }
 
 // parseAddressList parses an address header using enmime's AddressList method.
@@ -310,6 +413,10 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 	content := part.Content
 	hash := sha256.Sum256(content)
 	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
+	contentType := part.ContentType
+	if contentType == malformedContentType {
+		contentType = fallbackContentType
+	}
 	partKey := ""
 	if part.PartID != "" {
 		partKey = "mime:" + part.PartID
@@ -317,7 +424,7 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 
 	return Attachment{
 		Filename:    part.FileName,
-		ContentType: part.ContentType,
+		ContentType: contentType,
 		ContentID:   part.ContentID,
 		Disposition: disposition,
 		PartKey:     partKey,

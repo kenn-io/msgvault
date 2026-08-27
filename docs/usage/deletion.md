@@ -8,7 +8,9 @@ msgvault supports a staged deletion workflow: select messages in the Web UI or
 TUI, or stage them via an AI assistant; review what will be deleted; then
 execute against Gmail or your IMAP provider. **Deletion only removes messages
 from the remote mail server. Your local archive is never modified.** This means
-you can always search, browse, and export deleted messages from your local copy.
+you can always browse and export deleted messages from your local copy, or find
+them with `msgvault search <query> --deletion-scope deleted`. Use
+`--deletion-scope any` to search active and source-deleted messages together.
 
 ## Staging in the Web UI
 

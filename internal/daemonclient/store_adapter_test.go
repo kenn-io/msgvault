@@ -1138,6 +1138,50 @@ func TestGetCLISearch_Success(t *testing.T) {
 	assert.Equal(1, resp.ScopeSourceCount, "ScopeSourceCount")
 }
 
+func TestGetCLISearch_DeletionScopeRequiresCompatibleDaemon(t *testing.T) {
+	tests := []struct {
+		name          string
+		schemaVersion string
+		deletionScope string
+		wantErr       bool
+		wantSearches  int
+	}{
+		{name: "older daemon rejects active", schemaVersion: "2.11.0", deletionScope: "active", wantErr: true},
+		{name: "older daemon rejects deleted", schemaVersion: "2.11.0", deletionScope: "deleted", wantErr: true},
+		{name: "compatible daemon accepts active", schemaVersion: "2.12.0", deletionScope: "active", wantSearches: 1},
+		{name: "compatible daemon accepts deleted", schemaVersion: "2.12.0", deletionScope: "deleted", wantSearches: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			searches := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tt.schemaVersion)
+					return
+				}
+				searches++
+				assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
+				assert.Equal(t, tt.deletionScope, r.URL.Query().Get("deletion_scope"))
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			client := newTestStore(srv, "")
+			_, err := client.GetCLISearch(context.Background(), CLISearchRequest{
+				Query: "scope", DeletionScope: tt.deletionScope,
+			})
+			if tt.wantErr {
+				require.ErrorContains(t, err, "requires daemon API schema 2.12.0")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantSearches, searches,
+				"an incompatible daemon must not receive the scoped search")
+		})
+	}
+}
+
 func TestGetCLIHybridSearch_Success(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

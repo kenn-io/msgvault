@@ -2135,6 +2135,64 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	assert.Empty(searchIndexState(), "state once the index is complete")
 }
 
+func TestHandleCLISearchDeletionScope(t *testing.T) {
+	tests := []struct {
+		name      string
+		rawScope  string
+		wantScope search.DeletionScope
+	}{
+		{name: "default_active", wantScope: search.DeletionScopeActive},
+		{name: "explicit_active", rawScope: "active", wantScope: search.DeletionScopeActive},
+		{name: "deleted", rawScope: "deleted", wantScope: search.DeletionScopeDeleted},
+		{name: "any", rawScope: "any", wantScope: search.DeletionScopeAny},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotScope search.DeletionScope
+			engine := &querytest.MockEngine{
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					gotScope = q.DeletionScope
+					return nil, nil
+				},
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
+			})
+			srv.ftsIndexComplete.Store(true)
+			target := "/api/v1/cli/search?q=scope"
+			if tt.rawScope != "" {
+				target += "&deletion_scope=" + tt.rawScope
+			}
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
+			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+			assert.Equal(t, tt.wantScope, gotScope)
+		})
+	}
+}
+
+func TestHandleCLISearchRejectsInvalidDeletionScope(t *testing.T) {
+	called := false
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
+	})
+	srv.ftsIndexComplete.Store(true)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet,
+		"/api/v1/cli/search?q=scope&deletion_scope=bogus", nil))
+
+	assert.Equal(t, http.StatusBadRequest, resp.Code, resp.Body.String())
+	assert.False(t, called, "invalid scope must be rejected before search")
+}
+
 // TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild reproduces the
 // probe/rebuild race (roborev finding on f91f6cb): the ensure worker's
 // completeness probe runs outside the operation gate, so a rebuild-fts can
@@ -5696,6 +5754,35 @@ func TestHandleDeepSearch(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(t, "agenda", resp["query"], "query")
+}
+
+func TestHandleDeepSearchPreservesHideDeletedCompatibility(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantScope search.DeletionScope
+	}{
+		{name: "omitted includes retained source deletions", query: "", wantScope: search.DeletionScopeAny},
+		{name: "false includes retained source deletions", query: "&hide_deleted=false", wantScope: search.DeletionScopeAny},
+		{name: "true keeps active only", query: "&hide_deleted=true", wantScope: search.DeletionScopeActive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotScope search.DeletionScope
+			engine := &querytest.MockEngine{
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					gotScope = q.DeletionScope
+					return nil, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet,
+				"/api/v1/search/deep?q=agenda"+tt.query, nil))
+			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+			assert.Equal(t, tt.wantScope, gotScope)
+		})
+	}
 }
 
 type bodySearchTestEngine struct {

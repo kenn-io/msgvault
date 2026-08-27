@@ -426,32 +426,91 @@ func TestDuckDBEngine_DeletedMessagesIncluded(t *testing.T) {
 	assert.NotNil(msg, "expected message 2")
 }
 
-// TestDuckDBEngine_SearchHideDeleted verifies that Search (deep FTS path)
-// respects search.Query.HideDeleted via the sqliteEngine delegation.
-func TestDuckDBEngine_SearchHideDeleted(t *testing.T) {
+// TestDuckDBEngine_SearchDeletionScope verifies the sqliteEngine delegation
+// applies the same source-deletion scope as the native SQLite engine.
+func TestDuckDBEngine_SearchDeletionScope(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	// Mark message 1 as deleted
 	_, err := env.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = 1")
 	require.NoError(err, "mark deleted")
+	_, err = env.DB.Exec("UPDATE messages SET deleted_at = datetime('now') WHERE id = 2")
+	require.NoError(err, "mark dedup-hidden")
 
 	engine, err := NewDuckDBEngine("", "", env.DB)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx := context.Background()
+	assertSearchDeletionScopes(t, engine,
+		[]int64{3, 4, 5}, []int64{1}, []int64{1, 3, 4, 5})
+}
 
-	// Search without HideDeleted: all 5 messages
-	all, err := engine.Search(ctx, &search.Query{}, 100, 0)
-	require.NoError(err, "Search")
-	assert.Len(all, 5, "Search without HideDeleted")
+// TestDuckDBEngine_SearchDeletionScopeSQLiteScanner exercises the alternate
+// DuckDB sqlite_scanner path instead of the direct SQLite delegation.
+func TestDuckDBEngine_SearchDeletionScopeSQLiteScanner(t *testing.T) {
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "scope.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	schema, err := os.ReadFile("../store/schema.sql")
+	require.NoError(err, "read schema")
+	_, err = db.Exec(string(schema))
+	require.NoError(err, "create schema")
+	_, err = db.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'scope@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'scope-thread', 'email_thread', 'Scope');
+		INSERT INTO messages (
+			id, conversation_id, source_id, source_message_id, message_type,
+			sent_at, subject, snippet, size_estimate, has_attachments, attachment_count,
+			deleted_at, deleted_from_source_at
+		) VALUES
+			(1, 1, 1, 'scope-deleted', 'email', '2024-04-10 10:00:00', 'scope needle', '', 100, 0, 0, NULL, '2024-04-12 10:00:00'),
+			(2, 1, 1, 'scope-dedup', 'email', '2024-04-11 10:00:00', 'scope needle', '', 100, 0, 0, '2024-04-12 10:00:00', NULL),
+			(3, 1, 1, 'scope-live', 'email', '2024-04-12 10:00:00', 'scope needle', '', 100, 0, 0, NULL, NULL);
+	`)
+	require.NoError(err, "seed sqlite")
+	require.NoError(db.Close(), "close sqlite")
 
-	// Search with HideDeleted: 4 messages
-	hidden, err := engine.Search(ctx, &search.Query{HideDeleted: true}, 100, 0)
-	require.NoError(err, "Search(HideDeleted)")
-	assert.Len(hidden, 4, "Search with HideDeleted")
+	engine, err := NewDuckDBEngine("", dbPath, nil)
+	require.NoError(err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+	if !engine.hasSQLite() {
+		t.Skip("DuckDB sqlite_scanner extension unavailable")
+	}
+
+	assertSearchDeletionScopes(t, engine, []int64{3}, []int64{1}, []int64{1, 3})
+}
+
+func assertSearchDeletionScopes(t *testing.T, engine Engine, activeIDs, deletedIDs, anyIDs []int64) {
+	t.Helper()
+	tests := []struct {
+		name        string
+		scope       search.DeletionScope
+		hideDeleted bool
+		wantIDs     []int64
+	}{
+		{name: "zero_value_keeps_hide_deleted_off", wantIDs: anyIDs},
+		{name: "zero_value_keeps_hide_deleted_on", hideDeleted: true, wantIDs: activeIDs},
+		{name: "active", scope: search.DeletionScopeActive, wantIDs: activeIDs},
+		{name: "deleted", scope: search.DeletionScopeDeleted, wantIDs: deletedIDs},
+		{name: "any", scope: search.DeletionScopeAny, wantIDs: anyIDs},
+		{name: "unknown_fails_closed_to_active", scope: search.DeletionScope("bogus"), wantIDs: activeIDs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := engine.Search(context.Background(), &search.Query{
+				DeletionScope: tt.scope,
+				HideDeleted:   tt.hideDeleted,
+			}, 100, 0)
+			require.NoError(t, err)
+			gotIDs := make([]int64, 0, len(results))
+			for _, result := range results {
+				gotIDs = append(gotIDs, result.ID)
+			}
+			require.ElementsMatch(t, tt.wantIDs, gotIDs)
+		})
+	}
 }
 
 // TestDuckDBEngine_AggregateByRecipient verifies that recipient aggregation

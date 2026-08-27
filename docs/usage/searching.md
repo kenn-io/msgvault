@@ -94,6 +94,28 @@ The two flags are mutually exclusive. Collection filters work in full-text, vect
 
 SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/architecture/search-ranking/).
 
+## Source-Deleted Messages
+
+Search excludes messages deleted from their source account by default. Full-text
+search can select that retained local history explicitly:
+
+```bash
+# Only messages deleted from their source account
+msgvault search "quarterly report" --deletion-scope deleted
+
+# Active and source-deleted messages
+msgvault search "quarterly report" --deletion-scope any
+```
+
+The accepted values are `active` (the default), `deleted`, and `any`. This scope
+applies to source deletion (`deleted_from_source_at`); rows hidden internally by
+deduplication are never returned. It is available only with `--mode fts` because
+the vector index intentionally covers active messages only. Vector and hybrid
+search reject non-active deletion scopes instead of returning incomplete results.
+
+HTTP clients can pass the same values as `deletion_scope` on
+`GET /api/v1/cli/search`.
+
 ## Filtering by Message Type
 
 Archives can hold more than email — Google Calendar events, Microsoft Teams

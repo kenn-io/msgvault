@@ -618,6 +618,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryIntegerParam("offset", "Zero-based row offset"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
+			queryStringParam("deletion_scope", "Source deletion scope: active (default), deleted, or any", false),
 		}, scopeParams()...)
 	case "searchDocuments":
 		return []*huma.Param{
