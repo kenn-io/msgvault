@@ -120,10 +120,24 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err := s.applyPersonProfilePatchTx(ctx, tx, personID, patch); err != nil {
 			return err
 		}
+		if personProfilePatchChangesEnrichmentIdentity(patch) {
+			if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+				ctx, tx, personID); err != nil {
+				return err
+			}
+		}
 		profile, err = s.getPersonProfileTx(ctx, tx, updatedID, true)
 		return err
 	})
 	return profile, err
+}
+
+func personProfilePatchChangesEnrichmentIdentity(patch PersonProfilePatch) bool {
+	namesChanged := patch.Names != nil &&
+		(len(patch.Names.Add) > 0 || len(patch.Names.Supersede) > 0)
+	contactsChanged := patch.ContactPoints != nil &&
+		(len(patch.ContactPoints.Add) > 0 || len(patch.ContactPoints.Supersede) > 0)
+	return namesChanged || contactsChanged
 }
 
 func (s *Store) GetPersonProfileHistoryContext(

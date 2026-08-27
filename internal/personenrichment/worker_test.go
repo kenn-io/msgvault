@@ -770,6 +770,97 @@ func TestWorkerAuthorizedDispatchPreventsConcurrentPersonDeletion(t *testing.T) 
 	requirements.NoError(f.store.DeletePersonContext(t.Context(), person.ID, person.Revision))
 }
 
+func TestWorkerAuthorizedDispatchPreventsConcurrentAuthorityMutation(t *testing.T) {
+	for _, mutation := range []string{"tracking", "consent", "suppression", "identity"} {
+		t.Run(mutation, func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			f := newWorkerFixture(t, "dispatch-authority-"+mutation, nil)
+			f.enqueue(t)
+			mutate := func() error {
+				_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
+				return err
+			}
+			switch mutation {
+			case "consent":
+				mutate = func() error {
+					_, err := f.store.RevokePersonEnrichmentConsent(
+						t.Context(), f.profile.Fingerprint, "privacy-test")
+					return err
+				}
+			case "suppression":
+				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
+					personenrichment.SuppressionPublicProfileURL,
+					[]string{"https://profiles.example.test/worker-person"})
+				requirements.NoError(err)
+				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class,
+					normalized.NormalizationVersion, normalized.Value)
+				mutate = func() error {
+					return f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+						[]store.PersonEnrichmentSuppressionInput{{
+							ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+							NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID,
+							Digest: digest.Digest, Reason: store.PersonEnrichmentSuppressionOptOut,
+							Actor: "privacy-test",
+						}})
+				}
+			case "identity":
+				mutate = func() error {
+					_, err := f.store.ApplyPersonProfilePatchContext(
+						t.Context(), f.person.ID, f.person.Revision, store.PersonProfilePatch{
+							Names: &store.PersonNamePatch{Add: []store.PersonNameInput{{
+								NameKind: store.PersonNameNickname, Formatted: new("Dispatch Nickname"),
+								Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+							}}},
+						})
+					return err
+				}
+			}
+
+			authorized := make(chan struct{})
+			resume := make(chan struct{})
+			work := &workerHookStore{
+				WorkStore: f.store,
+				afterAuthorize: func() error {
+					close(authorized)
+					<-resume
+					return nil
+				},
+			}
+			var starts atomic.Int64
+			provider := &functionProvider{
+				start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+					starts.Add(1)
+					return personenrichment.Attempt{}, errors.New("synthetic uncertain provider start")
+				},
+				poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+					return personenrichment.Result{}, errors.New("unexpected poll")
+				},
+			}
+			worker, err := personenrichment.NewWorker(
+				work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+				map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+					return provider, nil
+				}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
+			)
+			requirements.NoError(err)
+			done := make(chan error, 1)
+			go func() {
+				_, runErr := worker.RunOnce(t.Context(), f.run.ID)
+				done <- runErr
+			}()
+			<-authorized
+			mutationErr := mutate()
+			close(resume)
+			runErr := <-done
+			requirements.ErrorIs(mutationErr, store.ErrPersonEnrichmentDispatchInProgress)
+			requirements.NoError(runErr)
+			checks.Equal(int64(1), starts.Load())
+			requirements.NoError(mutate(), "authority mutation should succeed after provider startup settles")
+		})
+	}
+}
+
 func (s *beginAttemptErrorStore) BeginAttempt(
 	ctx context.Context, token personenrichment.LeaseToken, start personenrichment.AttemptStart,
 ) (*personenrichment.DurableAttempt, bool, error) {
@@ -1933,6 +2024,7 @@ func TestWorkerRateLimitedStartRetriesSameReservedAttempt(t *testing.T) {
 
 type recordingSink struct {
 	inner    personenrichment.ClaimSink
+	before   func()
 	mu       sync.Mutex
 	statuses []personenrichment.ClaimOutcomeStatus
 }
@@ -1940,6 +2032,9 @@ type recordingSink struct {
 func (s *recordingSink) CommitEnrichmentClaims(
 	ctx context.Context, commit personenrichment.ClaimCommit,
 ) (*personenrichment.ClaimOutcome, error) {
+	if s.before != nil {
+		s.before()
+	}
 	outcome, err := s.inner.CommitEnrichmentClaims(ctx, commit)
 	if outcome != nil {
 		s.mu.Lock()
@@ -1986,8 +2081,7 @@ func TestWorkerCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
 				cfg.MaxCostUSDMicrosPerRun = 1_000
 			})
 			f.enqueue(t)
-			started := make(chan personenrichment.Result, 1)
-			release := make(chan struct{})
+			var returned personenrichment.Result
 			provider := &guaranteedFunctionProvider{
 				functionProvider: &functionProvider{
 					start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
@@ -1995,8 +2089,7 @@ func TestWorkerCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
 							Currency: "USD", AmountMicros: 600,
 						})
 						result.CanonicalPublicURLs = []string{"https://profiles.example.test/synthetic-person"}
-						started <- result
-						<-release
+						returned = result
 						return personenrichment.Attempt{
 							State: personenrichment.AttemptComplete, RequestID: result.RequestID,
 							AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
@@ -2011,7 +2104,12 @@ func TestWorkerCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
 					return personenrichment.Cost{Currency: "USD", AmountMicros: 900}, nil
 				},
 			}
-			sink := &recordingSink{inner: f.store}
+			sink := &recordingSink{
+				inner: f.store,
+				before: func() {
+					tt.invalidate(f, returned)
+				},
+			}
 			worker, err := personenrichment.NewWorker(
 				f.store, sink, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 				map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
@@ -2026,9 +2124,6 @@ func TestWorkerCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
 				}
 				done <- runErr
 			}()
-			result := <-started
-			tt.invalidate(f, result)
-			close(release)
 			requirements.NoError(<-done)
 			sink.mu.Lock()
 			checks.Equal([]personenrichment.ClaimOutcomeStatus{tt.want}, sink.statuses)

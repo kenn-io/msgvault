@@ -266,6 +266,10 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 func (s *Store) cancelPersonEnrichmentTx(
 	ctx context.Context, tx *loggedTx, personID int64, fingerprint string,
 ) error {
+	if err := rejectPersonEnrichmentDispatchInProgressTx(
+		ctx, tx, personID, fingerprint); err != nil {
+		return err
+	}
 	where := "person_id = ?"
 	args := []any{personID}
 	if fingerprint != "" {
@@ -412,6 +416,9 @@ func (s *Store) bumpAuthorizedPersonEnrichmentRevisionsTx(
 func (s *Store) forceInvalidatePersonEnrichmentTx(
 	ctx context.Context, tx *loggedTx, personID int64,
 ) error {
+	if err := rejectPersonEnrichmentDispatchInProgressTx(ctx, tx, personID, ""); err != nil {
+		return err
+	}
 	now := s.personEnrichmentTime()
 	workRows, err := tx.QueryContext(ctx, `SELECT profile_fingerprint
 		FROM person_enrichment_work WHERE person_id = ?
@@ -474,6 +481,31 @@ func (s *Store) forceInvalidatePersonEnrichmentTx(
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM person_enrichment_work WHERE person_id = ?`, personID); err != nil {
 		return fmt.Errorf("force-invalidate person enrichment work: %w", err)
+	}
+	return nil
+}
+
+func rejectPersonEnrichmentDispatchInProgressTx(
+	ctx context.Context, tx *loggedTx, personID int64, fingerprint string,
+) error {
+	// Callers hold the person row lock. Dispatch authorization takes the same
+	// lock before it records this marker, so the check cannot miss a concurrent
+	// authorization commit.
+	where := "person_id = ?"
+	args := []any{personID}
+	if fingerprint != "" {
+		where += " AND profile_fingerprint = ?"
+		args = append(args, fingerprint)
+	}
+	var dispatching bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_enrichment_attempts
+		WHERE `+where+` AND state = 'starting' AND dispatch_authorized_at IS NOT NULL)`,
+		args...).Scan(&dispatching); err != nil {
+		return fmt.Errorf("check person enrichment dispatch in progress: %w", err)
+	}
+	if dispatching {
+		return ErrPersonEnrichmentDispatchInProgress
 	}
 	return nil
 }

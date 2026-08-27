@@ -136,6 +136,25 @@ func TestApplyPersonProfilePatchIsAtomicUnderRevision(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonRevisionConflict)
 }
 
+func TestApplyPersonProfilePatchPublishesIdentityEnrichment(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	person, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	patched, err := f.store.ApplyPersonProfilePatchContext(
+		t.Context(), person.ID, person.Revision, store.PersonProfilePatch{
+			Names: &store.PersonNamePatch{Add: []store.PersonNameInput{{
+				NameKind: store.PersonNameNickname, Formatted: new("Profile Nickname"),
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			}}},
+		})
+	requirements.NoError(err)
+	work := f.work(t)
+	requirements.Len(work, 1)
+	checks.Equal("revision:"+strconv.FormatInt(patched.Person.Revision, 10), work[0].TriggerGeneration)
+}
+
 func TestFailedPatchRollsBackEveryCollection(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

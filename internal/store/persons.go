@@ -269,18 +269,8 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if revision != expectedRevision {
 			return ErrPersonRevisionConflict
 		}
-		// Authorization commits before provider egress and remains in the
-		// starting state until Start returns. Refuse deletion during that short
-		// window so the outbound request cannot follow a committed delete.
-		var dispatching bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM person_enrichment_attempts
-			WHERE person_id = ? AND state = 'starting' AND dispatch_authorized_at IS NOT NULL)`,
-			id).Scan(&dispatching); err != nil {
-			return fmt.Errorf("check person enrichment dispatch before deleting person %d: %w", id, err)
-		}
-		if dispatching {
-			return ErrPersonEnrichmentDispatchInProgress
+		if err := rejectPersonEnrichmentDispatchInProgressTx(ctx, tx, id, ""); err != nil {
+			return err
 		}
 		var hasCardDAVPublication bool
 		if err := tx.QueryRowContext(ctx,

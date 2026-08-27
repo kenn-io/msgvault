@@ -350,6 +350,9 @@ func (s *Server) writePersonProfileValueError(w http.ResponseWriter, err error) 
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
 	case errors.Is(err, store.ErrPersonRevisionConflict):
 		writeError(w, http.StatusConflict, "person_revision_conflict", "Person profile changed; reload and retry")
+	case errors.Is(err, store.ErrPersonEnrichmentDispatchInProgress):
+		writeError(w, http.StatusConflict, "person_enrichment_dispatch_in_progress",
+			"Person enrichment is being sent; retry the profile change after it finishes")
 	case errors.Is(err, store.ErrServiceAliasConflict):
 		writeError(w, http.StatusConflict, "service_alias_conflict", err.Error())
 	case errors.Is(err, store.ErrPersonCategoryDuplicate):

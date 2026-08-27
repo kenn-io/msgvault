@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -600,6 +601,43 @@ func (s *Store) BeginAttempt(
 			if existing.RunID != start.RunID || existing.Token.WorkPersonID != start.PersonID ||
 				existing.Token.ProfileFingerprint != start.ProfileFingerprint {
 				return ErrActiveAttemptConflict
+			}
+			if work.HasFreshTrigger || currentRevision != start.PersonRevision ||
+				currentRevision != existing.PersonRevision {
+				if !work.HasFreshTrigger {
+					if err := s.putPersonEnrichmentWorkTx(ctx, tx, EnrichmentTriggerInput{
+						PersonID: start.PersonID, ProfileFingerprint: start.ProfileFingerprint,
+						Kind:       personenrichment.TriggerIdentity,
+						Generation: "revision:" + strconv.FormatInt(currentRevision, 10),
+						DueAt:      s.personEnrichmentTime(),
+					}); err != nil {
+						return err
+					}
+				}
+				if _, err := reconcilePersonEnrichmentCostTx(
+					ctx, tx, s.dialect, existing.ID,
+					personenrichment.Cost{Currency: "USD"}, false, s.personEnrichmentTime(),
+				); err != nil {
+					return err
+				}
+				result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+					SET state = 'terminal', completed_at = ?, failure_class = ?,
+					    next_action_at = NULL, lease_owner = NULL, lease_until = NULL
+					WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?`,
+					s.personEnrichmentTime(), personenrichment.FailurePolicy, existing.ID,
+					token.RunID, token.Owner, token.Fence)
+				if err != nil {
+					return fmt.Errorf("terminalize stale person enrichment attempt: %w", err)
+				}
+				if err := requireOneLeaseRow(result); err != nil {
+					return err
+				}
+				activeToken.AttemptID = existing.ID
+				if err := settleTerminalEnrichmentWorkTx(ctx, tx, activeToken, nil); err != nil {
+					return err
+				}
+				stalePublication = true
+				return nil
 			}
 			var requestHash string
 			if err := tx.QueryRowContext(ctx, `SELECT request_hash FROM person_enrichment_attempts WHERE id = ?`,

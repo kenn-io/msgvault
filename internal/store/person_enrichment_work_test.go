@@ -210,12 +210,21 @@ func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *tes
 
 	changed, err := f.store.RevokePersonEnrichmentConsent(
 		t.Context(), f.profile.Fingerprint, "dispatch-test")
-	requirements.NoError(err)
-	checks.True(changed)
+	requirements.ErrorIs(err, store.ErrPersonEnrichmentDispatchInProgress)
+	checks.False(changed)
 	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT dispatch_authorized_at IS NOT NULL FROM person_enrichment_attempts WHERE id = ?`),
 		attempt.ID).Scan(&authorized))
 	checks.True(authorized)
+	requirements.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
+		State: personenrichment.AttemptPending, RequestID: "opaque-request", JobID: "opaque-job",
+		StartedAt: f.now, AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
+		ProgramFingerprint: strings.Repeat("b", 64),
+	}))
+	changed, err = f.store.RevokePersonEnrichmentConsent(
+		t.Context(), f.profile.Fingerprint, "dispatch-test")
+	requirements.NoError(err)
+	checks.True(changed)
 	requirements.ErrorIs(
 		f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token),
 		personenrichment.ErrConsentRequired)
@@ -645,6 +654,50 @@ func TestPersonEnrichmentOneActiveAttemptInvariant(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestPersonEnrichmentBeginAttemptReplacesActiveAttemptAfterFreshTrigger(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "fresh-active")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker-a")
+	start := testAttemptStart(&f, run.ID, "a")
+	first, created, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+	requirements.NoError(err)
+	checks.True(created)
+
+	requirements.NoError(f.store.EnqueuePersonEnrichmentContext(t.Context(), store.EnrichmentTriggerInput{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		Kind: personenrichment.TriggerManual, Generation: "manual:fresh-active", DueAt: f.now,
+	}))
+	replayed, created, err := f.store.BeginAttempt(t.Context(), first.Token, start)
+	requirements.ErrorIs(err, store.ErrStaleLease)
+	checks.Nil(replayed)
+	checks.False(created)
+
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), first.ID)
+	requirements.NoError(err)
+	checks.Equal("terminal", stored.State)
+	work := f.work(t)
+	requirements.Len(work, 1)
+	checks.Nil(work[0].RunID)
+	checks.Nil(work[0].ActiveAttemptID)
+	checks.False(work[0].HasFreshTrigger)
+	checks.Equal("manual:fresh-active", work[0].TriggerGeneration)
+
+	replacementLease := f.claim(t, run.ID, "worker-b")
+	input, err := f.store.LoadRequestInput(t.Context(), *replacementLease)
+	requirements.NoError(err)
+	replacementStart := testAttemptStart(&f, run.ID, "b")
+	replacementStart.PersonRevision = input.PersonRevision
+	replacementStart.Trigger = replacementLease.Trigger
+	replacement, created, err := f.store.BeginAttempt(t.Context(), replacementLease.Token,
+		replacementStart)
+	requirements.NoError(err)
+	checks.True(created)
+	checks.NotEqual(first.ID, replacement.ID)
+}
+
 func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema(t *testing.T) {
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "generated-schema-shape")
@@ -784,6 +837,7 @@ func TestPersonEnrichmentAttemptDiagnosticsAreBoundedAndRedacted(t *testing.T) {
 
 func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "uncertain")
 	f.enqueue(t)
@@ -794,11 +848,11 @@ func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing
 	f.setNow(lease.LeaseUntil.Add(time.Nanosecond))
 	reclaimed := f.claim(t, run.ID, "worker-b")
 	require.NotNil(reclaimed.ActiveAttempt)
-	assert.Equal(t, "uncertain_start", reclaimed.ActiveAttempt.State)
+	assert.Equal("uncertain_start", reclaimed.ActiveAttempt.State)
 	_, created, err := f.store.BeginAttempt(t.Context(), reclaimed.Token, testAttemptStart(&f, run.ID, "a"))
 	require.NoError(err)
-	assert.False(t, created)
-	assert.Equal(t, attempt.ID, reclaimed.ActiveAttempt.ID)
+	assert.False(created)
+	assert.Equal(attempt.ID, reclaimed.ActiveAttempt.ID)
 	require.NoError(f.store.MarkUncertainStart(t.Context(), reclaimed.Token,
 		personenrichment.SafeFailure{
 			Class: personenrichment.FailureUncertainStart, Message: "start outcome is uncertain",
@@ -807,13 +861,13 @@ func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing
 		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
 	})
 	require.NoError(err)
-	assert.Empty(t, work)
+	assert.Empty(work)
 	require.NoError(f.store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{
 		CompletedAt: f.now,
 	}))
 	completed, err := f.store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
 	require.NoError(err)
-	assert.Equal(t, "failed", completed.State)
+	assert.Equal("failed", completed.State)
 }
 
 func TestPersonEnrichmentWorkReleasePreservesManualTrigger(t *testing.T) {
