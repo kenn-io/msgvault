@@ -2,7 +2,9 @@ package embed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -34,6 +36,66 @@ func TestAssembleOrdinaryDocument_AlwaysFitsContextualRequestBudget(t *testing.T
 	})
 	require.NoError(err)
 	assert.True(t, doc.Chunks[len(doc.Chunks)-1].Truncated)
+}
+
+func TestAssembleOrdinaryDocument_ReservesDocumentPrefixBytes(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	const prefix = "search_document: "
+	policy := AssemblyPolicy{
+		MaxChunkRunes: 128, MaxDocumentUTF8Bytes: 220,
+		DocumentPrefixUTF8Bytes: len(prefix),
+	}
+	doc, ok := assembleOrdinaryDocument(AssemblyMessage{
+		ID: 1, ConversationID: 2, MessageType: "email",
+		Body: strings.Repeat("🙂", 128), LastModified: "v1",
+	}, policy)
+	must.True(ok)
+	must.NotEmpty(doc.Chunks)
+
+	input := DocumentInput{Chunks: make([]string, len(doc.Chunks))}
+	for i, chunk := range doc.Chunks {
+		input.Chunks[i] = prefix + chunk.Text
+	}
+	_, err := PackDocuments([]DocumentInput{input}, RequestLimits{
+		MaxDocuments: 1, MaxChunks: 16_000, MaxUTF8Bytes: policy.MaxDocumentUTF8Bytes,
+	})
+
+	must.NoError(err)
+	check.True(doc.Chunks[len(doc.Chunks)-1].Truncated)
+}
+
+func TestAssembleOrdinaryDocument_EmptyPrefixPreservesLegacyRevision(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	row := AssemblyMessage{
+		ID: 1, ConversationID: 2, MessageType: "email", Subject: "subject",
+		Body: "short body", LastModified: "v1",
+	}
+	policy := AssemblyPolicy{MaxChunkRunes: 128, MaxDocumentUTF8Bytes: 220}
+	legacy, ok := assembleOrdinaryDocument(row, policy)
+	must.True(ok)
+	check.Equal(legacyDocumentRevision("ordinary", row, policy, legacy.Chunks), legacy.Revision)
+
+	prefixedPolicy := policy
+	prefixedPolicy.DocumentPrefixUTF8Bytes = len("search_document: ")
+	prefixed, ok := assembleOrdinaryDocument(row, prefixedPolicy)
+	must.True(ok)
+	check.NotEqual(legacy.Revision, prefixed.Revision)
+}
+
+func legacyDocumentRevision(
+	kind string, row AssemblyMessage, policy AssemblyPolicy, chunks []OwnedChunk,
+) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00", kind, row.ID,
+		row.ConversationID, row.MessageType, policy.MaxChunkRunes, policy.MaxDocumentUTF8Bytes)
+	for _, chunk := range chunks {
+		_, _ = fmt.Fprintf(h, "%d\x00%d\x00%d\x00%d\x00%d\x00%t\x00%s\x00",
+			chunk.MessageID, chunk.ChunkIndex, chunk.SourceCharStart, chunk.SourceCharEnd,
+			chunk.SourceBasis, chunk.Truncated, chunk.Text)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 type chatAssemblerStub struct{}

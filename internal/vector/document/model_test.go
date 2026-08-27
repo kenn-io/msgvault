@@ -16,14 +16,16 @@ func requireFingerprint(t *testing.T, extractionProfileID string, config vector.
 }
 
 func TestFingerprintBindsDocumentExtractionAndEmbeddingPolicy(t *testing.T) {
+	check := assert.New(t)
 	config := vector.Config{Embeddings: vector.EmbeddingsConfig{
 		Endpoint:  "https://embeddings.example.test/v1",
 		APIFormat: vector.APIFormatOpenAI, Model: "embed-v1", Dimension: 768, MaxInputChars: 8192,
 	}}
 
 	baseline := requireFingerprint(t, "extract-v1", config)
-	assert.Regexp(t, "^[0-9a-f]{64}$", baseline)
-	assert.Equal(t, baseline, requireFingerprint(t, "extract-v1", config))
+	check.Regexp("^[0-9a-f]{64}$", baseline)
+	check.Equal("9e8ac42634c6e981a20950e20f612f4bf692dd460a07491643e2cb5853278f64", baseline)
+	check.Equal(baseline, requireFingerprint(t, "extract-v1", config))
 
 	tests := []struct {
 		name   string
@@ -34,15 +36,17 @@ func TestFingerprintBindsDocumentExtractionAndEmbeddingPolicy(t *testing.T) {
 		{name: "model", mutate: func(c *vector.Config) { c.Embeddings.Model = "embed-v2" }},
 		{name: "dimension", mutate: func(c *vector.Config) { c.Embeddings.Dimension++ }},
 		{name: "max input chars", mutate: func(c *vector.Config) { c.Embeddings.MaxInputChars++ }},
+		{name: "document prefix", mutate: func(c *vector.Config) { c.Embeddings.DocumentPrefix = "search_document: " }},
+		{name: "query prefix", mutate: func(c *vector.Config) { c.Embeddings.QueryPrefix = "search_query: " }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			changed := config
 			test.mutate(&changed)
-			assert.NotEqual(t, baseline, requireFingerprint(t, "extract-v1", changed))
+			assert.New(t).NotEqual(baseline, requireFingerprint(t, "extract-v1", changed))
 		})
 	}
-	assert.NotEqual(t, baseline, requireFingerprint(t, "extract-v2", config))
+	check.NotEqual(baseline, requireFingerprint(t, "extract-v2", config))
 }
 
 func TestFingerprintExcludesMessageCorpusAndCredentials(t *testing.T) {

@@ -16,6 +16,8 @@ describe('settings catalog', () => {
       'openai',
       'voyage-contextual'
     ]);
+    expect(settingsCatalog['vector.embeddings.document_prefix'].description).toContain('document chunk');
+    expect(settingsCatalog['vector.embeddings.query_prefix'].description).toContain('search query');
     expect(settingsCatalog['vector.embed.scope.accounts'].group).toBe('search');
     expect(settingsCatalog['vector.multimodal.enabled'].group).toBe('search');
     expect(settingsCatalog['vector.multimodal.provider'].options).toEqual(['voyage']);

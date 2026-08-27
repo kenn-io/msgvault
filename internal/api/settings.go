@@ -110,6 +110,8 @@ var settingsCatalog = []settingDefinition{
 	testableStringSetting("vector.embeddings.endpoint", "search", func(c *config.Config) string { return c.Vector.Embeddings.Endpoint }),
 	localOnlyStringSetting("vector.embeddings.api_key_env", "search", func(c *config.Config) string { return c.Vector.Embeddings.APIKeyEnv }),
 	stringSetting("vector.embeddings.model", "search", nil, func(c *config.Config) string { return c.Vector.Embeddings.Model }),
+	stringSetting("vector.embeddings.document_prefix", "search", nil, func(c *config.Config) string { return c.Vector.Embeddings.DocumentPrefix }),
+	stringSetting("vector.embeddings.query_prefix", "search", nil, func(c *config.Config) string { return c.Vector.Embeddings.QueryPrefix }),
 	intSetting("vector.embeddings.dimension", "search", func(c *config.Config) int { return c.Vector.Embeddings.Dimension }),
 	intSetting("vector.embeddings.batch_size", "search", func(c *config.Config) int { return c.Vector.Embeddings.BatchSize }),
 	intSetting("vector.embeddings.max_retries", "search", func(c *config.Config) int { return c.Vector.Embeddings.MaxRetries }),

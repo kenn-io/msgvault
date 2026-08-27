@@ -248,6 +248,8 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
 			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+			DocumentPrefix: vectorCfg.Embeddings.DocumentPrefix,
+			QueryPrefix:    vectorCfg.Embeddings.QueryPrefix,
 		}
 		messageClient := embed.NewClient(clientConfig)
 		documentClientConfig := clientConfig
@@ -292,6 +294,8 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
 			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
 			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+			DocumentPrefix: vectorCfg.Embeddings.DocumentPrefix,
+			QueryPrefix:    vectorCfg.Embeddings.QueryPrefix,
 			Limits: embed.RequestLimits{MaxDocuments: vectorCfg.Embeddings.BatchSize,
 				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
 		}
@@ -307,16 +311,18 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewVoyageClient(clientConfig)
 		policy := embed.AssemblyPolicy{
-			MaxChunkRunes:        vectorCfg.Embeddings.MaxInputChars,
-			MaxDocumentUTF8Bytes: contextualDocumentUTF8Limit,
-			Preprocess:           embeddingPreprocessConfig(vectorCfg),
+			MaxChunkRunes:           vectorCfg.Embeddings.MaxInputChars,
+			MaxDocumentUTF8Bytes:    contextualDocumentUTF8Limit,
+			DocumentPrefixUTF8Bytes: len(vectorCfg.Embeddings.DocumentPrefix),
+			Preprocess:              embeddingPreprocessConfig(vectorCfg),
 		}
 		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
 		messageWorker := embed.NewContextWorker(embed.ContextWorkerDeps{
 			Backend: deps.Backend, Publisher: publisher, Store: deps.Store,
 			Assembler: assembler, Client: messageClient, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
-			ChangeBatchSize:    vectorCfg.Embeddings.BatchSize,
-			ReconcileBatchSize: vectorCfg.Embeddings.BatchSize,
+			ChangeBatchSize:         vectorCfg.Embeddings.BatchSize,
+			ReconcileBatchSize:      vectorCfg.Embeddings.BatchSize,
+			DocumentPrefixUTF8Bytes: len(vectorCfg.Embeddings.DocumentPrefix),
 		})
 		personWorker := embed.NewPersonWorker(embed.PersonWorkerDeps{
 			Store: deps.Store, Backend: personBackend, Client: personClient,
@@ -544,6 +550,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		features.Convergence = runtime.Convergence
 		features.SemanticClient = runtime.SemanticClient
 		features.DocumentQueryClient = runtime.QuerySemanticClient
+		features.PersonQueryClient = runtime.PersonQueryClient
 		features.HybridEngine = hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
 			ExpectedFingerprint: vecCfg.GenerationFingerprint(),
 			RRFK:                vecCfg.Search.RRFK,

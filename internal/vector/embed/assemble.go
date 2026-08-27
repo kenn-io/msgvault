@@ -27,11 +27,12 @@ var ErrSourceSnapshotClosed = errors.New("embedding source snapshot is closed")
 // activation-path filter; it is evaluated before an ordinary or meeting
 // document is rendered.
 type AssemblyPolicy struct {
-	MaxChunkRunes        int
-	MaxDocumentUTF8Bytes int
-	ChatGap              time.Duration
-	Preprocess           PreprocessConfig
-	SkipMessage          func(AssemblyMessage) bool
+	MaxChunkRunes           int
+	MaxDocumentUTF8Bytes    int
+	DocumentPrefixUTF8Bytes int
+	ChatGap                 time.Duration
+	Preprocess              PreprocessConfig
+	SkipMessage             func(AssemblyMessage) bool
 }
 
 // AssemblyMessage is the source row used by the deterministic assemblers.
@@ -757,7 +758,8 @@ func assembleOrdinaryDocument(row AssemblyMessage, policy AssemblyPolicy) (Docum
 			Truncated:   bodyTruncated || tailDropped,
 		})
 	}
-	chunks = limitOwnedChunksToRequest(chunks, policy.MaxDocumentUTF8Bytes, defaultVoyageRequestLimits.MaxChunks)
+	chunks = limitOwnedChunksToRequest(chunks, policy.MaxDocumentUTF8Bytes,
+		defaultVoyageRequestLimits.MaxChunks, policy.DocumentPrefixUTF8Bytes)
 	if len(chunks) == 0 {
 		return Document{}, false
 	}
@@ -775,7 +777,7 @@ func assembleOrdinaryDocument(row AssemblyMessage, policy AssemblyPolicy) (Docum
 // accounting used by PackDocuments. It preserves a prefix of the source,
 // marks the final retained chunk truncated, and never splits one document
 // across provider requests.
-func limitOwnedChunksToRequest(chunks []OwnedChunk, maxBytes, maxChunks int) []OwnedChunk {
+func limitOwnedChunksToRequest(chunks []OwnedChunk, maxBytes, maxChunks, documentPrefixBytes int) []OwnedChunk {
 	if len(chunks) == 0 || (maxBytes <= 0 && maxChunks <= 0) {
 		return chunks
 	}
@@ -792,7 +794,8 @@ func limitOwnedChunksToRequest(chunks []OwnedChunk, maxBytes, maxChunks int) []O
 			out = append(out, chunk)
 			continue
 		}
-		textBudget := remaining - voyagePromptReserveUTF8BytesPerChunk
+		chunkReserve := voyagePromptReserveUTF8BytesPerChunk + max(0, documentPrefixBytes)
+		textBudget := remaining - chunkReserve
 		if textBudget <= 0 {
 			dropped = true
 			break
@@ -810,7 +813,7 @@ func limitOwnedChunksToRequest(chunks []OwnedChunk, maxBytes, maxChunks int) []O
 			break
 		}
 		out = append(out, chunk)
-		remaining -= len(chunk.Text) + voyagePromptReserveUTF8BytesPerChunk
+		remaining -= len(chunk.Text) + chunkReserve
 	}
 	if dropped && len(out) > 0 {
 		out[len(out)-1].Truncated = true
@@ -863,6 +866,9 @@ func documentRevision(kind string, row AssemblyMessage, policy AssemblyPolicy, c
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00", kind, row.ID,
 		row.ConversationID, row.MessageType, policy.MaxChunkRunes, policy.MaxDocumentUTF8Bytes)
+	if policy.DocumentPrefixUTF8Bytes > 0 {
+		_, _ = fmt.Fprintf(h, "document-prefix-bytes:%d\x00", policy.DocumentPrefixUTF8Bytes)
+	}
 	for _, chunk := range chunks {
 		_, _ = fmt.Fprintf(h, "%d\x00%d\x00%d\x00%d\x00%d\x00%t\x00%s\x00",
 			chunk.MessageID, chunk.ChunkIndex, chunk.SourceCharStart, chunk.SourceCharEnd,

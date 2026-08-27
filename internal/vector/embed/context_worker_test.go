@@ -767,7 +767,7 @@ func TestContextWorker_MetadataFanoutBudgetsPreservedScopes(t *testing.T) {
 	for i, chunk := range documents[0].Chunks {
 		input.Chunks[i] = chunk.Text
 	}
-	f.worker.deps.MaxRunUTF8Bytes = documentInputUTF8Bytes(input)
+	f.worker.deps.MaxRunUTF8Bytes = documentInputUTF8Bytes(input, 0)
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 	beforeDocuments := f.client.Documents()
@@ -792,6 +792,14 @@ func TestContextWorker_MetadataFanoutBudgetsPreservedScopes(t *testing.T) {
 		selector := chatDayContextScope(f.chatID, start.AddDate(0, 0, day)).selector
 		assert.Positive(t, counted.selectors[selector])
 	}
+}
+
+func TestDocumentInputUTF8BytesIncludesDocumentPrefixPerChunk(t *testing.T) {
+	input := DocumentInput{Chunks: []string{"first", "second"}}
+	withoutPrefix := documentInputUTF8Bytes(input, 0)
+
+	assert.Equal(t, withoutPrefix+2*len("search_document: "),
+		documentInputUTF8Bytes(input, len("search_document: ")))
 }
 
 func TestContextWorker_MetadataFanoutUsesBoundedResumablePages(t *testing.T) {
@@ -1100,7 +1108,7 @@ func TestContextWorker_MetadataFanoutHonorsPerRunByteBudgetAndResumes(t *testing
 	for i, chunk := range documents[0].Chunks {
 		input.Chunks[i] = chunk.Text
 	}
-	f.worker.deps.MaxRunUTF8Bytes = documentInputUTF8Bytes(input)
+	f.worker.deps.MaxRunUTF8Bytes = documentInputUTF8Bytes(input, 0)
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 	for run := 1; run <= 5; run++ {

@@ -120,6 +120,8 @@ backend = "sqlite-vec"
 endpoint = "http://localhost:11434/v1"
 model = "nomic-embed-text"
 dimension = 768
+document_prefix = "search_document: "
+query_prefix = "search_query: "
 eta_window = 10
 
 [vector.preprocess]
@@ -685,6 +687,8 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
 | `model` | (required) | Model name to pass in each request (e.g., `nomic-embed-text`). |
 | `dimension` | (required) | Vector dimension. Must match the model's output dimension. |
+| `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
+| `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
 | `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
 | `timeout` | `30s` | Per-request timeout. |
@@ -692,7 +696,7 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
 
-The index generation fingerprint includes the model, dimension, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
+The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`
 

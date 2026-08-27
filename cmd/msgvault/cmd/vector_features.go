@@ -51,6 +51,7 @@ type vectorFeatures struct {
 	DocumentSearch      *vectordocument.SearchService
 	SemanticClient      embed.SemanticClient
 	DocumentQueryClient embed.SemanticClient
+	PersonQueryClient   personsearch.QueryEmbedder
 	Cfg                 vector.Config
 	Visual              *visualFeatures
 	// Close releases the backend's resources: on SQLite it closes the

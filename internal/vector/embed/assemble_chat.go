@@ -163,7 +163,9 @@ func (a ChatWindowAssembler) sessionize(
 	currentBytes := 0
 	for _, member := range members {
 		header := chatHeader(conversation, member.row.SentAt, includeMutableMetadata)
-		memberBytes := chatMemberEmbeddingBytes(header, member, includeMutableMetadata)
+		memberBytes := chatMemberEmbeddingBytes(
+			header, member, includeMutableMetadata, a.Policy.DocumentPrefixUTF8Bytes,
+		)
 		split := false
 		if len(current) != 0 {
 			previous := current[len(current)-1]
@@ -211,7 +213,8 @@ func (a ChatWindowAssembler) document(
 			})
 		}
 	}
-	chunks = limitOwnedChunksToRequest(chunks, a.Policy.MaxDocumentUTF8Bytes, defaultVoyageRequestLimits.MaxChunks)
+	chunks = limitOwnedChunksToRequest(chunks, a.Policy.MaxDocumentUTF8Bytes,
+		defaultVoyageRequestLimits.MaxChunks, a.Policy.DocumentPrefixUTF8Bytes)
 	key := "chat:" + strconv.FormatInt(conversation.ID, 10) + ":" +
 		chatDocumentPolicyVersion + ":" + strconv.FormatInt(anchor.ID, 10)
 	metadataVersion := conversation.MetadataVersion
@@ -271,10 +274,13 @@ func contextualChatText(
 	return header + "\n\n" + sender + " (" + timestamp + "): " + source
 }
 
-func chatMemberEmbeddingBytes(header string, member chatMember, includeMutableMetadata bool) int {
+func chatMemberEmbeddingBytes(
+	header string, member chatMember, includeMutableMetadata bool, documentPrefixBytes int,
+) int {
 	total := 0
 	for _, span := range member.chunks {
-		total += len(contextualChatText(header, member.row, span.Text, includeMutableMetadata)) + voyagePromptReserveUTF8BytesPerChunk
+		total += len(contextualChatText(header, member.row, span.Text, includeMutableMetadata)) +
+			voyagePromptReserveUTF8BytesPerChunk + max(0, documentPrefixBytes)
 	}
 	return total
 }

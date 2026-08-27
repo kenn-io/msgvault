@@ -54,10 +54,11 @@ type ContextWorkerDeps struct {
 	Client     SemanticClient
 	BuildScope vector.BuildScope
 
-	ChangeBatchSize    int
-	ReconcileBatchSize int
-	MaxRunUTF8Bytes    int
-	Hooks              ContextWorkerHooks
+	ChangeBatchSize         int
+	ReconcileBatchSize      int
+	MaxRunUTF8Bytes         int
+	DocumentPrefixUTF8Bytes int
+	Hooks                   ContextWorkerHooks
 }
 
 // ContextConvergence is the durable state Task 10 can use for activation and
@@ -712,7 +713,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			for chunkIndex, chunk := range doc.Chunks {
 				input.Chunks[chunkIndex] = chunk.Text
 			}
-			scopeBytes += documentInputUTF8Bytes(input)
+			scopeBytes += documentInputUTF8Bytes(input, w.deps.DocumentPrefixUTF8Bytes)
 		}
 		// Assembly and source reads consume bounded work even when durable
 		// vectors can be preserved or a scope now needs only a tombstone.
@@ -1019,10 +1020,10 @@ func successfulPreparedDocuments(plan preparedScopePublication) ([]Document, [][
 	return documents, vectors, preserved
 }
 
-func documentInputUTF8Bytes(input DocumentInput) int {
+func documentInputUTF8Bytes(input DocumentInput, documentPrefixBytes int) int {
 	total := 0
 	for _, chunk := range input.Chunks {
-		total += len(chunk) + voyagePromptReserveUTF8BytesPerChunk
+		total += len(chunk) + voyagePromptReserveUTF8BytesPerChunk + max(0, documentPrefixBytes)
 	}
 	return total
 }

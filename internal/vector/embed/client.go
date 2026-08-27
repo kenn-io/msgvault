@@ -35,6 +35,10 @@ type Config struct {
 	APIKey string
 	// Model is the model name passed in the request body.
 	Model string
+	// DocumentPrefix is prepended to every document chunk before it is sent.
+	DocumentPrefix string
+	// QueryPrefix is prepended to every query before it is sent.
+	QueryPrefix string
 	// Dimension is the expected vector dimension. Responses whose vectors
 	// differ are rejected with an error.
 	Dimension int
@@ -84,7 +88,8 @@ type embeddingResponse struct {
 	Model string `json:"model"`
 }
 
-// Embed returns one vector per input, in input order. Empty input is a no-op
+// Embed embeds document chunks and returns one vector per input, in input order.
+// DocumentPrefix is applied independently to every input. Empty input is a no-op
 // and returns (nil, nil) without making an HTTP call. Every returned vector
 // is verified to match cfg.Dimension. Transient errors — 5xx responses, 429
 // Too Many Requests, network failures, and body-read / decode hiccups — are
@@ -92,6 +97,10 @@ type embeddingResponse struct {
 // 429 response's Retry-After header (when present and parseable) overrides
 // the backoff for that attempt. Other 4xx responses fail immediately.
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+	return c.embed(ctx, prependPrefix(inputs, c.cfg.DocumentPrefix))
+}
+
+func (c *Client) embed(ctx context.Context, inputs []string) ([][]float32, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
@@ -149,7 +158,7 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error
 
 // EmbedQuery embeds one query and returns its single vector.
 func (c *Client) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	vecs, err := c.Embed(ctx, []string{text})
+	vecs, err := c.embed(ctx, prependPrefix([]string{text}, c.cfg.QueryPrefix))
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +176,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []DocumentInput) 
 		inputs = append(inputs, document.Chunks...)
 	}
 
-	vecs, err := c.Embed(ctx, inputs)
+	vecs, err := c.embed(ctx, prependPrefix(inputs, c.cfg.DocumentPrefix))
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +192,17 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []DocumentInput) 
 		offset = next
 	}
 	return documentVecs, nil
+}
+
+func prependPrefix(inputs []string, prefix string) []string {
+	if prefix == "" || len(inputs) == 0 {
+		return inputs
+	}
+	prefixed := make([]string, len(inputs))
+	for i, input := range inputs {
+		prefixed[i] = prefix + input
+	}
+	return prefixed
 }
 
 // doOnce performs a single HTTP request. A returned *retryError signals the

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -292,6 +293,7 @@ func setupVectorFeaturesFixture(
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
 	c := config.NewDefaultConfig()
+	c.HomeDir = dir
 	c.Data.DataDir = dir
 	c.Vector.Enabled = true
 	c.Vector.DBPath = filepath.Join(dir, "vectors.db")
@@ -307,12 +309,23 @@ func setupVectorFeaturesFixture(
 	for _, apply := range mutate {
 		apply(c)
 	}
+	require.NoError(t, c.Save())
 	withTestConfig(t, c)
 
 	s, err := store.Open(mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	require.NoError(t, s.InitSchema())
+	if c.Vector.People.Enabled {
+		semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
+		require.NoError(t, err)
+		_, err = s.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
+		require.NoError(t, err)
+		_, _, err = s.GrantPersonSemanticEmbeddingConsent(
+			t.Context(), semanticProfile.Fingerprint, "test",
+		)
+		require.NoError(t, err)
+	}
 	fingerprint := strings.Repeat("d", 64)
 	profile := store.DocumentExtractionProfile{
 		ID: "profile-" + fingerprint, Fingerprint: fingerprint, Provider: "synthetic",
@@ -369,6 +382,133 @@ func TestSetupVectorFeaturesDocumentClientRejectsCrossOriginRedirects(t *testing
 			assert.Zero(t, targetRequests.Load(), "attachment text must not reach the redirect target")
 		})
 	}
+}
+
+func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	maxChunk := strings.Repeat("x", 2000)
+	var calls [][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Input []string `json:"input"`
+		}
+		if !check.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		calls = append(calls, request.Input)
+		data := make([]map[string]any, len(request.Input))
+		for i := range request.Input {
+			data[i] = map[string]any{
+				"embedding": []float32{1, 2, 3, 4},
+				"index":     i,
+			}
+		}
+		check.NoError(json.NewEncoder(w).Encode(map[string]any{"data": data}))
+	}))
+	t.Cleanup(server.Close)
+	vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false, func(c *config.Config) {
+		c.Vector.Embeddings.Endpoint = server.URL
+		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
+		c.Vector.Embeddings.DocumentPrefix = "search_document: "
+		c.Vector.Embeddings.QueryPrefix = "search_query: "
+		c.Vector.People = vector.PeopleConfig{
+			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		}
+	})
+
+	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
+		{Chunks: []string{"first chunk", "second chunk"}},
+	})
+	must.NoError(err)
+	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
+	must.NoError(err)
+	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	must.NoError(err)
+	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
+	must.NoError(err)
+	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
+		{Chunks: []string{maxChunk}},
+	})
+	must.NoError(err)
+
+	check.Equal([][]string{
+		{"search_document: first chunk", "search_document: second chunk"},
+		{"search_query: document query"},
+		{"search_query: message query"},
+		{"search_query: person query"},
+		{"search_document: " + maxChunk},
+	}, calls)
+	must.Len(calls, 5)
+	must.Len(calls[4], 1)
+	check.Len(calls[4][0], len(maxChunk)+len("search_document: "))
+}
+
+func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	maxChunk := strings.Repeat("x", 2000)
+	type voyageCall struct {
+		Inputs    [][]string `json:"inputs"`
+		InputType string     `json:"input_type"`
+	}
+	var calls []voyageCall
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request voyageCall
+		if !check.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		calls = append(calls, request)
+		outer := make([]map[string]any, len(request.Inputs))
+		for i, chunks := range request.Inputs {
+			inner := make([]map[string]any, len(chunks))
+			for j := range chunks {
+				inner[j] = map[string]any{
+					"embedding": []float32{1, 2, 3, 4},
+					"index":     j,
+				}
+			}
+			outer[i] = map[string]any{"data": inner, "index": i}
+		}
+		check.NoError(json.NewEncoder(w).Encode(map[string]any{"data": outer}))
+	}))
+	t.Cleanup(server.Close)
+	vf := setupVectorFeaturesFixture(t, vector.APIFormatVoyageContextual, false, func(c *config.Config) {
+		c.Vector.Embeddings.Endpoint = server.URL
+		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
+		c.Vector.Embeddings.DocumentPrefix = "search_document: "
+		c.Vector.Embeddings.QueryPrefix = "search_query: "
+		c.Vector.People = vector.PeopleConfig{
+			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+		}
+	})
+
+	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
+		{Chunks: []string{"first chunk", "second chunk"}},
+	})
+	must.NoError(err)
+	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
+	must.NoError(err)
+	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	must.NoError(err)
+	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
+	must.NoError(err)
+	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
+		{Chunks: []string{maxChunk}},
+	})
+	must.NoError(err)
+
+	check.Equal([]voyageCall{
+		{InputType: "document", Inputs: [][]string{{"search_document: first chunk", "search_document: second chunk"}}},
+		{InputType: "query", Inputs: [][]string{{"search_query: document query"}}},
+		{InputType: "query", Inputs: [][]string{{"search_query: message query"}}},
+		{InputType: "query", Inputs: [][]string{{"search_query: person query"}}},
+		{InputType: "document", Inputs: [][]string{{"search_document: " + maxChunk}}},
+	}, calls)
+	must.Len(calls, 5)
+	must.Len(calls[4].Inputs, 1)
+	must.Len(calls[4].Inputs[0], 1)
+	check.Len(calls[4].Inputs[0][0], len(maxChunk)+len("search_document: "))
 }
 
 func TestSetupVectorFeatures_SelectsRunnerByAPIFormat(t *testing.T) {

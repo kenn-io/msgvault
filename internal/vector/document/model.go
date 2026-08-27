@@ -108,13 +108,15 @@ func Fingerprint(extractionProfileID string, cfg vector.Config) (string, error) 
 		return "", fmt.Errorf("fingerprint document vector space: %w", err)
 	}
 	payload := struct {
-		Version             int    `json:"version"`
-		ExtractionProfileID string `json:"extraction_profile_id"`
-		RecipeFingerprint   string `json:"recipe_fingerprint"`
-		VectorSpace         string `json:"vector_space_fingerprint"`
+		Version               int    `json:"version"`
+		ExtractionProfileID   string `json:"extraction_profile_id"`
+		RecipeFingerprint     string `json:"recipe_fingerprint"`
+		VectorSpace           string `json:"vector_space_fingerprint"`
+		TaskPrefixFingerprint string `json:"task_prefix_fingerprint,omitempty"`
 	}{
 		Version: 1, ExtractionProfileID: extractionProfileID,
 		RecipeFingerprint: recipe.Fingerprint(), VectorSpace: spaceFingerprint,
+		TaskPrefixFingerprint: cfg.Embeddings.TaskPrefixFingerprint(),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

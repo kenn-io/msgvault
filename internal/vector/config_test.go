@@ -82,6 +82,16 @@ func TestConfig_Validate(t *testing.T) {
 		{"UnknownBackend", func(c *Config) { c.Backend = "mystery" }, "backend"},
 		{"ZeroBatch", func(c *Config) { c.Embeddings.BatchSize = 0 }, "batch_size"},
 		{"MissingModel", func(c *Config) { c.Embeddings.Model = "" }, "model"},
+		{"DocumentPrefixTooLarge", func(c *Config) {
+			c.Embeddings.DocumentPrefix = strings.Repeat("x", maxEmbeddingTaskPrefixUTF8Bytes+1)
+		}, "document_prefix"},
+		{"QueryPrefixTooLarge", func(c *Config) {
+			c.Embeddings.QueryPrefix = strings.Repeat("x", maxEmbeddingTaskPrefixUTF8Bytes+1)
+		}, "query_prefix"},
+		{"PrefixLimitOK", func(c *Config) {
+			c.Embeddings.DocumentPrefix = strings.Repeat("x", maxEmbeddingTaskPrefixUTF8Bytes)
+			c.Embeddings.QueryPrefix = strings.Repeat("x", maxEmbeddingTaskPrefixUTF8Bytes)
+		}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -453,6 +463,48 @@ func TestConfig_GenerationFingerprint_IncludesMaxInputChars(t *testing.T) {
 	zeroed.Embeddings.MaxInputChars = 0
 	assert.NotEqual(t, baseline, zeroed.GenerationFingerprint(),
 		"GenerationFingerprint should change when MaxInputChars goes 6000→0")
+}
+
+func TestConfig_GenerationFingerprint_IncludesEmbeddingPrefixes(t *testing.T) {
+	check := assert.New(t)
+	const base = `
+[embeddings]
+model = "nomic-embed-text"
+dimension = 768
+max_input_chars = 2000
+`
+	decode := func(t *testing.T, suffix string) Config {
+		t.Helper()
+		var cfg Config
+		_, err := toml.Decode(base+suffix, &cfg)
+		require.NoError(t, err)
+		return cfg
+	}
+
+	unprefixed := decode(t, "")
+	documentPrefixed := decode(t, `document_prefix = "search_document: "`)
+	queryPrefixed := decode(t, `query_prefix = "search_query: "`)
+	bothPrefixed := decode(t, `
+document_prefix = "search_document: "
+query_prefix = "search_query: "
+`)
+
+	check.NotEqual(unprefixed.GenerationFingerprint(), documentPrefixed.GenerationFingerprint())
+	check.NotEqual(unprefixed.GenerationFingerprint(), queryPrefixed.GenerationFingerprint())
+	check.NotEqual(documentPrefixed.GenerationFingerprint(), bothPrefixed.GenerationFingerprint())
+	check.NotEqual(queryPrefixed.GenerationFingerprint(), bothPrefixed.GenerationFingerprint())
+}
+
+func TestConfig_GenerationFingerprint_EmbeddingPrefixEncodingIsUnambiguous(t *testing.T) {
+	left := Config{Embeddings: EmbeddingsConfig{
+		Model: "m", Dimension: 8, MaxInputChars: 2000,
+		DocumentPrefix: "a\x1fb", QueryPrefix: "c",
+	}}
+	right := left
+	right.Embeddings.DocumentPrefix = "a"
+	right.Embeddings.QueryPrefix = "b\x1fc"
+
+	assert.NotEqual(t, left.GenerationFingerprint(), right.GenerationFingerprint())
 }
 
 // TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion pins the

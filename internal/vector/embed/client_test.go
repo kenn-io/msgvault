@@ -107,6 +107,41 @@ func TestClient_EmbedQueryUsesSingleInput(t *testing.T) {
 	assert.Equal(t, []float32{1}, got)
 }
 
+func TestClient_AppliesEmbeddingPrefixesByRole(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	var calls [][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := decodeRequest(t, r)
+		calls = append(calls, request.Input)
+		vectors := make([][]float32, len(request.Input))
+		for i := range vectors {
+			vectors[i] = []float32{float32(i + 1)}
+		}
+		writeEmbeddings(t, w, vectors)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(Config{
+		Endpoint: server.URL, Model: "test-model", Dimension: 1,
+		DocumentPrefix: "search_document: ", QueryPrefix: "search_query: ",
+	})
+
+	_, err := client.EmbedDocuments(t.Context(), []DocumentInput{
+		{Chunks: []string{"first chunk", "second chunk"}},
+	})
+	must.NoError(err)
+	_, err = client.EmbedQuery(t.Context(), "find this")
+	must.NoError(err)
+	_, err = client.Embed(t.Context(), []string{"legacy worker chunk"})
+	must.NoError(err)
+
+	check.Equal([][]string{
+		{"search_document: first chunk", "search_document: second chunk"},
+		{"search_query: find this"},
+		{"search_document: legacy worker chunk"},
+	}, calls)
+}
+
 // TestClientBeforeRequestFencesEveryRetryAttempt catches a consent check that
 // runs once around the logical embedding operation instead of immediately
 // before every real HTTP attempt. Query retries are included because curated

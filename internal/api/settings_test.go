@@ -27,6 +27,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	require := require.New(t)
 	srv, _ := newSettingsTestServer(t, "# keep\n[web]\ntheme = \"dark\"\n"+
 		"[server]\napi_key = \"test-api-key\"\n"+
+		"[vector.embeddings]\ndocument_prefix = \"search_document: \"\nquery_prefix = \"search_query: \"\n"+
 		"[integrations.tasks]\napi_key = \"task-secret\"\n"+
 		"[unsupported]\nprivate_value = \"must-not-leak\"\n")
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "test-api-key")
@@ -47,6 +48,12 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	require.NotNil(byKey["vector.embeddings.api_format"].Value.String)
 	assert.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
 	assert.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
+	require.NotNil(byKey["vector.embeddings.document_prefix"].Value)
+	require.NotNil(byKey["vector.embeddings.document_prefix"].Value.String)
+	assert.Equal("search_document: ", *byKey["vector.embeddings.document_prefix"].Value.String)
+	require.NotNil(byKey["vector.embeddings.query_prefix"].Value)
+	require.NotNil(byKey["vector.embeddings.query_prefix"].Value.String)
+	assert.Equal("search_query: ", *byKey["vector.embeddings.query_prefix"].Value.String)
 	require.NotNil(byKey["vector.people.enabled"].Value)
 	require.NotNil(byKey["vector.people.enabled"].Value.Boolean)
 	assert.False(*byKey["vector.people.enabled"].Value.Boolean)

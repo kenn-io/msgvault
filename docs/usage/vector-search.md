@@ -112,6 +112,8 @@ endpoint = "http://tailnet-host:11434/v1"
 api_key_env = "OLLAMA_API_KEY"           # optional; omit for anonymous endpoints
 model = "nomic-embed-text"
 dimension = 768
+document_prefix = "search_document: "  # required by nomic-embed-text
+query_prefix = "search_query: "        # required by nomic-embed-text
 batch_size = 32                          # embeddings per HTTP call
 timeout = "30s"
 max_retries = 3
@@ -166,11 +168,27 @@ backend = "pgvector"
 endpoint = "http://localhost:11434/v1"
 model = "nomic-embed-text"
 dimension = 768
+document_prefix = "search_document: "
+query_prefix = "search_query: "
 ```
 
 pgvector embeddings live in the PostgreSQL database. `db_path` and
 `vectors.db` apply only to the SQLite sqlite-vec backend. See
 [PostgreSQL Backend](/architecture/postgresql/) for database setup.
+
+### Model task prefixes
+
+Some embedding models require different task instructions for indexed
+documents and search queries. The `nomic-embed-text` examples above use
+its required retrieval prefixes. Set `document_prefix` and `query_prefix`
+to the values required by your model, or leave them empty for models that
+do not use instructions.
+
+msgvault prepends `document_prefix` to every chunk after chunking and
+`query_prefix` to every vector-search query. Prefix characters do not
+reduce the `max_input_chars` content budget. Changing either prefix marks
+the existing vector generation stale so prefixed queries cannot be mixed
+with an index built from unprefixed documents.
 
 ### Matching `max_input_chars` to your embedder's context window
 
@@ -463,7 +481,7 @@ filtering.
 
 ## Model Rotation
 
-To switch models, dimensions, preprocessing settings, or
+To switch models, dimensions, task prefixes, preprocessing settings, or
 `max_input_chars`, update your config, then run:
 
 ```bash
@@ -472,7 +490,7 @@ msgvault embeddings build --full-rebuild --yes
 
 This builds a new generation with the new fingerprint and activates
 it atomically when the build completes. The fingerprint includes the
-model, dimension, preprocessing policy, `max_input_chars`, and
+model, dimension, task prefixes, preprocessing policy, `max_input_chars`, and
 embedding output policy. While the rebuild is in flight,
 `mode=vector` and `mode=hybrid` return `index_stale` (the
 previously-active generation no longer matches the configured
@@ -494,7 +512,7 @@ body keywords.
 | Error | Meaning | Recovery |
 |---|---|---|
 | `vector_not_enabled` | The server or MCP process did not wire a vector backend, usually because `[vector] enabled = false`. | Set `enabled = true`, configure `[vector.embeddings]`, and start with a build that includes the needed backend (`sqlite_vec` or `pgvector`). |
-| `index_stale` | Active generation's fingerprint does not match the current embedding settings: model, dimension, preprocessing policy, `max_input_chars`, output policy, or scope. | For an existing account-scoped index built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon. Otherwise run `msgvault embeddings build --full-rebuild --yes`. |
+| `index_stale` | Active generation's fingerprint does not match the current embedding settings: model, dimension, task prefixes, preprocessing policy, `max_input_chars`, output policy, or scope. | For an existing account-scoped index built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon. Otherwise run `msgvault embeddings build --full-rebuild --yes`. |
 | `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build`, wait for the scheduler, or use the appropriate non-vector fallback. |
 | `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or use the appropriate non-vector fallback. |
 | `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use the appropriate non-vector fallback, or rebuild an unscoped generation. |

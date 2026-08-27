@@ -27,6 +27,10 @@ const (
 	APIFormatVoyageContextual EmbeddingAPIFormat = "voyage-contextual"
 	// contextPolicyVersion identifies the contextual document assembly policy.
 	contextPolicyVersion = 2
+	// Task prefixes are short provider instructions, not document content.
+	// Bounding them prevents one prefix from exhausting contextual request
+	// budgets before any source text can be assembled.
+	maxEmbeddingTaskPrefixUTF8Bytes = 4096
 )
 
 // preprocessVersion identifies the embed/preprocess.go implementation
@@ -182,16 +186,18 @@ func (m MultimodalConfig) APIKey() string {
 // EmbeddingsConfig configures the external embedding endpoint used to convert
 // message text into vectors.
 type EmbeddingsConfig struct {
-	APIFormat     EmbeddingAPIFormat `toml:"api_format"`
-	Endpoint      string             `toml:"endpoint"`
-	APIKeyEnv     string             `toml:"api_key_env"`
-	Model         string             `toml:"model"`
-	Dimension     int                `toml:"dimension"`
-	BatchSize     int                `toml:"batch_size"`
-	Timeout       time.Duration      `toml:"timeout"`
-	MaxRetries    int                `toml:"max_retries"`
-	MaxInputChars int                `toml:"max_input_chars"`
-	ETAWindow     int                `toml:"eta_window"`
+	APIFormat      EmbeddingAPIFormat `toml:"api_format"`
+	Endpoint       string             `toml:"endpoint"`
+	APIKeyEnv      string             `toml:"api_key_env"`
+	Model          string             `toml:"model"`
+	DocumentPrefix string             `toml:"document_prefix"`
+	QueryPrefix    string             `toml:"query_prefix"`
+	Dimension      int                `toml:"dimension"`
+	BatchSize      int                `toml:"batch_size"`
+	Timeout        time.Duration      `toml:"timeout"`
+	MaxRetries     int                `toml:"max_retries"`
+	MaxInputChars  int                `toml:"max_input_chars"`
+	ETAWindow      int                `toml:"eta_window"`
 }
 
 // EffectiveAPIFormat returns the configured API format, defaulting to the
@@ -226,6 +232,14 @@ func (e EmbeddingsConfig) Validate() error {
 	}
 	if e.Model == "" {
 		return fmt.Errorf("vector.embeddings.model: required (the index generation fingerprint is %q, which is ambiguous without a model name)", e.Fingerprint())
+	}
+	if len(e.DocumentPrefix) > maxEmbeddingTaskPrefixUTF8Bytes {
+		return fmt.Errorf("vector.embeddings.document_prefix: must be at most %d UTF-8 bytes, got %d",
+			maxEmbeddingTaskPrefixUTF8Bytes, len(e.DocumentPrefix))
+	}
+	if len(e.QueryPrefix) > maxEmbeddingTaskPrefixUTF8Bytes {
+		return fmt.Errorf("vector.embeddings.query_prefix: must be at most %d UTF-8 bytes, got %d",
+			maxEmbeddingTaskPrefixUTF8Bytes, len(e.QueryPrefix))
 	}
 	if e.Dimension <= 0 {
 		return fmt.Errorf("vector.embeddings.dimension: must be positive, got %d", e.Dimension)
@@ -421,6 +435,7 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // GenerationFingerprint returns the full identifier used to compare an
 // index generation against the configured policy. Format:
 // "<model>:<dimension>:<preprocess>:c<max_input_chars>:e<embed_policy>".
+// Non-empty document or query prefixes add a hashed ":t<digest>" segment.
 // Contextual generations add
 // ":avoyage-contextual:v<context_policy_version>" before any scope segment.
 // Every segment is derived from the effective config (or a code-level
@@ -451,6 +466,9 @@ func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars,
 		embedPolicyVersion)
+	if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
+		fp += ":t" + taskPrefixFingerprint
+	}
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {
 		fp = fmt.Sprintf("%s:a%s:v%d", fp, APIFormatVoyageContextual, contextPolicyVersion)
 	}
@@ -458,6 +476,19 @@ func (c *Config) GenerationFingerprint() string {
 		fp = fmt.Sprintf("%s:s%s", fp, scopeFP)
 	}
 	return fp
+}
+
+// TaskPrefixFingerprint identifies document/query task-prefix policy without
+// exposing configured prefix text. Empty policy deliberately has no identity
+// so existing generation fingerprints retain their exact legacy bytes.
+func (e EmbeddingsConfig) TaskPrefixFingerprint() string {
+	if e.DocumentPrefix == "" && e.QueryPrefix == "" {
+		return ""
+	}
+	encoded := fmt.Sprintf("embedding-prefix-v1:%d:%s:%d:%s",
+		len(e.DocumentPrefix), e.DocumentPrefix, len(e.QueryPrefix), e.QueryPrefix)
+	digest := sha256.Sum256([]byte(encoded))
+	return hex.EncodeToString(digest[:])
 }
 
 // AnyLaneEnabled reports whether either the ordinary text-vector lane or the

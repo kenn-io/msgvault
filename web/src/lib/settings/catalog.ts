@@ -72,6 +72,8 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   }),
   'vector.embeddings.api_key_env': entry('search', 'Embedding key environment variable', 'Environment variable containing the endpoint key.'),
   'vector.embeddings.model': entry('search', 'Embedding model', 'Model identifier used to build an index generation.'),
+  'vector.embeddings.document_prefix': entry('search', 'Document task prefix', 'Text prepended to every document chunk.'),
+  'vector.embeddings.query_prefix': entry('search', 'Query task prefix', 'Text prepended to every vector search query.'),
   'vector.embeddings.dimension': entry('search', 'Embedding dimension', 'Vector dimension returned by the model.'),
   'vector.embeddings.batch_size': entry('search', 'Embedding batch size', 'Items sent per embedding request.'),
   'vector.embeddings.max_retries': entry('search', 'Embedding retries', 'Maximum transient request retries.'),

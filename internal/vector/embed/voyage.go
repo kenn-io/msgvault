@@ -23,6 +23,10 @@ type VoyageConfig struct {
 	Timeout    time.Duration
 	MaxRetries int
 	Limits     RequestLimits
+	// DocumentPrefix is prepended to every document chunk before packing.
+	DocumentPrefix string
+	// QueryPrefix is prepended to the query before packing.
+	QueryPrefix string
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
 	BeforeRequest BeforeRequestFunc
@@ -79,7 +83,9 @@ type voyageResponse struct {
 
 // EmbedQuery embeds one independent query with Voyage's query role.
 func (c *VoyageClient) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	batches, err := PackDocuments([]DocumentInput{{Chunks: []string{text}}}, c.cfg.Limits)
+	batches, err := PackDocuments([]DocumentInput{{
+		Chunks: prependPrefix([]string{text}, c.cfg.QueryPrefix),
+	}}, c.cfg.Limits)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
@@ -102,7 +108,7 @@ func (c *VoyageClient) EmbedDocuments(ctx context.Context, documents []DocumentI
 	if len(documents) == 0 {
 		return nil, nil
 	}
-	batches, err := PackDocuments(documents, c.cfg.Limits)
+	batches, err := PackDocuments(prependDocumentPrefix(documents, c.cfg.DocumentPrefix), c.cfg.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +122,17 @@ func (c *VoyageClient) EmbedDocuments(ctx context.Context, documents []DocumentI
 		results = append(results, batchResults...)
 	}
 	return results, nil
+}
+
+func prependDocumentPrefix(documents []DocumentInput, prefix string) []DocumentInput {
+	if prefix == "" || len(documents) == 0 {
+		return documents
+	}
+	prefixed := make([]DocumentInput, len(documents))
+	for i, document := range documents {
+		prefixed[i].Chunks = prependPrefix(document.Chunks, prefix)
+	}
+	return prefixed
 }
 
 func documentInputs(documents []DocumentInput) [][]string {

@@ -717,6 +717,35 @@ func TestVoyageClient_EmbedQueryUsesQueryRole(t *testing.T) {
 	assert.Equal([]float32{1, 1, 1, 1}, got)
 }
 
+func TestVoyageClient_AppliesEmbeddingPrefixesByRole(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	var captured []capturedVoyageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := decodeVoyageRequest(t, r)
+		captured = append(captured, request)
+		writeVoyageResponse(t, w, sequentialVoyageResults(request.Inputs))
+	}))
+	t.Cleanup(server.Close)
+	client := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
+		cfg.DocumentPrefix = "search_document: "
+		cfg.QueryPrefix = "search_query: "
+	})
+
+	_, err := client.EmbedDocuments(t.Context(), []embed.DocumentInput{
+		{Chunks: []string{"first chunk", "second chunk"}},
+	})
+	must.NoError(err)
+	_, err = client.EmbedQuery(t.Context(), "find this")
+	must.NoError(err)
+
+	must.Len(captured, 2)
+	check.Equal("document", captured[0].InputType)
+	check.Equal([][]string{{"search_document: first chunk", "search_document: second chunk"}}, captured[0].Inputs)
+	check.Equal("query", captured[1].InputType)
+	check.Equal([][]string{{"search_query: find this"}}, captured[1].Inputs)
+}
+
 func TestVoyageClient_RejectsDuplicateOuterIndex(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeVoyageResponse(t, w, []voyageResponseResult{
