@@ -334,12 +334,10 @@ func (s *Store) ClaimWork(
 			SELECT w.person_id, w.profile_fingerprint
 			FROM person_enrichment_work w
 			JOIN person_enrichment_profiles p ON p.fingerprint = w.profile_fingerprint
-			LEFT JOIN person_enrichment_attempts a ON a.id = w.active_attempt_id
 			WHERE p.provider_name = ?
 			  AND (w.run_id = ? OR w.run_id IS NULL)
 			  AND w.due_at <= ?
 			  AND (w.lease_owner IS NULL OR w.lease_until <= ?)
-			  AND (w.active_attempt_id IS NULL OR a.state <> 'uncertain_start')
 			ORDER BY CASE WHEN w.run_id = ? THEN 0 ELSE 1 END, w.due_at, w.person_id
 			LIMIT 1` + lock + `
 		)
@@ -1050,17 +1048,26 @@ func (s *Store) MarkUncertainStart(
 		if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
 			return err
 		}
+		// An ambiguous start is terminal for scheduling but keeps its distinct
+		// audit state. Charge the reserved maximum because the provider may have
+		// accepted the request, then detach the work without replaying it.
+		if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect, token.AttemptID,
+			personenrichment.Cost{}, true, s.personEnrichmentTime()); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
-			SET state = 'uncertain_start', failure_class = ?, lease_owner = NULL, lease_until = NULL
+			SET state = 'uncertain_start', failure_class = ?, completed_at = ?,
+			    next_action_at = NULL, lease_owner = NULL, lease_until = NULL
 			WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?`,
-			personenrichment.FailureUncertainStart, token.AttemptID, token.RunID, token.Owner, token.Fence)
+			personenrichment.FailureUncertainStart, s.personEnrichmentTime(),
+			token.AttemptID, token.RunID, token.Owner, token.Fence)
 		if err != nil {
 			return fmt.Errorf("mark uncertain person enrichment start: %w", err)
 		}
 		if err := requireOneLeaseRow(result); err != nil {
 			return err
 		}
-		return updateEnrichmentWorkLeaseTx(ctx, tx, token, `lease_owner = NULL, lease_until = NULL`)
+		return settleTerminalEnrichmentWorkTx(ctx, tx, token, nil)
 	})
 }
 

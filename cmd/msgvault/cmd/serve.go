@@ -2190,7 +2190,14 @@ func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
 
 func (a *storeAPIAdapter) DeletePersonContext(ctx context.Context, id, expectedRevision int64) error {
 	if !a.personEnrichmentConfig.Enabled {
-		return a.store.DeletePersonContext(ctx, id, expectedRevision)
+		var hasHistory bool
+		if err := a.store.DB().QueryRowContext(ctx, a.store.Rebind(`SELECT EXISTS (
+			SELECT 1 FROM person_enrichment_attempts WHERE person_id = ?)`), id).Scan(&hasHistory); err != nil {
+			return fmt.Errorf("check person enrichment history for deletion: %w", err)
+		}
+		if !hasHistory {
+			return a.store.DeletePersonContext(ctx, id, expectedRevision)
+		}
 	}
 	lookup := a.lookupEnv
 	if lookup == nil {

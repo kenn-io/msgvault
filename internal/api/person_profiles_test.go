@@ -126,14 +126,23 @@ func TestPersonProfileHTTPDelete(t *testing.T) {
 	assert.Equal(http.StatusNotFound, deletedAgain.Code)
 }
 
-func TestPersonProfileHTTPDeleteReportsCardDAVPublication(t *testing.T) {
+func TestPersonProfileHTTPDeleteReportsConflicts(t *testing.T) {
 	srv, _ := newIdentityLinkTestServer(t)
-	response := httptest.NewRecorder()
-
-	srv.writePersonError(response, store.ErrPersonCardDAVPublished)
-
-	assert.Equal(t, http.StatusConflict, response.Code)
-	assert.Contains(t, response.Body.String(), `"person_carddav_published"`)
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "CardDAV publication", err: store.ErrPersonCardDAVPublished, code: "person_carddav_published"},
+		{name: "enrichment dispatch", err: store.ErrPersonEnrichmentDispatchInProgress, code: "person_enrichment_dispatch_in_progress"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			srv.writePersonError(response, test.err)
+			assert.Equal(t, http.StatusConflict, response.Code)
+			assert.Contains(t, response.Body.String(), `"`+test.code+`"`)
+		})
+	}
 }
 
 func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {

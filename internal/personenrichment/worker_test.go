@@ -604,21 +604,36 @@ type beginAttemptErrorStore struct {
 	releases atomic.Int64
 }
 
-type authorityRemovalAfterBeginStore struct {
+type workerHookStore struct {
 	personenrichment.WorkStore
 
-	remove func() error
+	afterBegin     func() error
+	afterAuthorize func() error
 }
 
-func (s *authorityRemovalAfterBeginStore) BeginAttempt(
+func (s *workerHookStore) AuthorizeAttemptDispatch(
+	ctx context.Context, token personenrichment.LeaseToken,
+) error {
+	if err := s.WorkStore.AuthorizeAttemptDispatch(ctx, token); err != nil {
+		return err
+	}
+	if s.afterAuthorize != nil {
+		return s.afterAuthorize()
+	}
+	return nil
+}
+
+func (s *workerHookStore) BeginAttempt(
 	ctx context.Context, token personenrichment.LeaseToken, start personenrichment.AttemptStart,
 ) (*personenrichment.DurableAttempt, bool, error) {
 	attempt, created, err := s.WorkStore.BeginAttempt(ctx, token, start)
 	if err != nil {
 		return attempt, created, err
 	}
-	if err := s.remove(); err != nil {
-		return nil, false, err
+	if s.afterBegin != nil {
+		if err := s.afterBegin(); err != nil {
+			return nil, false, err
+		}
 	}
 	return attempt, created, nil
 }
@@ -678,7 +693,7 @@ func TestWorkerDoesNotStartProviderAfterAuthorityRemovalCommits(t *testing.T) {
 						}})
 				}
 			}
-			work := &authorityRemovalAfterBeginStore{WorkStore: f.store, remove: remove}
+			work := &workerHookStore{WorkStore: f.store, afterBegin: remove}
 			var starts atomic.Int64
 			factory := func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
 				return &functionProvider{
@@ -704,6 +719,55 @@ func TestWorkerDoesNotStartProviderAfterAuthorityRemovalCommits(t *testing.T) {
 			assert.Zero(starts.Load())
 		})
 	}
+}
+
+func TestWorkerAuthorizedDispatchPreventsConcurrentPersonDeletion(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newWorkerFixture(t, "dispatch-delete-race", nil)
+	f.enqueue(t)
+	authorized := make(chan struct{})
+	resume := make(chan struct{})
+	work := &workerHookStore{
+		WorkStore: f.store,
+		afterAuthorize: func() error {
+			close(authorized)
+			<-resume
+			return nil
+		},
+	}
+	var starts atomic.Int64
+	provider := &functionProvider{
+		start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+			starts.Add(1)
+			return personenrichment.Attempt{}, errors.New("synthetic uncertain provider start")
+		},
+		poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+			return personenrichment.Result{}, errors.New("unexpected poll")
+		},
+	}
+	worker, err := personenrichment.NewWorker(
+		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return provider, nil
+		}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
+	)
+	requirements.NoError(err)
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := worker.RunOnce(t.Context(), f.run.ID)
+		done <- runErr
+	}()
+	<-authorized
+	deleteErr := f.store.DeletePersonContext(t.Context(), f.person.ID, f.person.Revision)
+	close(resume)
+	runErr := <-done
+	requirements.ErrorIs(deleteErr, store.ErrPersonEnrichmentDispatchInProgress)
+	requirements.NoError(runErr)
+	checks.Equal(int64(1), starts.Load())
+	person, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	requirements.NoError(f.store.DeletePersonContext(t.Context(), person.ID, person.Revision))
 }
 
 func (s *beginAttemptErrorStore) BeginAttempt(
@@ -1569,6 +1633,17 @@ func TestWorkerUncertainStartIsNeverReplayed(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(attempts, 1)
 	checks.Equal("uncertain_start", attempts[0].State)
+	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Empty(work)
+	requirements.NoError(f.store.CompleteRun(t.Context(), f.run.ID, personenrichment.RunCompletion{
+		CompletedAt: f.now.Add(time.Minute),
+	}))
+	run, err := f.store.GetPersonEnrichmentRunContext(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.Equal("failed", run.State)
 }
 
 type noOpRenewStore struct{ personenrichment.WorkStore }

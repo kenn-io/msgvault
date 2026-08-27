@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	ErrPersonNotFound         = errors.New("person not found")
-	ErrPersonRevisionConflict = errors.New("person revision conflict")
-	ErrPersonBindingConflict  = errors.New("participant clusters belong to different persons")
-	ErrPersonReferenced       = errors.New("person is referenced by another profile")
-	ErrPersonCardDAVPublished = errors.New("person has CardDAV publication state")
-	ErrPersonMergeActive      = errors.New("person has active merge lineage")
+	ErrPersonNotFound                     = errors.New("person not found")
+	ErrPersonRevisionConflict             = errors.New("person revision conflict")
+	ErrPersonBindingConflict              = errors.New("participant clusters belong to different persons")
+	ErrPersonReferenced                   = errors.New("person is referenced by another profile")
+	ErrPersonCardDAVPublished             = errors.New("person has CardDAV publication state")
+	ErrPersonMergeActive                  = errors.New("person has active merge lineage")
+	ErrPersonEnrichmentDispatchInProgress = errors.New("person enrichment provider dispatch is in progress")
 )
 
 // PersonBindingConflictError reports the curated people that would be
@@ -249,6 +250,9 @@ func (s *Store) DeletePersonWithEnrichmentSuppressionsContext(
 func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichmentInput) error {
 	id, expectedRevision := input.PersonID, input.ExpectedRevision
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -264,6 +268,19 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		}
 		if revision != expectedRevision {
 			return ErrPersonRevisionConflict
+		}
+		// Authorization commits before provider egress and remains in the
+		// starting state until Start returns. Refuse deletion during that short
+		// window so the outbound request cannot follow a committed delete.
+		var dispatching bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_enrichment_attempts
+			WHERE person_id = ? AND state = 'starting' AND dispatch_authorized_at IS NOT NULL)`,
+			id).Scan(&dispatching); err != nil {
+			return fmt.Errorf("check person enrichment dispatch before deleting person %d: %w", id, err)
+		}
+		if dispatching {
+			return ErrPersonEnrichmentDispatchInProgress
 		}
 		var hasCardDAVPublication bool
 		if err := tx.QueryRowContext(ctx,

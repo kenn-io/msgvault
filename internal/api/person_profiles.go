@@ -359,6 +359,9 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrPersonMergeActive):
 		writeError(w, http.StatusConflict, "person_merge_active",
 			"Split the person's active merge lineage before deleting this profile")
+	case errors.Is(err, store.ErrPersonEnrichmentDispatchInProgress):
+		writeError(w, http.StatusConflict, "person_enrichment_dispatch_in_progress",
+			"Person enrichment is being sent; retry deletion after it finishes")
 	case errors.Is(err, store.ErrParticipantNotFound), errors.Is(err, store.ErrInvalidParticipantID):
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", err.Error())
 	default:

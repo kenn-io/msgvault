@@ -348,7 +348,7 @@ func (s *Store) CompleteRun(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT (SELECT COUNT(*) FROM person_enrichment_work WHERE run_id = ?) +
 			       (SELECT COUNT(*) FROM person_enrichment_attempts
-			        WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait','uncertain_start'))`,
+			        WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait'))`,
 			runID, runID).Scan(&nonterminal); err != nil {
 			return fmt.Errorf("check person enrichment run terminal state: %w", err)
 		}
@@ -359,7 +359,7 @@ func (s *Store) CompleteRun(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*), COUNT(*),
 			       COALESCE(SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END), 0),
-			       COALESCE(SUM(CASE WHEN state = 'terminal' THEN 1 ELSE 0 END), 0),
+			       COALESCE(SUM(CASE WHEN state IN ('terminal','uncertain_start') THEN 1 ELSE 0 END), 0),
 			       COALESCE(SUM(CASE WHEN state = 'suppressed' THEN 1 ELSE 0 END), 0),
 			       COALESCE(SUM(CASE WHEN state = 'identity_rejected' THEN 1 ELSE 0 END), 0)
 			FROM person_enrichment_attempts WHERE run_id = ?`, runID).Scan(

@@ -799,6 +799,21 @@ func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing
 	require.NoError(err)
 	assert.False(t, created)
 	assert.Equal(t, attempt.ID, reclaimed.ActiveAttempt.ID)
+	require.NoError(f.store.MarkUncertainStart(t.Context(), reclaimed.Token,
+		personenrichment.SafeFailure{
+			Class: personenrichment.FailureUncertainStart, Message: "start outcome is uncertain",
+		}))
+	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	require.NoError(err)
+	assert.Empty(t, work)
+	require.NoError(f.store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{
+		CompletedAt: f.now,
+	}))
+	completed, err := f.store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
+	require.NoError(err)
+	assert.Equal(t, "failed", completed.State)
 }
 
 func TestPersonEnrichmentWorkReleasePreservesManualTrigger(t *testing.T) {
