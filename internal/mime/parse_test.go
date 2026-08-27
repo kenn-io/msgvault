@@ -91,6 +91,8 @@ func TestParse_InvalidPartContentType(t *testing.T) {
 }
 
 func TestParse_InvalidTextPartContentTypeDefaultsToBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	raw := []byte("From: sender@example.com\r\n" +
 		"To: recipient@example.com\r\n" +
 		"Subject: malformed body type\r\n" +
@@ -100,13 +102,15 @@ func TestParse_InvalidTextPartContentTypeDefaultsToBody(t *testing.T) {
 		"--outer--\r\n")
 
 	msg := mustParse(t, raw)
-	assert.Equal(t, "searchable body", msg.BodyText)
-	assert.Empty(t, msg.Attachments)
-	require.Len(t, msg.Errors, 1)
-	assert.Contains(t, msg.Errors[0], "invalid Content-Type treated as text/plain")
+	assert.Equal("searchable body", msg.BodyText)
+	assert.Empty(msg.Attachments)
+	require.Len(msg.Errors, 1)
+	assert.Contains(msg.Errors[0], "invalid Content-Type treated as text/plain")
 }
 
 func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	raw := []byte("From: sender@example.com\r\n" +
 		"To: recipient@example.com\r\n" +
 		"Subject: name parameter\r\n" +
@@ -118,15 +122,17 @@ func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {
 		"--outer--\r\n")
 
 	msg := mustParse(t, raw)
-	require.Len(t, msg.Attachments, 1)
-	assert.Equal(t, "named.pdf", msg.Attachments[0].Filename)
-	assert.Equal(t, "application/octet-stream", msg.Attachments[0].ContentType)
-	assert.Empty(t, msg.Attachments[0].Disposition)
-	assert.False(t, msg.Attachments[0].IsInline)
-	assert.Equal(t, []byte("synthetic pdf bytes"), msg.Attachments[0].Content)
+	require.Len(msg.Attachments, 1)
+	assert.Equal("named.pdf", msg.Attachments[0].Filename)
+	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Empty(msg.Attachments[0].Disposition)
+	assert.False(msg.Attachments[0].IsInline)
+	assert.Equal([]byte("synthetic pdf bytes"), msg.Attachments[0].Content)
 }
 
 func TestParse_InvalidPartContentTypePreservesContentIDAsInline(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	raw := []byte("From: sender@example.com\r\n" +
 		"To: recipient@example.com\r\n" +
 		"Subject: inline resource\r\n" +
@@ -139,12 +145,12 @@ func TestParse_InvalidPartContentTypePreservesContentIDAsInline(t *testing.T) {
 		"--outer--\r\n")
 
 	msg := mustParse(t, raw)
-	require.Len(t, msg.Attachments, 1)
-	assert.Equal(t, "application/octet-stream", msg.Attachments[0].ContentType)
-	assert.Equal(t, "image-1", msg.Attachments[0].ContentID)
-	assert.Empty(t, msg.Attachments[0].Disposition)
-	assert.True(t, msg.Attachments[0].IsInline)
-	assert.Equal(t, []byte{0, 1, 254, 255}, msg.Attachments[0].Content)
+	require.Len(msg.Attachments, 1)
+	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Equal("image-1", msg.Attachments[0].ContentID)
+	assert.Empty(msg.Attachments[0].Disposition)
+	assert.True(msg.Attachments[0].IsInline)
+	assert.Equal([]byte{0, 1, 254, 255}, msg.Attachments[0].Content)
 }
 
 func TestParse_InvalidMultipartContentTypeWithBoundaryRemainsFatal(t *testing.T) {
