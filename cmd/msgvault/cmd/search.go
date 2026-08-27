@@ -167,12 +167,20 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 	)
 	started := time.Now()
 
+	// Only send an explicitly requested scope: the daemon's default is
+	// already active-only, and a scoped request makes the client require
+	// API schema 2.12.0, which would break default searches against older
+	// daemons.
+	deletionScope := ""
+	if cmd.Flags().Changed("deletion-scope") {
+		deletionScope = searchDeletionScope
+	}
 	resp, err := s.GetCLISearch(cmd.Context(), daemonclient.CLISearchRequest{
 		Query:         queryStr,
 		Account:       searchAccount,
 		Collection:    searchCollection,
 		MessageTypes:  searchMessageTypes,
-		DeletionScope: searchDeletionScope,
+		DeletionScope: deletionScope,
 		Limit:         searchLimit,
 		Offset:        searchOffset,
 	})

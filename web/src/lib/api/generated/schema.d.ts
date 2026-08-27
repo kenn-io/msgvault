@@ -11059,6 +11059,8 @@ export interface operations {
                 offset?: number;
                 /** @description Message type filter; repeat or comma-separate for multiple values */
                 message_type?: string;
+                /** @description Source deletion scope: active (default), deleted, or any */
+                deletion_scope?: string;
                 /** @description Restrict to one account/source */
                 account?: string;
                 /** @description Restrict to one collection */

@@ -942,10 +942,6 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.12.0"}`))
-			return
-		}
 		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
 	defer srv.Close()

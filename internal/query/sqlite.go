@@ -1558,7 +1558,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 // FTS join (ftsJoin); there is no separate non-EXISTS join slot.
 func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
 	return e.buildSearchQueryPartsWithVisibility(ctx, q,
-		searchMessageVisibilityWhere("m", q.DeletionScope))
+		searchMessageVisibilityWhere("m", q))
 }
 
 // buildSearchQueryPartsWithVisibility keeps the historical SearchFast

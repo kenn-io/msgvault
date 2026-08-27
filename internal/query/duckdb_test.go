@@ -485,11 +485,13 @@ func TestDuckDBEngine_SearchDeletionScopeSQLiteScanner(t *testing.T) {
 func assertSearchDeletionScopes(t *testing.T, engine Engine, activeIDs, deletedIDs, anyIDs []int64) {
 	t.Helper()
 	tests := []struct {
-		name    string
-		scope   search.DeletionScope
-		wantIDs []int64
+		name        string
+		scope       search.DeletionScope
+		hideDeleted bool
+		wantIDs     []int64
 	}{
-		{name: "zero_value_defaults_to_active", wantIDs: activeIDs},
+		{name: "zero_value_keeps_hide_deleted_off", wantIDs: anyIDs},
+		{name: "zero_value_keeps_hide_deleted_on", hideDeleted: true, wantIDs: activeIDs},
 		{name: "active", scope: search.DeletionScopeActive, wantIDs: activeIDs},
 		{name: "deleted", scope: search.DeletionScopeDeleted, wantIDs: deletedIDs},
 		{name: "any", scope: search.DeletionScopeAny, wantIDs: anyIDs},
@@ -499,6 +501,7 @@ func assertSearchDeletionScopes(t *testing.T, engine Engine, activeIDs, deletedI
 		t.Run(tt.name, func(t *testing.T) {
 			results, err := engine.Search(context.Background(), &search.Query{
 				DeletionScope: tt.scope,
+				HideDeleted:   tt.hideDeleted,
 			}, 100, 0)
 			require.NoError(t, err)
 			gotIDs := make([]int64, 0, len(results))

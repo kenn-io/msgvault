@@ -2033,7 +2033,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	var args []any
 	var joins []string
 
-	conditions = append(conditions, searchMessageVisibilityWhere("m", q.DeletionScope))
+	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
 
 	// From filter
 	if len(q.FromAddrs) > 0 {

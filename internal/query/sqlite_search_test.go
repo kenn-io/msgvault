@@ -547,11 +547,13 @@ func TestSearch_DeletionScope(t *testing.T) {
 	env.MarkDedupLoserByID(2)
 
 	tests := []struct {
-		name    string
-		scope   search.DeletionScope
-		wantIDs []int64
+		name        string
+		scope       search.DeletionScope
+		hideDeleted bool
+		wantIDs     []int64
 	}{
-		{name: "zero_value_defaults_to_active", wantIDs: []int64{3, 4, 5}},
+		{name: "zero_value_keeps_hide_deleted_off", wantIDs: []int64{1, 3, 4, 5}},
+		{name: "zero_value_keeps_hide_deleted_on", hideDeleted: true, wantIDs: []int64{3, 4, 5}},
 		{name: "active", scope: search.DeletionScopeActive, wantIDs: []int64{3, 4, 5}},
 		{name: "deleted", scope: search.DeletionScopeDeleted, wantIDs: []int64{1}},
 		{name: "any", scope: search.DeletionScopeAny, wantIDs: []int64{1, 3, 4, 5}},
@@ -559,7 +561,10 @@ func TestSearch_DeletionScope(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results := env.MustSearch(&search.Query{DeletionScope: tt.scope}, 100, 0)
+			results := env.MustSearch(&search.Query{
+				DeletionScope: tt.scope,
+				HideDeleted:   tt.hideDeleted,
+			}, 100, 0)
 			gotIDs := make([]int64, 0, len(results))
 			for _, result := range results {
 				gotIDs = append(gotIDs, result.ID)

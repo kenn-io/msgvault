@@ -477,7 +477,8 @@ func (s *Store) searchMessagesQueryImpl(
 	case search.DeletionScopeActive:
 		conditions = append(conditions, LiveMessagesWhere("m", true))
 	default:
-		// Unknown scope values fail closed to the narrowest population.
+		// The zero value (no scope chosen) and unknown values fail
+		// closed to the narrowest population.
 		conditions = append(conditions, LiveMessagesWhere("m", true))
 	}
 

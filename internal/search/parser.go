@@ -28,11 +28,13 @@ type Query struct {
 	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
 
-	// DeletionScope selects which messages the Store search path
-	// (Store.SearchMessagesQuery*) covers relative to source deletion
+	// DeletionScope selects which messages the Store and query-engine
+	// lexical search paths cover relative to source deletion
 	// (messages.deleted_from_source_at). It is caller-set context — the
-	// parser never populates it — and the zero value keeps the historical
-	// active-only behavior, so callers that never set it are unaffected.
+	// parser never populates it — and an explicit scope wins over
+	// HideDeleted. The zero value keeps each path's historical behavior
+	// (active-only on the Store path, HideDeleted-driven on the engine
+	// Search path), so callers that never set it are unaffected.
 	// SearchFast is an analytical path and keeps honoring its separate
 	// MessageFilter deletion context.
 	DeletionScope DeletionScope
@@ -57,9 +59,10 @@ type Query struct {
 type DeletionScope string
 
 const (
-	// DeletionScopeActive matches live messages only. It is the zero
-	// value so existing callers keep the historical active-only behavior.
-	DeletionScopeActive DeletionScope = ""
+	// DeletionScopeActive matches live messages only. It is distinct from
+	// the zero value so search paths can tell an explicit active request
+	// apart from a caller that never chose a scope.
+	DeletionScopeActive DeletionScope = "active"
 	// DeletionScopeDeleted matches archived messages that were deleted
 	// from their source account.
 	DeletionScopeDeleted DeletionScope = "deleted"
