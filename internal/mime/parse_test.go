@@ -121,6 +121,30 @@ func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "named.pdf", msg.Attachments[0].Filename)
 	assert.Equal(t, "application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Empty(t, msg.Attachments[0].Disposition)
+	assert.False(t, msg.Attachments[0].IsInline)
+	assert.Equal(t, []byte("synthetic pdf bytes"), msg.Attachments[0].Content)
+}
+
+func TestParse_InvalidPartContentTypePreservesContentIDAsInline(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: inline resource\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/related; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:image-1\">\r\n" +
+		"--outer\r\nContent-Type: invalid value\r\n" +
+		"Content-ID: <image-1>\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nAAH+/w==\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	require.Len(t, msg.Attachments, 1)
+	assert.Equal(t, "application/octet-stream", msg.Attachments[0].ContentType)
+	assert.Equal(t, "image-1", msg.Attachments[0].ContentID)
+	assert.Empty(t, msg.Attachments[0].Disposition)
+	assert.True(t, msg.Attachments[0].IsInline)
+	assert.Equal(t, []byte{0, 1, 254, 255}, msg.Attachments[0].Content)
 }
 
 func TestParse_InvalidMultipartContentTypeWithBoundaryRemainsFatal(t *testing.T) {

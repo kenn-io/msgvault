@@ -119,6 +119,7 @@ func Parse(raw []byte) (*Message, error) {
 	// explicit Content-Disposition: attachment
 	msg.Attachments = append(msg.Attachments, processParts(env.Attachments, false)...)
 	msg.Attachments = append(msg.Attachments, processParts(env.Inlines, true)...)
+	msg.Attachments = append(msg.Attachments, processMalformedOtherParts(env.OtherParts)...)
 
 	// Collect any parsing errors
 	for _, e := range env.Errors {
@@ -167,8 +168,8 @@ func looksLikeMultipart(value string) bool {
 }
 
 // normalizeMalformedContentTypes applies the RFC 2045 default after enmime has
-// parsed each part's disposition and filename. Attachment evidence wins over
-// the text default, matching the classification used by Python's email parser.
+// parsed the headers that can identify a binary part. Keep the sentinel for
+// those parts so EnvelopeFromPart does not select them as a text body.
 func normalizeMalformedContentTypes(root *enmime.Part) {
 	parts := root.BreadthMatchAll(func(*enmime.Part) bool { return true })
 	for _, part := range parts {
@@ -179,13 +180,9 @@ func normalizeMalformedContentTypes(root *enmime.Part) {
 			continue
 		}
 
-		recoveredType := defaultContentType
-		if strings.EqualFold(part.Disposition, "attachment") || part.FileName != "" {
-			recoveredType = fallbackContentType
-			if part.Disposition == "" {
-				part.Disposition = "attachment"
-			}
-		} else {
+		recoveredType := fallbackContentType
+		if part.Disposition == "" && part.FileName == "" && part.ContentID == "" {
+			recoveredType = defaultContentType
 			part.ContentType = defaultContentType
 		}
 
@@ -194,6 +191,24 @@ func normalizeMalformedContentTypes(root *enmime.Part) {
 			Detail: "invalid Content-Type treated as " + recoveredType,
 		})
 	}
+}
+
+// processMalformedOtherParts recovers malformed binary parts that enmime did
+// not classify from Content-Disposition. A filename identifies an attachment,
+// while a Content-ID identifies an inline resource. Neither changes the
+// sender's original disposition metadata.
+func processMalformedOtherParts(parts []*enmime.Part) []Attachment {
+	var result []Attachment
+	for _, part := range parts {
+		if part.ContentType != malformedContentType {
+			continue
+		}
+		if part.FileName == "" && part.ContentID == "" {
+			continue
+		}
+		result = append(result, makeAttachment(part, part.ContentID != ""))
+	}
+	return result
 }
 
 // parseAddressList parses an address header using enmime's AddressList method.
