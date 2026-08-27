@@ -1166,7 +1166,7 @@ func validateActivityEventToken(event ActivityEvent, token ActivityProjectionTok
 		switch token.ConversationType {
 		case "email_thread":
 			expectedChannel = ChannelEmail
-		case "group_chat", "direct_chat", "channel":
+		case "chat", "group_chat", "direct_chat", "channel":
 			expectedChannel = ChannelChat
 		}
 	}

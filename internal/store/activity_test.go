@@ -444,6 +444,39 @@ func TestConversationTypeMutationReopensEveryAffectedActivityCandidate(t *testin
 	}
 }
 
+func TestGmailChatConversationProjectsChatActivity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, personID := activityProjectionFixture(t)
+	occurredAt := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	conversationID, err := f.Store.EnsureConversationWithType(
+		f.Source.ID, "default-thread", "chat", "Default Thread")
+	require.NoError(err)
+	require.Equal(f.ConvID, conversationID)
+	messageID := f.NewMessage().
+		WithSourceMessageID("gmail-chat-activity").
+		WithSentAt(occurredAt).
+		Create(t, f.Store)
+
+	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal(messageID, candidates[0].MessageID)
+	assert.Equal("chat", candidates[0].ConversationType)
+	classification := store.ClassifyActivityCandidate(candidates[0], 25)
+	assert.Equal(store.ChannelChat, classification.Channel)
+
+	projection := activityProjectionFromCandidate(
+		t, candidates[0], personID, occurredAt)
+	projection.Event.Channel = store.ChannelChat
+	_, err = f.Store.ProjectActivityBatchContext(
+		t.Context(), []store.ActivityProjection{projection})
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, occurredAt)
+	require.NoError(err)
+	assert.Equal(store.ChannelChat, state.LastContactChannel)
+}
+
 func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 	t.Run("message mutation", func(t *testing.T) {
 		f := storetest.New(t)

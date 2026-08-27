@@ -156,7 +156,7 @@ func activityChannelFor(conversationType string, meeting bool) ActivityChannel {
 	switch conversationType {
 	case "email_thread":
 		return ChannelEmail
-	case "group_chat", "direct_chat", "channel":
+	case "chat", "group_chat", "direct_chat", "channel":
 		return ChannelChat
 	default:
 		return ChannelOther
