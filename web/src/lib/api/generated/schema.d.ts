@@ -4747,6 +4747,7 @@ export interface components {
             started_at: string;
             /** Format: int64 */
             succeeded: number;
+            tombstone_ids?: string[] | null;
         };
         ExploreActionTarget: {
             action: string;

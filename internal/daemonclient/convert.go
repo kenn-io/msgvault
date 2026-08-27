@@ -176,6 +176,7 @@ func cliDeletionExecutionToGenerated(execution *deletion.Execution) *generated.E
 		Method:             string(execution.Method),
 		StartedAt:          execution.StartedAt,
 		Succeeded:          int64(execution.Succeeded),
+		TombstoneIds:       append([]string(nil), execution.TombstoneIDs...),
 	}
 }
 

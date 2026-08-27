@@ -2814,6 +2814,7 @@ type Execution struct {
 	Method             string     `json:"method" validate:"required"`
 	StartedAt          time.Time  `json:"started_at" validate:"required"`
 	Succeeded          int64      `json:"succeeded"`
+	TombstoneIds       []string   `json:"tombstone_ids,omitempty"`
 }
 
 func (e Execution) Validate() error {
