@@ -1,3 +1,7 @@
+---
+last_edited: 2026-08-27
+---
+
 # Accounts, Identities, Collections, and Deduplication — Specification
 
 This is the authoritative reference for how msgvault organizes
@@ -309,7 +313,8 @@ preference runs in this order:
 
 1. Source preference (when `--prefer` is configured, or the default
    order: `gmail,imap,mbox,emlx,hey`).
-2. Has raw MIME / complete original payload.
+2. Complete original payload — has raw MIME, then more attachments,
+   then a larger original payload.
 3. Source metadata quality — provider IDs, threading info, presence
    of Message-ID.
 4. Richer label or folder metadata.

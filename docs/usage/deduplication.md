@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-27
 title: Deduplication
 description: Find and merge duplicate messages across accounts and collections with a reversible, five-rung safety ladder that never deletes anything by default.
 ---
@@ -30,14 +31,16 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 
 1. Source type, following `--prefer` or the default order `gmail,imap,mbox,emlx,hey`.
 2. Presence of the complete raw MIME payload.
-3. Richer label or folder metadata.
-4. Earlier archive timestamp.
-5. A stable row ID, as the final tie-breaker.
+3. More attachments.
+4. A larger payload.
+5. Richer label or folder metadata.
+6. Earlier archive timestamp.
+7. A stable row ID, as the final tie-breaker.
 
 Earlier rules win outright; later rules apply only when all earlier ones tie. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection runs the sent-copy eligibility filter first, then a priority list: source preference, raw MIME, richer labels, earlier archive time, and finally a stable row ID." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection runs the sent-copy eligibility filter first, then a priority list: source preference, raw MIME, more attachments, a larger payload, richer labels, earlier archive time, and finally a stable row ID." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## Choosing a Scope

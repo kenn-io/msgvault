@@ -2,16 +2,22 @@ package dedup_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -71,6 +77,44 @@ func linkLabel(
 		st.LinkMessageLabel(msgID, lid),
 		"LinkMessageLabel "+sourceLabelID,
 	)
+}
+
+func ingestRawMessage(
+	t *testing.T,
+	st *store.Store,
+	source *store.Source,
+	sourceMessageID string,
+	raw []byte,
+	fallbackDate time.Time,
+) int64 {
+	t.Helper()
+	hash := sha256.Sum256(raw)
+	err := importer.IngestRawMessage(
+		context.Background(), st, source.ID, source.Identifier, "",
+		nil, sourceMessageID, hex.EncodeToString(hash[:]), raw, fallbackDate,
+		slog.New(slog.DiscardHandler),
+	)
+	require.NoError(t, err, "IngestRawMessage")
+
+	var messageID int64
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT id FROM messages
+			WHERE source_id = ? AND source_message_id = ?`),
+		source.ID, sourceMessageID,
+	).Scan(&messageID)
+	require.NoError(t, err, "find ingested message")
+	return messageID
+}
+
+func setArchivedAt(
+	t *testing.T, st *store.Store, messageID int64, archivedAt time.Time,
+) {
+	t.Helper()
+	_, err := st.DB().Exec(
+		st.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"),
+		archivedAt, messageID,
+	)
+	require.NoError(t, err, "set archived_at")
 }
 
 func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
@@ -146,6 +190,18 @@ func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
 
 	idInbox := addMessage(t, st, gmail, "inbox-sent", "rfc-sent", false)
 	idSent := addMessage(t, st, gmail, "sent-sent", "rfc-sent", true)
+	_, err := st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+		int64(10000), 3, idInbox,
+	)
+	require.NoError(err, "make received copy payload-richer")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+		int64(100), 0, idSent,
+	)
+	require.NoError(err, "make sent copy payload-poorer")
 
 	linkLabel(t, st, gmail.ID, idInbox, "INBOX", "Inbox", "system")
 	linkLabel(t, st, gmail.ID, idSent, "SENT", "Sent", "system")
@@ -349,6 +405,50 @@ func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
 	require.Equal("normalized-hash", report.Groups[0].KeyType, "keyType")
 }
 
+func TestEngine_ContentHashPrefersAttachmentCompleteCopy(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	source := f.Source
+
+	partialID := addMessage(t, st, source, "hash-partial", "", false)
+	fullID := addMessage(t, st, source, "hash-full", "", false)
+	raw := []byte("From: sender@example.test\r\nSubject: Same content\r\n\r\nBody")
+	require.NoError(st.UpsertMessageRaw(partialID, raw), "UpsertMessageRaw partial")
+	require.NoError(st.UpsertMessageRaw(fullID, raw), "UpsertMessageRaw full")
+
+	_, err := st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ?, archived_at = ?
+			WHERE id = ?`),
+		int64(len(raw)), 0,
+		time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC), partialID,
+	)
+	require.NoError(err, "set partial completeness")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ?, archived_at = ?
+			WHERE id = ?`),
+		int64(len(raw)+100), 1,
+		time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC), fullID,
+	)
+	require.NoError(err, "set full completeness")
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs:    []int64{source.ID},
+		Account:             source.Identifier,
+		ContentHashFallback: true,
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	require.Equal("normalized-hash", report.Groups[0].KeyType, "key type")
+
+	group := report.Groups[0]
+	survivor := group.Messages[group.Survivor]
+	require.Equal(fullID, survivor.ID, "attachment-complete content-hash survivor")
+}
+
 // TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved verifies the
 // spec contract: "A content-hash group with two Message-ID survivors keeps
 // both as winners (one per Message-ID group)."
@@ -512,6 +612,11 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 		"never merges messages across different",
 		"methodology missing cross-account guarantee",
 	)
+	assert.Contains(t,
+		out,
+		"Tiebreakers: has raw MIME > more attachments > larger payload > more labels > earlier archived_at > lower id.",
+		"methodology missing payload completeness order",
+	)
 }
 
 // TestEngine_FormatMethodology_SingleMemberCollection asserts that a
@@ -537,7 +642,201 @@ func TestEngine_FormatMethodology_SingleMemberCollection(t *testing.T) {
 		"single-member collection should fall to the same-account guarantee; got:\n%s", out)
 }
 
+func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	source, err := st.GetOrCreateSource("apple-mail", "mailbox@example.test")
+	require.NoError(err, "GetOrCreateSource")
+
+	const messageID = "<partial-full@example.test>"
+	partialRaw := email.NewMessage().
+		From("sender@example.test").
+		To("recipient@example.test").
+		Header("Message-ID", messageID).
+		Body("Complete body, attachment not cached.").
+		Bytes()
+	fullRaw := email.NewMessage().
+		From("sender@example.test").
+		To("recipient@example.test").
+		Header("Message-ID", messageID).
+		Body("Complete body, attachment not cached.").
+		WithAttachment(
+			"report.txt", "text/plain", []byte("downloaded attachment"),
+		).
+		Bytes()
+
+	partialID := ingestRawMessage(
+		t, st, source, "partial-copy", partialRaw,
+		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	)
+	fullID := ingestRawMessage(
+		t, st, source, "full-copy", fullRaw,
+		time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
+	)
+	setArchivedAt(t, st, partialID, time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	setArchivedAt(t, st, fullID, time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC))
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{source.ID},
+		Account:          source.Identifier,
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+
+	group := report.Groups[0]
+	survivor := group.Messages[group.Survivor]
+	require.Equal(fullID, survivor.ID, "attachment-complete survivor")
+
+	_, err = eng.Execute(context.Background(), report, "partial-full")
+	require.NoError(err, "Execute")
+	assertSoftDeleted(t, st, partialID, true)
+	assertSoftDeleted(t, st, fullID, false)
+}
+
+func TestEngine_CrossMailboxPartialFullKeepsAttachmentCompleteCopy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	partialSource, err := st.GetOrCreateSource(
+		"apple-mail", "mailbox-a@example.test",
+	)
+	require.NoError(err, "GetOrCreateSource partial")
+	fullSource, err := st.GetOrCreateSource(
+		"apple-mail", "mailbox-b@example.test",
+	)
+	require.NoError(err, "GetOrCreateSource full")
+
+	const messageID = "<cross-mailbox-partial-full@example.test>"
+	partialRaw := email.NewMessage().
+		Header("Message-ID", messageID).
+		Body("Message body").
+		Bytes()
+	fullRaw := email.NewMessage().
+		Header("Message-ID", messageID).
+		Body("Message body").
+		WithAttachment(
+			"archive.bin", "application/octet-stream", []byte("complete payload"),
+		).
+		Bytes()
+
+	partialID := ingestRawMessage(
+		t, st, partialSource, "mailbox-a-partial", partialRaw,
+		time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC),
+	)
+	fullID := ingestRawMessage(
+		t, st, fullSource, "mailbox-b-full", fullRaw,
+		time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
+	)
+	setArchivedAt(t, st, partialID, time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC))
+	setArchivedAt(t, st, fullID, time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC))
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs:  []int64{partialSource.ID, fullSource.ID},
+		Account:           "Apple Mail",
+		ScopeIsCollection: true,
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+
+	group := report.Groups[0]
+	survivor := group.Messages[group.Survivor]
+	require.Equal(fullID, survivor.ID, "attachment-complete cross-mailbox survivor")
+	assert.Equal(fullSource.ID, survivor.SourceID, "survivor source")
+}
+
+func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	gmail := f.Source
+	appleMail, err := st.GetOrCreateSource(
+		"apple-mail", "archive@example.test",
+	)
+	require.NoError(err, "GetOrCreateSource apple-mail")
+
+	gmailID := addMessage(
+		t, st, gmail, "gmail-copy", "source-priority-completeness", false,
+	)
+	appleMailID := addMessage(
+		t, st, appleMail, "apple-mail-copy", "source-priority-completeness", false,
+	)
+	require.NoError(
+		st.UpsertMessageRaw(gmailID, []byte("From: sender@example.test\r\n\r\nBody")),
+		"UpsertMessageRaw gmail",
+	)
+	require.NoError(
+		st.UpsertMessageRaw(
+			appleMailID,
+			[]byte("From: sender@example.test\r\n\r\nBody with complete attachments"),
+		),
+		"UpsertMessageRaw apple-mail",
+	)
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+		int64(100), 0, gmailID,
+	)
+	require.NoError(err, "set gmail completeness")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
+			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+		int64(10000), 3, appleMailID,
+	)
+	require.NoError(err, "set apple-mail completeness")
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs:  []int64{gmail.ID, appleMail.ID},
+		Account:           "collection",
+		ScopeIsCollection: true,
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+
+	group := report.Groups[0]
+	survivor := group.Messages[group.Survivor]
+	require.Equal(gmailID, survivor.ID, "source-priority survivor")
+	require.Equal(0, survivor.AttachmentCount, "higher-priority source can be less complete")
+}
+
 func TestEngine_SurvivorTiebreakers(t *testing.T) {
+	t.Run("larger payload wins when attachment count is equal", func(t *testing.T) {
+		require := require.New(t)
+		f := storetest.New(t)
+		st := f.Store
+
+		idSmaller := addMessage(t, st, f.Source, "smaller", "rfc-payload-tie", false)
+		idLarger := addMessage(t, st, f.Source, "larger", "rfc-payload-tie", false)
+		_, err := st.DB().Exec(
+			st.Rebind(`UPDATE messages
+				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+			int64(1000), 1, idSmaller,
+		)
+		require.NoError(err, "set smaller payload completeness")
+		_, err = st.DB().Exec(
+			st.Rebind(`UPDATE messages
+				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
+			int64(2000), 1, idLarger,
+		)
+		require.NoError(err, "set larger payload completeness")
+
+		eng := dedup.NewEngine(st, dedup.Config{
+			AccountSourceIDs: []int64{f.Source.ID},
+			Account:          "test",
+		}, nil)
+		report, err := eng.Scan(context.Background())
+		require.NoError(err, "Scan")
+		require.Equal(1, report.DuplicateGroups, "groups")
+		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+		assert.Equal(t, idLarger, survivor.ID, "survivor (larger payload)")
+	})
+
 	t.Run("raw MIME wins over no raw MIME", func(t *testing.T) {
 		require := require.New(t)
 		f := storetest.New(t)

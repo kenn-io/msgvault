@@ -183,6 +183,8 @@ type DuplicateMessage struct {
 	Subject          string
 	SentAt           time.Time
 	HasRawMIME       bool
+	PayloadBytes     int64
+	AttachmentCount  int
 	LabelCount       int
 	ArchivedAt       time.Time
 	IsFromMe         bool
@@ -371,6 +373,8 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 				Subject:          m.Subject,
 				SentAt:           m.SentAt,
 				HasRawMIME:       m.HasRawMIME,
+				PayloadBytes:     m.PayloadBytes,
+				AttachmentCount:  m.AttachmentCount,
 				LabelCount:       m.LabelCount,
 				ArchivedAt:       m.ArchivedAt,
 				IsFromMe:         m.IsFromMe,
@@ -591,6 +595,8 @@ func (e *Engine) scanNormalizedHashGroups(
 						Subject:          item.candidate.Subject,
 						SentAt:           item.candidate.SentAt,
 						HasRawMIME:       true,
+						PayloadBytes:     item.candidate.PayloadBytes,
+						AttachmentCount:  item.candidate.AttachmentCount,
 						LabelCount:       item.candidate.LabelCount,
 						ArchivedAt:       item.candidate.ArchivedAt,
 						IsFromMe:         item.candidate.IsFromMe,
@@ -809,6 +815,12 @@ func (e *Engine) isBetter(
 	}
 	if candidate.HasRawMIME != current.HasRawMIME {
 		return candidate.HasRawMIME
+	}
+	if candidate.AttachmentCount != current.AttachmentCount {
+		return candidate.AttachmentCount > current.AttachmentCount
+	}
+	if candidate.PayloadBytes != current.PayloadBytes {
+		return candidate.PayloadBytes > current.PayloadBytes
 	}
 	if candidate.LabelCount != current.LabelCount {
 		return candidate.LabelCount > current.LabelCount
@@ -1298,8 +1310,8 @@ func (e *Engine) FormatMethodology() string {
 	for i, st := range e.config.SourcePreference {
 		fmt.Fprintf(&sb, "  %d. %s\n", i+1, st)
 	}
-	sb.WriteString("  Tiebreakers: has raw MIME > more labels > " +
-		"earlier archived_at > lower id.\n\n")
+	sb.WriteString("  Tiebreakers: has raw MIME > more attachments > " +
+		"larger payload > more labels > earlier archived_at > lower id.\n\n")
 
 	sb.WriteString("Sent messages:\n")
 	if e.config.ScopeIsCollection && len(e.config.AccountSourceIDs) > 1 {
