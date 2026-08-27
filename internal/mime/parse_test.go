@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
@@ -77,7 +77,7 @@ func TestParse_InvalidPartContentType(t *testing.T) {
 		"--outer\r\nContent-Type: text/plain\r\n\r\nAttached is a synthetic statement.\r\n" +
 		"--outer\r\nContent-Type: cannot open (No such file or directory)\r\n" +
 		"Content-Disposition: attachment; filename=statement.pdf\r\n" +
-		"Content-Transfer-Encoding: base64\r\n\r\nc3ludGhldGljIHBkZiBieXRlcw==\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nAAH+/w==\r\n" +
 		"--outer--\r\n")
 
 	msg, err := Parse(raw)
@@ -87,7 +87,23 @@ func TestParse_InvalidPartContentType(t *testing.T) {
 	require.Len(msg.Attachments, 1)
 	assert.Equal("statement.pdf", msg.Attachments[0].Filename)
 	assert.Equal("application/octet-stream", msg.Attachments[0].ContentType)
-	assert.Equal([]byte("synthetic pdf bytes"), msg.Attachments[0].Content)
+	assert.Equal([]byte{0, 1, 254, 255}, msg.Attachments[0].Content)
+}
+
+func TestParse_InvalidTextPartContentTypeDefaultsToBody(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: malformed body type\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\nContent-Type: text plain\r\n\r\nsearchable body\r\n" +
+		"--outer--\r\n")
+
+	msg := mustParse(t, raw)
+	assert.Equal(t, "searchable body", msg.BodyText)
+	assert.Empty(t, msg.Attachments)
+	require.Len(t, msg.Errors, 1)
+	assert.Contains(t, msg.Errors[0], "invalid Content-Type treated as text/plain")
 }
 
 func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {

@@ -11,10 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
+	"github.com/jhillyerd/enmime/v2/mediatype"
 )
 
-const fallbackContentType = "application/octet-stream"
+const (
+	defaultContentType   = "text/plain"
+	fallbackContentType  = "application/octet-stream"
+	malformedContentType = "application/x-msgvault-malformed"
+)
 
 var envelopeParser = enmime.NewParser(
 	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
@@ -65,9 +70,18 @@ type Attachment struct {
 
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
-	env, err := envelopeParser.ReadEnvelope(bytes.NewReader(raw))
+	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("read MIME envelope: Failed to ReadParts: %w", err)
+	}
+	normalizeMalformedContentTypes(root)
+
+	env, err := envelopeParser.EnvelopeFromPart(root)
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: %w", err)
+	}
+	if err := env.GatherNestedErrors(); err != nil {
+		return nil, fmt.Errorf("read MIME envelope: gather nested errors: %w", err)
 	}
 
 	msg := &Message{
@@ -120,18 +134,18 @@ func parseMediaTypeLenient(value string) (
 	invalidParams []string,
 	err error,
 ) {
-	//nolint:staticcheck // SetCustomParseMediaType requires enmime's tolerant four-result parser.
-	mediaType, params, invalidParams, err = enmime.ParseMediaType(value)
+	mediaType, params, invalidParams, err = mediatype.Parse(value)
 	if err == nil {
 		return mediaType, params, invalidParams, nil
 	}
 
 	params = salvageMediaTypeParams(value)
-	if params["boundary"] != "" {
+	if looksLikeMultipart(value) {
 		return "", nil, nil, fmt.Errorf("parse media type: %w", err)
 	}
+	delete(params, "boundary")
 
-	return fallbackContentType, params, nil, nil
+	return malformedContentType, params, nil, nil
 }
 
 func salvageMediaTypeParams(value string) map[string]string {
@@ -140,12 +154,46 @@ func salvageMediaTypeParams(value string) map[string]string {
 		return nil
 	}
 
-	//nolint:staticcheck // SetCustomParseMediaType requires enmime's tolerant four-result parser.
-	_, params, _, err := enmime.ParseMediaType(fallbackContentType + value[separator:])
+	_, params, _, err := mediatype.Parse(fallbackContentType + value[separator:])
 	if err != nil {
 		return nil
 	}
 	return params
+}
+
+func looksLikeMultipart(value string) bool {
+	baseType, _, _ := strings.Cut(value, ";")
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(baseType)), "multipart")
+}
+
+// normalizeMalformedContentTypes applies the RFC 2045 default after enmime has
+// parsed each part's disposition and filename. Attachment evidence wins over
+// the text default, matching the classification used by Python's email parser.
+func normalizeMalformedContentTypes(root *enmime.Part) {
+	parts := root.BreadthMatchAll(func(*enmime.Part) bool { return true })
+	for _, part := range parts {
+		if part.Disposition == malformedContentType {
+			part.Disposition = ""
+		}
+		if part.ContentType != malformedContentType {
+			continue
+		}
+
+		recoveredType := defaultContentType
+		if strings.EqualFold(part.Disposition, "attachment") || part.FileName != "" {
+			recoveredType = fallbackContentType
+			if part.Disposition == "" {
+				part.Disposition = "attachment"
+			}
+		} else {
+			part.ContentType = defaultContentType
+		}
+
+		part.Errors = append(part.Errors, &enmime.Error{
+			Name:   enmime.ErrorMalformedHeader,
+			Detail: "invalid Content-Type treated as " + recoveredType,
+		})
+	}
 }
 
 // parseAddressList parses an address header using enmime's AddressList method.
@@ -350,6 +398,10 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 	content := part.Content
 	hash := sha256.Sum256(content)
 	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
+	contentType := part.ContentType
+	if contentType == malformedContentType {
+		contentType = fallbackContentType
+	}
 	partKey := ""
 	if part.PartID != "" {
 		partKey = "mime:" + part.PartID
@@ -357,7 +409,7 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 
 	return Attachment{
 		Filename:    part.FileName,
-		ContentType: part.ContentType,
+		ContentType: contentType,
 		ContentID:   part.ContentID,
 		Disposition: disposition,
 		PartKey:     partKey,
