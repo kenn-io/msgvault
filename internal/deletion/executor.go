@@ -364,6 +364,16 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	}
 	e.progress.OnStart(len(manifest.GmailIDs), alreadyProcessed)
 	for ti, gmailID := range tombstoneIDs {
+		select {
+		case <-ctx.Done():
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
+			return ctx.Err()
+		default:
+		}
+		if e.manifestCancelled(manifestID) {
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
+			return ErrManifestCancelled
+		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, opts.Method == MethodDelete, gmailID); err != nil {
 			remaining := tombstoneIDs[ti:]
 			e.saveTombstoneCheckpoint(
@@ -541,6 +551,16 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 	var failedIDs []string
 	// Tombstone-only retries must never issue another remote deletion.
 	for ti, gmailID := range tombstoneIDs {
+		select {
+		case <-ctx.Done():
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
+			return ctx.Err()
+		default:
+		}
+		if e.manifestCancelled(manifestID) {
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
+			return ErrManifestCancelled
+		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, true, gmailID); err != nil {
 			remaining := slices.Clone(tombstoneIDs[ti:])
 			e.saveTombstoneCheckpoint(
