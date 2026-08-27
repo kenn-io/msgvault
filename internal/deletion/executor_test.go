@@ -648,6 +648,9 @@ func TestExecutor_ExecuteBatch_LocalTombstoneFailureDuringRetryLeavesManifestInP
 }
 
 func TestExecutor_ExecuteBatch_ResumeTombstoneRetriesWithoutRemoteDelete(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("resume tombstone only", []string{"msg0"})
 	tc.SeedMessages([]string{"msg0"})
@@ -658,12 +661,12 @@ func TestExecutor_ExecuteBatch_ResumeTombstoneRetriesWithoutRemoteDelete(t *test
 		TombstoneIDs:       []string{"msg0"},
 		LastProcessedIndex: 1,
 	}
-	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest")
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest")
 
-	require.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
+	require.NoError(tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
 	tc.AssertDeleteCalls(0)
-	assert.Empty(t, tc.MockAPI.BatchDeleteCalls)
-	assert.Equal(t, 1, tc.CountDeleted(), "local tombstone was persisted")
+	assert.Empty(tc.MockAPI.BatchDeleteCalls)
+	assert.Equal(1, tc.CountDeleted(), "local tombstone was persisted")
 	tc.AssertCompletedCount(1)
 }
 
