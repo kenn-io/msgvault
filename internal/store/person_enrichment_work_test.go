@@ -617,6 +617,35 @@ func TestPersonEnrichmentClaimReturnsBoundActiveAttempt(t *testing.T) {
 	assert.Equal(attempt.ID, reclaimed.Token.AttemptID)
 }
 
+func TestPersonEnrichmentReclaimClearsInterruptedPollAuthorization(t *testing.T) {
+	require := require.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "interrupted-poll")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker-a")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, testAttemptStart(&f, run.ID, "a"))
+	require.NoError(err)
+	require.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+	require.NoError(f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
+		State: personenrichment.AttemptPending, RequestID: "opaque-request", JobID: "opaque-job-42",
+		StartedAt:      f.now,
+		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
+		ProgramFingerprint: strings.Repeat("b", 64),
+	}))
+	require.NoError(f.store.SchedulePoll(t.Context(), attempt.Token, personenrichment.Result{
+		State: personenrichment.ResultPending, RequestID: "opaque-request", JobID: "opaque-job-42",
+		PollAfter: time.Minute, AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1",
+	}))
+
+	f.setNow(f.now.Add(time.Minute))
+	polling := f.claim(t, run.ID, "worker-a")
+	require.NoError(f.store.AuthorizeAttemptPoll(t.Context(), polling.Token))
+
+	f.setNow(polling.LeaseUntil.Add(time.Nanosecond))
+	reclaimed := f.claim(t, run.ID, "worker-b")
+	require.NoError(f.store.AuthorizeAttemptPoll(t.Context(), reclaimed.Token))
+}
+
 func TestSixtyfourReclaimUsesProviderStartTimeForMaximumJobAge(t *testing.T) {
 	require := require.New(t)
 	checks := assert.New(t)

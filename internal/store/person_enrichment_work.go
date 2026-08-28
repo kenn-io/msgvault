@@ -400,6 +400,10 @@ func (s *Store) ClaimWork(
 				        WHEN state = 'retry_wait' AND provider_job_id IS NOT NULL THEN NULL
 				        ELSE next_action_at
 				    END,
+				    dispatch_authorized_at = CASE
+				        WHEN state = 'pending' THEN NULL
+				        ELSE dispatch_authorized_at
+				    END,
 				    lease_owner = ?, lease_fence = ?, lease_until = ?
 				WHERE id = ? AND run_id = ?`, options.Owner, fence, leaseUntil,
 				activeID.Int64, runID); err != nil {
