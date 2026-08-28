@@ -165,6 +165,9 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 	now = now.UTC()
 	count := 0
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		expiryMask, err := personEnrichmentTriggerMask(personenrichment.TriggerExpiry)
 		if err != nil {
 			return err
@@ -271,6 +274,9 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		}
 		if err := rows.Close(); err != nil {
 			return fmt.Errorf("close missing person enrichment work: %w", err)
+		}
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("catch_up_missing_snapshotted")
 		}
 		for _, item := range missing {
 			if err := s.putPersonEnrichmentWorkTx(ctx, tx, EnrichmentTriggerInput{
