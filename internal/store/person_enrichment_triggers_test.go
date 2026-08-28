@@ -608,16 +608,45 @@ func TestPersonEnrichmentCatchUpRepairsMissingTrackedWorkAndExcludesUntracked(t 
 	require.NoError(err)
 	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
 
-	count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200)
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
 	require.NoError(err)
 	assert.Equal(1, count)
 	rows := f.work(t, 0)
 	require.Len(rows, 1)
 	assert.Equal(int64(1), rows[0].TriggerMask)
 
-	count, err = f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200)
+	count, err = f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
 	require.NoError(err)
 	assert.Zero(count)
+}
+
+func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing.T) {
+	for _, expiredClaim := range []bool{false, true} {
+		t.Run("expired_claim="+strconv.FormatBool(expiredClaim), func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			f := newEnrichmentTriggerFixture(t, 2)
+			f.grant(t, 0)
+			f.grant(t, 1)
+			_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+			requirements.NoError(err)
+			if expiredClaim {
+				insertProviderClaim(t, f.store, f.person.ID, f.profiles[1].Fingerprint,
+					"unavailable-expired", f.now.Add(-time.Minute))
+			}
+			requirements.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(
+				t.Context(), []string{f.profiles[0].Fingerprint}))
+			checks.Empty(f.work(t, 1))
+
+			count, err := f.store.EnqueueDuePersonEnrichmentContext(
+				t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
+			requirements.NoError(err)
+			checks.Zero(count)
+			checks.Empty(f.work(t, 1))
+		})
+	}
 }
 
 func TestPersonEnrichmentCatchUpAdvancesExistingRefreshWhenProviderClaimExpires(t *testing.T) {
@@ -637,7 +666,8 @@ func TestPersonEnrichmentCatchUpAdvancesExistingRefreshWhenProviderClaimExpires(
 	claimID := insertProviderClaim(t, f.store, f.person.ID, f.profiles[0].Fingerprint,
 		"expired", f.now.Add(-time.Minute))
 
-	count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200)
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
 	require.NoError(err)
 	assert.Equal(1, count)
 	rows := f.work(t, 0)
@@ -666,7 +696,8 @@ func TestPersonEnrichmentCatchUpIgnoresHistoricalExpiredProviderClaim(t *testing
 	insertProviderClaim(t, f.store, f.person.ID, f.profiles[0].Fingerprint,
 		"latest-fresh", f.now.Add(6*time.Hour))
 
-	count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200)
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
 	require.NoError(err)
 	assert.Zero(count)
 	rows := f.work(t, 0)

@@ -2750,9 +2750,10 @@ type personEnrichmentScheduleWorker interface {
 // personEnrichmentSchedule owns only wake-up ordering. Runs, attempts, retry
 // times, provider jobs, and spend remain database-owned.
 type personEnrichmentSchedule struct {
-	Store        *store.Store
-	Worker       personEnrichmentScheduleWorker
-	CatchUpLimit int
+	Store                     *store.Store
+	Worker                    personEnrichmentScheduleWorker
+	CatchUpLimit              int
+	ActiveProfileFingerprints []string
 }
 
 func (r *personEnrichmentSchedule) Wake(ctx context.Context, occurrence time.Time) error {
@@ -2796,7 +2797,7 @@ func (r *personEnrichmentSchedule) Wake(ctx context.Context, occurrence time.Tim
 	}
 	for {
 		count, err := r.Store.EnqueueDuePersonEnrichmentContext(
-			ctx, requestedAt, r.CatchUpLimit)
+			ctx, requestedAt, r.CatchUpLimit, r.ActiveProfileFingerprints)
 		if err != nil {
 			return fmt.Errorf("catch up person enrichment work: %w", err)
 		}
@@ -2918,6 +2919,7 @@ func registerPersonEnrichmentJob(
 	}
 	runner := &personEnrichmentSchedule{
 		Store: st, Worker: worker, CatchUpLimit: min(enrichmentConfig.BatchSize, 200),
+		ActiveProfileFingerprints: activeFingerprints,
 	}
 	return sched.AddJob(scheduler.Job{
 		Name: personEnrichmentJob, Schedule: enrichmentConfig.Schedule,

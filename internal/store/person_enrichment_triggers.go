@@ -141,11 +141,27 @@ func (s *Store) publishPersonIdentityEnrichmentTx(
 // refresh rows keep their database-owned due times; the cron schedule only
 // wakes this scan.
 func (s *Store) EnqueueDuePersonEnrichmentContext(
-	ctx context.Context, now time.Time, limit int,
+	ctx context.Context, now time.Time, limit int, activeFingerprints []string,
 ) (int, error) {
 	if now.IsZero() || limit < 1 || limit > 200 {
 		return 0, errors.New("person enrichment catch-up requires a time and limit from 1 to 200")
 	}
+	seen := make(map[string]struct{}, len(activeFingerprints))
+	profileArgs := make([]any, 0, len(activeFingerprints))
+	for _, fingerprint := range activeFingerprints {
+		if !validLowerSHA256(fingerprint) {
+			return 0, errors.New("active person enrichment profile fingerprint is invalid")
+		}
+		if _, duplicate := seen[fingerprint]; duplicate {
+			continue
+		}
+		seen[fingerprint] = struct{}{}
+		profileArgs = append(profileArgs, fingerprint)
+	}
+	if len(profileArgs) == 0 {
+		return 0, nil
+	}
+	profilePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(profileArgs)), ",")
 	now = now.UTC()
 	count := 0
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -153,6 +169,8 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		if err != nil {
 			return err
 		}
+		expiredArgs := append([]any(nil), profileArgs...)
+		expiredArgs = append(expiredArgs, now, expiryMask, now, limit)
 		expiredRows, err := tx.QueryContext(ctx, `
 			SELECT c.person_id, g.provider_policy_fingerprint, MAX(c.id)
 			FROM person_fact_claims c
@@ -164,7 +182,9 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			LEFT JOIN person_enrichment_work w
 			  ON w.person_id = c.person_id
 			 AND w.profile_fingerprint = g.provider_policy_fingerprint
-			WHERE c.origin = 'enrichment' AND c.valid_until IS NOT NULL
+			WHERE c.origin = 'enrichment'
+			  AND g.provider_policy_fingerprint IN (`+profilePlaceholders+`)
+			  AND c.valid_until IS NOT NULL
 			  AND c.valid_until <= ?
 			  AND NOT EXISTS (
 				SELECT 1 FROM person_fact_generations newer
@@ -175,7 +195,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  AND (w.person_id IS NULL OR (w.trigger_mask & ?) = 0 OR w.due_at > ?)
 			GROUP BY c.person_id, g.provider_policy_fingerprint
 			ORDER BY c.person_id, g.provider_policy_fingerprint
-			LIMIT ?`, now, expiryMask, now, limit)
+			LIMIT ?`, expiredArgs...)
 		if err != nil {
 			return fmt.Errorf("list expired person enrichment claims: %w", err)
 		}
@@ -213,6 +233,8 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		if count == limit {
 			return nil
 		}
+		missingArgs := append([]any(nil), profileArgs...)
+		missingArgs = append(missingArgs, limit-count)
 		rows, err := tx.QueryContext(ctx, `
 			SELECT pt.person_id, c.profile_fingerprint, p.revision
 			FROM person_tracking pt
@@ -221,9 +243,11 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			LEFT JOIN person_enrichment_work w
 			  ON w.person_id = pt.person_id
 			 AND w.profile_fingerprint = c.profile_fingerprint
-			WHERE c.revoked_at IS NULL AND w.person_id IS NULL
+			WHERE c.revoked_at IS NULL
+			  AND c.profile_fingerprint IN (`+profilePlaceholders+`)
+			  AND w.person_id IS NULL
 			ORDER BY pt.person_id, c.profile_fingerprint
-			LIMIT ?`, limit-count)
+			LIMIT ?`, missingArgs...)
 		if err != nil {
 			return fmt.Errorf("list missing person enrichment work: %w", err)
 		}
