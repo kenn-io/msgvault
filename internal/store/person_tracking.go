@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/personenrichment"
 )
 
@@ -84,7 +84,7 @@ func (s *Store) SetPersonTrackingContext(
 			ctx, tx, "person-fact-generation", personID); err != nil {
 			return err
 		}
-		revision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)
+		_, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("track person %d: %w", personID, ErrPersonNotFound)
 		}
@@ -96,6 +96,7 @@ func (s *Store) SetPersonTrackingContext(
 		}
 
 		trackingAdded := false
+		trackingGeneration := ""
 		if tracked {
 			var result sql.Result
 			result, err = tx.ExecContext(ctx, `
@@ -107,6 +108,9 @@ func (s *Store) SetPersonTrackingContext(
 			if err == nil {
 				inserted, err = result.RowsAffected()
 				trackingAdded = inserted == 1
+				if trackingAdded {
+					trackingGeneration = "enrollment:" + uuid.NewString()
+				}
 			}
 			if err == nil && inserted == 1 {
 				_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
@@ -142,7 +146,7 @@ func (s *Store) SetPersonTrackingContext(
 		if tracked {
 			if trackingAdded {
 				if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
-					personenrichment.TriggerTracked, "revision:"+strconv.FormatInt(revision, 10),
+					personenrichment.TriggerTracked, trackingGeneration,
 					s.personEnrichmentTime()); err != nil {
 					return err
 				}

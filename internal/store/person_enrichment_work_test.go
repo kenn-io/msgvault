@@ -359,6 +359,48 @@ func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.
 	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
 }
 
+func TestPersonEnrichmentRetrackingCreatesFreshAttempt(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
+	requirements.NoError(err)
+	_, err = f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	requirements.NoError(err)
+	run := f.startRun(t, "retracking")
+	lease := f.claim(t, run.ID, "worker-a")
+	payloadHash := strings.Repeat("7", 64)
+	requestHash, err := personenrichment.RequestHash(f.person.ID, payloadHash, lease.Trigger)
+	requirements.NoError(err)
+	first, created, err := f.store.BeginAttempt(t.Context(), lease.Token, personenrichment.AttemptStart{
+		RunID: run.ID, PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		PayloadHash: payloadHash, RequestHash: requestHash,
+		PersonRevision: f.person.Revision, Trigger: lease.Trigger,
+	})
+	requirements.NoError(err)
+	checks.True(created)
+
+	_, err = f.store.SetPersonTrackingContext(t.Context(), f.person.ID, false)
+	requirements.NoError(err)
+	_, err = f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	requirements.NoError(err)
+	retrackedLease := f.claim(t, run.ID, "worker-b")
+	checks.NotEqual(lease.Trigger.Generation, retrackedLease.Trigger.Generation)
+	retrackedHash, err := personenrichment.RequestHash(
+		f.person.ID, payloadHash, retrackedLease.Trigger)
+	requirements.NoError(err)
+	checks.NotEqual(requestHash, retrackedHash)
+	second, created, err := f.store.BeginAttempt(t.Context(), retrackedLease.Token,
+		personenrichment.AttemptStart{
+			RunID: run.ID, PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+			PayloadHash: payloadHash, RequestHash: retrackedHash,
+			PersonRevision: f.person.Revision, Trigger: retrackedLease.Trigger,
+		})
+	requirements.NoError(err)
+	checks.True(created)
+	checks.NotEqual(first.ID, second.ID)
+}
+
 func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
