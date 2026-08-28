@@ -646,11 +646,13 @@ func TestPersonEnrichmentCatchUpRepairsMissingTrackedWorkAndExcludesUntracked(t 
 }
 
 func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
 	f.grant(t, 0)
 	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
-	require.NoError(t, err)
-	require.NoError(t, clearEnrichmentWork(t, f.store, f.person.ID))
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
 
 	snapshotted := make(chan struct{})
 	releaseCatchUp := make(chan struct{})
@@ -687,13 +689,13 @@ func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 	}
 	release()
-	require.NoError(t, <-catchUpDone)
+	require.NoError(<-catchUpDone)
 	if !earlyRemoval {
 		revokeErr = <-revokeDone
 	}
-	require.NoError(t, revokeErr)
-	assert.False(t, earlyRemoval, "consent revocation committed during catch-up publication")
-	assert.Empty(t, f.work(t, 0))
+	require.NoError(revokeErr)
+	assert.False(earlyRemoval, "consent revocation committed during catch-up publication")
+	assert.Empty(f.work(t, 0))
 }
 
 func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing.T) {
