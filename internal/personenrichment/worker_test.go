@@ -1687,7 +1687,7 @@ func TestWorkerStopsRetryingActiveAttemptAtLimit(t *testing.T) {
 		start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
 			return personenrichment.Attempt{
 				State: personenrichment.AttemptPending, JobID: "active-retry-job",
-				PollAfter: time.Nanosecond, StartedAt: time.Now().UTC(),
+				PollAfter: time.Hour, StartedAt: time.Now().UTC(),
 				AdapterVersion: "test-adapter-v1", SchemaVersion: "test-wire-v1",
 				ProgramFingerprint: workerProgramFingerprint(t, false, ""),
 			}, nil
@@ -1709,16 +1709,28 @@ func TestWorkerStopsRetryingActiveAttemptAtLimit(t *testing.T) {
 	processed, err := worker.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	checks.True(processed)
-	processed, err = worker.RunOnce(t.Context(), f.run.ID)
-	requirements.NoError(err)
-	checks.True(processed)
-
 	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
 		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
 	})
 	requirements.NoError(err)
 	requirements.Len(work, 1)
 	options := f.options(configs)
+	options.Clock = func() time.Time { return work[0].DueAt.Add(time.Second) }
+	worker, err = personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "", false }),
+		factory, options,
+	)
+	requirements.NoError(err)
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+
+	work, err = f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(work, 1)
+	options = f.options(configs)
 	options.Clock = func() time.Time { return work[0].DueAt.Add(time.Second) }
 	worker, err = personenrichment.NewWorker(
 		f.store, f.store, f.gate(t, func(string) (string, bool) { return "", false }),
