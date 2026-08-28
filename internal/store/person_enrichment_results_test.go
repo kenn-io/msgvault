@@ -153,6 +153,26 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 	}
 }
 
+func TestPersonEnrichmentSynchronousResultCommitsFromStartingAttempt(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentResultFixture(t)
+	_, err := f.store.db.ExecContext(t.Context(), `UPDATE person_enrichment_attempts
+		SET state = 'starting', provider_request_id = NULL, provider_job_id = NULL,
+		    adapter_version = NULL, schema_version = NULL, generated_schema = FALSE,
+		    generated_schema_hash = NULL, targets_json = NULL, program_fingerprint = NULL,
+		    provider_started_at = NULL
+		WHERE id = ?`, f.attempt.ID)
+	requirements.NoError(err)
+
+	outcome, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+	requirements.NoError(err)
+	checks.Equal(personenrichment.ClaimApplied, outcome.Status)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), f.attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("succeeded", stored.State)
+}
+
 func enrichmentPublicClaim(
 	target personfacts.TargetDescriptor, submitted string, reportedScore int,
 ) personfacts.ProposedClaim {

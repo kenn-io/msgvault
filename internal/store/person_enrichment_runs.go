@@ -359,7 +359,8 @@ func (s *Store) CompleteRun(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*), COUNT(*),
 			       COALESCE(SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END), 0),
-			       COALESCE(SUM(CASE WHEN state IN ('terminal','uncertain_start') THEN 1 ELSE 0 END), 0),
+			       COALESCE(SUM(CASE WHEN state IN ('terminal','uncertain_start')
+			                         AND COALESCE(failure_class, '') <> 'policy' THEN 1 ELSE 0 END), 0),
 			       COALESCE(SUM(CASE WHEN state = 'suppressed' THEN 1 ELSE 0 END), 0),
 			       COALESCE(SUM(CASE WHEN state = 'identity_rejected' THEN 1 ELSE 0 END), 0)
 			FROM person_enrichment_attempts WHERE run_id = ?`, runID).Scan(

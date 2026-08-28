@@ -867,7 +867,7 @@ func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema
 	require.Error(t, err)
 }
 
-func TestPersonEnrichmentGeneratedSynchronousStartDoesNotRequireRestartTargets(t *testing.T) {
+func TestPersonEnrichmentAttemptRejectsNonAtomicSynchronousStart(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -887,14 +887,35 @@ func TestPersonEnrichmentGeneratedSynchronousStartDoesNotRequireRestartTargets(t
 		AdapterVersion: "adapter-v1", SchemaVersion: "schema-v1", GeneratedSchema: true,
 		GeneratedSchemaHash: strings.Repeat("c", 64), ProgramFingerprint: strings.Repeat("b", 64),
 	})
-	require.NoError(err)
+	require.Error(err)
 
-	f.setNow(lease.LeaseUntil.Add(time.Nanosecond))
-	reclaimed := f.claim(t, run.ID, "worker-b")
-	require.NotNil(reclaimed.ActiveAttempt)
-	assert.True(reclaimed.ActiveAttempt.GeneratedSchema)
-	assert.Empty(reclaimed.ActiveAttempt.JobID)
-	assert.Empty(reclaimed.ActiveAttempt.Targets)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	require.NoError(err)
+	assert.Equal("starting", stored.State)
+	assert.Nil(stored.ProviderRequestID)
+}
+
+func TestPersonDisplayNameRejectsAuthorizedEnrichmentDispatch(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "display-name-dispatch")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "d"))
+	requirements.NoError(err)
+	requirements.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+
+	displayName := "Changed During Dispatch"
+	updated, err := f.store.UpdatePersonDisplayNameContext(
+		t.Context(), f.person.ID, f.person.Revision, &displayName)
+	requirements.ErrorIs(err, store.ErrPersonEnrichmentDispatchInProgress)
+	checks.Nil(updated)
+	current, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	checks.Equal(f.person.Revision, current.Revision)
+	checks.Equal(f.person.DisplayName, current.DisplayName)
 }
 
 func TestPersonEnrichmentAttemptRejectsPollingDifferentOpaqueJob(t *testing.T) {

@@ -525,7 +525,7 @@ func (s *Store) updatePersonDisplayNameOnce(
 		if err != nil {
 			return err
 		}
-		return s.publishPersonIdentityEnrichmentTx(ctx, tx, updatedID)
+		return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, updatedID)
 	})
 	if err != nil {
 		return nil, err

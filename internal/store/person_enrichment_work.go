@@ -952,12 +952,15 @@ func (s *Store) RecordProviderStarted(
 	if err := started.Validate(); err != nil {
 		return err
 	}
+	if started.State != personenrichment.AttemptPending {
+		return errors.New("provider start recording requires an asynchronous pending attempt")
+	}
 	if strings.TrimSpace(started.AdapterVersion) == "" || strings.TrimSpace(started.SchemaVersion) == "" ||
 		!validLowerSHA256(started.ProgramFingerprint) ||
 		(started.GeneratedSchema != validLowerSHA256(started.GeneratedSchemaHash)) {
 		return errors.New("provider start requires immutable adapter, schema, and program metadata")
 	}
-	if started.State == personenrichment.AttemptPending && started.StartedAt.IsZero() {
+	if started.StartedAt.IsZero() {
 		return errors.New("pending provider start requires exact provider start time")
 	}
 	var targetsJSON any

@@ -452,7 +452,8 @@ func TestRegisterPersonEnrichmentJobCancelsWorkForUnavailableProfiles(t *testing
 			}))
 			completed, err := f.Store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
 			requirements.NoError(err)
-			checks.Equal("failed", completed.State)
+			checks.Equal("succeeded", completed.State)
+			checks.Zero(completed.FailedCount)
 		})
 	}
 }

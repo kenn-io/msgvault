@@ -496,11 +496,11 @@ func (w *Worker) startAttempt(
 		return w.work.MarkTerminal(ctx, lease.Token,
 			safeFailure(FailureInvalidOutput, 0, started.RequestID, "invalid provider start"))
 	}
-	if err := w.work.RecordProviderStarted(ctx, lease.Token, started); err != nil {
-		return err
-	}
-	lease.ActiveAttempt = durableAttemptFromStart(lease, started)
 	if started.State == AttemptPending {
+		if err := w.work.RecordProviderStarted(ctx, lease.Token, started); err != nil {
+			return err
+		}
+		lease.ActiveAttempt = durableAttemptFromStart(lease, started)
 		return w.work.SchedulePoll(ctx, lease.Token, Result{
 			State: ResultPending, RequestID: started.RequestID, JobID: started.JobID,
 			PollAfter: started.PollAfter, AdapterVersion: started.AdapterVersion,

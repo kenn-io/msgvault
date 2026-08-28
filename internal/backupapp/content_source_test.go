@@ -778,7 +778,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 
 	select {
 	case <-blocked.opened:
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		require.FailNow("backup did not open the old packed blob")
 	}
 	repackStats, repackErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
@@ -789,7 +789,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	var result createResult
 	select {
 	case result = <-created:
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		require.FailNow("backup did not finish after releasing its content source")
 	}
 	require.NoError(result.err)

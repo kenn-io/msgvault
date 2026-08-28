@@ -218,6 +218,14 @@ func TestPersonEnrichmentCompleteRunDerivesTruthfulState(t *testing.T) {
 			PayloadHash: strings.Repeat(hashByte, 64), RequestHash: strings.Repeat(hashByte, 64),
 		}))
 	}
+	policyPerson := func(t *testing.T, f enrichmentWorkFixture, runID int64, owner, hashByte string) {
+		t.Helper()
+		lease := f.claim(t, runID, owner)
+		require.NoError(t, f.store.ReleaseWork(t.Context(), lease.Token, personenrichment.WorkRelease{
+			Outcome: "policy", PersonRevision: f.person.Revision,
+			PayloadHash: strings.Repeat(hashByte, 64), RequestHash: strings.Repeat(hashByte, 64),
+		}))
+	}
 	extraTrackedPerson := func(t *testing.T, f *enrichmentWorkFixture) {
 		t.Helper()
 		participantID, err := f.store.EnsureParticipant(
@@ -252,12 +260,12 @@ func TestPersonEnrichmentCompleteRunDerivesTruthfulState(t *testing.T) {
 		f := newEnrichmentWorkFixture(t)
 		run := f.startRun(t, "derive-succeeded")
 		f.enqueue(t)
-		suppressPerson(t, f, run.ID, "derive-succeeded-worker", "d")
+		policyPerson(t, f, run.ID, "derive-succeeded-worker", "d")
 		requirements.NoError(f.store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{State: "", CompletedAt: f.now}))
 		got, err := f.store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
 		requirements.NoError(err)
 		checks.Equal("succeeded", got.State)
-		checks.Equal(int64(1), got.SuppressedCount)
+		checks.Zero(got.FailedCount)
 	})
 
 	t.Run("mixed outcomes", func(t *testing.T) {

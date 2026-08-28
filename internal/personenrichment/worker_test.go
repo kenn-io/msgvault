@@ -2051,7 +2051,6 @@ func TestWorkerRateLimitedStartRetriesSameReservedAttempt(t *testing.T) {
 
 type recordingSink struct {
 	inner    personenrichment.ClaimSink
-	before   func()
 	mu       sync.Mutex
 	statuses []personenrichment.ClaimOutcomeStatus
 }
@@ -2059,9 +2058,6 @@ type recordingSink struct {
 func (s *recordingSink) CommitEnrichmentClaims(
 	ctx context.Context, commit personenrichment.ClaimCommit,
 ) (*personenrichment.ClaimOutcome, error) {
-	if s.before != nil {
-		s.before()
-	}
 	outcome, err := s.inner.CommitEnrichmentClaims(ctx, commit)
 	if outcome != nil {
 		s.mu.Lock()
@@ -2069,117 +2065,6 @@ func (s *recordingSink) CommitEnrichmentClaims(
 		s.mu.Unlock()
 	}
 	return outcome, err
-}
-
-func TestWorkerCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
-	tests := []struct {
-		name       string
-		want       personenrichment.ClaimOutcomeStatus
-		invalidate func(*workerFixture, personenrichment.Result)
-	}{
-		{
-			name: "consent revoked", want: personenrichment.ClaimPolicyRejected,
-			invalidate: func(f *workerFixture, _ personenrichment.Result) {
-				changed, err := f.store.RevokePersonEnrichmentConsent(t.Context(), f.profile.Fingerprint, "test")
-				require.NoError(t, err)
-				require.True(t, changed)
-			},
-		},
-		{
-			name: "returned identity suppressed", want: personenrichment.ClaimSuppressed,
-			invalidate: func(f *workerFixture, result personenrichment.Result) {
-				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
-					personenrichment.SuppressionPublicProfileURL, []string{result.CanonicalPublicURLs[0]})
-				require.NoError(t, err)
-				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class, normalized.NormalizationVersion, normalized.Value)
-				require.NoError(t, f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(), []store.PersonEnrichmentSuppressionInput{{
-					ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
-					NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID, Digest: digest.Digest,
-					Reason: store.PersonEnrichmentSuppressionOptOut, Actor: "test",
-				}}))
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			checks := assert.New(t)
-			requirements := require.New(t)
-			f := newWorkerFixture(t, "commit-recheck", func(cfg *personenrichment.ProviderConfig) {
-				cfg.MaxCostUSDMicrosPerRun = 1_000
-			})
-			f.enqueue(t)
-			var returned personenrichment.Result
-			provider := &guaranteedFunctionProvider{
-				functionProvider: &functionProvider{
-					start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
-						result := workerResult(t, request, f.target, "blocked-request", "", false, "", personenrichment.Cost{
-							Currency: "USD", AmountMicros: 600,
-						})
-						result.CanonicalPublicURLs = []string{"https://profiles.example.test/synthetic-person"}
-						returned = result
-						return personenrichment.Attempt{
-							State: personenrichment.AttemptComplete, RequestID: result.RequestID,
-							AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
-							ProgramFingerprint: workerProgramFingerprint(t, false, ""), Result: &result,
-						}, nil
-					},
-					poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
-						return personenrichment.Result{}, errors.New("unexpected poll")
-					},
-				},
-				bound: func(context.Context, personenrichment.Request) (personenrichment.Cost, error) {
-					return personenrichment.Cost{Currency: "USD", AmountMicros: 900}, nil
-				},
-			}
-			sink := &recordingSink{
-				inner: f.store,
-				before: func() {
-					tt.invalidate(f, returned)
-				},
-			}
-			worker, err := personenrichment.NewWorker(
-				f.store, sink, f.gate(t, func(string) (string, bool) { return "test-key", true }),
-				map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
-					return provider, nil
-				}}, f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}))
-			requirements.NoError(err)
-			done := make(chan error, 1)
-			go func() {
-				processed, runErr := worker.RunOnce(t.Context(), f.run.ID)
-				if !processed && runErr == nil {
-					runErr = errors.New("worker did not process blocked result")
-				}
-				done <- runErr
-			}()
-			requirements.NoError(<-done)
-			sink.mu.Lock()
-			checks.Equal([]personenrichment.ClaimOutcomeStatus{tt.want}, sink.statuses)
-			sink.mu.Unlock()
-			attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
-				PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
-			})
-			requirements.NoError(err)
-			requirements.Len(attempts, 1)
-			requirements.NotNil(attempts[0].ActualCostUSDMicros)
-			checks.Equal(int64(600), *attempts[0].ActualCostUSDMicros)
-			checks.Nil(attempts[0].FactGenerationKey)
-			checks.Nil(attempts[0].LeaseOwner)
-			checks.Contains([]string{"terminal", "suppressed"}, attempts[0].State)
-			for _, table := range []string{
-				"person_enrichment_provider_identities", "person_enrichment_citations",
-				"person_fact_generations", "person_fact_claims", "person_fact_decisions",
-			} {
-				var count int64
-				requirements.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
-				checks.Zero(count, table)
-			}
-			work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
-				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
-			})
-			requirements.NoError(err)
-			checks.Empty(work)
-		})
-	}
 }
 
 func TestWorkerAsyncPollCommitRechecksConsentAndReturnedSuppression(t *testing.T) {

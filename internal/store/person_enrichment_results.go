@@ -163,7 +163,17 @@ func (s *Store) preparePersonEnrichmentCommit(
 	if attempt.LeaseFence != commit.LeaseFence {
 		return nil, ErrStaleLease
 	}
-	if err := verifyPersonEnrichmentCommitAttemptEnvelope(commit, result, attempt); err != nil {
+	if attempt.State == "starting" {
+		if err := verifyPersonEnrichmentCommitAttemptIdentity(commit, attempt); err != nil {
+			return nil, err
+		}
+		if attempt.ProviderRequestID.Valid || attempt.ProviderJobID.Valid ||
+			attempt.AdapterVersion.Valid || attempt.SchemaVersion.Valid || attempt.GeneratedSchema ||
+			attempt.GeneratedSchemaHash.Valid || attempt.ProgramFingerprint.Valid {
+			return nil, fmt.Errorf(
+				"%w: partial synchronous provider metadata", errPersonEnrichmentResultEnvelopeChanged)
+		}
+	} else if err := verifyPersonEnrichmentCommitAttemptEnvelope(commit, result, attempt); err != nil {
 		return nil, err
 	}
 	profile, err := s.loadPersonEnrichmentProfile(ctx, s.db, commit.ProfileFingerprint, false)
@@ -201,7 +211,7 @@ func (s *Store) preparePersonEnrichmentCommit(
 	if err != nil {
 		return nil, err
 	}
-	if attempt.ProgramFingerprint.String != programFingerprint {
+	if attempt.State != "starting" && attempt.ProgramFingerprint.String != programFingerprint {
 		return nil, personenrichment.ErrProgramFingerprintMismatch
 	}
 	input := personfacts.GenerationInput{
@@ -369,6 +379,42 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	attempt, err := s.loadPersonEnrichmentCommitAttempt(ctx, tx, commit.AttemptID, true)
 	if err != nil {
 		return enrichmentCommitDisposition{}, err
+	}
+	if attempt.State == "starting" {
+		programFingerprint, fingerprintErr := personenrichment.ProgramFingerprint(
+			personenrichment.ProgramDescriptor{
+				HostMappingVersion: personenrichment.HostClaimMappingVersion,
+				AdapterVersion:     result.AdapterVersion, WireSchemaVersion: result.SchemaVersion,
+				GeneratedSchema: result.GeneratedSchema, GeneratedSchemaHash: result.GeneratedSchemaHash,
+			})
+		if fingerprintErr != nil {
+			return enrichmentCommitDisposition{}, fingerprintErr
+		}
+		updated, updateErr := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+			SET provider_request_id = ?, provider_job_id = ?, adapter_version = ?,
+			    schema_version = ?, generated_schema = ?, generated_schema_hash = ?,
+			    program_fingerprint = ?
+			WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?
+			  AND state = 'starting' AND dispatch_authorized_at IS NOT NULL
+			  AND provider_request_id IS NULL AND provider_job_id IS NULL
+			  AND adapter_version IS NULL AND schema_version IS NULL
+			  AND generated_schema = FALSE AND generated_schema_hash IS NULL
+			  AND program_fingerprint IS NULL`, nullableOpaqueID(result.RequestID),
+			nullableOpaqueID(result.JobID), strings.TrimSpace(result.AdapterVersion),
+			strings.TrimSpace(result.SchemaVersion), result.GeneratedSchema,
+			nullableTrimmed(result.GeneratedSchemaHash), programFingerprint,
+			attempt.ID, attempt.RunID, attempt.LeaseOwner.String, attempt.LeaseFence)
+		if updateErr != nil {
+			return enrichmentCommitDisposition{}, fmt.Errorf(
+				"bind synchronous person enrichment result: %w", updateErr)
+		}
+		if err := requireOneLeaseRow(updated); err != nil {
+			return enrichmentCommitDisposition{}, err
+		}
+		attempt, err = s.loadPersonEnrichmentCommitAttempt(ctx, tx, commit.AttemptID, true)
+		if err != nil {
+			return enrichmentCommitDisposition{}, err
+		}
 	}
 	if err := verifyPersonEnrichmentCommitAttemptEnvelope(commit, result, attempt); err != nil {
 		return enrichmentCommitDisposition{}, err
@@ -908,10 +954,8 @@ func verifyPersonEnrichmentCommitAttemptEnvelope(
 	commit personenrichment.ClaimCommit, result personenrichment.Result,
 	attempt personEnrichmentCommitAttempt,
 ) error {
-	if attempt.ID != commit.AttemptID || attempt.RunID != commit.RunID ||
-		attempt.PersonID != commit.PersonID || attempt.ProfileFingerprint != commit.ProfileFingerprint ||
-		attempt.RequestHash != commit.RequestHash {
-		return errPersonEnrichmentResultEnvelopeChanged
+	if err := verifyPersonEnrichmentCommitAttemptIdentity(commit, attempt); err != nil {
+		return err
 	}
 	if nullOpaqueValue(attempt.ProviderRequestID) != result.RequestID ||
 		nullOpaqueValue(attempt.ProviderJobID) != result.JobID ||
@@ -920,6 +964,17 @@ func verifyPersonEnrichmentCommitAttemptEnvelope(
 		attempt.GeneratedSchema != result.GeneratedSchema ||
 		attempt.GeneratedSchemaHash.String != result.GeneratedSchemaHash {
 		return fmt.Errorf("%w: provider result metadata", errPersonEnrichmentResultEnvelopeChanged)
+	}
+	return nil
+}
+
+func verifyPersonEnrichmentCommitAttemptIdentity(
+	commit personenrichment.ClaimCommit, attempt personEnrichmentCommitAttempt,
+) error {
+	if attempt.ID != commit.AttemptID || attempt.RunID != commit.RunID ||
+		attempt.PersonID != commit.PersonID || attempt.ProfileFingerprint != commit.ProfileFingerprint ||
+		attempt.RequestHash != commit.RequestHash {
+		return errPersonEnrichmentResultEnvelopeChanged
 	}
 	return nil
 }
