@@ -702,7 +702,8 @@ func TestIMAPQresyncEndToEndRetiresChangedMailboxTopology(t *testing.T) {
 			t, st, source.ID, "retired-topology@example.test")
 		assertions.True(deleted)
 		assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE")
-		assertions.Contains(server.commandsFor(3), "LIST")
+		assertions.Contains(server.commandsFor(2), "LIST")
+		assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 	})
 
 	t.Run("renamed mailbox replaces cursor and label", func(t *testing.T) {
@@ -746,7 +747,8 @@ func TestIMAPQresyncEndToEndRetiresChangedMailboxTopology(t *testing.T) {
 			t, st, source.ID, "renamed-topology@example.test")
 		assertions.False(deleted)
 		assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE")
-		assertions.Contains(server.commandsFor(3), "UID SEARCH")
+		assertions.Contains(server.commandsFor(2), "UID SEARCH")
+		assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 	})
 
 	t.Run("zero current mailboxes removes the final cursor", func(t *testing.T) {
@@ -792,7 +794,8 @@ func TestIMAPQresyncEndToEndRetiresChangedMailboxTopology(t *testing.T) {
 			t, st, source.ID, "zero-topology@example.test")
 		assertions.True(deleted)
 		assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE")
-		assertions.Contains(server.commandsFor(3), "LIST")
+		assertions.Contains(server.commandsFor(2), "LIST")
+		assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 	})
 }
 
@@ -1087,9 +1090,9 @@ func TestIMAPQresyncEndToEndUIDValidityReset(t *testing.T) {
 		t, st, source.ID, "new-epoch@example.test")
 	assertions.Equal("INBOX|1", newSourceID)
 	assertions.False(deleted)
-	assertions.NotContains(server.commandsFor(2), "UID SEARCH")
 	assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE")
-	assertions.Contains(server.commandsFor(3), "UID SEARCH")
+	assertions.Contains(server.commandsFor(2), "UID SEARCH")
+	assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 }
 
 func TestIMAPQresyncEndToEndConservativeFallbacks(t *testing.T) {
@@ -1117,10 +1120,10 @@ func TestIMAPQresyncEndToEndConservativeFallbacks(t *testing.T) {
 		known, err := st.GetIMAPKnownUIDs(source.ID)
 		requirements.NoError(err)
 		assertions.Equal(map[string][]uint32{"INBOX": {1}}, known)
-		assertions.NotContains(server.commandsFor(2), "UID SEARCH")
 		assertions.NotContains(server.commandsFor(2), "ENABLE QRESYNC")
-		assertions.Contains(server.commandsFor(3), "UID SEARCH")
-		assertions.GreaterOrEqual(server.connectionCount(), 3)
+		assertions.Contains(server.commandsFor(2), "UID SEARCH")
+		assertions.Equal(2, server.connectionCount(),
+			"a server without QRESYNC must not cost a redial on every sync")
 	})
 
 	for _, response := range []string{"BAD", "NO"} {
@@ -1259,8 +1262,8 @@ func TestIMAPQresyncEndToEndUnsupportedAllDoesNotUseStaleShortcut(t *testing.T) 
 		t, st, source.ID, "unsupported-all@example.test")
 	assertions.False(deleted)
 	assertions.False(isRead, "provider \\Seen must not overwrite local read state")
-	assertions.NotContains(server.commandsFor(2), "UID SEARCH")
-	assertions.Contains(server.commandsFor(3), "UID SEARCH")
+	assertions.Contains(server.commandsFor(2), "UID SEARCH")
+	assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 }
 
 func TestIMAPQresyncEndToEndGmailAllAvoidsMembershipScan(t *testing.T) {
@@ -1464,8 +1467,8 @@ func TestIMAPQresyncEndToEndGmailAllStatusFailureSuppressesPublication(t *testin
 	for _, state := range states {
 		assertions.Equal(uint64(1), state.HighestModSeq)
 	}
-	assertions.NotContains(server.commandsFor(2), "UID SEARCH")
-	assertions.Contains(server.commandsFor(3), "SELECT INBOX")
+	assertions.Contains(server.commandsFor(2), "SELECT INBOX")
+	assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 }
 
 func TestIMAPQresyncEndToEndNoAllEmptyStatusFailureSuppressesPublication(t *testing.T) {
@@ -1504,7 +1507,8 @@ func TestIMAPQresyncEndToEndNoAllEmptyStatusFailureSuppressesPublication(t *test
 			"one failed STATUS must suppress the entire authoritative snapshot")
 	}
 	assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE")
-	assertions.Contains(server.commandsFor(3), `SELECT "ARCHIVE"`)
+	assertions.Contains(server.commandsFor(2), `SELECT "ARCHIVE"`)
+	assertions.Empty(server.commandsFor(3), "an ineligible QRESYNC baseline issues no command, so nothing needs discarding")
 }
 
 func TestIMAPQresyncEndToEndZeroStatusCursorSuppressesPublication(t *testing.T) {

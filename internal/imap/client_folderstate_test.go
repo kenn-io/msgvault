@@ -236,8 +236,12 @@ func TestListMessages_AllMailboxUnsupportedQresyncUsesFullFallback(t *testing.T)
 	second.mailboxCache = []string{"All Mail", "Projects"}
 	second.allMailFolder = "All Mail"
 	ids := listAllMessages(t, second)
-	assert.Empty(ids,
-		"unsupported QRESYNC still skips mailboxes proven unchanged by UIDNEXT and count")
+	// An \All mailbox deliberately forgoes the per-folder shortcuts: \All may
+	// not be a superset of every mailbox, so both the label map and the listing
+	// enumerate everything. Folder skipping without QRESYNC is the no-\All
+	// path, covered by TestListMessages_SkipsUnchangedFoldersWithoutModSeq.
+	assert.ElementsMatch([]string{"All Mail|1", "All Mail|2", "Projects|1"}, ids,
+		"an \\All run enumerates every mailbox rather than taking UIDNEXT shortcuts")
 	assert.Equal(saved, second.ObservedFolderStates())
 	assert.NotNil(second.msgIDToLabels,
 		"authoritative fallback must still publish a label map")

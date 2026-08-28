@@ -818,12 +818,12 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			!c.labelsSnapshotFilteredLocked() &&
 			len(c.priorFolderStates) > 0
 		handled, deltaErr := c.tryBuildQresyncMessageList(ctx, allMailboxes, folderStatuses)
-		if deltaErr != nil || (requireQresync && !handled) {
-			if deltaErr != nil {
-				c.logger.Warn("QRESYNC failed, reconnecting for full enumeration", "error", deltaErr)
-			} else {
-				c.logger.Info("QRESYNC unavailable, reconnecting for full enumeration")
-			}
+		switch {
+		case deltaErr != nil:
+			// A failed attempt has already issued ENABLE and CONDSTORE SELECTs
+			// and left partial deltas behind, so the connection and every
+			// observation derived from it are discarded before enumerating.
+			c.logger.Warn("QRESYNC failed, reconnecting for full enumeration", "error", deltaErr)
 			c.observedMailboxDeltas = nil
 			c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
 			c.messageListCache = nil
@@ -838,7 +838,16 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
 			folderStatuses = c.observeFolderStates(ctx, allMailboxes)
 			qresyncFallback = true
-		} else if handled {
+		case requireQresync && !handled:
+			// Ineligible rather than failed. tryBuildQresyncMessageList returns
+			// before issuing a command when no mailbox carries a mod-sequence
+			// baseline, so the connection, the mailbox plan and the STATUS
+			// results all still stand. A server that never reports a
+			// mod-sequence takes this path on every run, where reconnecting
+			// would redial and re-STATUS every mailbox to discard nothing.
+			c.logger.Info("QRESYNC unavailable, enumerating fully")
+			qresyncFallback = true
+		case handled:
 			return nil
 		}
 	}
