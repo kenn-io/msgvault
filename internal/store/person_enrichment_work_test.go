@@ -805,6 +805,44 @@ func TestPersonEnrichmentBeginAttemptReplacesActiveAttemptAfterFreshTrigger(t *t
 	checks.NotEqual(first.ID, replacement.ID)
 }
 
+func TestPersonEnrichmentFreshTriggerSurvivesActiveAttemptRetryRelease(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "fresh-after-retry")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker-a")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "a"))
+	require.NoError(err)
+	require.NoError(f.store.ScheduleRetry(t.Context(), attempt.Token, personenrichment.RetryUpdate{
+		Failure: personenrichment.SafeFailure{
+			Class: personenrichment.FailureTransient, Message: "retry later",
+		},
+		NextActionAt: f.now.Add(time.Minute),
+	}))
+
+	require.NoError(f.store.EnqueuePersonEnrichmentContext(t.Context(), store.EnrichmentTriggerInput{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		Kind: personenrichment.TriggerManual, Generation: "manual:fresh-after-retry", DueAt: f.now,
+	}))
+	work := f.work(t)
+	require.Len(work, 1)
+	assert.True(work[0].HasFreshTrigger)
+
+	reclaimed := f.claim(t, run.ID, "worker-b")
+	require.NotNil(reclaimed.ActiveAttempt)
+	require.NoError(f.store.MarkTerminal(t.Context(), reclaimed.Token, personenrichment.SafeFailure{
+		Class: personenrichment.FailureInvalidOutput, Message: "durable request binding changed",
+	}))
+	work = f.work(t)
+	require.Len(work, 1)
+	assert.Nil(work[0].RunID)
+	assert.Nil(work[0].ActiveAttemptID)
+	assert.False(work[0].HasFreshTrigger)
+	assert.Equal("manual:fresh-after-retry", work[0].TriggerGeneration)
+}
+
 func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema(t *testing.T) {
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "generated-schema-shape")

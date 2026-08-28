@@ -152,7 +152,8 @@ const personEnrichmentWorkConflictClause = `
 			ELSE person_enrichment_work.trigger_generation
 		END,
 		has_fresh_trigger = CASE
-			WHEN person_enrichment_work.lease_owner IS NOT NULL
+			WHEN (person_enrichment_work.lease_owner IS NOT NULL
+			      OR person_enrichment_work.active_attempt_id IS NOT NULL)
 			 AND (person_enrichment_work.has_fresh_trigger
 			      OR person_enrichment_work.trigger_mask <> excluded.trigger_mask
 			      OR person_enrichment_work.trigger_generation <> excluded.trigger_generation)
