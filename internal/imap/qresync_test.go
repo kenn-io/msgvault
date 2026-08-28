@@ -713,3 +713,58 @@ func TestListMessagesIneligibleQresyncReusesConnection(t *testing.T) {
 		"one STATUS per mailbox, not two")
 	assert.NotContains(commands, "QRESYNC (")
 }
+
+// TestListMessagesQresyncErrorStillCoversSkippedMailboxes pins the safety
+// property behind letting the post-error fallback take scan shortcuts. A failed
+// QRESYNC attempt invalidates nothing the plan depends on: the stored baseline
+// is untouched and the reconnect re-runs STATUS, so a mailbox proven unchanged
+// by UIDVALIDITY, UIDNEXT and message count is still safe to skip. What must
+// not happen is a skipped mailbox dropping out of the published topology --
+// applyIMAPMailboxDeltas retires every mailbox missing from the delta set,
+// deleting its memberships and tombstoning the messages that lived only there.
+func TestListMessagesQresyncErrorStillCoversSkippedMailboxes(t *testing.T) {
+	assert := assert.New(t)
+
+	numMessages := uint32(3)
+	mailboxes := []string{"Archive", "INBOX"}
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:            []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		mailboxes:               mailboxes,
+		uidValidity:             77,
+		uidNext:                 4,
+		highestModSeq:           20,
+		numMessages:             &numMessages,
+		selectFailureConnection: 1,
+		selectFailureAt:         1,
+		searchUIDs:              []imapv2.UID{1, 2, 3},
+	})
+
+	states := make(map[string]FolderState, len(mailboxes))
+	for _, mailbox := range mailboxes {
+		states[mailbox] = FolderState{
+			UIDValidity:   77,
+			UIDNext:       4,
+			HighestModSeq: 20,
+			KnownUIDs:     []uint32{1, 2, 3},
+		}
+	}
+	client := newQresyncTestClient(t, addr, states)
+	client.mailboxCache = mailboxes
+
+	// The QRESYNC SELECT fails, so the run redials and re-STATUSes. Every
+	// mailbox then matches its baseline and is skipped.
+	assert.Empty(listQresyncMessages(t, client))
+	assert.Contains(joinedCommands(server.commandsFor(2)), "STATUS",
+		"a genuine QRESYNC failure still redials and re-reads STATUS")
+
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(t, deltas, len(mailboxes),
+		"a skipped mailbox must still appear in the topology or the store retires it")
+	for _, delta := range deltas {
+		assert.True(delta.Incremental, "%s", delta.Mailbox)
+		assert.False(delta.Reset, "%s", delta.Mailbox)
+		assert.Empty(delta.VanishedUIDs, "%s", delta.Mailbox)
+		assert.Equal([]uint32{1, 2, 3}, delta.State.KnownUIDs, "%s", delta.Mailbox)
+	}
+	assert.Len(client.ObservedFolderStates(), len(mailboxes))
+}

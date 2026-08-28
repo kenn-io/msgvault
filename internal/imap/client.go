@@ -858,9 +858,14 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		c.observedMailboxDeltas = make([]MailboxDelta, 0, len(allMailboxes))
 	}
 
-	// A scan without saved folder states or after a QRESYNC fallback enumerates
-	// every UID, so it can build an authoritative membership map even when the
-	// server has no \All mailbox. Filtered saved-state scans remain additive.
+	// A scan without saved folder states or after a QRESYNC fallback builds an
+	// authoritative membership map even when the server has no \All mailbox.
+	// It is the mailbox coverage that makes the map authoritative, not a full
+	// re-read: a mailbox the scan plan proves unchanged contributes a no-op
+	// delta carrying its stored baseline, so the published topology still spans
+	// every mailbox and the store reconciles that mailbox's labels from the
+	// membership rows the no-op preserves. Filtered saved-state scans remain
+	// additive.
 	fullScanWithoutAll := c.allMailFolder == "" &&
 		trackFolders &&
 		(c.forceFullEnumeration || qresyncFallback || len(c.priorFolderStates) == 0) &&
