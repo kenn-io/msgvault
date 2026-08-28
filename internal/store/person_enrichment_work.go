@@ -1951,6 +1951,13 @@ func (s *Store) LoadRequestInput(
 	input := personenrichment.RequestInput{
 		PersonID: person.ID, PersonRevision: person.Revision, Catalog: catalog, Trigger: lease.Trigger,
 	}
+	if person.DisplayName != nil {
+		if value := strings.TrimSpace(*person.DisplayName); value != "" {
+			input.Names = append(input.Names, personenrichment.IdentityCandidate{
+				StableID: person.ID, Value: value, Primary: true, ActiveFrom: person.UpdatedAt.UTC(),
+			})
+		}
+	}
 	names, err := s.ListPersonNamesContext(ctx, person.ID, true)
 	if err != nil {
 		return input, err

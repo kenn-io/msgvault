@@ -45,6 +45,22 @@ func TestStoreAPIAdapterDeletePersonSuppressesCurrentIdentifiers(t *testing.T) {
 	require.NoError(err)
 	_, _, err = f.Store.GrantPersonEnrichmentConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE participants SET display_name = NULL WHERE id = ?`), participantID)
+	require.NoError(err)
+	displayName := "Delete Profile"
+	person, err = f.Store.UpdatePersonDisplayNameContext(
+		t.Context(), person.ID, person.Revision, &displayName)
+	require.NoError(err)
+	organization, err := f.Store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: "Example Labs", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(err)
+	_, err = f.Store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: organization.ID,
+		IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
 	person, err = f.Store.GetPersonContext(t.Context(), person.ID)
 	require.NoError(err)
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
@@ -89,6 +105,14 @@ func TestStoreAPIAdapterDeletePersonSuppressesCurrentIdentifiers(t *testing.T) {
 	digest := hasher.Digest(profile.ProviderNamespace, personenrichment.SuppressionEmail,
 		personenrichment.EmailNormalizationV1, "delete.person@example.test")
 	found, err := f.Store.HasPersonEnrichmentSuppressionContext(t.Context(), digest)
+	require.NoError(err)
+	assert.True(t, found)
+	nameCompany, err := personenrichment.NormalizeSuppressionIdentifier(
+		personenrichment.SuppressionNameCompany, []string{"Delete Profile", "Example Labs"})
+	require.NoError(err)
+	digest = hasher.Digest(profile.ProviderNamespace, nameCompany.Class,
+		nameCompany.NormalizationVersion, nameCompany.Value)
+	found, err = f.Store.HasPersonEnrichmentSuppressionContext(t.Context(), digest)
 	require.NoError(err)
 	assert.True(t, found)
 }

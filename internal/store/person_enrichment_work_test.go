@@ -1131,6 +1131,53 @@ func TestPersonEnrichmentWorkLoadsCurrentMinimumRequestInput(t *testing.T) {
 	assert.NotEmpty(hashes.RequestHash)
 }
 
+func TestPersonEnrichmentRequestUsesPersonDisplayName(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	requirements.NotEmpty(f.person.ParticipantIDs)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE participants SET display_name = NULL WHERE id = ?`), f.person.ParticipantIDs[0])
+	requirements.NoError(err)
+	displayName := "Curated Work Person"
+	f.person, err = f.store.UpdatePersonDisplayNameContext(
+		t.Context(), f.person.ID, f.person.Revision, &displayName)
+	requirements.NoError(err)
+	organization, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: "Example Labs", Kind: store.OrganizationKindCompany,
+	})
+	requirements.NoError(err)
+	_, err = f.store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: f.person.ID, OrganizationID: organization.ID,
+		IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
+	})
+	requirements.NoError(err)
+
+	input, err := f.store.LoadRequestInput(t.Context(), personenrichment.WorkLease{
+		PersonID: f.person.ID,
+		Trigger:  personenrichment.Trigger{Kind: personenrichment.TriggerManual, Generation: "manual:display-name"},
+	})
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, candidate := range input.Catalog.Targets {
+		if !candidate.Sensitive {
+			target = candidate
+			break
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	profile := f.profile
+	profile.Kind = personenrichment.ProviderSixtyfour
+	profile.AllowedIdentifiers = []personenrichment.IdentifierClass{
+		personenrichment.IdentifierName, personenrichment.IdentifierCurrentCompany,
+	}
+	profile.Targets = []personfacts.TargetDescriptor{target}
+	request, _, err := personenrichment.BuildRequest(input, profile)
+	requirements.NoError(err)
+	checks.Equal("curated work person", request.Identity.Name)
+	checks.Equal("example labs", request.Identity.CurrentCompany)
+}
+
 func TestPersonEnrichmentTerminalRefreshBecomesUnboundWork(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
