@@ -1218,8 +1218,30 @@ func (s *Store) MarkTerminal(
 		// The default terminal state is correct for every other safe failure.
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		currentRevision, err := lockPersonEnrichmentPersonTx(
+			ctx, tx, s.dialect, token.WorkPersonID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrStaleLease
+		}
+		if err != nil {
+			return err
+		}
 		if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
 			return err
+		}
+		var attemptRevision int64
+		if err := tx.QueryRowContext(ctx, `SELECT person_revision
+			FROM person_enrichment_attempts
+			WHERE id = ? AND run_id = ? AND person_id = ? AND profile_fingerprint = ?`,
+			token.AttemptID, token.RunID, token.WorkPersonID,
+			token.ProfileFingerprint).Scan(&attemptRevision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStaleLease
+			}
+			return fmt.Errorf("load terminal person enrichment attempt revision: %w", err)
 		}
 		if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect, token.AttemptID,
 			personenrichment.Cost{}, true, s.personEnrichmentTime()); err != nil {
@@ -1237,7 +1259,15 @@ func (s *Store) MarkTerminal(
 		if err := requireOneLeaseRow(result); err != nil {
 			return err
 		}
-		return settleTerminalEnrichmentWorkTx(ctx, tx, token, nil)
+		if attemptRevision == currentRevision {
+			return settleTerminalEnrichmentWorkTx(ctx, tx, token, nil)
+		}
+		return settleTerminalEnrichmentWorkTx(ctx, tx, token, &EnrichmentTriggerInput{
+			PersonID: token.WorkPersonID, ProfileFingerprint: token.ProfileFingerprint,
+			Kind:       personenrichment.TriggerIdentity,
+			Generation: "revision:" + strconv.FormatInt(currentRevision, 10),
+			DueAt:      s.personEnrichmentTime(),
+		})
 	})
 }
 

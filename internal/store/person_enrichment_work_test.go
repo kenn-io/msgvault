@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -888,6 +889,38 @@ func TestPersonEnrichmentFreshTriggerSurvivesActiveAttemptRetryRelease(t *testin
 	assert.Nil(work[0].ActiveAttemptID)
 	assert.False(work[0].HasFreshTrigger)
 	assert.Equal("manual:fresh-after-retry", work[0].TriggerGeneration)
+}
+
+func TestPersonEnrichmentStaleAttemptRetainsReplacementWork(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "stale-revision")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker-a")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "a"))
+	requirements.NoError(err)
+
+	_, err = f.store.AddPersonAddressContext(t.Context(), f.person.ID, store.PersonAddressInput{
+		AddressKind: store.PersonAddressPostal,
+		Locality:    new("Exampleville"),
+		Envelope:    store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	current, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	requirements.Greater(current.Revision, attempt.PersonRevision)
+
+	requirements.NoError(f.store.MarkTerminal(t.Context(), attempt.Token, personenrichment.SafeFailure{
+		Class: personenrichment.FailureInvalidOutput, Message: "durable request binding changed",
+	}))
+	work := f.work(t)
+	requirements.Len(work, 1)
+	checks.Nil(work[0].RunID)
+	checks.Nil(work[0].ActiveAttemptID)
+	checks.False(work[0].HasFreshTrigger)
+	checks.Equal("revision:"+strconv.FormatInt(current.Revision, 10), work[0].TriggerGeneration)
 }
 
 func TestPersonEnrichmentActiveRetryReleaseIncrementsAttemptCount(t *testing.T) {
