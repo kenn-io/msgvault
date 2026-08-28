@@ -771,7 +771,7 @@ func TestWorkerAuthorizedDispatchPreventsConcurrentPersonDeletion(t *testing.T) 
 }
 
 func TestWorkerAuthorizedDispatchPreventsConcurrentAuthorityMutation(t *testing.T) {
-	for _, mutation := range []string{"tracking", "consent", "suppression", "identity"} {
+	for _, mutation := range []string{"tracking", "consent", "suppression", "identity", "employment"} {
 		t.Run(mutation, func(t *testing.T) {
 			requirements := require.New(t)
 			checks := assert.New(t)
@@ -813,6 +813,18 @@ func TestWorkerAuthorizedDispatchPreventsConcurrentAuthorityMutation(t *testing.
 								Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 							}}},
 						})
+					return err
+				}
+			case "employment":
+				organization, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+					Name: "Dispatch Employer", Kind: store.OrganizationKindCompany,
+				})
+				requirements.NoError(err)
+				mutate = func() error {
+					_, err := f.store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+						PersonID: f.person.ID, OrganizationID: organization.ID,
+						Title: new("Dispatch Engineer"), Source: store.ProvenanceUser,
+					})
 					return err
 				}
 			}
@@ -1121,6 +1133,7 @@ func TestWorkerTerminalizesActiveAttemptWhenRuntimeProfileDrifts(t *testing.T) {
 	requirements := require.New(t)
 	f := newWorkerFixture(t, "active-profile-drift", nil)
 	f.enqueue(t)
+	workerNow := f.now
 	const schemaHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	var polls atomic.Int64
 	factory := personenrichment.ProviderFactory(func(
@@ -1130,7 +1143,7 @@ func TestWorkerTerminalizesActiveAttemptWhenRuntimeProfileDrifts(t *testing.T) {
 			start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
 				return personenrichment.Attempt{
 					State: personenrichment.AttemptPending, JobID: "profile-drift-job",
-					PollAfter: time.Nanosecond, StartedAt: time.Now().UTC(),
+					PollAfter: time.Nanosecond, StartedAt: workerNow,
 					AdapterVersion: "test-adapter-v1", SchemaVersion: "test-wire-v1",
 					GeneratedSchema: true, GeneratedSchemaHash: schemaHash,
 					ProgramFingerprint: workerProgramFingerprint(t, true, schemaHash), Targets: request.Targets,
@@ -1143,16 +1156,26 @@ func TestWorkerTerminalizesActiveAttemptWhenRuntimeProfileDrifts(t *testing.T) {
 		}, nil
 	})
 
-	first := f.newWorker(t,
-		map[string]personenrichment.ProviderFactory{f.config.Name: factory},
-		map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
-		func(string) (string, bool) { return "test-key", true },
+	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
+	options.Clock = func() time.Time { return workerNow }
+	first, err := personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: factory}, options,
 	)
+	requirements.NoError(err)
 	processed, err := first.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	requirements.True(processed)
 
-	options := f.options(map[string]personenrichment.ProviderConfig{})
+	scheduledWork, err := f.store.ListPersonEnrichmentWorkContext(
+		t.Context(), store.PersonEnrichmentWorkFilter{
+			PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+		})
+	requirements.NoError(err)
+	requirements.Len(scheduledWork, 1)
+	workerNow = scheduledWork[0].DueAt.Add(time.Second)
+	options = f.options(map[string]personenrichment.ProviderConfig{})
+	options.Clock = func() time.Time { return workerNow }
 	second, err := personenrichment.NewWorker(
 		f.store, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 		map[string]personenrichment.ProviderFactory{f.config.Name: factory}, options,

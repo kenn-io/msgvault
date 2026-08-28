@@ -601,23 +601,36 @@ func suppressPersonEnrichmentPerson(
 	adapter := &storeAPIAdapter{
 		store: st, personEnrichmentConfig: deps.config(), lookupEnv: deps.lookupEnv,
 	}
-	digests, err := adapter.personEnrichmentDeletionDigests(command.Context(), personID, hasher)
-	if err != nil {
-		return err
-	}
-	for i := range digests {
-		digests[i].Reason = reason
-		digests[i].Actor = personEnrichmentConsentActor
-	}
 	configuredKeyID, err := hasher.KeyID()
 	if err != nil {
 		return err
 	}
-	if err := st.InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
-		command.Context(), configuredKeyID, digests); err != nil {
-		return err
+	const snapshotAttempts = 3
+	var digestCount int
+	for range snapshotAttempts {
+		digests, revision, snapshotErr := adapter.personEnrichmentDeletionDigests(
+			command.Context(), personID, hasher)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		for i := range digests {
+			digests[i].Reason = reason
+			digests[i].Actor = personEnrichmentConsentActor
+		}
+		err = st.InsertPersonEnrichmentSuppressionsForPersonRevisionContext(
+			command.Context(), personID, revision, configuredKeyID, digests)
+		if !errors.Is(err, store.ErrPersonRevisionConflict) {
+			if err != nil {
+				return err
+			}
+			digestCount = len(digests)
+			break
+		}
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Suppressed %d digest(s) for person %d\n", len(digests), personID)
+	if err != nil {
+		return fmt.Errorf("person identity changed during suppression: %w", err)
+	}
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Suppressed %d digest(s) for person %d\n", digestCount, personID)
 	if err != nil {
 		return fmt.Errorf("write person enrichment person suppression: %w", err)
 	}

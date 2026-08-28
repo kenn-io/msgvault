@@ -603,6 +603,12 @@ func (s *Store) claimEmploymentPeopleTx(
 	if err := s.lockEmploymentPeopleTx(ctx, tx, personIDs...); err != nil {
 		return err
 	}
+	for _, personID := range sortedUniqueInt64s(personIDs...) {
+		if err := rejectPersonEnrichmentDispatchInProgressTx(
+			ctx, tx, personID, ""); err != nil {
+			return err
+		}
+	}
 	if err := s.bumpPersonVCardProjectionsTx(ctx, tx, personIDs...); err != nil {
 		return err
 	}

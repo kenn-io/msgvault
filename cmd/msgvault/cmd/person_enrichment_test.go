@@ -233,6 +233,36 @@ func TestPersonEnrichmentSuppressPersonModeRejectsProviderMetadataSmuggling(t *t
 	}
 }
 
+func TestPersonEnrichmentSuppressPersonPersistsCurrentIdentityDigests(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("person@example.test", "Test Person", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
+	requirements.NoError(err)
+	provider, profile, _ := scheduleWorkerProfile(t, f, "suppression-provider", "TEST_PROVIDER_KEY")
+	config := personenrichment.Config{
+		Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY",
+		Providers: []personenrichment.ProviderConfig{provider},
+	}
+	key := strings.Repeat("s", 32)
+	hasher, err := personenrichment.NewSuppressionHasher([]byte(key))
+	requirements.NoError(err)
+	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps.lookupEnv = func(string) (string, bool) { return key, true }
+
+	stdout, stderr, err := executePersonEnrichmentCommand(t, deps, "",
+		"suppress", "--person", strconv.FormatInt(person.ID, 10), "--reason", "opt_out")
+	requirements.NoError(err)
+	checks.Empty(stderr)
+	checks.Contains(stdout, "for person "+strconv.FormatInt(person.ID, 10))
+	digest := hasher.Digest(profile.ProviderNamespace, personenrichment.SuppressionEmail,
+		personenrichment.EmailNormalizationV1, "person@example.test")
+	found, err := f.Store.HasPersonEnrichmentSuppressionContext(t.Context(), digest)
+	requirements.NoError(err)
+	checks.True(found)
+}
+
 func TestPersonEnrichmentSuppressDaemonPersistsOnlyDigestMetadata(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

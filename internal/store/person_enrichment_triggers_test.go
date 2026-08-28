@@ -109,6 +109,23 @@ func TestPersonEnrichmentTriggerCoalescesKindsAndAdvancesGeneration(t *testing.T
 	assert.Equal(f.now, rows[0].DueAt)
 }
 
+func TestPersonEnrichmentIdempotentTrackingDoesNotRepublishWork(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	insertProviderIdentity(t, f.store, f.person.ID,
+		f.profiles[0].ProviderNamespace, "opaque-before-repeat")
+
+	_, err = f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	assert.Empty(f.work(t, 0))
+	assert.Equal(1, providerIdentityCount(t, f.store, f.person.ID))
+}
+
 func TestPersonEnrichmentManualRunRunningIdempotencyRejectsDifferentProfile(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -750,6 +767,35 @@ func TestPersonEnrichmentMergeAndSplitInvalidateProviderIdentities(t *testing.T)
 	require.NoError(err)
 	require.Len(rows, 1)
 	assert.Equal(int64(2), rows[0].TriggerMask)
+}
+
+func TestPersonEnrichmentRepromotionInvalidatesNewParticipantIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	insertProviderIdentity(t, f.store, f.person.ID,
+		f.profiles[0].ProviderNamespace, "opaque-before-repromotion")
+	aliasID, err := f.store.EnsureParticipant(
+		"repromotion-alias@example.test", "Repromotion Alias", "example.test")
+	require.NoError(err)
+	participantID := f.person.ParticipantIDs[0]
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+		INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`),
+		participantID, aliasID)
+	require.NoError(err)
+
+	promoted, created, err := f.store.CreatePersonFromParticipantContext(t.Context(), aliasID)
+	require.NoError(err)
+	assert.False(created)
+	assert.Equal([]int64{participantID, aliasID}, promoted.ParticipantIDs)
+	assert.Zero(providerIdentityCount(t, f.store, f.person.ID))
+	work := f.work(t, 0)
+	require.Len(work, 1)
+	assert.Equal(int64(2), work[0].TriggerMask)
 }
 
 func TestPersonEnrichmentPersonMergeInvalidatesSurvivorIdentity(t *testing.T) {

@@ -119,6 +119,10 @@ func (s *Store) CreatePersonFromParticipantContext(
 			if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 				return err
 			}
+			if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
+				ctx, tx, personID); err != nil {
+				return err
+			}
 		}
 		if created || bindingsChanged {
 			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {

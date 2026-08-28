@@ -2227,7 +2227,7 @@ func (a *storeAPIAdapter) DeletePersonContext(ctx context.Context, id, expectedR
 			return personenrichment.ErrSuppressionKeyMismatch
 		}
 	}
-	current, err := a.personEnrichmentDeletionDigests(ctx, id, hasher)
+	current, _, err := a.personEnrichmentDeletionDigests(ctx, id, hasher)
 	if err != nil {
 		return err
 	}
@@ -2243,14 +2243,14 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 	ctx context.Context,
 	personID int64,
 	hasher *personenrichment.SuppressionHasher,
-) ([]store.PersonEnrichmentSuppressionInput, error) {
+) ([]store.PersonEnrichmentSuppressionInput, int64, error) {
 	person, err := a.store.GetPersonContext(ctx, personID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	input, err := a.store.LoadRequestInput(ctx, personenrichment.WorkLease{PersonID: person.ID})
 	if err != nil {
-		return nil, fmt.Errorf("load current person enrichment identifiers for deletion: %w", err)
+		return nil, 0, fmt.Errorf("load current person enrichment identifiers for deletion: %w", err)
 	}
 	defer func() {
 		clearPersonEnrichmentCandidates(input.Names)
@@ -2263,7 +2263,7 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 		SELECT provider_namespace FROM person_enrichment_profiles
 		GROUP BY provider_namespace ORDER BY provider_namespace`)
 	if err != nil {
-		return nil, fmt.Errorf("list persisted person enrichment namespaces for deletion: %w", err)
+		return nil, 0, fmt.Errorf("list persisted person enrichment namespaces for deletion: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	namespaces := make([]string, 0)
@@ -2271,15 +2271,15 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 		var namespace string
 		if err := rows.Scan(&namespace); err != nil {
 			_ = rows.Close()
-			return nil, fmt.Errorf("read persisted person enrichment namespace for deletion: %w", err)
+			return nil, 0, fmt.Errorf("read persisted person enrichment namespace for deletion: %w", err)
 		}
 		namespaces = append(namespaces, namespace)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close persisted person enrichment namespaces for deletion: %w", err)
+		return nil, 0, fmt.Errorf("close persisted person enrichment namespaces for deletion: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate persisted person enrichment namespaces for deletion: %w", err)
+		return nil, 0, fmt.Errorf("iterate persisted person enrichment namespaces for deletion: %w", err)
 	}
 
 	digests := make([]store.PersonEnrichmentSuppressionInput, 0)
@@ -2310,41 +2310,41 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 	for _, namespace := range namespaces {
 		for i := range input.Emails {
 			if err := appendDigest(namespace, personenrichment.SuppressionEmail, input.Emails[i].Value); err != nil {
-				return nil, fmt.Errorf("normalize current email for deletion: %w", err)
+				return nil, 0, fmt.Errorf("normalize current email for deletion: %w", err)
 			}
 		}
 		for i := range input.Phones {
 			if err := appendDigest(namespace, personenrichment.SuppressionPhone, input.Phones[i].Value); err != nil {
-				return nil, fmt.Errorf("normalize current phone for deletion: %w", err)
+				return nil, 0, fmt.Errorf("normalize current phone for deletion: %w", err)
 			}
 		}
 		for i := range input.PublicProfileURLs {
 			if err := appendDigest(namespace, personenrichment.SuppressionPublicProfileURL,
 				input.PublicProfileURLs[i].Value); err != nil {
-				return nil, fmt.Errorf("normalize current public profile URL for deletion: %w", err)
+				return nil, 0, fmt.Errorf("normalize current public profile URL for deletion: %w", err)
 			}
 		}
 		for i := range input.Names {
 			for j := range input.CurrentCompanies {
 				if err := appendDigest(namespace, personenrichment.SuppressionNameCompany,
 					input.Names[i].Value, input.CurrentCompanies[j].Value); err != nil {
-					return nil, fmt.Errorf("normalize current name-company identity for deletion: %w", err)
+					return nil, 0, fmt.Errorf("normalize current name-company identity for deletion: %w", err)
 				}
 			}
 		}
 		providerIDs, loadErr := a.store.LoadProviderPersonIDs(ctx, personID, namespace)
 		if loadErr != nil {
-			return nil, loadErr
+			return nil, 0, loadErr
 		}
 		for i := range providerIDs {
 			if err := appendDigest(namespace, personenrichment.SuppressionProviderPersonID, providerIDs[i]); err != nil {
 				clearPersonEnrichmentStrings(providerIDs)
-				return nil, fmt.Errorf("normalize stored provider identity for deletion: %w", err)
+				return nil, 0, fmt.Errorf("normalize stored provider identity for deletion: %w", err)
 			}
 		}
 		clearPersonEnrichmentStrings(providerIDs)
 	}
-	return digests, nil
+	return digests, person.Revision, nil
 }
 
 func clearPersonEnrichmentCandidates(values []personenrichment.IdentityCandidate) {

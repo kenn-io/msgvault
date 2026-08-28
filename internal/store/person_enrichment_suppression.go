@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -161,6 +162,32 @@ func (s *Store) InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 	configuredKeyID string,
 	inputs []PersonEnrichmentSuppressionInput,
 ) error {
+	return s.insertPersonEnrichmentSuppressionsForConfiguredKeyContext(
+		ctx, 0, 0, configuredKeyID, inputs)
+}
+
+// InsertPersonEnrichmentSuppressionsForPersonRevisionContext inserts a
+// person-wide identifier snapshot only if it still describes the locked
+// person revision.
+func (s *Store) InsertPersonEnrichmentSuppressionsForPersonRevisionContext(
+	ctx context.Context,
+	personID, expectedRevision int64,
+	configuredKeyID string,
+	inputs []PersonEnrichmentSuppressionInput,
+) error {
+	if personID <= 0 || expectedRevision <= 0 {
+		return errors.New("person enrichment suppression snapshot is invalid")
+	}
+	return s.insertPersonEnrichmentSuppressionsForConfiguredKeyContext(
+		ctx, personID, expectedRevision, configuredKeyID, inputs)
+}
+
+func (s *Store) insertPersonEnrichmentSuppressionsForConfiguredKeyContext(
+	ctx context.Context,
+	personID, expectedRevision int64,
+	configuredKeyID string,
+	inputs []PersonEnrichmentSuppressionInput,
+) error {
 	if !validLowerSHA256(configuredKeyID) {
 		return personenrichment.ErrSuppressionKeyMismatch
 	}
@@ -176,13 +203,33 @@ func (s *Store) InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 		validated[i] = input
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		personIDs, err := s.lockPersonEnrichmentSuppressionAffectedPeopleTx(
-			ctx, tx, validated)
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		if personID > 0 && s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("person_suppression_before_person_lock")
+		}
+		personIDs, err := s.lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(
+			ctx, tx, validated, personID)
 		if err != nil {
 			return err
 		}
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("suppression_affected_people_snapshotted")
+		}
+		if personID > 0 {
+			var revision int64
+			err := tx.QueryRowContext(ctx,
+				`SELECT revision FROM persons WHERE id = ?`, personID).Scan(&revision)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrPersonNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("verify person enrichment suppression snapshot: %w", err)
+			}
+			if revision != expectedRevision {
+				return ErrPersonRevisionConflict
+			}
 		}
 		if err := s.validatePersonEnrichmentSuppressionKeyStateTx(
 			ctx, tx, configuredKeyID); err != nil {
@@ -216,8 +263,14 @@ func (s *Store) lockCurrentPersonEnrichmentSuppressionAffectedPeopleTx(
 	ctx context.Context,
 	tx *loggedTx,
 	inputs []PersonEnrichmentSuppressionInput,
+	includePersonIDs ...int64,
 ) ([]int64, error) {
-	affected := make(map[int64]struct{})
+	affected := make(map[int64]struct{}, len(includePersonIDs))
+	for _, personID := range includePersonIDs {
+		if personID > 0 {
+			affected[personID] = struct{}{}
+		}
+	}
 	for i := range inputs {
 		input := inputs[i]
 		rows, err := tx.QueryContext(ctx, `SELECT a.person_id

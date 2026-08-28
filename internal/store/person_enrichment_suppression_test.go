@@ -65,6 +65,28 @@ func TestPersonEnrichmentSuppressionSurvivesProductionPersonDeletion(t *testing.
 	assert.Equal(1, suppressions)
 }
 
+func TestPersonEnrichmentSuppressionRejectsStalePersonSnapshot(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, person := trackedTestPerson(t)
+	input := enrichmentSuppressionInput()
+
+	name := "Changed Person"
+	_, err := st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+		NameKind: store.PersonNameFormatted, Formatted: &name, OriginalValue: name,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	err = st.InsertPersonEnrichmentSuppressionsForPersonRevisionContext(
+		t.Context(), person.ID, person.Revision, input.KeyID,
+		[]store.PersonEnrichmentSuppressionInput{input})
+	require.ErrorIs(err, store.ErrPersonRevisionConflict)
+
+	found, err := st.HasPersonEnrichmentSuppressionContext(t.Context(), suppressionLookup(input))
+	require.NoError(err)
+	assert.False(found)
+}
+
 func TestPersonEnrichmentSuppressionIsProviderScopedAndMetadataImmutable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

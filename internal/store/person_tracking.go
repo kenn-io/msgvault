@@ -95,6 +95,7 @@ func (s *Store) SetPersonTrackingContext(
 			s.personEnrichmentTxBarrier("tracking_person_locked")
 		}
 
+		trackingAdded := false
 		if tracked {
 			var result sql.Result
 			result, err = tx.ExecContext(ctx, `
@@ -105,6 +106,7 @@ func (s *Store) SetPersonTrackingContext(
 			var inserted int64
 			if err == nil {
 				inserted, err = result.RowsAffected()
+				trackingAdded = inserted == 1
 			}
 			if err == nil && inserted == 1 {
 				_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
@@ -138,10 +140,12 @@ func (s *Store) SetPersonTrackingContext(
 			return fmt.Errorf("set person %d tracking to %t: %w", personID, tracked, err)
 		}
 		if tracked {
-			if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
-				personenrichment.TriggerTracked, "revision:"+strconv.FormatInt(revision, 10),
-				s.personEnrichmentTime()); err != nil {
-				return err
+			if trackingAdded {
+				if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
+					personenrichment.TriggerTracked, "revision:"+strconv.FormatInt(revision, 10),
+					s.personEnrichmentTime()); err != nil {
+					return err
+				}
 			}
 		} else {
 			if s.personEnrichmentTxBarrier != nil {
