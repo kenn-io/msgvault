@@ -579,6 +579,12 @@ func (s *Store) BeginAttempt(
 	var stalePublication bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("begin_before_authority_lock")
+		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("begin_before_person_lock")
 		}
 		currentRevision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, start.PersonID)

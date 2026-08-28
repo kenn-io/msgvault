@@ -134,7 +134,7 @@ func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *tes
 			beginReached := make(chan struct{})
 			releaseBegin := make(chan struct{})
 			store.SetPersonEnrichmentTxBarrierForTest(f.store, func(phase string) {
-				if phase == "begin_before_person_lock" {
+				if phase == "begin_before_authority_lock" {
 					close(beginReached)
 					<-releaseBegin
 				}
@@ -392,7 +392,7 @@ func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing
 	require.ErrorIs(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
 }
 
-func TestPersonEnrichmentSuppressionFencesAttemptCreatedAfterSnapshot(t *testing.T) {
+func TestPersonEnrichmentSuppressionSerializesAttemptCreation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -443,13 +443,18 @@ func TestPersonEnrichmentSuppressionFencesAttemptCreatedAfterSnapshot(t *testing
 				Actor: "privacy-test",
 			}})
 	}()
-	requireChannelSignal(t, suppressionSnapshotted,
-		"suppression did not snapshot active attempts")
+	select {
+	case <-suppressionSnapshotted:
+		require.Fail("suppression acquired authority before attempt creation released it")
+	case <-time.After(250 * time.Millisecond):
+	}
 	close(releaseBegin)
 	result := <-beginDone
 	require.NoError(result.err)
 	require.True(result.created)
 	require.NotNil(result.attempt)
+	requireChannelSignal(t, suppressionSnapshotted,
+		"suppression did not snapshot the created attempt")
 	require.NoError(<-suppressionDone)
 	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), result.attempt.ID)
 	require.NoError(err)

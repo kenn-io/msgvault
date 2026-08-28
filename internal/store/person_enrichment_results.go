@@ -258,6 +258,12 @@ func (s *Store) commitPreparedPersonEnrichmentResult(
 	outcome := &personenrichment.ClaimOutcome{}
 	var costViolation bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("result_before_authority_lock")
+		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		disposition, err := s.recheckPersonEnrichmentCommitTx(
 			ctx, tx, prepared.Commit, prepared.Profile, prepared.Generation,
 			prepared.OwnershipRejectedGeneration)

@@ -75,13 +75,13 @@ func (s *Store) SetPersonTrackingContext(
 	var state *PersonTracking
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentTxBarrier != nil {
-			s.personEnrichmentTxBarrier("tracking_before_person_lock")
+			s.personEnrichmentTxBarrier("tracking_before_authority_lock")
+		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
 		}
 		if err := s.lockProfileIdentityKeyTxContext(
 			ctx, tx, "person-fact-generation", personID); err != nil {
-			return err
-		}
-		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
 		revision, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)

@@ -249,7 +249,7 @@ func testPersonEnrichmentMissingPersonRevocation(t *testing.T, st *store.Store, 
 
 	snapshotReached := make(chan struct{})
 	releaseRevoke := make(chan struct{})
-	trackingBeforeLock := make(chan struct{})
+	trackingBeforeAuthority := make(chan struct{})
 	trackingPersonLocked := make(chan struct{})
 	manualPersonLocked := make(chan struct{})
 	var snapshotOnce, trackingBeforeOnce, trackingLockedOnce, manualLockedOnce sync.Once
@@ -260,8 +260,8 @@ func testPersonEnrichmentMissingPersonRevocation(t *testing.T, st *store.Store, 
 				close(snapshotReached)
 				<-releaseRevoke
 			})
-		case "tracking_before_person_lock":
-			trackingBeforeOnce.Do(func() { close(trackingBeforeLock) })
+		case "tracking_before_authority_lock":
+			trackingBeforeOnce.Do(func() { close(trackingBeforeAuthority) })
 		case "tracking_person_locked":
 			trackingLockedOnce.Do(func() { close(trackingPersonLocked) })
 		case "manual_person_locked":
@@ -293,7 +293,7 @@ func testPersonEnrichmentMissingPersonRevocation(t *testing.T, st *store.Store, 
 		}
 		publication <- result
 	}()
-	requireChannelSignal(t, trackingBeforeLock,
+	requireChannelSignal(t, trackingBeforeAuthority,
 		"tracking did not reach its authority/person gate")
 
 	earlyPersonMutation := false

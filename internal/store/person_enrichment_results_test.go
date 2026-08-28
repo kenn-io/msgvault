@@ -280,7 +280,7 @@ func TestPersonEnrichmentResultRejectsConcurrentConfiguredKeyWinner(t *testing.T
 			resultReached := make(chan struct{})
 			releaseResult := make(chan struct{})
 			SetPersonEnrichmentTxBarrierForTest(f.store, func(phase string) {
-				if phase == "result_before_person_lock" {
+				if phase == "result_before_authority_lock" {
 					close(resultReached)
 					<-releaseResult
 				}
@@ -295,7 +295,7 @@ func TestPersonEnrichmentResultRejectsConcurrentConfiguredKeyWinner(t *testing.T
 				result <- commitResult{outcome: outcome, err: commitErr}
 			}()
 			requireEnrichmentResultSignal(t, resultReached,
-				"result did not reach its person-first gate")
+				"result did not reach its authority gate")
 			if winner == "suppression" {
 				requirements.NoError(f.store.InsertPersonEnrichmentSuppressionsForConfiguredKeyContext(
 					t.Context(), newKeyID, []PersonEnrichmentSuppressionInput{input}))

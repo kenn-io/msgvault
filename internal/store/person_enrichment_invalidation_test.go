@@ -354,15 +354,15 @@ func TestPersonEnrichmentMergeSplitSerializeConcurrentBeginBeforeInvalidation(t 
 
 			invalidationLocked := make(chan struct{}, 1)
 			releaseInvalidation := make(chan struct{})
-			beginBeforeLock := make(chan struct{}, 1)
+			beginBeforeAuthority := make(chan struct{}, 1)
 			beginPersonLocked := make(chan struct{}, 1)
 			SetPersonEnrichmentTxBarrierForTest(f.store, func(phase string) {
 				switch phase {
 				case "invalidation_person_locked":
 					invalidationLocked <- struct{}{}
 					<-releaseInvalidation
-				case "begin_before_person_lock":
-					beginBeforeLock <- struct{}{}
+				case "begin_before_authority_lock":
+					beginBeforeAuthority <- struct{}{}
 				case "begin_person_locked":
 					beginPersonLocked <- struct{}{}
 				}
@@ -380,7 +380,8 @@ func TestPersonEnrichmentMergeSplitSerializeConcurrentBeginBeforeInvalidation(t 
 				attempt, created, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
 				beginDone <- beginResult{attempt: attempt, created: created, err: err}
 			}()
-			requireReceiveEnrichmentBarrier(t, beginBeforeLock, "BeginAttempt did not reach person gate")
+			requireReceiveEnrichmentBarrier(t, beginBeforeAuthority,
+				"BeginAttempt did not reach authority gate")
 			close(releaseInvalidation)
 			select {
 			case <-beginPersonLocked:
