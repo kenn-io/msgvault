@@ -1046,6 +1046,34 @@ func TestPersonEnrichmentWorkReleasePreservesManualTrigger(t *testing.T) {
 	assert.Equal(t, "manual:key", attempts[0].TriggerGeneration)
 }
 
+func TestPersonEnrichmentTerminalReleasePreservesFreshTrigger(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "fresh-terminal-release")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker")
+	requirements.NoError(f.store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerManual, Generation: "manual:fresh"},
+		DueAt:   f.now,
+	}))
+
+	requirements.NoError(f.store.ReleaseWork(t.Context(), lease.Token, personenrichment.WorkRelease{
+		Outcome: "policy", PersonRevision: f.person.Revision,
+		PayloadHash: strings.Repeat("a", 64), RequestHash: strings.Repeat("b", 64),
+	}))
+	work := f.work(t)
+	requirements.Len(work, 1)
+	checks.Nil(work[0].RunID)
+	checks.Nil(work[0].LeaseOwner)
+	checks.False(work[0].HasFreshTrigger)
+
+	reclaimed := f.claim(t, run.ID, "next-worker")
+	checks.Equal(personenrichment.TriggerManual, reclaimed.Trigger.Kind)
+	checks.Equal("manual:fresh", reclaimed.Trigger.Generation)
+}
+
 func TestPersonEnrichmentWorkLoadsCurrentMinimumRequestInput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

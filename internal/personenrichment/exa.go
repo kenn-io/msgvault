@@ -689,6 +689,9 @@ func exaTypedIdentityMatches(
 	companyMatch := false
 	var companyValue string
 	for _, work := range properties.WorkHistory {
+		if work.Dates != nil && work.Dates.To != nil {
+			continue
+		}
 		if work.Company != nil && work.Company.Name != nil &&
 			exactExaIdentityMatch(IdentifierCurrentCompany, identity.CurrentCompany, *work.Company.Name) {
 			companyMatch = true

@@ -213,6 +213,31 @@ func TestExaTypedPeopleRequestAndResponse(t *testing.T) {
 	requirements.ErrorContains(err, "synchronous")
 }
 
+func TestExaRejectsHistoricalEmploymentAsCurrentCompanyMatch(t *testing.T) {
+	requirements := require.New(t)
+	fixture := exaFixture(t, "exa_people_success.json")
+	requirements.Contains(string(fixture), `"to": null`)
+	fixture = bytes.Replace(fixture, []byte(`"to": null`), []byte(`"to": "2024-01-01"`), 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fixture)
+	}))
+	defer server.Close()
+
+	provider, err := personenrichment.NewExaProvider(
+		exaConfig(server.URL+"/search", "people", 1), "test-key", server.Client(),
+	)
+	requirements.NoError(err)
+	_, err = provider.Start(t.Context(), personenrichment.Request{
+		Identity: personenrichment.Identity{Name: "Test User", CurrentCompany: "Example Labs"},
+		Targets:  exaTypedTargets(t),
+	})
+	requirements.Error(err)
+	var providerErr *personenrichment.ProviderError
+	requirements.ErrorAs(err, &providerErr)
+	assert.Equal(t, personenrichment.FailureInvalidOutput, providerErr.Class)
+}
+
 func TestExaDeepModesPreserveGroundingAndBindGeneratedSchema(t *testing.T) {
 	fixture := exaFixture(t, "exa_deep_success.json")
 	for _, mode := range []string{"deep", "deep-reasoning"} {

@@ -558,11 +558,40 @@ func (s *Store) ReleaseWork(
 		result, err := tx.ExecContext(ctx, `DELETE FROM person_enrichment_work
 			WHERE person_id = ? AND profile_fingerprint = ? AND run_id = ?
 			  AND lease_owner = ? AND lease_fence = ?
-			  AND ((? = 0 AND active_attempt_id IS NULL) OR active_attempt_id = ?)`,
+			  AND ((? = 0 AND active_attempt_id IS NULL) OR active_attempt_id = ?)
+			  AND NOT has_fresh_trigger`,
 			token.WorkPersonID, token.ProfileFingerprint, token.RunID, token.Owner,
 			token.Fence, token.AttemptID, token.AttemptID)
 		if err != nil {
 			return fmt.Errorf("release person enrichment work: %w", err)
+		}
+		if deleted, err := result.RowsAffected(); err != nil {
+			return err
+		} else if deleted == 1 {
+			return nil
+		}
+		var hasFreshTrigger bool
+		if err := tx.QueryRowContext(ctx, `SELECT has_fresh_trigger
+			FROM person_enrichment_work
+			WHERE person_id = ? AND profile_fingerprint = ? AND run_id = ?
+			  AND lease_owner = ? AND lease_fence = ?
+			  AND ((? = 0 AND active_attempt_id IS NULL) OR active_attempt_id = ?)`,
+			token.WorkPersonID, token.ProfileFingerprint, token.RunID, token.Owner,
+			token.Fence, token.AttemptID, token.AttemptID).Scan(&hasFreshTrigger); err != nil {
+			return fmt.Errorf("load coalesced person enrichment work release: %w", err)
+		}
+		if !hasFreshTrigger {
+			return errors.New("person enrichment work release changed without a fresh trigger")
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE person_enrichment_work
+			SET run_id = NULL, lease_owner = NULL, lease_until = NULL, has_fresh_trigger = FALSE
+			WHERE person_id = ? AND profile_fingerprint = ? AND run_id = ?
+			  AND lease_owner = ? AND lease_fence = ?
+			  AND ((? = 0 AND active_attempt_id IS NULL) OR active_attempt_id = ?)`,
+			token.WorkPersonID, token.ProfileFingerprint, token.RunID, token.Owner,
+			token.Fence, token.AttemptID, token.AttemptID)
+		if err != nil {
+			return fmt.Errorf("retain coalesced person enrichment work release: %w", err)
 		}
 		return requireOneLeaseRow(result)
 	})
