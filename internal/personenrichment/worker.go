@@ -229,14 +229,14 @@ func (w *Worker) processLease(
 ) error {
 	profile, err := w.work.LoadProviderProfile(ctx, lease.ProfileFingerprint)
 	if err != nil {
-		return w.releaseRetry(ctx, lease.Token, nil, safeFailure(FailureTransient, 0, "", "profile unavailable"), 0)
+		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "profile unavailable"))
 	}
 	if profile.Name != lease.ProviderName || profile.Fingerprint != lease.ProfileFingerprint {
-		return w.releaseRetry(ctx, lease.Token, nil, safeFailure(FailurePolicy, 0, "", "profile binding changed"), 0)
+		return w.releaseRetry(ctx, lease, nil, safeFailure(FailurePolicy, 0, "", "profile binding changed"))
 	}
 	input, err := w.work.LoadRequestInput(ctx, lease)
 	if err != nil {
-		return w.releaseRetry(ctx, lease.Token, nil, safeFailure(FailureTransient, 0, "", "request state unavailable"), 0)
+		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "request state unavailable"))
 	}
 	request, hashes, err := BuildRequest(input, profile)
 	if err != nil {
@@ -263,8 +263,8 @@ func (w *Worker) processLease(
 
 	knownIDs, err := w.work.LoadProviderPersonIDs(ctx, lease.PersonID, profile.ProviderNamespace)
 	if err != nil {
-		return w.releaseRetry(ctx, lease.Token, &input,
-			safeFailure(FailureTransient, 0, "", "provider identity state unavailable"), 0)
+		return w.releaseRetry(ctx, lease, &input,
+			safeFailure(FailureTransient, 0, "", "provider identity state unavailable"))
 	}
 	authorization, err := w.gate.Authorize(ctx, EgressInput{
 		Request: request, Profile: profile, KnownProviderPersonIDs: knownIDs,
@@ -278,8 +278,8 @@ func (w *Worker) processLease(
 			return w.work.MarkTerminal(ctx, lease.Token,
 				safeFailure(FailureSuppressed, 0, "", "egress suppressed"))
 		case errors.Is(err, ErrCredentialUnavailable):
-			return w.releaseRetry(ctx, lease.Token, &input,
-				safeFailure(FailureTransient, 0, "", "credential unavailable"), activeAttemptCount(lease))
+			return w.releaseRetry(ctx, lease, &input,
+				safeFailure(FailureTransient, 0, "", "credential unavailable"))
 		case errors.Is(err, ErrConsentRequired), errors.Is(err, ErrSuppressionKeyMismatch):
 			if lease.ActiveAttempt == nil {
 				return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "policy")
@@ -287,8 +287,8 @@ func (w *Worker) processLease(
 			return w.work.MarkTerminal(ctx, lease.Token,
 				safeFailure(FailurePolicy, 0, "", "egress policy rejected"))
 		default:
-			return w.releaseRetry(ctx, lease.Token, &input,
-				safeFailure(FailureTransient, 0, "", "egress policy state unavailable"), activeAttemptCount(lease))
+			return w.releaseRetry(ctx, lease, &input,
+				safeFailure(FailureTransient, 0, "", "egress policy state unavailable"))
 		}
 	}
 
@@ -296,8 +296,8 @@ func (w *Worker) processLease(
 	provider, err := factory(config, authorization.Credential)
 	authorization.Credential = ""
 	if err != nil || provider == nil {
-		return w.releaseRetry(ctx, lease.Token, &input,
-			safeFailure(FailureTransient, 0, "", "provider construction failed"), activeAttemptCount(lease))
+		return w.releaseRetry(ctx, lease, &input,
+			safeFailure(FailureTransient, 0, "", "provider construction failed"))
 	}
 	if lease.ActiveAttempt != nil {
 		return w.resumeAttempt(ctx, lease, input, request, hashes, profile, config, provider,
@@ -758,11 +758,18 @@ func (w *Worker) terminalizePolicyDrift(
 
 func (w *Worker) releaseRetry(
 	ctx context.Context,
-	token LeaseToken,
+	lease WorkLease,
 	input *RequestInput,
 	failure SafeFailure,
-	attempt int64,
 ) error {
+	attempt := int64(0)
+	if lease.ActiveAttempt != nil {
+		attempt = activeAttemptCount(lease)
+		if config, ok := w.options.ProviderConfigs[lease.ProviderName]; ok &&
+			attempt > int64(config.MaxRetries) {
+			return w.work.MarkTerminal(ctx, lease.Token, failure)
+		}
+	}
 	delay, err := RetryDelay(RetryInput{
 		Attempt: int(attempt), Base: time.Second, Maximum: httpretry.ProviderMaxRetryAfter,
 		Now: w.options.Clock().UTC(), Jitter: w.options.Jitter,
@@ -778,7 +785,7 @@ func (w *Worker) releaseRetry(
 	if input != nil {
 		release.PersonRevision = input.PersonRevision
 	}
-	return w.work.ReleaseWork(ctx, token, release)
+	return w.work.ReleaseWork(ctx, lease.Token, release)
 }
 
 func activeAttemptCount(lease WorkLease) int64 {

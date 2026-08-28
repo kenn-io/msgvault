@@ -1676,6 +1676,68 @@ func TestWorkerMissingCredentialSchedulesRetryWithoutBudgetReservation(t *testin
 	checks.Empty(attempts)
 }
 
+func TestWorkerStopsRetryingActiveAttemptAtLimit(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newWorkerFixture(t, "active-retry-limit", func(config *personenrichment.ProviderConfig) {
+		config.MaxRetries = 1
+	})
+	f.enqueue(t)
+	provider := &functionProvider{
+		start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
+			return personenrichment.Attempt{
+				State: personenrichment.AttemptPending, JobID: "active-retry-job",
+				PollAfter: time.Nanosecond, StartedAt: time.Now().UTC(),
+				AdapterVersion: "test-adapter-v1", SchemaVersion: "test-wire-v1",
+				ProgramFingerprint: workerProgramFingerprint(t, false, ""),
+			}, nil
+		},
+		poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+			return personenrichment.Result{}, &personenrichment.ProviderError{
+				Class: personenrichment.FailureTransient,
+			}
+		},
+	}
+	factory := map[string]personenrichment.ProviderFactory{
+		f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return provider, nil
+		},
+	}
+	configs := map[string]personenrichment.ProviderConfig{f.config.Name: f.config}
+	worker := f.newWorker(t, factory, configs, func(string) (string, bool) { return "test-key", true })
+
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+
+	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(work, 1)
+	options := f.options(configs)
+	options.Clock = func() time.Time { return work[0].DueAt.Add(time.Second) }
+	worker, err = personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "", false }),
+		factory, options,
+	)
+	requirements.NoError(err)
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(attempts, 1)
+	checks.Equal("terminal", attempts[0].State)
+	checks.Equal(int64(2), attempts[0].AttemptCount)
+}
+
 func TestWorkerInvalidOutputWritesNoResultState(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

@@ -848,6 +848,32 @@ func TestPersonEnrichmentFreshTriggerSurvivesActiveAttemptRetryRelease(t *testin
 	assert.Equal("manual:fresh-after-retry", work[0].TriggerGeneration)
 }
 
+func TestPersonEnrichmentActiveRetryReleaseIncrementsAttemptCount(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "active-retry-count")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker-a")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "a"))
+	requirements.NoError(err)
+	checks.Equal(int64(1), attempt.AttemptCount)
+
+	next := f.now.Add(time.Minute)
+	requirements.NoError(f.store.ReleaseWork(t.Context(), attempt.Token, personenrichment.WorkRelease{
+		Outcome: "retry",
+		Failure: &personenrichment.SafeFailure{
+			Class: personenrichment.FailureTransient, Message: "retry later",
+		},
+		NextActionAt: &next,
+	}))
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("retry_wait", stored.State)
+	checks.Equal(int64(2), stored.AttemptCount)
+}
+
 func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema(t *testing.T) {
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "generated-schema-shape")

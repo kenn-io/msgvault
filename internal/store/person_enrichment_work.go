@@ -497,6 +497,7 @@ func (s *Store) ReleaseWork(
 				}
 				result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
 					SET state = 'retry_wait', next_action_at = ?, failure_class = ?,
+					    attempt_count = attempt_count + 1,
 					    lease_owner = NULL, lease_until = NULL
 					WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?`,
 					release.NextActionAt.UTC(), release.Failure.Class, token.AttemptID,
