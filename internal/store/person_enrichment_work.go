@@ -234,6 +234,9 @@ func (s *Store) CancelPersonEnrichmentWorkOutsideProfilesContext(
 		activeAttempt sql.NullInt64
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, query+s.dialect.SelectForUpdate(), arguments...)
 		if err != nil {
 			return fmt.Errorf("list unavailable person enrichment work: %w", err)
@@ -258,6 +261,10 @@ func (s *Store) CancelPersonEnrichmentWorkOutsideProfilesContext(
 		completedAt := s.personEnrichmentTime()
 		for _, item := range stale {
 			if item.activeAttempt.Valid {
+				if err := s.rejectPersonEnrichmentDispatchInProgressTx(
+					ctx, tx, item.personID, item.fingerprint); err != nil {
+					return err
+				}
 				if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect,
 					item.activeAttempt.Int64, personenrichment.Cost{}, true, completedAt); err != nil {
 					return err
@@ -982,7 +989,7 @@ func (s *Store) RecordProviderStarted(
 			SET state = 'pending', provider_request_id = ?, provider_job_id = ?,
 			    adapter_version = ?, schema_version = ?, generated_schema = ?,
 			    generated_schema_hash = ?, targets_json = ?, program_fingerprint = ?,
-			    provider_started_at = ?
+			    provider_started_at = ?, dispatch_authorized_at = NULL
 			WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?
 			  AND state = 'starting' AND dispatch_authorized_at IS NOT NULL`, nullableOpaqueID(started.RequestID), nullableOpaqueID(started.JobID),
 			strings.TrimSpace(started.AdapterVersion), strings.TrimSpace(started.SchemaVersion),
@@ -991,6 +998,73 @@ func (s *Store) RecordProviderStarted(
 			token.AttemptID, token.RunID, token.Owner, token.Fence)
 		if err != nil {
 			return fmt.Errorf("record person enrichment provider start: %w", err)
+		}
+		return requireOneLeaseRow(result)
+	})
+}
+
+func (s *Store) AuthorizeAttemptPoll(
+	ctx context.Context, token personenrichment.LeaseToken,
+) error {
+	if token.AttemptID <= 0 {
+		return errors.New("person enrichment poll authorization requires an active attempt")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		currentRevision, err := lockPersonEnrichmentPersonTx(
+			ctx, tx, s.dialect, token.WorkPersonID)
+		if err != nil {
+			return err
+		}
+		if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
+			return err
+		}
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_tracking tracked
+			JOIN person_enrichment_consents consent
+			  ON consent.profile_fingerprint = ? AND consent.revoked_at IS NULL
+			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
+			token.WorkPersonID).Scan(&active); err != nil {
+			return fmt.Errorf("check person enrichment poll authority: %w", err)
+		}
+		if !active {
+			return personenrichment.ErrConsentRequired
+		}
+		var attemptRevision int64
+		if err := tx.QueryRowContext(ctx, `SELECT person_revision
+			FROM person_enrichment_attempts
+			WHERE id = ? AND run_id = ? AND person_id = ? AND profile_fingerprint = ?
+			  AND lease_owner = ? AND lease_fence = ? AND state = 'pending'
+			  AND provider_job_id IS NOT NULL AND dispatch_authorized_at IS NULL`,
+			token.AttemptID, token.RunID, token.WorkPersonID, token.ProfileFingerprint,
+			token.Owner, token.Fence).Scan(&attemptRevision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStaleLease
+			}
+			return fmt.Errorf("load person enrichment poll revision: %w", err)
+		}
+		if attemptRevision != currentRevision {
+			return ErrStaleLease
+		}
+		digests, err := s.loadPersonEnrichmentAttemptIdentifiersTx(ctx, tx, token.AttemptID)
+		if err != nil {
+			return err
+		}
+		if err := s.recheckPersonEnrichmentSuppressionsTx(ctx, tx, digests); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+			SET dispatch_authorized_at = ?
+			WHERE id = ? AND run_id = ? AND person_id = ? AND profile_fingerprint = ?
+			  AND lease_owner = ? AND lease_fence = ? AND state = 'pending'
+			  AND provider_job_id IS NOT NULL AND dispatch_authorized_at IS NULL`,
+			s.personEnrichmentTime(), token.AttemptID, token.RunID, token.WorkPersonID,
+			token.ProfileFingerprint, token.Owner, token.Fence)
+		if err != nil {
+			return fmt.Errorf("authorize person enrichment poll: %w", err)
 		}
 		return requireOneLeaseRow(result)
 	})
@@ -1152,7 +1226,7 @@ func (s *Store) schedulePersonEnrichmentAction(
 		result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
 			SET state = ?, next_action_at = ?, failure_class = ?,
 			    attempt_count = attempt_count + ?,
-			    lease_owner = NULL, lease_until = NULL
+			    dispatch_authorized_at = NULL, lease_owner = NULL, lease_until = NULL
 			WHERE id = ? AND run_id = ? AND lease_owner = ? AND lease_fence = ?`,
 			state, next, failureClass, incrementAttempt,
 			token.AttemptID, token.RunID, token.Owner, token.Fence)

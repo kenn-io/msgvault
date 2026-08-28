@@ -161,8 +161,8 @@ func TestPersonEnrichmentSynchronousResultCommitsFromStartingAttempt(t *testing.
 		SET state = 'starting', provider_request_id = NULL, provider_job_id = NULL,
 		    adapter_version = NULL, schema_version = NULL, generated_schema = FALSE,
 		    generated_schema_hash = NULL, targets_json = NULL, program_fingerprint = NULL,
-		    provider_started_at = NULL
-		WHERE id = ?`, f.attempt.ID)
+		    provider_started_at = NULL, dispatch_authorized_at = ?
+		WHERE id = ?`, f.now, f.attempt.ID)
 	requirements.NoError(err)
 
 	outcome, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)

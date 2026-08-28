@@ -260,6 +260,31 @@ func TestPersonEnrichmentDispatchAuthorizationRejectsStaleIdentityRevision(t *te
 	assert.False(work[0].HasFreshTrigger)
 }
 
+func TestPersonEnrichmentProfileCleanupRejectsAuthorizedDispatch(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run := f.startRun(t, "profile-cleanup-dispatch")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "profile-cleanup-worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+		testAttemptStart(&f, run.ID, "f"))
+	requirements.NoError(err)
+	requirements.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+
+	requirements.ErrorIs(
+		f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), nil),
+		store.ErrPersonEnrichmentDispatchInProgress,
+	)
+	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("starting", stored.State)
+	work := f.work(t)
+	requirements.Len(work, 1)
+	requirements.NotNil(work[0].ActiveAttemptID)
+	checks.Equal(attempt.ID, *work[0].ActiveAttemptID)
+}
+
 func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAttempt(t *testing.T) {
 	for _, mutation := range []string{"add_name", "supersede_name", "add_contact", "supersede_contact"} {
 		t.Run(mutation, func(t *testing.T) {

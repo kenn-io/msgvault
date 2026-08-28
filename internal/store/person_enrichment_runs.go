@@ -78,6 +78,22 @@ func (s *Store) StartManualPersonEnrichmentRunContext(
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
+		existing, err := scanDurableRun(tx.QueryRowContext(ctx, `
+			SELECT id, kind, requested_by, state, requested_at
+			FROM person_enrichment_runs
+			WHERE kind = 'manual' AND requested_by = ?`+s.dialect.SelectForUpdate(),
+			idempotencyKey))
+		if err == nil {
+			if err := s.bindManualPersonEnrichmentRunTargetTx(
+				ctx, tx, existing.ID, personID, profileFingerprint, false); err != nil {
+				return err
+			}
+			run = existing
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read existing manual person enrichment run: %w", err)
+		}
 		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrPersonNotFound
@@ -98,7 +114,6 @@ func (s *Store) StartManualPersonEnrichmentRunContext(
 		if !authorized {
 			return errors.New("manual person enrichment run requires a tracked person and active exact consent")
 		}
-		var err error
 		run, created, err = s.startPersonEnrichmentRunTx(ctx, tx, personenrichment.RunStart{
 			Kind: "manual", RequestedBy: idempotencyKey, RequestedAt: requestedAt,
 		})

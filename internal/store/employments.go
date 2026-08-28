@@ -604,7 +604,7 @@ func (s *Store) claimEmploymentPeopleTx(
 		return err
 	}
 	for _, personID := range sortedUniqueInt64s(personIDs...) {
-		if err := rejectPersonEnrichmentDispatchInProgressTx(
+		if err := s.rejectPersonEnrichmentDispatchInProgressTx(
 			ctx, tx, personID, ""); err != nil {
 			return err
 		}

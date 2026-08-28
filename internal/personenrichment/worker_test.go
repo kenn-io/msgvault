@@ -2129,32 +2129,75 @@ func (s *recordingSink) CommitEnrichmentClaims(
 	return outcome, err
 }
 
-func TestWorkerAsyncPollCommitRechecksConsentAndReturnedSuppression(t *testing.T) {
+func TestWorkerAsyncPollFencesConsentAndRechecksReturnedSuppression(t *testing.T) {
+	disclosed, err := personenrichment.NormalizeSuppressionIdentifier(
+		personenrichment.SuppressionPublicProfileURL,
+		[]string{"https://profiles.example.test/worker-person"})
+	require.NoError(t, err)
+	insertDisclosedSuppression := func(f *workerFixture) error {
+		digest := f.hasher.Digest(f.profile.ProviderNamespace, disclosed.Class,
+			disclosed.NormalizationVersion, disclosed.Value)
+		return f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(),
+			[]store.PersonEnrichmentSuppressionInput{{
+				ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
+				NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID, Digest: digest.Digest,
+				Reason: store.PersonEnrichmentSuppressionOptOut, Actor: "test",
+			}})
+	}
 	tests := []struct {
-		name       string
-		want       personenrichment.ClaimOutcomeStatus
-		invalidate func(*workerFixture, personenrichment.Result)
+		name           string
+		want           personenrichment.ClaimOutcomeStatus
+		wantState      string
+		assertNoWrites bool
+		invalidateErr  error
+		invalidate     func(*workerFixture, personenrichment.Result) error
+		after          func(*workerFixture) error
+		wantWork       bool
 	}{
 		{
-			name: "consent revoked", want: personenrichment.ClaimPolicyRejected,
-			invalidate: func(f *workerFixture, _ personenrichment.Result) {
+			name: "consent revocation", want: personenrichment.ClaimApplied, wantState: "succeeded",
+			invalidateErr: store.ErrPersonEnrichmentDispatchInProgress,
+			invalidate: func(f *workerFixture, _ personenrichment.Result) error {
+				_, err := f.store.RevokePersonEnrichmentConsent(t.Context(), f.profile.Fingerprint, "test")
+				return err
+			},
+			after: func(f *workerFixture) error {
 				changed, err := f.store.RevokePersonEnrichmentConsent(t.Context(), f.profile.Fingerprint, "test")
-				require.NoError(t, err)
-				require.True(t, changed)
+				if err != nil {
+					return err
+				}
+				if !changed {
+					return errors.New("consent revocation did not commit after poll")
+				}
+				return nil
 			},
 		},
 		{
+			name: "disclosed identifier suppression", want: personenrichment.ClaimApplied,
+			wantState: "succeeded", invalidateErr: store.ErrPersonEnrichmentDispatchInProgress,
+			invalidate: func(f *workerFixture, _ personenrichment.Result) error {
+				return insertDisclosedSuppression(f)
+			},
+			after: func(f *workerFixture) error {
+				return insertDisclosedSuppression(f)
+			},
+			wantWork: true,
+		},
+		{
 			name: "returned identity suppressed", want: personenrichment.ClaimSuppressed,
-			invalidate: func(f *workerFixture, result personenrichment.Result) {
+			wantState: "suppressed", assertNoWrites: true,
+			invalidate: func(f *workerFixture, result personenrichment.Result) error {
 				normalized, err := personenrichment.NormalizeSuppressionIdentifier(
 					personenrichment.SuppressionPublicProfileURL, []string{result.CanonicalPublicURLs[0]})
-				require.NoError(t, err)
+				if err != nil {
+					return err
+				}
 				digest := f.hasher.Digest(f.profile.ProviderNamespace, normalized.Class, normalized.NormalizationVersion, normalized.Value)
-				require.NoError(t, f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(), []store.PersonEnrichmentSuppressionInput{{
+				return f.store.InsertPersonEnrichmentSuppressionsContext(t.Context(), []store.PersonEnrichmentSuppressionInput{{
 					ProviderNamespace: digest.ProviderNamespace, IdentifierClass: digest.IdentifierClass,
 					NormalizationVersion: digest.NormalizationVersion, KeyID: digest.KeyID, Digest: digest.Digest,
 					Reason: store.PersonEnrichmentSuppressionOptOut, Actor: "test",
-				}}))
+				}})
 			},
 		},
 	}
@@ -2221,9 +2264,12 @@ func TestWorkerAsyncPollCommitRechecksConsentAndReturnedSuppression(t *testing.T
 				done <- runErr
 			}()
 			result := <-pollBlocked
-			tt.invalidate(f, result)
+			requirements.ErrorIs(tt.invalidate(f, result), tt.invalidateErr)
 			close(releasePoll)
 			requirements.NoError(<-done)
+			if tt.after != nil {
+				requirements.NoError(tt.after(f))
+			}
 			sink.mu.Lock()
 			checks.Equal([]personenrichment.ClaimOutcomeStatus{tt.want}, sink.statuses)
 			sink.mu.Unlock()
@@ -2236,22 +2282,30 @@ func TestWorkerAsyncPollCommitRechecksConsentAndReturnedSuppression(t *testing.T
 			checks.Equal("async-policy-job", *attempts[0].ProviderJobID)
 			requirements.NotNil(attempts[0].ActualCostUSDMicros)
 			checks.Equal(int64(600), *attempts[0].ActualCostUSDMicros)
-			checks.Nil(attempts[0].FactGenerationKey)
 			checks.Nil(attempts[0].LeaseOwner)
-			checks.Contains([]string{"terminal", "suppressed"}, attempts[0].State)
-			for _, table := range []string{
-				"person_enrichment_provider_identities", "person_enrichment_citations",
-				"person_fact_generations", "person_fact_claims", "person_fact_decisions",
-			} {
-				var count int64
-				requirements.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
-				checks.Zero(count, table)
+			checks.Equal(tt.wantState, attempts[0].State)
+			if tt.assertNoWrites {
+				checks.Nil(attempts[0].FactGenerationKey)
+				for _, table := range []string{
+					"person_enrichment_provider_identities", "person_enrichment_citations",
+					"person_fact_generations", "person_fact_claims", "person_fact_decisions",
+				} {
+					var count int64
+					requirements.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
+					checks.Zero(count, table)
+				}
+			} else {
+				requirements.NotNil(attempts[0].FactGenerationKey)
 			}
 			work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
 				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
 			})
 			requirements.NoError(err)
-			checks.Empty(work)
+			if tt.wantWork {
+				checks.Len(work, 1)
+			} else {
+				checks.Empty(work)
+			}
 		})
 	}
 }

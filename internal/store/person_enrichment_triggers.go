@@ -290,7 +290,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 func (s *Store) cancelPersonEnrichmentTx(
 	ctx context.Context, tx *loggedTx, personID int64, fingerprint string,
 ) error {
-	if err := rejectPersonEnrichmentDispatchInProgressTx(
+	if err := s.rejectPersonEnrichmentDispatchInProgressTx(
 		ctx, tx, personID, fingerprint); err != nil {
 		return err
 	}
@@ -440,7 +440,7 @@ func (s *Store) bumpAuthorizedPersonEnrichmentRevisionsTx(
 func (s *Store) forceInvalidatePersonEnrichmentTx(
 	ctx context.Context, tx *loggedTx, personID int64,
 ) error {
-	if err := rejectPersonEnrichmentDispatchInProgressTx(ctx, tx, personID, ""); err != nil {
+	if err := s.rejectPersonEnrichmentDispatchInProgressTx(ctx, tx, personID, ""); err != nil {
 		return err
 	}
 	now := s.personEnrichmentTime()
@@ -509,22 +509,28 @@ func (s *Store) forceInvalidatePersonEnrichmentTx(
 	return nil
 }
 
-func rejectPersonEnrichmentDispatchInProgressTx(
+func (s *Store) rejectPersonEnrichmentDispatchInProgressTx(
 	ctx context.Context, tx *loggedTx, personID int64, fingerprint string,
 ) error {
-	// Callers hold the person row lock. Dispatch authorization takes the same
-	// lock before it records this marker, so the check cannot miss a concurrent
-	// authorization commit.
+	// Callers hold the authority gate or the person row lock. Provider calls
+	// record an explicit marker, and polls keep their durable lease until the
+	// call settles. The matching locks make both checks stable against a
+	// concurrent authorization commit.
 	where := "person_id = ?"
 	args := []any{personID}
 	if fingerprint != "" {
 		where += " AND profile_fingerprint = ?"
 		args = append(args, fingerprint)
 	}
+	args = append(args, s.personEnrichmentTime())
 	var dispatching bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_enrichment_attempts
-		WHERE `+where+` AND state = 'starting' AND dispatch_authorized_at IS NOT NULL)`,
+		WHERE `+where+` AND (
+			(state = 'starting' AND dispatch_authorized_at IS NOT NULL)
+			OR (state = 'pending' AND dispatch_authorized_at IS NOT NULL
+				AND lease_owner IS NOT NULL AND lease_until > ?)
+		))`,
 		args...).Scan(&dispatching); err != nil {
 		return fmt.Errorf("check person enrichment dispatch in progress: %w", err)
 	}

@@ -198,6 +198,29 @@ func TestPersonEnrichmentManualRunCompletedIdempotencyRejectsDifferentPerson(t *
 	checks.Equal(beforeConflict, work)
 }
 
+func TestPersonEnrichmentManualRunReplaysAfterPersonDeletion(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	requirements.NoError(err)
+	run, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profiles[0].Fingerprint, "deleted-target-key", f.now)
+	requirements.NoError(err)
+	requirements.True(created)
+
+	requirements.NoError(f.store.DeletePersonContext(
+		t.Context(), f.person.ID, f.person.Revision))
+	replayed, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profiles[0].Fingerprint,
+		"deleted-target-key", f.now.Add(time.Minute))
+	requirements.NoError(err)
+	checks.False(created)
+	requirements.NotNil(replayed)
+	checks.Equal(run.ID, replayed.ID)
+}
+
 func TestPersonEnrichmentManualRunSerializesWithConsentRevocation(t *testing.T) {
 	testPersonEnrichmentManualAuthorizationRaceBackends(t, "revoke")
 }

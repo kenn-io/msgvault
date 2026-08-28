@@ -583,6 +583,18 @@ func (w *Worker) pollAttempt(
 		GeneratedSchemaHash: active.GeneratedSchemaHash,
 		ProgramFingerprint:  active.ProgramFingerprint, Targets: cloneDurableAttemptTargets(active.Targets),
 	}
+	if err := w.work.AuthorizeAttemptPoll(ctx, lease.Token); err != nil {
+		switch {
+		case errors.Is(err, ErrSuppressed):
+			return w.work.MarkTerminal(ctx, lease.Token,
+				safeFailure(FailureSuppressed, 0, active.RequestID, "enrichment suppressed before poll"))
+		case errors.Is(err, ErrConsentRequired):
+			return w.work.MarkTerminal(ctx, lease.Token,
+				safeFailure(FailurePolicy, 0, active.RequestID, "enrichment consent revoked before poll"))
+		default:
+			return fmt.Errorf("authorize person enrichment poll: %w", err)
+		}
+	}
 	callCtx, cancel := context.WithTimeout(ctx, config.RequestTimeout)
 	result, err := provider.Poll(callCtx, pollInput)
 	cancel()

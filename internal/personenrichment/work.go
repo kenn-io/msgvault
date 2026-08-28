@@ -44,6 +44,7 @@ type WorkStore interface {
 	ReleaseWork(ctx context.Context, token LeaseToken, release WorkRelease) error
 	BeginAttempt(ctx context.Context, token LeaseToken, start AttemptStart) (*DurableAttempt, bool, error)
 	AuthorizeAttemptDispatch(ctx context.Context, token LeaseToken) error
+	AuthorizeAttemptPoll(ctx context.Context, token LeaseToken) error
 	RecordProviderStarted(ctx context.Context, token LeaseToken, attempt Attempt) error
 	SchedulePoll(ctx context.Context, token LeaseToken, result Result) error
 	ScheduleRetry(ctx context.Context, token LeaseToken, retry RetryUpdate) error
