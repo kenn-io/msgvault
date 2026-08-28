@@ -297,6 +297,31 @@ func uidsToUint32(uids []imap.UID) []uint32 {
 	return values
 }
 
+// diffKnownUIDs compares a stored baseline against a freshly enumerated UID
+// set and reports what changed. added are UIDs the baseline does not have;
+// vanished are baseline UIDs the mailbox no longer holds. Both are sorted.
+func diffKnownUIDs(prior []uint32, current []imap.UID) (added, vanished []imap.UID) {
+	priorSet := make(map[uint32]struct{}, len(prior))
+	for _, uid := range prior {
+		priorSet[uid] = struct{}{}
+	}
+	currentSet := make(map[uint32]struct{}, len(current))
+	for _, uid := range current {
+		currentSet[uint32(uid)] = struct{}{}
+		if _, ok := priorSet[uint32(uid)]; !ok {
+			added = append(added, uid)
+		}
+	}
+	for _, uid := range prior {
+		if _, ok := currentSet[uid]; !ok {
+			vanished = append(vanished, imap.UID(uid))
+		}
+	}
+	slices.Sort(added)
+	slices.Sort(vanished)
+	return added, vanished
+}
+
 func mergeKnownUIDs(prior []uint32, additions []imap.UID) []uint32 {
 	if prior == nil {
 		return nil

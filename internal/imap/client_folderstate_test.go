@@ -1007,10 +1007,12 @@ func TestWithFolderFilter_GmailCanonicalMailboxesHonorFilters(t *testing.T) {
 	})
 }
 
-// TestListMessages_ResetsFolderAfterExpunge covers the case UIDNEXT alone gets
-// wrong: a message removed with nothing appended leaves the high water mark
-// exactly where it was, so only the message count reveals the change.
-func TestListMessages_ResetsFolderAfterExpunge(t *testing.T) {
+// TestListMessages_ExpungeVanishesWithoutRepublishing covers the case UIDNEXT
+// alone gets wrong: a message removed with nothing appended leaves the high
+// water mark exactly where it was, so only the message count reveals the
+// change. Finding out costs a full UID SEARCH, but the search answers with a
+// diff -- the mailbox does not have to be republished to retire one UID.
+func TestListMessages_ExpungeVanishesWithoutRepublishing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 3, "Archive": 2})
@@ -1023,20 +1025,53 @@ func TestListMessages_ResetsFolderAfterExpunge(t *testing.T) {
 	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
-	assert.Equal([]string{"INBOX|2", "INBOX|3"}, listAllMessages(t, second),
-		"a shrunken mailbox must be re-enumerated in full")
+	assert.Empty(listAllMessages(t, second),
+		"an expunge adds no messages, so none may be re-listed")
 
 	deltas := second.ObservedMailboxDeltas()
 	require.Len(deltas, 2)
 	for _, delta := range deltas {
-		if delta.Mailbox == "INBOX" {
-			assert.True(delta.Reset,
-				"only a full republish lets the store retire the expunged UID")
-			assert.Equal([]uint32{2, 3}, delta.State.KnownUIDs)
-		} else {
+		if delta.Mailbox != "INBOX" {
 			assert.False(delta.Reset, "an untouched mailbox stays untouched")
+			continue
 		}
+		assert.False(delta.Reset,
+			"a known baseline makes the removal expressible without a republish")
+		assert.Equal([]imapv2.UID{1}, delta.VanishedUIDs)
+		assert.Empty(delta.ChangedUIDs)
+		assert.Equal([]uint32{2, 3}, delta.State.KnownUIDs)
 	}
+}
+
+// TestListMessages_ExpungeWithoutBaselineStillResets covers the same expunge
+// with no stored KnownUIDs to diff against: there is nothing to subtract from,
+// so a full republish remains the only correct answer.
+func TestListMessages_ExpungeWithoutBaselineStillResets(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 3})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 3)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	// A state saved before memberships were tracked carries no UID baseline.
+	for mailbox, state := range saved {
+		state.KnownUIDs = nil
+		saved[mailbox] = state
+	}
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+
+	second := newTestClient(t, addr, WithFolderStates(saved))
+	assert.Equal([]string{"INBOX|2", "INBOX|3"}, listAllMessages(t, second))
+
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(deltas, 1)
+	assert.True(deltas[0].Reset,
+		"without a baseline only a full republish can retire the expunged UID")
+	assert.Empty(deltas[0].VanishedUIDs)
+	assert.Equal([]uint32{2, 3}, deltas[0].State.KnownUIDs)
 }
 
 // TestListMessages_AdvancedUIDNextWithSteadyCountDoesNotReset covers a message

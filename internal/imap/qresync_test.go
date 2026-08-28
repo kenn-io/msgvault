@@ -555,8 +555,10 @@ func TestListMessagesFallbackRebuildsKnownUIDBaseline(t *testing.T) {
 		"INBOX": {UIDValidity: 77, UIDNext: 4, KnownUIDs: []uint32{1, 2, 3}},
 	})
 
-	assert.Equal(t, []string{"INBOX|1", "INBOX|2", "INBOX|3", "INBOX|4"},
-		listQresyncMessages(t, client))
+	// The server reports no MESSAGES count, so the baseline cannot be verified
+	// arithmetically and a full UID SEARCH settles it. The search is ground
+	// truth, so only the UID missing from the baseline needs listing.
+	assert.Equal(t, []string{"INBOX|4"}, listQresyncMessages(t, client))
 	assert.Equal(t, []uint32{1, 2, 3, 4}, client.ObservedFolderStates()["INBOX"].KnownUIDs)
 }
 

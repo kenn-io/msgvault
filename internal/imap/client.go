@@ -437,11 +437,12 @@ func addMessageIDsFromHeaderFetchResults(dst map[string]bool, msgs []*imapclient
 // mailbox skipped by one and enumerated by the other would publish a Reset
 // delta with no membership observations behind it.
 type mailboxScan struct {
-	skip  bool       // membership provably unchanged; publish a no-op delta
-	reset bool       // republish the whole mailbox
-	uids  []imap.UID // UIDs to fetch and list
-	known []uint32   // resulting KnownUIDs baseline
-	err   error      // enumeration failed; the run is not authoritative
+	skip     bool       // membership provably unchanged; publish a no-op delta
+	reset    bool       // republish the whole mailbox
+	uids     []imap.UID // UIDs to fetch and list
+	vanished []imap.UID // UIDs that left the mailbox since the baseline
+	known    []uint32   // resulting KnownUIDs baseline
+	err      error      // enumeration failed; the run is not authoritative
 }
 
 // statusMessageCount reports whether the server's MESSAGES count is known and
@@ -529,9 +530,23 @@ func (c *Client) planMailboxScan(
 	if statusMessageCount(status, len(known)) {
 		return mailboxScan{uids: uids, known: known}
 	}
-	// The counts disagree: something at or below the high water mark vanished,
-	// and only a full enumeration can say what.
-	return full()
+	// The counts disagree: something at or below the high water mark vanished.
+	// Only a full enumeration can say what, but its answer is a diff, not a
+	// reason to republish: prior.KnownUIDs is read back from the stored
+	// memberships, so the difference between it and the current UID set names
+	// the additions and the removals outright. Republishing instead would cost
+	// a Message-ID fetch for every message in the mailbox, twice -- once to
+	// rebuild the label map and once to refresh labels downstream.
+	current, err := c.enumerateMailbox(ctx, mailbox, 0)
+	if err != nil {
+		return mailboxScan{err: err}
+	}
+	added, vanished := diffKnownUIDs(prior.KnownUIDs, current)
+	return mailboxScan{
+		uids:     added,
+		vanished: vanished,
+		known:    uidsToUint32(current),
+	}
 }
 
 // enumerateMailbox lists UIDs in a single mailbox. A non-zero minUID
@@ -997,10 +1012,11 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				reset = true
 			}
 			c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
-				Mailbox:     mailbox,
-				State:       trackState,
-				ChangedUIDs: append([]imap.UID(nil), uids...),
-				Reset:       reset,
+				Mailbox:      mailbox,
+				State:        trackState,
+				ChangedUIDs:  append([]imap.UID(nil), uids...),
+				VanishedUIDs: append([]imap.UID(nil), scan.vanished...),
+				Reset:        reset,
 			})
 		}
 		c.logger.Debug("listed mailbox", "mailbox", mailbox, "count", len(uids))
