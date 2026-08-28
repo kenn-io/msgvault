@@ -259,6 +259,84 @@ func TestPersonEnrichmentDispatchAuthorizationRejectsStaleIdentityRevision(t *te
 	assert.False(work[0].HasFreshTrigger)
 }
 
+func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAttempt(t *testing.T) {
+	for _, mutation := range []string{"add_name", "supersede_name", "add_contact", "supersede_contact"} {
+		t.Run(mutation, func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			f := newEnrichmentWorkFixture(t)
+			var mutate func() error
+			switch mutation {
+			case "add_name":
+				mutate = func() error {
+					name := "Changed Work Person"
+					_, err := f.store.AddPersonNameContext(t.Context(), f.person.ID, store.PersonNameInput{
+						NameKind: store.PersonNameFormatted, Formatted: &name, OriginalValue: name,
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+					})
+					return err
+				}
+			case "supersede_name":
+				name := "Historical Work Person"
+				created, err := f.store.AddPersonNameContext(t.Context(), f.person.ID, store.PersonNameInput{
+					NameKind: store.PersonNameFormatted, Formatted: &name, OriginalValue: name,
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+				})
+				requirements.NoError(err)
+				mutate = func() error {
+					return f.store.SupersedePersonNameContext(
+						t.Context(), f.person.ID, created.Envelope.ID, nil)
+				}
+			case "add_contact":
+				mutate = func() error {
+					_, err := f.store.AddPersonContactPointContext(t.Context(), f.person.ID,
+						store.PersonContactPointInput{
+							AddressKind: store.ContactAddressEmail, OriginalValue: "changed-work@example.test",
+							Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+						})
+					return err
+				}
+			case "supersede_contact":
+				created, err := f.store.AddPersonContactPointContext(t.Context(), f.person.ID,
+					store.PersonContactPointInput{
+						AddressKind: store.ContactAddressEmail, OriginalValue: "historical-work@example.test",
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+					})
+				requirements.NoError(err)
+				mutate = func() error {
+					return f.store.SupersedePersonContactPointContext(
+						t.Context(), f.person.ID, created.Envelope.ID, nil)
+				}
+			}
+			requirements.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+			var err error
+			f.person, err = f.store.GetPersonContext(t.Context(), f.person.ID)
+			requirements.NoError(err)
+			insertProviderIdentity(t, f.store, f.person.ID,
+				f.profile.ProviderNamespace, "opaque-before-"+mutation)
+			run := f.startRun(t, "identity-mutation-"+mutation)
+			f.enqueue(t)
+			lease := f.claim(t, run.ID, "identity-mutation-worker")
+			attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token,
+				testAttemptStart(&f, run.ID, "6"))
+			requirements.NoError(err)
+
+			requirements.NoError(mutate())
+			checks.Zero(providerIdentityCount(t, f.store, f.person.ID))
+			stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+			requirements.NoError(err)
+			checks.Equal("terminal", stored.State)
+			work := f.work(t)
+			requirements.Len(work, 1)
+			checks.Nil(work[0].RunID)
+			checks.Nil(work[0].ActiveAttemptID)
+			checks.Equal(int64(2), work[0].TriggerMask)
+			requirements.ErrorIs(
+				f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token), store.ErrStaleLease)
+		})
+	}
+}
+
 func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

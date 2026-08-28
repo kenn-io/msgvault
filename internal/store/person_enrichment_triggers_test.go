@@ -528,7 +528,7 @@ func TestPersonEnrichmentTriggerPublishesTrackedIdentityAndConsentWorkPerProfile
 	for index := range f.profiles {
 		rows := f.work(t, index)
 		require.Len(rows, 1)
-		assert.Equal(int64(3), rows[0].TriggerMask)
+		assert.Equal(int64(2), rows[0].TriggerMask)
 		assert.True(strings.HasPrefix(rows[0].TriggerGeneration, "revision:"))
 	}
 	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))

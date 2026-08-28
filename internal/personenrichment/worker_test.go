@@ -259,7 +259,11 @@ func TestWorkerResumesExactBoundAsyncAttemptAfterRestart(t *testing.T) {
 		strings.Repeat("b", 64), strings.Repeat("c", 64), time.Now().UTC())
 	requirements.NoError(err)
 
-	second := f.newWorker(t, providers, configs, credential)
+	options := f.options(configs)
+	options.Clock = func() time.Time { return work[0].DueAt.Add(time.Second) }
+	second, err := personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, credential), providers, options)
+	requirements.NoError(err)
 	processed, err = second.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	checks.True(processed)

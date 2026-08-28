@@ -67,7 +67,7 @@ func (s *Store) AddPersonContactPointContext(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		return s.publishPersonIdentityEnrichmentTx(ctx, tx, personID)
+		return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID)
 	})
 	return result, err
 }
@@ -147,7 +147,7 @@ func (s *Store) SupersedePersonContactPointContext(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		return s.publishPersonIdentityEnrichmentTx(ctx, tx, personID)
+		return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID)
 	})
 }
 
