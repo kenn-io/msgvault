@@ -1,6 +1,5 @@
-// Package whatsapp provides import functionality for WhatsApp message backups.
-// It reads from a decrypted WhatsApp msgstore.db (SQLite) and maps messages
-// into the msgvault unified schema.
+// Package whatsapp imports WhatsApp messages from Android msgstore.db backups
+// and Apple ChatStorage.sqlite databases into the msgvault unified schema.
 package whatsapp
 
 import (

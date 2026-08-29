@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,8 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// Importer handles importing WhatsApp messages from a decrypted msgstore.db
-// into the msgvault store.
+// Importer handles importing WhatsApp messages into the msgvault store.
 type Importer struct {
 	store    *store.Store
 	progress ImportProgress
@@ -34,26 +32,27 @@ func NewImporter(s *store.Store, progress ImportProgress) *Importer {
 	}
 }
 
-// Import performs the full WhatsApp import from a decrypted msgstore.db.
+// Import detects the WhatsApp database schema and imports its messages.
 func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOptions) (*ImportSummary, error) {
 	startTime := time.Now()
 	summary := &ImportSummary{}
 
-	// Open WhatsApp DB read-only.
-	// Use file: URI to safely handle paths containing '?' or other special characters.
-	dsn := (&url.URL{
-		Scheme:   "file",
-		OmitHost: true,
-		Path:     waDBPath,
-		RawQuery: "mode=ro&_journal_mode=WAL&_busy_timeout=5000",
-	}).String()
-	waDB, err := sql.Open("sqlite3", dsn)
+	waDB, err := openReadOnlyDatabase(ctx, waDBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open whatsapp db: %w", err)
 	}
 	defer func() { _ = waDB.Close() }()
 
-	// Verify it's a valid WhatsApp DB.
+	kind, err := detectDatabaseKind(waDB)
+	if err != nil {
+		return nil, err
+	}
+	if kind == databaseKindApple {
+		return imp.importApple(ctx, waDB, waDBPath, opts)
+	}
+
+	// Keep the detailed Android schema checks for compatibility with the
+	// existing importer error handling.
 	if err := verifyWhatsAppDB(waDB); err != nil {
 		return nil, err
 	}

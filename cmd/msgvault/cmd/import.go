@@ -25,12 +25,16 @@ var (
 )
 
 var importWhatsappCmd = &cobra.Command{
-	Use:   "import-whatsapp <msgstore.db>",
-	Short: "Import WhatsApp messages from decrypted backup",
-	Long: `Import messages from a decrypted WhatsApp msgstore.db backup.
+	Use:   "import-whatsapp <database>",
+	Short: "Import WhatsApp messages from an Android or Apple database",
+	Long: `Import messages from a decrypted Android msgstore.db backup or an
+Apple ChatStorage.sqlite database. Apple databases currently import text
+messages from direct and group chats. Reading the native macOS WhatsApp store
+may require Full Disk Access in System Settings > Privacy & Security.
 
 Examples:
   msgvault import-whatsapp --phone "+447700900000" /path/to/msgstore.db
+  msgvault import-whatsapp --phone "+447700900000" "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
   msgvault import-whatsapp --phone "+447700900000" --contacts ~/contacts.vcf /path/to/msgstore.db
   msgvault import-whatsapp --phone "+447700900000" --media-dir /path/to/Media /path/to/msgstore.db`,
 	Args: cobra.ExactArgs(1),
