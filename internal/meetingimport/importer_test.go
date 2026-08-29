@@ -839,16 +839,19 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 		done <- importErr
 	}()
 
+	// These are liveness bounds, not latency budgets: the import stops
+	// within milliseconds when it works, and a hang is the only failure they
+	// exist to catch. Keep them generous so a slow runner cannot fail them.
 	select {
 	case <-participantStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		require.FailNow("meeting import did not reach attendee insertion")
 	}
 	cancel()
 
 	select {
 	case err = <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		require.FailNow("meeting import did not stop after cancellation")
 	}
 	require.ErrorIs(err, context.Canceled)

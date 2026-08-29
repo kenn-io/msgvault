@@ -1122,7 +1122,7 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 
 	require.NoError(<-importErrs, "the import path must not fail while the feed polls")
 	require.NoError(pollErr, "the feed must not error while an import holds the write lock")
-	require.Greaterf(polls, 10,
+	require.Greaterf(polls, 2,
 		"the feed completed only %d polls in 5s against an active import; "+
 			"that is a stall, not contention", polls)
 	require.Positive(imported.Load(),

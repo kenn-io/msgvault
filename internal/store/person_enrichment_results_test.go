@@ -1133,3 +1133,61 @@ func TestPersonEnrichmentResultMetadataStructsDoNotExposeSecretsOrRawIdentifiers
 		assert.NotContains(t, string(encoded), forbidden)
 	}
 }
+
+// TestPersonEnrichmentResultCommitAndLeaseRenewalDoNotDeadlock pins the lock
+// order between a result commit and the worker's concurrent lease renewal.
+// The commit is held after it has locked the attempt row, and a renewal for the
+// same attempt is started against it. Before the work row was locked ahead of
+// the attempt row here, the renewal took the work row and then waited on the
+// attempt row while the released commit waited on the work row, and PostgreSQL
+// aborted one side with "deadlock detected". With the shared order the renewal
+// simply waits for the commit; it then either renews or, because the commit
+// settled the work row, reports a stale lease. Either is fine; a deadlock is
+// not.
+func TestPersonEnrichmentResultCommitAndLeaseRenewalDoNotDeadlock(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newEnrichmentResultFixture(t)
+
+	attemptLocked := make(chan struct{})
+	releaseResult := make(chan struct{})
+	var resultOnce sync.Once
+	SetPersonEnrichmentTxBarrierForTest(f.store, func(phase string) {
+		if phase == "result_attempt_locked" {
+			resultOnce.Do(func() {
+				close(attemptLocked)
+				<-releaseResult
+			})
+		}
+	})
+	claimDone := make(chan enrichmentClaimResult, 1)
+	go func() {
+		outcome, commitErr := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+		claimDone <- enrichmentClaimResult{outcome: outcome, err: commitErr}
+	}()
+	requireEnrichmentResultSignal(t, attemptLocked, "result did not lock its attempt")
+
+	renewDone := make(chan error, 1)
+	go func() {
+		renewDone <- f.store.RenewLease(t.Context(), f.attempt.Token, f.now.Add(time.Minute))
+	}()
+	// Give the renewal time to reach the row locks while the commit is held.
+	// The test cannot observe a blocked statement directly; without this the
+	// renewal may not have started before the commit is released, and the
+	// interleaving under test never happens.
+	select {
+	case err := <-renewDone:
+		requirements.FailNowf("lease renewal did not wait for the held commit", "%v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(releaseResult)
+
+	claim := requireEnrichmentClaimResult(t, claimDone)
+	requirements.NoError(claim.err)
+	requirements.NotNil(claim.outcome)
+	checks.Equal(personenrichment.ClaimApplied, claim.outcome.Status)
+	renewErr := requireEnrichmentErrorResult(t, renewDone, "lease renewal deadlocked")
+	if renewErr != nil {
+		checks.ErrorIs(renewErr, ErrStaleLease)
+	}
+}

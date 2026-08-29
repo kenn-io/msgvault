@@ -1707,6 +1707,25 @@ func lockEnrichmentWorkStateTx(
 	return work, nil
 }
 
+// lockEnrichmentWorkRowForOrderingTx takes the row lock on a work row by key
+// without verifying any lease on it. It exists so a transaction that must lock
+// the attempt row can first take the work row in the order every lease
+// mutation uses (work, then attempt). A missing row is not an error: the caller
+// is about to read the attempt and decide from that what the missing work row
+// means.
+func lockEnrichmentWorkRowForOrderingTx(
+	ctx context.Context, tx *loggedTx, dialect Dialect, personID int64, fingerprint string,
+) error {
+	var one int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM person_enrichment_work
+		WHERE person_id = ? AND profile_fingerprint = ?`+dialect.SelectForUpdate(),
+		personID, fingerprint).Scan(&one)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("lock person enrichment work for ordering: %w", err)
+	}
+	return nil
+}
+
 func lockPersonEnrichmentPersonTx(
 	ctx context.Context, tx *loggedTx, dialect Dialect, personID int64,
 ) (int64, error) {

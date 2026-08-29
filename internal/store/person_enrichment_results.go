@@ -376,9 +376,26 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	if s.personEnrichmentTxBarrier != nil {
 		s.personEnrichmentTxBarrier("result_person_locked")
 	}
+	// Lock the work row BEFORE the attempt row. Every other lease path
+	// (RenewLease, BeginAttempt, AuthorizeAttemptDispatch, the schedule and
+	// release paths) locks person_enrichment_work first and then
+	// person_enrichment_attempts, and the worker's lease-renewal goroutine runs
+	// RenewLease concurrently with this commit. Locking the attempt first here
+	// inverted that order and PostgreSQL reported "deadlock detected" on the
+	// renewal whenever a renewal tick landed during a result commit. The lock
+	// is taken by key alone, without verifying the lease: a replayed commit
+	// whose work row has already been settled must still reach the replay
+	// disposition below, and the lease itself is verified afterwards.
+	if err := lockEnrichmentWorkRowForOrderingTx(
+		ctx, tx, s.dialect, commit.PersonID, commit.ProfileFingerprint); err != nil {
+		return enrichmentCommitDisposition{}, err
+	}
 	attempt, err := s.loadPersonEnrichmentCommitAttempt(ctx, tx, commit.AttemptID, true)
 	if err != nil {
 		return enrichmentCommitDisposition{}, err
+	}
+	if s.personEnrichmentTxBarrier != nil {
+		s.personEnrichmentTxBarrier("result_attempt_locked")
 	}
 	if attempt.State == "starting" {
 		programFingerprint, fingerprintErr := personenrichment.ProgramFingerprint(
