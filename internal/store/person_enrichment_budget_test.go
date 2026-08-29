@@ -89,6 +89,50 @@ func hashForTest(value byte) string {
 	return string(result)
 }
 
+func TestPersonRemovalReconcilesEnrichmentReservation(t *testing.T) {
+	for _, mutation := range []string{"delete", "merge"} {
+		t.Run(mutation, func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			profile := enrichmentBudgetProfile(t, 10, 1000, 1000, 1000)
+			st, claims := newBudgetClaims(t, profile)
+			start := claims[0].start
+			start.HardCostCap = true
+			start.GuaranteedMaxCost = personenrichment.Cost{Currency: "USD", AmountMicros: 600}
+			attempt, created, err := st.BeginAttempt(t.Context(), claims[0].token, start)
+			requirements.NoError(err)
+			requirements.True(created)
+			person, err := st.GetPersonContext(t.Context(), start.PersonID)
+			requirements.NoError(err)
+
+			switch mutation {
+			case "delete":
+				err = st.DeletePersonContext(t.Context(), person.ID, person.Revision)
+			case "merge":
+				participantID, participantErr := st.EnsureParticipantContext(
+					t.Context(), "budget-survivor@example.test", "Budget Survivor", "example.test")
+				requirements.NoError(participantErr)
+				survivor, _, survivorErr := st.CreatePersonFromParticipantContext(t.Context(), participantID)
+				requirements.NoError(survivorErr)
+				_, err = st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+					SurvivorID: survivor.ID, AbsorbedID: person.ID,
+					ExpectedSurvivorRevision: survivor.Revision,
+					ExpectedAbsorbedRevision: person.Revision,
+					IdempotencyKey:           "budget-absorbed-enrichment", Actor: "test",
+				})
+			}
+			requirements.NoError(err)
+			_, err = st.GetPersonContext(t.Context(), person.ID)
+			requirements.ErrorIs(err, store.ErrPersonNotFound)
+			counters, err := st.GetPersonEnrichmentRunCountersContext(t.Context(), attempt.RunID)
+			requirements.NoError(err)
+			checks.Equal(int64(1), counters.RequestsStarted)
+			checks.Zero(counters.CostReservedUSDMicros)
+			checks.Equal(int64(600), counters.CostChargedUSDMicros)
+		})
+	}
+}
+
 func TestPersonEnrichmentRequestBudgetContention(t *testing.T) {
 	profile := enrichmentBudgetProfile(t, 1, 0, 0, 0)
 	st, claims := newBudgetClaims(t, profile)

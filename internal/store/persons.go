@@ -273,7 +273,7 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if revision != expectedRevision {
 			return ErrPersonRevisionConflict
 		}
-		if err := s.rejectPersonEnrichmentDispatchInProgressTx(ctx, tx, id, ""); err != nil {
+		if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, id); err != nil {
 			return err
 		}
 		var hasCardDAVPublication bool
