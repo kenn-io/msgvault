@@ -843,10 +843,22 @@ func (e *Engine) selectSurvivor(group *DuplicateGroup) {
 		candidates = sentIdxs
 	}
 
+	// Pairwise content checks can create a comparison cycle in mixed-hash
+	// groups. Enable completeness as one group-wide ordering tier instead.
+	contentHash := group.Messages[candidates[0]].normalizedHash
+	usePayloadCompleteness := contentHash != ""
+	for _, i := range candidates[1:] {
+		if group.Messages[i].normalizedHash != contentHash {
+			usePayloadCompleteness = false
+			break
+		}
+	}
+
 	best := candidates[0]
 	for _, i := range candidates[1:] {
 		if e.isBetter(
 			group.Messages[i], group.Messages[best], priorityMap,
+			usePayloadCompleteness,
 		) {
 			best = i
 		}
@@ -864,9 +876,11 @@ func allIndexes(n int) []int {
 
 // isBetter returns true if candidate is a better survivor than current.
 // Attachment and payload-size metadata are trusted only when normalized raw
-// MIME proves that both rows contain the same message content.
+// MIME proves that every eligible row contains the same message content.
 func (e *Engine) isBetter(
-	candidate, current DuplicateMessage, priorityMap map[string]int,
+	candidate, current DuplicateMessage,
+	priorityMap map[string]int,
+	usePayloadCompleteness bool,
 ) bool {
 	candPri := sourcePriority(candidate.SourceType, priorityMap)
 	currPri := sourcePriority(current.SourceType, priorityMap)
@@ -876,7 +890,7 @@ func (e *Engine) isBetter(
 	if candidate.HasRawMIME != current.HasRawMIME {
 		return candidate.HasRawMIME
 	}
-	if hasEquivalentContent(candidate, current) {
+	if usePayloadCompleteness {
 		if candidate.AttachmentCount != current.AttachmentCount {
 			return candidate.AttachmentCount > current.AttachmentCount
 		}
@@ -1413,7 +1427,7 @@ func (e *Engine) FormatMethodology() string {
 	for i, st := range e.config.SourcePreference {
 		fmt.Fprintf(&sb, "  %d. %s\n", i+1, st)
 	}
-	sb.WriteString("  Tiebreakers: has raw MIME > for matching normalized MIME, " +
+	sb.WriteString("  Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, " +
 		"more attachments > attachment signal > larger payload > more labels > " +
 		"earlier archived_at > lower id.\n\n")
 

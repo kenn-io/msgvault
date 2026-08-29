@@ -621,7 +621,7 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 	)
 	assert.Contains(t,
 		out,
-		"Tiebreakers: has raw MIME > for matching normalized MIME, more attachments > attachment signal > larger payload > more labels > earlier archived_at > lower id.",
+		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload > more labels > earlier archived_at > lower id.",
 		"methodology missing payload completeness order",
 	)
 }
@@ -716,6 +716,81 @@ func TestEngine_NonEquivalentPayloadCannotSteerSurvivorOrRemoteDeletion(t *testi
 	pending, err := mgr.ListPending()
 	require.NoError(err, "ListPending")
 	assert.Empty(pending, "pending remote deletions")
+}
+
+func TestEngine_MixedNormalizedHashesIgnorePayloadCompleteness(t *testing.T) {
+	type copySpec struct {
+		raw             []byte
+		payloadBytes    int64
+		attachmentCount int
+		hasAttachments  bool
+		labels          []string
+	}
+
+	const messageID = "mixed-normalized-hashes@example.test"
+	equivalentRaw := []byte("Message-ID: <mixed-normalized-hashes@example.test>\r\n" +
+		"Subject: Equivalent message\r\n\r\nEquivalent body")
+	specs := map[string]copySpec{
+		"payload-rich": {
+			raw:             equivalentRaw,
+			payloadBytes:    10000,
+			attachmentCount: 3,
+			hasAttachments:  true,
+		},
+		"label-rich": {
+			raw:          equivalentRaw,
+			payloadBytes: 100,
+			labels:       []string{"label-one", "label-two"},
+		},
+		"different-content": {
+			raw: []byte("Message-ID: <mixed-normalized-hashes@example.test>\r\n" +
+				"Subject: Different message\r\n\r\nDifferent body"),
+			payloadBytes: 100,
+			labels:       []string{"label-three"},
+		},
+	}
+	orders := [][]string{
+		{"payload-rich", "label-rich", "different-content"},
+		{"label-rich", "different-content", "payload-rich"},
+		{"different-content", "payload-rich", "label-rich"},
+	}
+
+	for _, order := range orders {
+		t.Run(strings.Join(order, "_then_"), func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			ids := make(map[string]int64, len(order))
+			for _, name := range order {
+				spec := specs[name]
+				id := addMessage(t, f.Store, f.Source, name, messageID, false)
+				ids[name] = id
+				require.NoError(f.Store.UpsertMessageRaw(id, spec.raw), "store "+name+" raw MIME")
+				_, err := f.Store.DB().Exec(
+					f.Store.Rebind(`UPDATE messages
+						SET size_estimate = ?, attachment_count = ?, has_attachments = ?
+						WHERE id = ?`),
+					spec.payloadBytes, spec.attachmentCount, spec.hasAttachments, id,
+				)
+				require.NoError(err, "set "+name+" metadata")
+				for _, label := range spec.labels {
+					linkLabel(t, f.Store, f.Source.ID, id, label, label, "user")
+				}
+			}
+
+			eng := dedup.NewEngine(f.Store, dedup.Config{
+				AccountSourceIDs: []int64{f.Source.ID},
+				Account:          f.Source.Identifier,
+			}, nil)
+			report, err := eng.Scan(t.Context())
+			require.NoError(err, "Scan")
+			require.Len(report.Groups, 1, "duplicate groups")
+
+			group := report.Groups[0]
+			survivor := group.Messages[group.Survivor]
+			require.Equal(ids["label-rich"], survivor.ID,
+				"mixed content hashes must fall back to the group-wide label ordering")
+		})
+	}
 }
 
 func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
