@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 )
 
 type databaseKind int
@@ -17,11 +18,15 @@ const (
 )
 
 func openReadOnlyDatabase(ctx context.Context, path string) (*sql.DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("stat database: %w", err)
+	}
+
 	dsn := (&url.URL{
 		Scheme:   "file",
 		OmitHost: true,
 		Path:     path,
-		RawQuery: "mode=ro&_busy_timeout=5000&_query_only=1",
+		RawQuery: "_busy_timeout=5000&_query_only=1",
 	}).String()
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {

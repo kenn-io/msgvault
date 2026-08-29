@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,38 +50,57 @@ func TestDetectDatabaseKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+
 			db, err := sql.Open("sqlite3", ":memory:")
-			require.NoError(t, err)
-			defer func() { require.NoError(t, db.Close()) }()
+			require.NoError(err)
+			defer func() { require.NoError(db.Close()) }()
 			_, err = db.Exec(tt.schema)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			got, err := detectDatabaseKind(db)
 			if tt.wantErr != "" {
-				require.ErrorContains(t, err, tt.wantErr)
+				require.ErrorContains(err, tt.wantErr)
 			} else {
-				require.NoError(t, err)
+				require.NoError(err)
 			}
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestOpenReadOnlyDatabaseRejectsWrites(t *testing.T) {
+func TestOpenReadOnlyDatabase(t *testing.T) {
+	require := require.New(t)
+
+	missingPath := filepath.Join(t.TempDir(), "missing.sqlite")
+	_, err := openReadOnlyDatabase(context.Background(), missingPath)
+	require.Error(err)
+	_, err = os.Stat(missingPath)
+	require.ErrorIs(err, os.ErrNotExist)
+
 	path := filepath.Join(t.TempDir(), "source ? data.sqlite")
 	createDSN := (&url.URL{Scheme: "file", OmitHost: true, Path: path}).String()
 	db, err := sql.Open("sqlite3", createDSN)
-	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TABLE source_rows (id INTEGER PRIMARY KEY)`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	var journalMode string
+	require.NoError(db.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&journalMode))
+	require.Equal("wal", strings.ToLower(journalMode))
+	_, err = db.Exec(`
+		CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
+		INSERT INTO source_rows (id) VALUES (1);
+	`)
+	require.NoError(err)
 
 	readOnly, err := openReadOnlyDatabase(context.Background(), path)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, readOnly.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(readOnly.Close()) }()
+	var count int
+	require.NoError(readOnly.QueryRow(`SELECT COUNT(*) FROM source_rows`).Scan(&count))
+	assert.Equal(t, 1, count)
 
-	_, err = readOnly.Exec(`INSERT INTO source_rows (id) VALUES (1)`)
-	require.Error(t, err)
+	_, err = readOnly.Exec(`INSERT INTO source_rows (id) VALUES (2)`)
+	require.Error(err)
 }
 
 func TestImportAppleTextMessages(t *testing.T) {
@@ -178,7 +198,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	assert.Equal("group prototype text", messages["group-in"].bodyText)
 	assert.Equal(
 		time.Unix(appleEpochOffset+700000000, 250000000).UTC(),
-		messages["direct-in"].sentAt.Time,
+		messages["direct-in"].sentAt.Time.UTC(),
 	)
 
 	var rawFormats int
@@ -214,19 +234,21 @@ func TestImportAppleTextMessages(t *testing.T) {
 }
 
 func TestAppleMappingFallbacks(t *testing.T) {
-	assert.Empty(t, applePhoneForJID("999999999999999@lid", nil))
-	assert.Equal(t, "999999999999999@lid", canonicalAppleJID("999999999999999@lid", nil))
-	assert.False(t, isImportableAppleChat("status@broadcast"))
-	assert.False(t, isImportableAppleChat("123@newsletter"))
+	assert := assert.New(t)
+
+	assert.Empty(applePhoneForJID("999999999999999@lid", nil))
+	assert.Equal("999999999999999@lid", canonicalAppleJID("999999999999999@lid", nil))
+	assert.False(isImportableAppleChat("status@broadcast"))
+	assert.False(isImportableAppleChat("123@newsletter"))
 
 	longText := sql.NullString{String: strings.Repeat("x", 101), Valid: true}
-	assert.Len(t, []rune(appleMessageSnippet(longText).String), 100)
-	assert.False(t, appleMessageTimestamp(appleTimestampValue{}).Valid)
+	assert.Len([]rune(appleMessageSnippet(longText).String), 100)
+	assert.False(appleMessageTimestamp(appleTimestampValue{}).Valid)
 
 	var timestamp appleTimestampValue
 	require.NoError(t, timestamp.Scan(time.Unix(700000000, 250000000).UTC()))
 	assert.Equal(
-		t, time.Unix(appleEpochOffset+700000000, 250000000).UTC(),
+		time.Unix(appleEpochOffset+700000000, 250000000).UTC(),
 		appleMessageTimestamp(timestamp).Time,
 	)
 }
