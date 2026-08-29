@@ -997,6 +997,123 @@ func TestPersonEnrichmentEmploymentWithoutAuthorizationPreservesPersonRevision(t
 	assert.Equal(person.Revision, current.Revision)
 }
 
+func TestOrganizationIdentityChangesInvalidateEnrichment(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	organization, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: "Initial Employer", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(err)
+	_, err = f.store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: f.person.ID, OrganizationID: organization.ID,
+		Title: new("Engineer"), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	insertProviderIdentity(t, f.store, f.person.ID,
+		f.profiles[0].ProviderNamespace, "opaque-before-organization-rename")
+	before, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	require.NoError(err)
+
+	organization, err = f.store.ReplaceOrganizationContext(t.Context(), organization.ID,
+		organization.Revision, store.OrganizationInput{
+			Name: "Renamed Employer", Kind: store.OrganizationKindCompany,
+		}, false)
+	require.NoError(err)
+	after, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	require.NoError(err)
+	assert.Equal(before.Revision+1, after.Revision)
+	assert.Zero(providerIdentityCount(t, f.store, f.person.ID))
+	work := f.work(t, 0)
+	require.Len(work, 1)
+	assert.Equal(int64(2), work[0].TriggerMask)
+
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	insertProviderIdentity(t, f.store, f.person.ID,
+		f.profiles[0].ProviderNamespace, "opaque-before-organization-retirement")
+	before = after
+	organization, err = f.store.ReplaceOrganizationContext(t.Context(), organization.ID,
+		organization.Revision, store.OrganizationInput{
+			Name: organization.Name, Kind: store.OrganizationKindCompany,
+		}, true)
+	require.NoError(err)
+	after, err = f.store.GetPersonContext(t.Context(), f.person.ID)
+	require.NoError(err)
+	assert.Equal(before.Revision+1, after.Revision)
+	assert.Zero(providerIdentityCount(t, f.store, f.person.ID))
+	work = f.work(t, 0)
+	require.Len(work, 1)
+	assert.Equal(int64(2), work[0].TriggerMask)
+
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	insertProviderIdentity(t, f.store, f.person.ID,
+		f.profiles[0].ProviderNamespace, "opaque-before-organization-merge")
+	survivor, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: "Surviving Employer", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(err)
+	before = after
+	_, err = f.store.MergeOrganizationsContext(t.Context(), survivor.ID, survivor.Revision,
+		organization.ID, organization.Revision)
+	require.NoError(err)
+	after, err = f.store.GetPersonContext(t.Context(), f.person.ID)
+	require.NoError(err)
+	assert.Equal(before.Revision+1, after.Revision)
+	assert.Zero(providerIdentityCount(t, f.store, f.person.ID))
+	work = f.work(t, 0)
+	require.Len(work, 1)
+	assert.Equal(int64(2), work[0].TriggerMask)
+}
+
+func TestCardDAVProjectionRetirementInvalidatesEnrichment(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"retired.vcf", "remote-retired",
+		"Retired Person", "retired@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	require.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	require.NoError(err)
+	require.NotNil(resource.PersonID)
+	personID := *resource.PersonID
+	profile := enrichmentTriggerProfile(t, "carddav-retirement-provider",
+		"https://carddav-retirement.example.test/search")
+	_, err = st.EnsurePersonEnrichmentProfile(t.Context(), profile)
+	require.NoError(err)
+	_, _, err = st.GrantPersonEnrichmentConsent(t.Context(), profile.Fingerprint, "test")
+	require.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), personID, true)
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, st, personID))
+	insertProviderIdentity(t, st, personID, profile.ProviderNamespace,
+		"opaque-before-carddav-retirement")
+	before, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+
+	discovery := cardDAVRediscoveryForBook(account, book)
+	discovery.Username = "replacement-user"
+	_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), discovery)
+	require.NoError(err)
+	after, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Equal(before.Revision+1, after.Revision)
+	assert.Zero(providerIdentityCount(t, st, personID))
+	work, err := st.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: personID, ProfileFingerprint: profile.Fingerprint, Limit: 200,
+	})
+	require.NoError(err)
+	require.Len(work, 1)
+	assert.Equal(int64(2), work[0].TriggerMask)
+}
+
 func clearEnrichmentWork(t *testing.T, st *store.Store, personID int64) error {
 	t.Helper()
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(

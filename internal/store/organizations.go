@@ -117,6 +117,11 @@ func (s *Store) mergeOrganizationsOnce(
 		); err != nil {
 			return err
 		}
+		if err := s.invalidateCurrentEmploymentPersonEnrichmentTx(
+			ctx, tx, losingID,
+		); err != nil {
+			return err
+		}
 
 		var collisions int64
 		collisionQuery := `SELECT COUNT(*)
@@ -349,6 +354,16 @@ func (s *Store) replaceOrganizationOnce(
 ) (*Organization, error) {
 	var organization *Organization
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var previousName string
+		var previousRetired bool
+		if err := tx.QueryRowContext(ctx, `SELECT name, retired_at IS NOT NULL
+			FROM organizations WHERE id = ?`+s.dialect.SelectForUpdate(), id).
+			Scan(&previousName, &previousRetired); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrOrganizationNotFound
+			}
+			return fmt.Errorf("lock organization %d before replacement: %w", id, err)
+		}
 		var err error
 		organization, err = scanOrganization(tx.QueryRowContext(ctx, fmt.Sprintf(`
 			UPDATE organizations
@@ -367,7 +382,13 @@ func (s *Store) replaceOrganizationOnce(
 		if err != nil {
 			return fmt.Errorf("replace organization %d: %w", id, err)
 		}
-		return s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id)
+		if err := s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
+		}
+		if previousName != organization.Name || previousRetired != retired {
+			return s.invalidateCurrentEmploymentPersonEnrichmentTx(ctx, tx, id)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

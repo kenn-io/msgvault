@@ -137,6 +137,41 @@ func (s *Store) publishPersonIdentityEnrichmentTx(
 	return nil
 }
 
+func (s *Store) invalidateCurrentEmploymentPersonEnrichmentTx(
+	ctx context.Context, tx *loggedTx, organizationIDs ...int64,
+) error {
+	placeholders, args := sortedIDPlaceholders(organizationIDs)
+	if placeholders == "" {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT person_id FROM employments
+		WHERE organization_id IN (`+placeholders+`) AND `+s.dialect.BoolTrueExpr("is_current")+`
+		GROUP BY person_id ORDER BY person_id`, args...)
+	if err != nil {
+		return fmt.Errorf("list current employees for enrichment invalidation: %w", err)
+	}
+	personIDs := make([]int64, 0)
+	for rows.Next() {
+		var personID int64
+		if err := rows.Scan(&personID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan current employee for enrichment invalidation: %w", err)
+		}
+		personIDs = append(personIDs, personID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate current employees for enrichment invalidation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close current employees for enrichment invalidation: %w", err)
+	}
+	if err := s.bumpAuthorizedPersonEnrichmentRevisionsTx(ctx, tx, personIDs...); err != nil {
+		return err
+	}
+	return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personIDs...)
+}
+
 // EnqueueDuePersonEnrichmentContext repairs bounded missing work. Existing
 // refresh rows keep their database-owned due times; the cron schedule only
 // wakes this scan.

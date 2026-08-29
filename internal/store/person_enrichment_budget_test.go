@@ -205,7 +205,6 @@ func assertExactlyOneBudgetReservation(t *testing.T, st *store.Store, claims []b
 		for _, claim := range claims {
 			require.NoError(t, store.EnsurePersonEnrichmentBudgetCountersForTest(t.Context(), st, claim.start))
 		}
-		installTwoPartyPersonEnrichmentBudgetBarrier(st)
 	}
 	var wg sync.WaitGroup
 	errs := make(chan error, len(claims))

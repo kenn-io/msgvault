@@ -184,6 +184,7 @@ func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *tes
 	require.NoError(err)
 	require.NotNil(mapping.PersonID)
 	personID := *mapping.PersonID
+	insertProviderIdentity(t, st, personID, "carddav-rebase", "opaque-before-rebase")
 
 	updated := remoteResource(href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
 	updated.SemanticHash = "semantic-remote-alice-updated"
@@ -192,6 +193,7 @@ func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *tes
 		SyncRevision: book.SyncRevision + 1, Upserts: []store.CardDAVRemoteResource{updated},
 	})
 	require.NoError(err)
+	assert.Zero(providerIdentityCount(t, st, personID))
 
 	person, err := st.GetPersonContext(t.Context(), personID)
 	require.NoError(err)
