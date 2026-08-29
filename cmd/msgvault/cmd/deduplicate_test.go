@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -180,6 +181,53 @@ func TestDeduplicateInteractivePerSourcePromptsShareInput(t *testing.T) {
 	assert.Equal(1, int(runRequests.Load()), "runner endpoint calls")
 	assert.Contains(stdout.String(), "alice@example.com", "first prompt")
 	assert.Contains(stdout.String(), "bob@example.com", "second prompt")
+}
+
+func TestDeduplicatePlanFingerprintChangesWhenRemoteDeletionTargetsChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageIDs := f.CreateMessages(2)
+
+	const rfc822MessageID = "remote-target-change@example.test"
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages
+		SET rfc822_message_id = ?
+		WHERE id IN (?, ?)`), rfc822MessageID, messageIDs[0], messageIDs[1])
+	require.NoError(err, "set shared RFC822 Message-ID")
+
+	raw := []byte("Message-ID: <remote-target-change@example.test>\r\n" +
+		"From: sender@example.test\r\nSubject: Same message\r\n\r\nSame body")
+	require.NoError(f.Store.UpsertMessageRaw(messageIDs[0], raw), "store first raw MIME")
+	require.NoError(f.Store.UpsertMessageRaw(messageIDs[1], raw), "store second raw MIME")
+
+	cfg := dedup.Config{
+		AccountSourceIDs:           []int64{f.Source.ID},
+		Account:                    f.Source.Identifier,
+		DeleteDupsFromSourceServer: true,
+	}
+	engine := dedup.NewEngine(f.Store, cfg, nil)
+	confirmedReport, err := engine.Scan(t.Context())
+	require.NoError(err, "scan confirmed plan")
+	confirmedFingerprint, err := deduplicatePlanFingerprint(t.Context(), cfg, confirmedReport)
+	require.NoError(err, "fingerprint confirmed plan")
+
+	changedRaw := []byte("Message-ID: <remote-target-change@example.test>\r\n" +
+		"From: sender@example.test\r\nSubject: Different message\r\n\r\nDifferent body")
+	require.NoError(f.Store.UpsertMessageRaw(messageIDs[1], changedRaw), "change duplicate raw MIME")
+	changedReport, err := engine.Scan(t.Context())
+	require.NoError(err, "rescan changed plan")
+	changedFingerprint, err := deduplicatePlanFingerprint(t.Context(), cfg, changedReport)
+	require.NoError(err, "fingerprint changed plan")
+
+	require.Len(confirmedReport.Groups, 1, "confirmed duplicate groups")
+	require.Len(changedReport.Groups, 1, "changed duplicate groups")
+	assert.Equal(
+		confirmedReport.Groups[0].Messages[confirmedReport.Groups[0].Survivor].ID,
+		changedReport.Groups[0].Messages[changedReport.Groups[0].Survivor].ID,
+		"survivor ID",
+	)
+	assert.NotEqual(confirmedFingerprint, changedFingerprint,
+		"fingerprint must cover MIME-dependent remote deletion targets")
 }
 
 func resetDeduplicateRoutingGlobals(t *testing.T) {

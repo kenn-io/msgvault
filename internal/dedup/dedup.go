@@ -237,6 +237,15 @@ type StagedManifest struct {
 	MessageCount int
 }
 
+// RemoteDeletionTarget identifies one message that a dedup plan would stage
+// for deletion from its source server.
+type RemoteDeletionTarget struct {
+	SourceID         int64  `json:"source_id"`
+	SourceType       string `json:"source_type"`
+	SourceIdentifier string `json:"source_identifier"`
+	SourceMessageID  string `json:"source_message_id"`
+}
+
 // remoteKey groups remote source IDs by the (account, source_type) pair so
 // that a user with multiple remote sources sharing the same account
 // identifier (e.g. gmail + imap for the same address) gets one manifest per
@@ -931,6 +940,31 @@ func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][
 	return bySource, nil
 }
 
+// PlannedRemoteDeletionTargets returns the canonical remote target set derived
+// from a scan report. Callers can bind confirmation to this exact destructive
+// plan without exposing normalized MIME hashes outside the dedup package.
+func PlannedRemoteDeletionTargets(
+	ctx context.Context, report *Report,
+) ([]RemoteDeletionTarget, error) {
+	bySource, err := remoteDeletionTargets(ctx, report)
+	if err != nil {
+		return nil, err
+	}
+
+	var targets []RemoteDeletionTarget
+	for _, key := range sortedRemoteKeys(bySource) {
+		for _, sourceMessageID := range dedupStrings(bySource[key]) {
+			targets = append(targets, RemoteDeletionTarget{
+				SourceID:         key.SourceID,
+				SourceType:       key.SourceType,
+				SourceIdentifier: key.Account,
+				SourceMessageID:  sourceMessageID,
+			})
+		}
+	}
+	return targets, nil
+}
+
 // Execute merges every duplicate group: unions labels onto the
 // survivor, soft-deletes the pruned duplicates, and — when
 // DeleteDupsFromSourceServer is enabled AND a pruned copy shares a
@@ -1024,19 +1058,7 @@ func (e *Engine) stageDeletionManifests(
 		return nil, fmt.Errorf("open deletion manager: %w", err)
 	}
 
-	keys := make([]remoteKey, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Account != keys[j].Account {
-			return keys[i].Account < keys[j].Account
-		}
-		if keys[i].SourceType != keys[j].SourceType {
-			return keys[i].SourceType < keys[j].SourceType
-		}
-		return keys[i].SourceID < keys[j].SourceID
-	})
+	keys := sortedRemoteKeys(byKey)
 
 	// Single-type accounts keep the original manifest ID (no source-type
 	// suffix) so existing consumers — and test fixtures — don't see a
@@ -1082,6 +1104,23 @@ func (e *Engine) stageDeletionManifests(
 		})
 	}
 	return staged, nil
+}
+
+func sortedRemoteKeys(byKey map[remoteKey][]string) []remoteKey {
+	keys := make([]remoteKey, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Account != keys[j].Account {
+			return keys[i].Account < keys[j].Account
+		}
+		if keys[i].SourceType != keys[j].SourceType {
+			return keys[i].SourceType < keys[j].SourceType
+		}
+		return keys[i].SourceID < keys[j].SourceID
+	})
+	return keys
 }
 
 func manifestIDFor(batchID, account string) string {
