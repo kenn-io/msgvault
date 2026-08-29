@@ -302,7 +302,11 @@ func exaIdentityQuery(identity Identity) (string, error) {
 	appendPart("email", identity.Email)
 	appendPart("phone", identity.Phone)
 	appendPart("company", identity.CurrentCompany)
-	for _, profileURL := range identity.PublicProfileURLs {
+	for _, rawProfileURL := range identity.PublicProfileURLs {
+		profileURL, err := safeExaPublicURL(rawProfileURL)
+		if err != nil {
+			return "", err
+		}
 		appendPart("public profile", profileURL)
 	}
 	if len(parts) == 0 {

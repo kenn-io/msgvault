@@ -563,12 +563,14 @@ func (s *Store) rejectPersonEnrichmentDispatchInProgressTx(
 		where += " AND profile_fingerprint = ?"
 		args = append(args, fingerprint)
 	}
-	args = append(args, s.personEnrichmentTime())
+	now := s.personEnrichmentTime()
+	args = append(args, now, now)
 	var dispatching bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_enrichment_attempts
 		WHERE `+where+` AND (
-			(state = 'starting' AND dispatch_authorized_at IS NOT NULL)
+			(state = 'starting' AND dispatch_authorized_at IS NOT NULL
+				AND lease_owner IS NOT NULL AND lease_until > ?)
 			OR (state = 'pending' AND dispatch_authorized_at IS NOT NULL
 				AND lease_owner IS NOT NULL AND lease_until > ?)
 		))`,

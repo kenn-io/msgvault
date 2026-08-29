@@ -213,6 +213,35 @@ func TestExaTypedPeopleRequestAndResponse(t *testing.T) {
 	requirements.ErrorContains(err, "synchronous")
 }
 
+func TestExaRejectsUnsafeIdentityProfileURLBeforeDispatch(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls.Add(1)
+	}))
+	defer server.Close()
+
+	provider, err := personenrichment.NewExaProvider(
+		exaConfig(server.URL+"/search", "people", 1), "test-key", server.Client(),
+	)
+	require.NoError(t, err)
+	for _, profileURL := range []string{
+		"http://profiles.example.test/test-user",
+		"https://localhost/test-user",
+		"https://127.0.0.1/test-user",
+	} {
+		t.Run(profileURL, func(t *testing.T) {
+			_, err := provider.Start(t.Context(), personenrichment.Request{
+				Identity: personenrichment.Identity{
+					Name: "Test User", PublicProfileURLs: []string{profileURL},
+				},
+				Targets: exaTypedTargets(t),
+			})
+			require.ErrorContains(t, err, "unsafe Exa public URL")
+		})
+	}
+	assert.Zero(t, calls.Load())
+}
+
 func TestExaRejectsHistoricalEmploymentAsCurrentCompanyMatch(t *testing.T) {
 	requirements := require.New(t)
 	fixture := exaFixture(t, "exa_people_success.json")

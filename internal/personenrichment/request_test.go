@@ -197,6 +197,21 @@ func TestBuildRequestEnforcesExaModeIdentityRequirements(t *testing.T) {
 	}
 }
 
+func TestBuildRequestRejectsUnsafeExaProfileURL(t *testing.T) {
+	target := requestTarget("attribute:bio", false)
+	_, _, err := personenrichment.BuildRequest(personenrichment.RequestInput{
+		PersonID:          1,
+		PublicProfileURLs: []personenrichment.IdentityCandidate{{StableID: 1, Value: "http://example.com/alice"}},
+		Catalog:           personfacts.Catalog{Targets: []personfacts.TargetDescriptor{target}},
+		Trigger:           personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "tracked:1"},
+	}, personenrichment.ProviderProfile{
+		Kind: personenrichment.ProviderExa, Mode: "people", Fingerprint: "profile",
+		AllowedIdentifiers: []personenrichment.IdentifierClass{personenrichment.IdentifierPublicProfileURL},
+		Targets:            []personfacts.TargetDescriptor{target},
+	})
+	require.ErrorContains(t, err, "unsafe Exa public URL")
+}
+
 func TestBuildRequestOmitsIncompleteOptionalNamePairWhenExaUsesProfileURL(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

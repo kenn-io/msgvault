@@ -90,6 +90,11 @@ func BuildRequest(input RequestInput, profile ProviderProfile) (Request, Request
 func validateRequestIdentityForProfile(identity Identity, profile ProviderProfile) error {
 	switch profile.Kind {
 	case ProviderExa:
+		for _, profileURL := range identity.PublicProfileURLs {
+			if _, err := safeExaPublicURL(profileURL); err != nil {
+				return err
+			}
+		}
 		hasPublicProfile := len(identity.PublicProfileURLs) > 0
 		switch profile.Mode {
 		case "people":

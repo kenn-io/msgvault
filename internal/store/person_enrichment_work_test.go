@@ -283,6 +283,15 @@ func TestPersonEnrichmentProfileCleanupRejectsAuthorizedDispatch(t *testing.T) {
 	requirements.Len(work, 1)
 	requirements.NotNil(work[0].ActiveAttemptID)
 	checks.Equal(attempt.ID, *work[0].ActiveAttemptID)
+
+	f.setNow(lease.LeaseUntil.Add(time.Second))
+	requirements.NoError(
+		f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), nil),
+	)
+	stored, err = f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("terminal", stored.State)
+	checks.Empty(f.work(t))
 }
 
 func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAttempt(t *testing.T) {
