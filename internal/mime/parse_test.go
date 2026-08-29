@@ -215,6 +215,23 @@ func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
 	assert.Empty(msg.Attachments)
 }
 
+func TestParseWithRecovery_FatalMultipartSanitizesThreadingHeaders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("Message-ID: <message-\xff@example.test>\r\n" +
+		"In-Reply-To: <parent-\xfe@example.test>\r\n" +
+		"References: <root-\xfd@example.test>\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n" +
+		"--outer--\r\n")
+
+	msg, err := ParseWithRecovery(raw, "snippet fallback")
+
+	require.ErrorContains(err, "expected slash after first token")
+	assert.Equal("<message-\uFFFD@example.test>", msg.MessageID)
+	assert.Equal("<parent-\uFFFD@example.test>", msg.InReplyTo)
+	assert.Equal([]string{"root-\uFFFD@example.test"}, msg.References)
+}
+
 func TestParseWithRecovery_UsesFallbackWithoutRecoverableHeaders(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -158,8 +158,8 @@ func salvageHeaders(raw []byte) *Message {
 	msg := &Message{
 		Subject:       decodeHeader(firstHeader(headers, "subject")),
 		ReceivedDates: ParseReceivedChain(headers["received"]),
-		MessageID:     firstHeader(headers, "message-id"),
-		InReplyTo:     firstHeader(headers, "in-reply-to"),
+		MessageID:     strings.ToValidUTF8(firstHeader(headers, "message-id"), "\uFFFD"),
+		InReplyTo:     strings.ToValidUTF8(firstHeader(headers, "in-reply-to"), "\uFFFD"),
 	}
 
 	if dateHeader := firstHeader(headers, "date"); dateHeader != "" {
@@ -171,7 +171,9 @@ func salvageHeaders(raw []byte) *Message {
 	msg.Cc = parseSalvagedAddressList(joinHeaders(headers, "cc"))
 	msg.Bcc = parseSalvagedAddressList(joinHeaders(headers, "bcc"))
 	msg.ReplyTo = parseSalvagedAddressList(joinHeaders(headers, "reply-to"))
-	msg.References = parseReferences(firstHeader(headers, "references"))
+	msg.References = parseReferences(strings.ToValidUTF8(
+		firstHeader(headers, "references"), "\uFFFD",
+	))
 	return msg
 }
 
