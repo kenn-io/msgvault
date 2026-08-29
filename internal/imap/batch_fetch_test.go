@@ -758,3 +758,64 @@ func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan 
 	}()
 	return listener.Addr().String(), fetchCommand
 }
+
+// TestMissingUIDDropsEarlierMembershipObservation covers the observation the
+// label map records during enumeration. When the message is expunged before
+// the run fetches it, the fetch reports it gone and the run acknowledges it,
+// so nothing ingests the message. The stale observation must not survive to
+// the durable commit, which would find no message row to map it to.
+func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
+	enumerated := func() []MembershipObservation {
+		return []MembershipObservation{
+			{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+			{Mailbox: "Archive", UID: 11, SourceMessageID: "Archive|11"},
+		}
+	}
+	uidToIdx := map[imapapi.UID]int{
+		imapapi.UID(10): 0,
+		imapapi.UID(11): 1,
+	}
+	chunk := []batchFetchItem{
+		{idx: 0, uid: imapapi.UID(10)},
+		{idx: 1, uid: imapapi.UID(11)},
+	}
+
+	t.Run("raw fetch", func(t *testing.T) {
+		c := Client{observedMemberships: enumerated()}
+		results := newRawBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer("message-10", []byte("raw-10")),
+		}
+
+		c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
+		assert.NotContains(t, observedUIDs(&c), uint32(11))
+		assert.Contains(t, observedUIDs(&c), uint32(10))
+	})
+
+	t.Run("label fetch", func(t *testing.T) {
+		c := Client{observedMemberships: enumerated()}
+		results := newLabelBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer(
+				"message-10",
+				[]byte("Message-ID: <message-10@example.com>\r\n\r\n"),
+			),
+		}
+
+		c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
+		assert.NotContains(t, observedUIDs(&c), uint32(11))
+		assert.Contains(t, observedUIDs(&c), uint32(10))
+	})
+}
+
+func observedUIDs(c *Client) []uint32 {
+	uids := make([]uint32, 0, len(c.observedMemberships))
+	for _, observation := range c.observedMemberships {
+		uids = append(uids, observation.UID)
+	}
+	return uids
+}

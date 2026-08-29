@@ -191,6 +191,7 @@ func (c *Client) applyFetchResults(
 		}
 		if results[item.idx].Message == nil && results[item.idx].Err == nil {
 			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
 		}
 	}
 }
@@ -403,6 +404,7 @@ func (c *Client) applyLabelFetchResults(
 		seenUIDs[msgBuf.UID] = true
 		if len(msgBuf.BodySection) == 0 {
 			results[idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, msgBuf.UID)
 			continue
 		}
 		rfc822MessageID := rawMIMEMessageID(msgBuf.BodySection[0].Bytes)
@@ -416,6 +418,7 @@ func (c *Client) applyLabelFetchResults(
 	for _, item := range chunk {
 		if !seenUIDs[item.uid] && results[item.idx].Err == nil {
 			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
 		}
 	}
 }
