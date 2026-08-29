@@ -77,7 +77,7 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	_, err = os.Stat(missingPath)
 	require.ErrorIs(err, os.ErrNotExist)
 
-	path := filepath.Join(t.TempDir(), "source ? data.sqlite")
+	path := filepath.Join(t.TempDir(), "source # data.sqlite")
 	createDSN, err := sqliteDatabaseDSN(path, "")
 	require.NoError(err)
 	db, err := sql.Open("sqlite3", createDSN)
