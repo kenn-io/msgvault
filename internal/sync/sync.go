@@ -561,6 +561,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
+			if errors.Is(labelResult.Err, gmail.ErrMessageGone) {
+				// The message left the mailbox mid-run. Deletion detection
+				// retires it; acknowledging here is what lets the folder keep
+				// its high water mark instead of re-enumerating next run.
+				result.acknowledged = append(result.acknowledged, sourceMessageID)
+				continue
+			}
 			if labelResult.Err != nil {
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)

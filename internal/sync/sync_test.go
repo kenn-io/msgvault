@@ -4594,3 +4594,73 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 	assertMessageNotHasLabel(t, env.Store, "msg1", "STARRED")
 	assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
 }
+
+// expungeBeforeLabelsIMAPClient removes one message from the server the first
+// time the run fetches labels, reproducing the ordinary race where a message
+// leaves the mailbox between enumeration and the label FETCH.
+type expungeBeforeLabelsIMAPClient struct {
+	*immediateLabelIMAPClient
+
+	t       *testing.T
+	addr    string
+	mailbox string
+	uid     imapv2.UID
+	done    bool
+}
+
+func (c *expungeBeforeLabelsIMAPClient) GetMessageLabelsBatch(
+	ctx context.Context, messageIDs []string,
+) ([]gmail.MessageLabelsBatchResult, error) {
+	if !c.done {
+		c.done = true
+		testutil.ExpungeIMAPMessage(c.t, c.addr, c.mailbox, c.uid)
+	}
+	return c.immediateLabelIMAPClient.GetMessageLabelsBatch(ctx, messageIDs)
+}
+
+func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "expunged@example.com")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "survivor@example.com")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+	require.NoError(firstClient.Close())
+
+	// No saved folder state, so the second run enumerates Archive in full and
+	// refreshes the labels of both stored messages. UID 1 disappears while it
+	// does so.
+	acknowledged := make(map[string]imapclient.FolderState)
+	secondClient := &expungeBeforeLabelsIMAPClient{
+		immediateLabelIMAPClient: newSyncTestIMAPClient(
+			t, addr,
+			imapclient.WithFolderStateSave(
+				func(mailbox string, state imapclient.FolderState) {
+					acknowledged[mailbox] = state
+				},
+			),
+		),
+		t:       t,
+		addr:    addr,
+		mailbox: "Archive",
+		uid:     imapv2.UID(1),
+	}
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+
+	assert.Equal(int64(0), summary.Errors,
+		"a message that left the mailbox mid-run is a race, not a fetch error")
+	assert.Contains(acknowledged, "Archive",
+		"an expunged message must not hold back the mailbox high water mark")
+}

@@ -18,7 +18,8 @@ import (
 )
 
 var errIMAPRawBodyMissing = errors.New("IMAP fetch result did not include raw body")
-var errIMAPFetchResultMissing = errors.New("IMAP fetch result missing from response")
+var errIMAPFetchResultMissing = fmt.Errorf(
+	"IMAP fetch result missing from response: %w", gmailapi.ErrMessageGone)
 var errIMAPSkippedAfterChunkFailed = errors.New("IMAP fetch skipped after earlier chunk failure")
 
 type batchFetchItem struct {
