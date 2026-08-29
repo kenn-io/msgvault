@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"context"
 	"database/sql"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +78,8 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	require.ErrorIs(err, os.ErrNotExist)
 
 	path := filepath.Join(t.TempDir(), "source ? data.sqlite")
-	createDSN := (&url.URL{Scheme: "file", OmitHost: true, Path: path}).String()
+	createDSN, err := sqliteDatabaseDSN(path, "")
+	require.NoError(err)
 	db, err := sql.Open("sqlite3", createDSN)
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()

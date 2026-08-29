@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 type databaseKind int
@@ -22,12 +24,10 @@ func openReadOnlyDatabase(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("stat database: %w", err)
 	}
 
-	dsn := (&url.URL{
-		Scheme:   "file",
-		OmitHost: true,
-		Path:     path,
-		RawQuery: "_busy_timeout=5000&_query_only=1",
-	}).String()
+	dsn, err := sqliteDatabaseDSN(path, "_busy_timeout=5000&_query_only=1")
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -39,6 +39,18 @@ func openReadOnlyDatabase(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func sqliteDatabaseDSN(path, rawQuery string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(absPath)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: rawQuery}).String(), nil
 }
 
 func detectDatabaseKind(db *sql.DB) (databaseKind, error) {
