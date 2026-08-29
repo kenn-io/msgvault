@@ -4618,6 +4618,84 @@ func (c *expungeBeforeLabelsIMAPClient) GetMessageLabelsBatch(
 	return c.immediateLabelIMAPClient.GetMessageLabelsBatch(ctx, messageIDs)
 }
 
+// rawGoneIMAPClient reports one message as gone from the source on the raw
+// fetch, the shape internal/imap produces when a UID it enumerated is absent
+// from the FETCH response (batch_fetch.go, errIMAPFetchResultMissing, whose
+// wrapping of gmail.ErrMessageGone internal/imap's own tests pin).
+//
+// The in-memory server cannot produce that shape: it answers a FETCH of an
+// expunged UID with an empty body, which is errIMAPRawBodyMissing — a
+// different condition, and deliberately still an error. So the vanished result
+// is substituted here and the rest of the run stays real.
+type rawGoneIMAPClient struct {
+	*immediateLabelIMAPClient
+
+	goneID string
+}
+
+func (c *rawGoneIMAPClient) GetMessagesRawBatchWithErrors(
+	ctx context.Context, messageIDs []string,
+) ([]gmail.RawMessageBatchResult, error) {
+	results, err := c.immediateLabelIMAPClient.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+	if err != nil {
+		return results, err
+	}
+	for i := range results {
+		if results[i].ID == c.goneID || messageIDs[i] == c.goneID {
+			results[i].Message = nil
+			results[i].Err = fmt.Errorf(
+				"IMAP fetch result missing from response: %w", gmail.ErrMessageGone)
+		}
+	}
+	return results, nil
+}
+
+func TestIMAPMessageGoneBeforeRawFetchStillSavesFolderState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "survivor@example.com")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.Close())
+
+	// UID 2 is new, so the second run fetches its body rather than its labels.
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "vanished@example.com")
+
+	acknowledged := make(map[string]imapclient.FolderState)
+	secondClient := &rawGoneIMAPClient{
+		immediateLabelIMAPClient: newSyncTestIMAPClient(
+			t, addr,
+			imapclient.WithFolderStates(saved),
+			imapclient.WithFolderStateSave(
+				func(mailbox string, state imapclient.FolderState) {
+					acknowledged[mailbox] = state
+				},
+			),
+		),
+		goneID: "Archive|2",
+	}
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+
+	assert.Equal(int64(0), summary.Errors,
+		"a message that left the mailbox before its body fetch is a race, not an error")
+	assert.Contains(acknowledged, "Archive",
+		"a message gone before its body fetch must not hold back the high water mark")
+}
+
 func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
