@@ -176,6 +176,8 @@ func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
 		"Cc: Copy Example <copy@example.test>\r\n" +
 		"Subject: =?UTF-8?Q?Recovered_=E2=9C=93?=\r\n" +
 		"Date: Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
+		"Received: from relay.example.test by mx.example.test; Wed, 03 Jan 2024 15:04:05 +0000\r\n" +
+		"Received: from sender.example.test by relay.example.test; Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
 		"Message-ID: <message@example.test>\r\n" +
 		"In-Reply-To: <parent@example.test>\r\n" +
 		"References: <root@example.test>\r\n" +
@@ -191,6 +193,10 @@ func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
 	assert.Equal("Recovered ✓", msg.Subject)
 	assert.Equal(time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC), msg.Date)
 	assert.Equal("Tue, 02 Jan 2024 15:04:05 +0000", msg.RawDateHeader)
+	assert.Equal([]time.Time{
+		time.Date(2024, 1, 3, 15, 4, 5, 0, time.UTC),
+		time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC),
+	}, msg.ReceivedDates)
 	assert.Equal([]Address{{
 		Name: "Sender Example", Email: "sender@example.test", Domain: "example.test",
 	}}, msg.From)

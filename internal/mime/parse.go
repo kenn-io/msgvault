@@ -156,9 +156,10 @@ func ParseWithRecovery(raw []byte, fallbackSubject string) (*Message, error) {
 func salvageHeaders(raw []byte) *Message {
 	headers := tokenizeHeaders(raw)
 	msg := &Message{
-		Subject:   decodeHeader(firstHeader(headers, "subject")),
-		MessageID: firstHeader(headers, "message-id"),
-		InReplyTo: firstHeader(headers, "in-reply-to"),
+		Subject:       decodeHeader(firstHeader(headers, "subject")),
+		ReceivedDates: ParseReceivedChain(headers["received"]),
+		MessageID:     firstHeader(headers, "message-id"),
+		InReplyTo:     firstHeader(headers, "in-reply-to"),
 	}
 
 	if dateHeader := firstHeader(headers, "date"); dateHeader != "" {
