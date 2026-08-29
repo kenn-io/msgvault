@@ -34,6 +34,7 @@ type DuplicateMessageRow struct {
 	HasRawMIME       bool
 	PayloadBytes     int64
 	AttachmentCount  int
+	HasAttachments   bool
 	LabelCount       int
 	IsFromMe         bool
 	HasSentLabel     bool // true if the message has the Gmail SENT label
@@ -63,6 +64,7 @@ type ContentHashCandidate struct {
 	ArchivedAt       time.Time
 	PayloadBytes     int64
 	AttachmentCount  int
+	HasAttachments   bool
 	LabelCount       int
 	IsFromMe         bool
 	HasSentLabel     bool
@@ -124,6 +126,7 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		       (CASE WHEN mr.message_id IS NOT NULL THEN 1 ELSE 0 END) AS has_raw,
 		       COALESCE(m.size_estimate, 0) AS payload_bytes,
 		       COALESCE(m.attachment_count, 0) AS attachment_count,
+		       CASE WHEN COALESCE(m.has_attachments, FALSE) THEN 1 ELSE 0 END AS has_attachments,
 		       (SELECT COUNT(*) FROM message_labels ml
 		          WHERE ml.message_id = m.id) AS label_count,
 		       CASE WHEN COALESCE(m.is_from_me, FALSE) THEN 1 ELSE 0 END AS is_from_me,
@@ -179,11 +182,11 @@ func (s *Store) GetDuplicateGroupMessages(
 	for rows.Next() {
 		var dm DuplicateMessageRow
 		var sentAt, archivedAt sql.NullTime
-		var hasRaw, isFromMe, hasSent int
+		var hasRaw, hasAttachments, isFromMe, hasSent int
 		if err := rows.Scan(
 			&dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 			&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
-			&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount,
+			&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 			&dm.LabelCount, &isFromMe, &hasSent,
 			&dm.FromEmail,
 		); err != nil {
@@ -196,6 +199,7 @@ func (s *Store) GetDuplicateGroupMessages(
 			dm.ArchivedAt = archivedAt.Time
 		}
 		dm.HasRawMIME = hasRaw == 1
+		dm.HasAttachments = hasAttachments == 1
 		dm.IsFromMe = isFromMe == 1
 		dm.HasSentLabel = hasSent == 1
 		msgs = append(msgs, dm)
@@ -259,11 +263,11 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			var dm DuplicateMessageRow
 			var rfc822ID string
 			var sentAt, archivedAt sql.NullTime
-			var hasRaw, isFromMe, hasSent int
+			var hasRaw, hasAttachments, isFromMe, hasSent int
 			if err := rows.Scan(
 				&rfc822ID, &dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 				&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
-				&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount,
+				&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 				&dm.LabelCount, &isFromMe, &hasSent,
 				&dm.FromEmail,
 			); err != nil {
@@ -276,6 +280,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 				dm.ArchivedAt = archivedAt.Time
 			}
 			dm.HasRawMIME = hasRaw == 1
+			dm.HasAttachments = hasAttachments == 1
 			dm.IsFromMe = isFromMe == 1
 			dm.HasSentLabel = hasSent == 1
 			result[rfc822ID] = append(result[rfc822ID], dm)
@@ -355,6 +360,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       COALESCE(m.size_estimate, 0) AS payload_bytes,
 		       COALESCE(m.attachment_count, 0) AS attachment_count,
+		       CASE WHEN COALESCE(m.has_attachments, FALSE) THEN 1 ELSE 0 END AS has_attachments,
 		       (SELECT COUNT(*) FROM message_labels ml
 		          WHERE ml.message_id = m.id) AS label_count,
 		       CASE WHEN COALESCE(m.is_from_me, FALSE) THEN 1 ELSE 0 END AS is_from_me,
@@ -398,11 +404,11 @@ func (s *Store) GetAllRawMIMECandidates(
 	for rows.Next() {
 		var c ContentHashCandidate
 		var sentAt, archivedAt sql.NullTime
-		var isFromMe, hasSent int
+		var hasAttachments, isFromMe, hasSent int
 		if err := rows.Scan(
 			&c.ID, &c.SourceID, &c.SourceType, &c.SourceIdentifier,
 			&c.SourceMessageID, &c.Subject, &sentAt, &archivedAt,
-			&c.PayloadBytes, &c.AttachmentCount,
+			&c.PayloadBytes, &c.AttachmentCount, &hasAttachments,
 			&c.LabelCount, &isFromMe, &hasSent, &c.FromEmail,
 		); err != nil {
 			return nil, err
@@ -413,6 +419,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		if archivedAt.Valid {
 			c.ArchivedAt = archivedAt.Time
 		}
+		c.HasAttachments = hasAttachments == 1
 		c.IsFromMe = isFromMe == 1
 		c.HasSentLabel = hasSent == 1
 		candidates = append(candidates, c)

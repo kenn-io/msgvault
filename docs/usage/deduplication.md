@@ -32,15 +32,16 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 1. Source type, following `--prefer` or the default order `gmail,imap,mbox,emlx,hey`.
 2. Presence of the complete raw MIME payload.
 3. More attachments.
-4. A larger payload.
-5. Richer label or folder metadata.
-6. Earlier archive timestamp.
-7. A stable row ID, as the final tie-breaker.
+4. An attachment-presence signal when attachment counts tie.
+5. A larger payload.
+6. Richer label or folder metadata.
+7. Earlier archive timestamp.
+8. A stable row ID, as the final tie-breaker.
 
-Earlier rules win outright; later rules apply only when all earlier ones tie. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
+Earlier rules win outright; later rules apply only when all earlier ones tie. The attachment-count, attachment-presence, and payload-size rules apply only when both copies have raw MIME and their normalized MIME hashes match. A shared `Message-ID` alone cannot make those payload-completeness signals authoritative. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection runs the sent-copy eligibility filter first, then a priority list: source preference, raw MIME, more attachments, a larger payload, richer labels, earlier archive time, and finally a stable row ID." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection runs the sent-copy eligibility filter first, then a priority list: source preference, raw MIME, more attachments, an attachment-presence signal, a larger payload, richer labels, earlier archive time, and finally a stable row ID." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## Choosing a Scope
@@ -80,7 +81,7 @@ Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 i
 - **Rung 01, scan.** `deduplicate --dry-run` reports the duplicate groups it found, the proposed survivor for each, and why. Nothing is modified.
 - **Rung 02, hide.** `deduplicate` applies the scan. Pruned copies are hidden from normal reads but kept on disk, and the run prints a batch ID. `--undo <batch-id>` restores them.
 - **Rung 03, local hard delete.** `delete-deduped` permanently removes hidden rows from the local archive to reclaim disk. It acts on named batches via `--batch` and refuses to touch rows it did not hide; all selected batches commit as one transaction, so cancellation rolls the whole selection back. `--all-hidden` purges every hidden row and always prompts for confirmation. Undo cannot recover purged rows.
-- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only for pruned copies whose loser and survivor share a source (same-source-only), so a group spanning two sources stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list`, target one batch with `delete-staged <batch-id>`, and note that execution is gated behind `MSGVAULT_ENABLE_REMOTE_DELETE=1`. The same-source restriction lives in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
+- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list`, target one batch with `delete-staged <batch-id>`, and note that execution is gated behind `MSGVAULT_ENABLE_REMOTE_DELETE=1`. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
 
 !!! note "What \"hidden\" means"
     A hidden copy is excluded from search, the Web UI, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
@@ -138,7 +139,7 @@ msgvault deduplicate --collection gmail-plus-mbox
 msgvault delete-deduped --batch <batch-id>
 ```
 
-**Actually remove the duplicates from the source server.** Stage during a dedup run, review the pending manifests, then execute the specific batch. Staging only ever covers same-source duplicate pairs; cross-source groups stage nothing. `delete-staged` itself is the generic deletion executor, and execution is gated:
+**Actually remove the duplicates from the source server.** Stage during a dedup run, review the pending manifests, then execute the specific batch. Staging only covers same-source pairs with matching normalized raw MIME; cross-source or non-equivalent pairs stage nothing. `delete-staged` itself is the generic deletion executor, and execution is gated:
 
 ```bash
 # Stage same-source duplicates for remote deletion during a dedup run

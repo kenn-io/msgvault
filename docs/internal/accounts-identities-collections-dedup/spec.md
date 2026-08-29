@@ -313,8 +313,9 @@ preference runs in this order:
 
 1. Source preference (when `--prefer` is configured, or the default
    order: `gmail,imap,mbox,emlx,hey`).
-2. Complete original payload — has raw MIME, then more attachments,
-   then a larger original payload.
+2. Complete original payload — has raw MIME, then, when normalized
+   raw MIME matches, more attachments, an attachment-presence signal,
+   and a larger original payload.
 3. Source metadata quality — provider IDs, threading info, presence
    of Message-ID.
 4. Richer label or folder metadata.
@@ -322,7 +323,10 @@ preference runs in this order:
 6. Stable row ID, as the final tie-breaker.
 
 Earlier rules win outright. Later rules apply only when all earlier
-ones tie. The exact policy is visible in dry-run output.
+ones tie. Attachment and payload-size metadata are authoritative only
+when both rows have raw MIME and their normalized MIME hashes match;
+a shared Message-ID alone is insufficient. The exact policy is visible
+in dry-run output.
 
 The public [Deduplication](../../usage/deduplication.md) guide carries
 the rendered survivor-selection diagram.
@@ -467,6 +471,10 @@ decisions remain source-specific.
 
 ### Rules
 
+- **Content-equivalence constraint.** A remote-deletion entry is
+  staged only when the loser and survivor both have raw MIME and their
+  normalized MIME hashes match. Message-ID equality alone is not
+  sufficient evidence for remote deletion.
 - **Same-source constraint.** A remote-deletion entry is staged only
   when the loser and the survivor share a `source_id`. Cross-source
   duplicate groups produce no remote-deletion entries even when the

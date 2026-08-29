@@ -63,7 +63,7 @@ Scope:
                         is local-only and reversible with --undo;
                         --delete-dups-from-source-server only stages
                         remote deletion when the loser and the survivor
-                        share a source (same-source-only).
+                        share a source and matching normalized raw MIME.
   (no flag)             Dedup runs per-account independently for every
                         account. Source boundaries are never crossed.
 
@@ -440,7 +440,7 @@ func deduplicateCollectionIntro(st *store.Store, displayName string, sourceIDs [
 	if len(memberNames) > 1 {
 		out.WriteString(
 			"  Note: cross-source dedup is reversible (--undo); " +
-				"remote deletion stays same-source-only. " +
+				"remote deletion requires equivalent same-source raw MIME. " +
 				"Re-run with --dry-run to preview.\n",
 		)
 	}
@@ -1123,7 +1123,7 @@ func init() {
 	deduplicateCmd.MarkFlagsMutuallyExclusive("undo", "collection")
 	deduplicateCmd.Flags().BoolVar(&dedupDeleteFromSourceSrvr,
 		"delete-dups-from-source-server", false,
-		"DESTRUCTIVE: stage pruned duplicates for remote deletion "+
+		"DESTRUCTIVE: stage equivalent same-source duplicates for remote deletion "+
 			"(execution requires MSGVAULT_ENABLE_REMOTE_DELETE=1)")
 	deduplicateCmd.Flags().BoolVarP(&dedupYes, "yes", "y", false,
 		"Skip confirmation prompt")
