@@ -31,6 +31,11 @@ const (
 // before the lock-held cache rebuild.
 var removeAccountAfterCascadeHook func()
 
+// removeAccountBeforeDiscordLifecycleLockHook lets tests observe that store
+// initialization has finished before the Discord credential lifecycle lock is
+// acquired.
+var removeAccountBeforeDiscordLifecycleLockHook func()
+
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   removeAccountCommandName + " [account]",
@@ -204,6 +209,9 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	)
 	if source.SourceType == sourceTypeDiscord {
 		discordTokens := discord.NewTokenManager(cfg.TokensDir())
+		if removeAccountBeforeDiscordLifecycleLockHook != nil {
+			removeAccountBeforeDiscordLifecycleLockHook()
+		}
 		removeErr = discordTokens.WithLifecycleLock(func() error {
 			lockedSource, lookupErr := s.GetSourceByID(source.ID)
 			if lookupErr != nil {

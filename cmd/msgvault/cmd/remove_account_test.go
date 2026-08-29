@@ -1310,6 +1310,12 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 		require.FailNow("timed out waiting for Discord credential save")
 	}
 
+	removeReachedLifecycleLock := make(chan struct{})
+	removeAccountBeforeDiscordLifecycleLockHook = func() {
+		close(removeReachedLifecycleLock)
+	}
+	t.Cleanup(func() { removeAccountBeforeDiscordLifecycleLockHook = nil })
+
 	removeDone := make(chan error, 1)
 	go func() {
 		root := newTestRootCmd()
@@ -1317,6 +1323,13 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 		root.SetArgs([]string{"remove-account", first.Identifier, "--yes", "--type", sourceTypeDiscord})
 		removeDone <- root.Execute()
 	}()
+	select {
+	case <-removeReachedLifecycleLock:
+	case err := <-removeDone:
+		require.FailNow("removal ended before reaching Discord lifecycle lock", "error: %v", err)
+	case <-time.After(5 * time.Second):
+		require.FailNow("timed out waiting for removal to reach Discord lifecycle lock")
+	}
 	select {
 	case err := <-removeDone:
 		require.FailNow("removal bypassed Discord lifecycle lock", "error: %v", err)
