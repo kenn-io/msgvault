@@ -1096,12 +1096,12 @@ func buildCacheLocked(
 	junctionFile := "data.parquet"
 
 	// runExport executes a COPY query and prints timing info.
-	runExport := func(label, query string) error {
+	runExport := func(label, copyQuery string) error {
 		start := time.Now()
 		fmt.Printf("  %-25s", label+"...")
-		if _, err := exportDB.Exec(query); err != nil {
+		if _, err := exportDB.Exec(copyQuery); err != nil {
 			fmt.Println()
-			return err
+			return query.HintRepairEncoding(err)
 		}
 		fmt.Printf(" done (%s)\n", time.Since(start).Round(time.Millisecond))
 		return nil
@@ -1959,7 +1959,9 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 			t.name, escaped, csvOpts,
 		)
 		if _, err := s.duckDB.Exec(viewSQL); err != nil {
-			return fmt.Errorf("create view sqlite_db.%s: %w", t.name, err)
+			return query.HintRepairEncoding(
+				fmt.Errorf("create view sqlite_db.%s: %w", t.name, err),
+			)
 		}
 	}
 
