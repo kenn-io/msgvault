@@ -629,7 +629,19 @@ func (c *Client) fetchMailboxMessageIDs(
 	}
 
 	if err := c.selectMailbox(mailbox); err != nil {
-		return nil, nil, err
+		if !isNetworkError(err) {
+			return nil, nil, err
+		}
+		c.logger.Warn("network error selecting mailbox for label map, reconnecting",
+			"mailbox", mailbox, "error", err)
+		if reconErr := c.reconnect(ctx); reconErr != nil {
+			return nil, nil, fmt.Errorf(
+				"reconnect failed building label map for %q: %w",
+				mailbox, reconErr)
+		}
+		if err := c.selectMailbox(mailbox); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	result := make(map[string]bool, len(uids))

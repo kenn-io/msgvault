@@ -1151,3 +1151,32 @@ func TestListMessages_LimitedSyncDisablesFolderSkipping(t *testing.T) {
 	assert.Len(listAllMessages(t, second), 5,
 		"a limited sync must not take folder shortcuts")
 }
+
+func TestLabelMapSelectReconnectsAfterDroppedConnection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX":   0,
+		"Archive": 0,
+	})
+	const messageID = "label-map-reconnect@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	client := newTestClient(t, addr)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	require.NoError(client.connect(ctx))
+	require.NoError(client.selectMailbox("INBOX"))
+	// Drop the connection the way a mid-run server disconnect does, leaving the
+	// client holding a dead socket it has not noticed yet.
+	require.NoError(client.conn.Close())
+
+	labels, unidentified, err := client.fetchMailboxMessageIDs(
+		ctx, "Archive", []imapv2.UID{1})
+
+	require.NoError(err,
+		"a dropped connection must not fail the label map, which discards the run")
+	assert.Equal(map[string]bool{messageID: true}, labels)
+	assert.Empty(unidentified)
+}
