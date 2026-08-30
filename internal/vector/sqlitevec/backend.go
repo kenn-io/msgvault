@@ -30,6 +30,7 @@ var _ vector.Backend = (*Backend)(nil)
 var _ vector.ChunkScoringBackend = (*Backend)(nil)
 var _ vector.FilteredCoverageBackend = (*Backend)(nil)
 var _ vector.ConvergedGenerationActivator = (*Backend)(nil)
+var _ vector.OrphanEmbeddingPruner = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
@@ -1567,6 +1568,111 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 		return fmt.Errorf("commit delete tx: %w", err)
 	}
 	return nil
+}
+
+// PruneOrphanEmbeddings removes every message embedding whose authoritative
+// message row has been hard-deleted. The main archive and vectors live in
+// separate SQLite files, so the maintenance transaction opens the main file
+// and attaches vectors.db on one pinned connection. Soft-deleted messages
+// remain present in main.messages and are intentionally preserved.
+func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
+	if b.mainPath == "" {
+		return 0, errors.New("prune orphan embeddings requires MainPath in Options")
+	}
+	conn, err := b.openFusedConn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("open coordinated orphan prune: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin orphan prune: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const orphanWhere = `NOT EXISTS (
+		SELECT 1 FROM messages m WHERE m.id = e.message_id
+	)`
+	var pruned int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT e.generation_id, e.message_id
+			  FROM vec.embeddings e
+			 WHERE `+orphanWhere+`
+			 GROUP BY e.generation_id, e.message_id
+		)`).Scan(&pruned); err != nil {
+		return 0, fmt.Errorf("count orphan embeddings: %w", err)
+	}
+	if pruned == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("commit empty orphan prune: %w", err)
+		}
+		return 0, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT g.dimension
+		  FROM vec.embeddings e
+		  JOIN vec.index_generations g ON g.id = e.generation_id
+		 WHERE `+orphanWhere+`
+		 GROUP BY g.dimension
+		 ORDER BY g.dimension`)
+	if err != nil {
+		return 0, fmt.Errorf("list orphan embedding dimensions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var dimensions []int
+	for rows.Next() {
+		var dimension int
+		if err := rows.Scan(&dimension); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan orphan embedding dimension: %w", err)
+		}
+		if dimension <= 0 {
+			_ = rows.Close()
+			return 0, fmt.Errorf("invalid orphan embedding dimension %d", dimension)
+		}
+		dimensions = append(dimensions, dimension)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close orphan embedding dimensions: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate orphan embedding dimensions: %w", err)
+	}
+
+	for _, dimension := range dimensions {
+		vecTable := "vec." + VectorTableName(dimension)
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			DELETE FROM %s
+			 WHERE embedding_id IN (
+				SELECT e.embedding_id
+				  FROM vec.embeddings e
+				  JOIN vec.index_generations g ON g.id = e.generation_id
+				 WHERE g.dimension = ? AND %s
+			 )`, vecTable, orphanWhere), dimension); err != nil {
+			return 0, fmt.Errorf("delete orphan vectors for dimension %d: %w", dimension, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vec.embeddings AS e
+		 WHERE `+orphanWhere); err != nil {
+		return 0, fmt.Errorf("delete orphan embedding metadata: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE vec.index_generations AS g
+		   SET message_count = (
+			SELECT COUNT(DISTINCT e.message_id)
+			  FROM vec.embeddings e
+			 WHERE e.generation_id = g.id
+		   )`); err != nil {
+		return 0, fmt.Errorf("repair generation message counts: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit orphan prune: %w", err)
+	}
+	return pruned, nil
 }
 
 // Stats returns counts for the given generation. When gen == 0, counts

@@ -186,6 +186,40 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func runEmbeddingsPruneCommand(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+	return runEmbeddingsPrune(cmd, args)
+}
+
+func runEmbeddingsPrune(cmd *cobra.Command, _ []string) error {
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	if err := ensureMainSchema(); err != nil {
+		return err
+	}
+	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer closeBackend()
+	pruner, ok := backend.(vector.OrphanEmbeddingPruner)
+	if !ok {
+		return errors.New("configured vector backend does not support orphan pruning")
+	}
+	pruned, err := pruner.PruneOrphanEmbeddings(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("prune orphan embeddings: %w", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pruned %d orphan message embedding(s).\n", pruned)
+	return nil
+}
+
 // errRetireActiveGeneration explains the consequence of retiring the
 // serving generation and the intended replace-then-retire workflow, instead
 // of only naming the override flag.

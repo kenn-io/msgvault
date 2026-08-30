@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -17,6 +18,51 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+func TestRunEmbeddingsPruneRemovesOrphansWithoutEmbeddingCalls(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	vectorPath := filepath.Join(dir, "vectors.db")
+	c := config.NewDefaultConfig()
+	c.HomeDir = dir
+	c.Data.DataDir = dir
+	c.Vector.Enabled = true
+	c.Vector.DBPath = vectorPath
+	c.Vector.Embeddings.Model = "test-model"
+	c.Vector.Embeddings.Dimension = 4
+	withTestConfig(t, c)
+
+	mainStore, err := store.Open(mainPath)
+	require.NoError(t, err)
+	require.NoError(t, mainStore.InitSchema())
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
+	})
+	require.NoError(t, err)
+	generation, err := backend.CreateGeneration(t.Context(), "test-model", 4, "test:4")
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(t.Context(), generation, []vector.Chunk{
+		{MessageID: 9001, Vector: []float32{1, 0, 0, 0}},
+	}))
+	require.NoError(t, backend.Close())
+	require.NoError(t, mainStore.Close())
+
+	var output bytes.Buffer
+	command := &cobra.Command{Use: "prune"}
+	command.SetContext(t.Context())
+	command.SetOut(&output)
+	require.NoError(t, runEmbeddingsPrune(command, nil))
+	assert.Equal(t, "Pruned 1 orphan message embedding(s).\n", output.String())
+
+	reopened, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: vectorPath, MainPath: mainPath, Dimension: 4,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	stats, err := reopened.Stats(t.Context(), generation)
+	require.NoError(t, err)
+	assert.Zero(t, stats.EmbeddingCount)
+}
 
 type convergenceProgressPublisher struct {
 	vector.DocumentPublisher

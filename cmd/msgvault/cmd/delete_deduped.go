@@ -24,9 +24,9 @@ manifests still reference Gmail/IMAP message IDs and remain valid
 after a local delete.
 
 Parquet analytics and the vector index may contain stale entries for
-deleted rows until rebuilt; the rebuild commands are separate. Run
+deleted rows until maintained separately. Run
 'msgvault build-cache --full-rebuild' for parquet analytics and
-'msgvault embeddings build --full-rebuild' for the vector index.`,
+'msgvault embeddings prune' for the vector index.`,
 	RunE: runDeleteDeduped,
 }
 
@@ -83,9 +83,8 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Note: parquet analytics and the vector index may contain entries
-	// for deleted rows; the post-run summary recommends rebuilding each
-	// separately ('build-cache --full-rebuild' and
-	// 'embeddings build --full-rebuild').
+	// for deleted rows; the post-run summary recommends maintaining each
+	// separately ('build-cache --full-rebuild' and 'embeddings prune').
 
 	expectedTotal := plan.Total
 	expectedBatchCount := plan.BatchCount
@@ -102,9 +101,9 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(out, "Backing up database to %s...\n", filepath.Base(executed.BackupPath))
 	}
 	_, _ = fmt.Fprintf(out, "\nDeleted %d message(s) from %d batch(es).\n\n", executed.Deleted, executed.BatchCount)
-	_, _ = fmt.Fprintln(out, "Caches may have stale entries; rebuild each separately:")
+	_, _ = fmt.Fprintln(out, "Caches may have stale entries; maintain each separately:")
 	_, _ = fmt.Fprintln(out, "  'msgvault build-cache --full-rebuild'        (parquet analytics)")
-	_, _ = fmt.Fprintln(out, "  'msgvault embeddings build --full-rebuild'   (vector index, if enabled)")
+	_, _ = fmt.Fprintln(out, "  'msgvault embeddings prune'                  (vector index, if enabled)")
 
 	return nil
 }

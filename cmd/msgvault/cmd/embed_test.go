@@ -52,6 +52,10 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require.NotNil(forceFlag)
 	assert.Contains(t, forceFlag.Usage, "person coverage")
 
+	pruneCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "prune"})
+	require.NoError(err)
+	require.Equal("prune", pruneCmd.Name())
+
 	legacyCmd, _, err := rootCmd.Find([]string{"build-embeddings"})
 	require.NoError(err)
 	require.Equal("build-embeddings", legacyCmd.Name())
@@ -85,6 +89,33 @@ func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
 	require.NoError(root.Execute(), "embeddings list")
 	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
 	assert.Equal("ID\tSTATE\n1\tactive\n", stdout.String(), "stdout")
+}
+
+func TestEmbeddingsPruneUsesDaemonRunner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "prune"}, req.Args, "args")
+	}, `{"type":"stdout","data":"Pruned 2 orphan message embedding(s).\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	prune := &cobra.Command{
+		Use:  "prune",
+		RunE: runEmbeddingsPruneCommand,
+	}
+	embeddings.AddCommand(prune)
+	root.AddCommand(embeddings)
+
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetArgs([]string{embeddingsCommandName, "prune"})
+
+	require.NoError(root.Execute(), "embeddings prune")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("Pruned 2 orphan message embedding(s).\n", stdout.String(), "stdout")
 }
 
 func TestEmbeddingsBuildPromptsBeforeDaemonRunner(t *testing.T) {

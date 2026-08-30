@@ -245,6 +245,25 @@ func TestEmbeddingsRetireFailsFastWhenArchiveOwned(t *testing.T) {
 	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
 }
 
+func TestEmbeddingsPruneFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+
+	owner, err := tryAcquireWriteOwnerLock(dataDir)
+	require.NoError(err, "acquire owner lock")
+	t.Cleanup(func() { _ = owner.Close() })
+
+	cmd := &cobra.Command{Use: "prune"}
+	cmd.SetContext(context.Background())
+	err = runEmbeddingsPrune(cmd, nil)
+	require.Error(err, "embeddings prune must fail while the archive is owned")
+	assert.Contains(err.Error(), "owned", "actionable ownership error")
+	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
+}
+
 func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(

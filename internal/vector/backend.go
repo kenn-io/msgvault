@@ -389,6 +389,14 @@ type FilteredCoverageBackend interface {
 	EmbeddedMessageCountForIDs(ctx context.Context, gen GenerationID, messageIDs []int64) (int64, error)
 }
 
+// OrphanEmbeddingPruner removes message embeddings whose authoritative
+// message row no longer exists. Soft-deleted messages still exist and are
+// deliberately retained. The return value counts distinct
+// (generation, message) pairs, not chunks.
+type OrphanEmbeddingPruner interface {
+	PruneOrphanEmbeddings(ctx context.Context) (int64, error)
+}
+
 // FilteredCoverageBatchSize is the maximum number of canonical message IDs a
 // filtered coverage backend accepts per call. Coverage callers page at this
 // boundary so neither SQL bind arrays nor cross-database JSON blobs grow with

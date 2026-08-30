@@ -57,6 +57,12 @@ var embeddingsActivateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEmbeddingsActivateCommand,
 }
+var embeddingsPruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Remove embeddings for hard-deleted messages",
+	Args:  cobra.NoArgs,
+	RunE:  runEmbeddingsPruneCommand,
+}
 var embedCmd = newEmbeddingsBuildCmd("build-embeddings")
 
 func newEmbeddingsBuildCmd(use string) *cobra.Command {
@@ -165,6 +171,7 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsListCmd)
 	embeddingsCmd.AddCommand(embeddingsRetireCmd)
 	embeddingsCmd.AddCommand(embeddingsActivateCmd)
+	embeddingsCmd.AddCommand(embeddingsPruneCmd)
 	rootCmd.AddCommand(embeddingsCmd)
 	rootCmd.AddCommand(embedCmd)
 }
