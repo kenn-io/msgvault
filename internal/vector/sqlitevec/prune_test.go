@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -12,10 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 )
-
-type orphanEmbeddingPruner interface {
-	PruneOrphanEmbeddings(ctx context.Context) (int64, error)
-}
 
 func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.T) {
 	dir := t.TempDir()
@@ -62,7 +57,7 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 		DELETE FROM messages WHERE id = 3;`)
 	require.NoError(t, err)
 
-	pruner, ok := any(backend).(orphanEmbeddingPruner)
+	pruner, ok := any(backend).(vector.OrphanEmbeddingPruner)
 	require.True(t, ok, "sqlite vector backend must support orphan pruning")
 	pruned, err := pruner.PruneOrphanEmbeddings(t.Context())
 	require.NoError(t, err)
