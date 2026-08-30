@@ -282,6 +282,21 @@ func (d *PostgreSQLDialect) visibilityFloor(
 // type and rejects integer comparisons (`col = 1`) against boolean columns.
 func (d *PostgreSQLDialect) BoolTrueExpr(col string) string { return col }
 
+// RFC822CanonicalIDExpr strips one clean angle-bracket pair from a stored
+// Message-ID. PostgreSQL TEXT cannot contain embedded NUL bytes, so its native
+// character-oriented LENGTH and SUBSTR semantics are sufficient.
+func (d *PostgreSQLDialect) RFC822CanonicalIDExpr(col string) string {
+	return fmt.Sprintf(`CASE
+		WHEN LENGTH(%[1]s) > 2
+		 AND SUBSTR(%[1]s, 1, 1) = '<'
+		 AND SUBSTR(%[1]s, LENGTH(%[1]s), 1) = '>'
+		 AND SUBSTR(%[1]s, 2, 1) NOT IN ('<', '>', ' ')
+		 AND SUBSTR(%[1]s, LENGTH(%[1]s) - 1, 1) NOT IN ('<', '>', ' ')
+			THEN SUBSTR(%[1]s, 2, LENGTH(%[1]s) - 2)
+			ELSE %[1]s
+	END`, col)
+}
+
 // JSONBindExpr returns "?::JSONB" — PG won't implicit-cast text to JSONB,
 // so a bare placeholder bound to a Go string raises a column-type
 // mismatch on the sources.sync_config write path.

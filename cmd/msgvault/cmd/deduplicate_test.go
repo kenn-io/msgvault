@@ -2,17 +2,508 @@ package cmd
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestPlanCLIDeduplicateRequiresConfirmationForDerivableBackfill(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	withDeduplicateTestConfig(t)
+
+	readyID := f.CreateMessage("ready-metadata")
+	require.NoError(f.Store.UpsertMessageRaw(readyID, []byte(
+		"Message-ID: <ready-metadata@example.test>\r\n\r\nBody")))
+	failedID := f.CreateMessage("malformed-metadata")
+	require.NoError(f.Store.UpsertMessageRaw(failedID, []byte(
+		"From: sender@example.test\r\nSubject: no identifier\r\n\r\nBody")))
+
+	plan, err := planCLIDeduplicate(t.Context(), f.Store, api.CLIDeduplicatePlanRequest{
+		Account: f.Source.Identifier,
+	})
+
+	require.NoError(err)
+	require.Len(plan.Items, 1)
+	item := plan.Items[0]
+	assert.True(item.NeedsConfirmation, "derivable metadata is executable work")
+	assert.Equal(int64(-1), item.BackfilledCount, "signed compatibility field")
+	assert.Contains(item.Stdout, "2 messages with missing RFC822 Message-ID were inspected.")
+	assert.Contains(item.Stdout, "1 RFC822 Message-ID value is ready to be derived from stored MIME after confirmation.")
+	assert.Contains(item.Stdout, "1 message could not provide a usable Message-ID and will be skipped.")
+}
+
+func TestPlanCLIDeduplicateMalformedOnlyBackfillDoesNotRequireConfirmation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	withDeduplicateTestConfig(t)
+
+	messageID := f.CreateMessage("malformed-only")
+	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
+		"From: sender@example.test\r\nSubject: no identifier\r\n\r\nBody")))
+
+	plan, err := planCLIDeduplicate(t.Context(), f.Store, api.CLIDeduplicatePlanRequest{
+		Account: f.Source.Identifier,
+	})
+
+	require.NoError(err)
+	require.Len(plan.Items, 1)
+	item := plan.Items[0]
+	assert.False(item.NeedsConfirmation, "malformed-only metadata is not executable work")
+	assert.Equal(int64(0), item.BackfilledCount, "signed compatibility field")
+	assert.Contains(item.Stdout, "1 message with missing RFC822 Message-ID was inspected.")
+	assert.NotContains(item.Stdout, "ready to be derived")
+	assert.Contains(item.Stdout, "1 message could not provide a usable Message-ID and will be skipped.")
+}
+
+func TestDeduplicatePlanFingerprintBindsExactBackfillPlan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("fingerprint-metadata")
+	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
+		"Message-ID: <first-plan@example.test>\r\n\r\nFirst body")))
+
+	cfgScoped := dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}
+	engine := dedup.NewEngine(f.Store, cfgScoped, nil)
+	firstReport, err := engine.Scan(t.Context())
+	require.NoError(err)
+	firstFingerprint, err := deduplicatePlanFingerprint(t.Context(), cfgScoped, firstReport)
+	require.NoError(err)
+
+	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
+		"Message-ID: <second-plan@example.test>\r\n\r\nSecond body")))
+	secondReport, err := engine.Scan(t.Context())
+	require.NoError(err)
+	secondFingerprint, err := deduplicatePlanFingerprint(t.Context(), cfgScoped, secondReport)
+	require.NoError(err)
+
+	assert.Equal(firstReport.BackfillCandidates, secondReport.BackfillCandidates, "candidate count")
+	assert.Equal(firstReport.PendingRFC822IDBackfill(), secondReport.PendingRFC822IDBackfill(), "ready count")
+	assert.NotEqual(firstReport.BackfillPlanDigest, secondReport.BackfillPlanDigest, "store plan digest")
+	assert.NotEqual(firstFingerprint, secondFingerprint, "CLI fingerprint must bind the exact derivation plan")
+}
+
+func TestPrintDedupSummaryOmitsUndoForBackfillOnlyExecution(t *testing.T) {
+	assert := assert.New(t)
+	done := captureStdout(t)
+	printDedupSummary(&dedup.ExecutionSummary{
+		BatchID:             "metadata-only-batch",
+		RFC822IDsBackfilled: 2,
+		RawMIMEBackfilled:   3,
+	})
+	out := done()
+
+	assert.Contains(out, "RFC822 Message-IDs derived: 2")
+	assert.Contains(out, "Raw MIME backfilled: 3", "raw MIME remains a separate metric")
+	assert.NotContains(out, "Batch ID:", "metadata-only execution creates no dedup batch")
+	assert.NotContains(out, "To undo:", "metadata-only execution has no reversible dedup batch")
+}
+
+func TestDeduplicateSingleAndMultiSourceBackfillOnlyOmitUndo(t *testing.T) {
+	t.Run("dry run stays read-only without prompting", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		f := storetest.New(t)
+		messageID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"dry-run-metadata", "dry-run-metadata@example.test")
+		cfgScoped := dedup.Config{
+			DryRun:           true,
+			AccountSourceIDs: []int64{f.Source.ID},
+			Account:          f.Source.Identifier,
+		}
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		cmd.SetIn(strings.NewReader("y\n"))
+
+		done := captureStdout(t)
+		err := runDeduplicateOnce(
+			cmd, f.Store, "", cfgScoped,
+			dedup.NewEngine(f.Store, cfgScoped, nil),
+		)
+		out := done()
+
+		require.NoError(err)
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, messageID))
+		assert.Contains(out, "Dry run complete. No changes made.")
+		assert.NotContains(out, "Proceed with deduplication")
+		assert.NotContains(out, "RFC822 Message-IDs derived:")
+	})
+
+	t.Run("single source", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupYes = true
+		dedupNoBackup = true
+		f := storetest.New(t)
+		messageID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"single-metadata", "single-metadata@example.test")
+		cfgScoped := dedup.Config{
+			AccountSourceIDs: []int64{f.Source.ID},
+			Account:          f.Source.Identifier,
+		}
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		done := captureStdout(t)
+		err := runDeduplicateOnce(
+			cmd, f.Store, "", cfgScoped,
+			dedup.NewEngine(f.Store, cfgScoped, nil),
+		)
+		out := done()
+
+		require.NoError(err)
+		assert.Equal("single-metadata@example.test", storedRFC822IDForCLI(t, f.Store, messageID))
+		assert.Contains(out, "Deriving RFC822 Message-IDs...")
+		assert.NotContains(out, "Merging duplicates...")
+		assert.Contains(out, "RFC822 Message-IDs derived: 1")
+		assert.NotContains(out, "Batch ID:")
+		assert.NotContains(out, "To undo:")
+		assert.NotContains(out, "To undo all of the above:")
+	})
+
+	t.Run("multiple per-source executions", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupYes = true
+		dedupNoBackup = true
+		f := storetest.New(t)
+		firstID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"first-metadata", "first-metadata@example.test")
+		secondSource, err := f.Store.GetOrCreateSource("mbox", "backup@example.test")
+		require.NoError(err)
+		secondConversation, err := f.Store.EnsureConversation(secondSource.ID, "second-thread", "Second")
+		require.NoError(err)
+		secondID := createPendingRFC822Message(t, f.Store, secondSource.ID, secondConversation,
+			"second-metadata", "second-metadata@example.test")
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		done := captureStdout(t)
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		out := done()
+
+		require.NoError(err)
+		assert.Equal("first-metadata@example.test", storedRFC822IDForCLI(t, f.Store, firstID))
+		assert.Equal("second-metadata@example.test", storedRFC822IDForCLI(t, f.Store, secondID))
+		assert.Equal(2, strings.Count(out, "Deriving RFC822 Message-IDs..."), "one execution prelude per source")
+		assert.NotContains(out, "Merging duplicates...")
+		assert.Equal(2, strings.Count(out, "RFC822 Message-IDs derived: 1"), "one execution summary per source")
+		assert.NotContains(out, "Batch ID:")
+		assert.NotContains(out, "To undo:")
+		assert.NotContains(out, "To undo all of the above:")
+	})
+}
+
+func TestDeduplicateLocalAndPerSourceMergeOutputIncludesBatch(t *testing.T) {
+	t.Run("single source", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupYes = true
+		dedupNoBackup = true
+		f := storetest.New(t)
+		messageIDs := f.CreateMessages(2)
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
+			"local-merge@example.test", messageIDs[0], messageIDs[1])
+		require.NoError(err)
+		cfgScoped := dedup.Config{
+			AccountSourceIDs: []int64{f.Source.ID},
+			Account:          f.Source.Identifier,
+		}
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		done := captureStdout(t)
+		err = runDeduplicateOnce(
+			cmd, f.Store, "", cfgScoped,
+			dedup.NewEngine(f.Store, cfgScoped, nil),
+		)
+		out := done()
+
+		require.NoError(err)
+		assert.Contains(out, "Merging duplicates...")
+		assert.NotContains(out, "Deriving RFC822 Message-IDs...")
+		assert.Contains(out, "Batch ID:")
+		assert.Contains(out, "Groups merged:       1")
+	})
+
+	t.Run("per source", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupYes = true
+		dedupNoBackup = true
+		f := storetest.New(t)
+		messageIDs := f.CreateMessages(2)
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
+			"per-source-merge@example.test", messageIDs[0], messageIDs[1])
+		require.NoError(err)
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		done := captureStdout(t)
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		out := done()
+
+		require.NoError(err)
+		assert.Contains(out, "Merging duplicates...")
+		assert.NotContains(out, "Deriving RFC822 Message-IDs...")
+		assert.Contains(out, "Batch ID:")
+		assert.Contains(out, "Groups merged:       1")
+	})
+}
+
+func TestDeduplicateLocalAndDaemonPromptDescribeDerivationFence(t *testing.T) {
+	const promptNote = "This will derive 1 RFC822 Message-ID value(s) from stored MIME after confirmation. " +
+		"If that reveals a different duplicate plan, no messages will be hidden; rerun deduplicate to review it."
+
+	t.Run("local", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupNoBackup = true
+		f := storetest.New(t)
+		messageID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"local-prompt", "local-prompt@example.test")
+		cfgScoped := dedup.Config{
+			AccountSourceIDs: []int64{f.Source.ID},
+			Account:          f.Source.Identifier,
+		}
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		cmd.SetIn(strings.NewReader("n\n"))
+
+		done := captureStdout(t)
+		err := runDeduplicateOnce(cmd, f.Store, "", cfgScoped, dedup.NewEngine(f.Store, cfgScoped, nil))
+		out := done()
+
+		require.NoError(err)
+		assert.Contains(out, promptNote)
+		assert.Contains(out, "Proceed with RFC822 Message-ID derivation? [y/N]:")
+		assert.NotContains(out, "reversible with --undo")
+		assert.Contains(out, "Aborted.")
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, messageID), "declined derivation remains unapplied")
+	})
+
+	t.Run("daemon-backed", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		f := storetest.New(t)
+		messageID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"daemon-prompt", "daemon-prompt@example.test")
+		serverCfg := config.NewDefaultConfig()
+		serverCfg.Data.DataDir = t.TempDir()
+		apiServer := api.NewServerWithOptions(api.ServerOptions{
+			Config:        serverCfg,
+			Store:         &storeAPIAdapter{store: f.Store},
+			Logger:        slog.New(slog.DiscardHandler),
+			DaemonVersion: Version,
+		})
+		httpServer := httptest.NewServer(apiServer.Router())
+		t.Cleanup(httpServer.Close)
+		configureRemoteDaemonForTest(t, httpServer.URL)
+
+		cmd := newDeduplicateRoutingTestCommand()
+		var stdout bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetIn(strings.NewReader("n\n"))
+		cmd.SetArgs([]string{"--account", f.Source.Identifier})
+
+		require.NoError(cmd.Execute())
+		assert.Contains(stdout.String(), promptNote)
+		assert.Contains(stdout.String(), "Proceed with RFC822 Message-ID derivation? [y/N]:")
+		assert.NotContains(stdout.String(), "reversible with --undo")
+		assert.Contains(stdout.String(), "Aborted.")
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, messageID), "planning and cancellation stay read-only")
+	})
+
+	t.Run("per-source", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupNoBackup = true
+		f := storetest.New(t)
+		messageID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"per-source-prompt", "per-source-prompt@example.test")
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		cmd.SetIn(strings.NewReader("n\n"))
+
+		done := captureStdout(t)
+		err := runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		out := done()
+
+		require.NoError(err)
+		assert.Contains(out, "Proceed with RFC822 Message-ID derivation for test@example.com? [y/N]:")
+		assert.NotContains(out, "reversible with --undo")
+		assert.Contains(out, "Skipped.")
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, messageID))
+	})
+
+	t.Run("multiple sources", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		resetDeduplicateRoutingGlobals(t)
+		dedupNoBackup = true
+		f := storetest.New(t)
+		firstID := createPendingRFC822Message(t, f.Store, f.Source.ID, f.ConvID,
+			"multi-first-prompt", "multi-first-prompt@example.test")
+		secondSource, err := f.Store.GetOrCreateSource("mbox", "backup@example.test")
+		require.NoError(err)
+		secondConversation, err := f.Store.EnsureConversation(secondSource.ID, "prompt-thread", "Prompt")
+		require.NoError(err)
+		secondID := createPendingRFC822Message(t, f.Store, secondSource.ID, secondConversation,
+			"multi-second-prompt", "multi-second-prompt@example.test")
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		cmd.SetIn(strings.NewReader("n\nn\n"))
+
+		done := captureStdout(t)
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		out := done()
+
+		require.NoError(err)
+		assert.Contains(out, "Proceed with RFC822 Message-ID derivation for test@example.com? [y/N]:")
+		assert.Contains(out, "Proceed with RFC822 Message-ID derivation for backup@example.test? [y/N]:")
+		assert.Equal(2, strings.Count(out, "Proceed with RFC822 Message-ID derivation for"))
+		assert.NotContains(out, "reversible with --undo")
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, firstID))
+		assert.Empty(storedRFC822IDForCLI(t, f.Store, secondID))
+	})
+}
+
+func TestDeduplicatePromptRetainsUndoGuidanceForDuplicateMerge(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	resetDeduplicateRoutingGlobals(t)
+	dedupNoBackup = true
+	f := storetest.New(t)
+	messageIDs := f.CreateMessages(2)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
+		"prompt-duplicate@example.test", messageIDs[0], messageIDs[1])
+	require.NoError(err)
+	cfgScoped := dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetIn(strings.NewReader("n\n"))
+
+	done := captureStdout(t)
+	err = runDeduplicateOnce(cmd, f.Store, "", cfgScoped, dedup.NewEngine(f.Store, cfgScoped, nil))
+	out := done()
+
+	require.NoError(err)
+	assert.Contains(out, "Proceed with deduplication? This will hide 1 duplicates (reversible with --undo). [y/N]:")
+	assert.NotContains(out, "Proceed with RFC822 Message-ID derivation?")
+}
+
+func TestDeduplicatePlanChangedOutputReportsCommitAndNoBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	resetDeduplicateRoutingGlobals(t)
+	dedupYes = true
+	dedupNoBackup = true
+	f := storetest.New(t)
+	messageIDs := f.CreateMessages(2)
+	const sharedID = "revealed-duplicate@example.test"
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), sharedID, messageIDs[0])
+	require.NoError(err)
+	require.NoError(f.Store.UpsertMessageRaw(messageIDs[1], []byte(
+		"Message-ID: <"+sharedID+">\r\n\r\nRevealed duplicate")))
+	cfgScoped := dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	done := captureStdout(t)
+	err = runDeduplicateOnce(
+		cmd, f.Store, "", cfgScoped,
+		dedup.NewEngine(f.Store, cfgScoped, nil),
+	)
+	out := done()
+
+	require.Error(err)
+	require.ErrorIs(err, dedup.ErrPlanChangedAfterRFC822Backfill)
+	assert.Contains(err.Error(), "1 RFC822 Message-ID derivation was committed")
+	assert.Contains(err.Error(), "no duplicate messages were hidden")
+	assert.Contains(err.Error(), "no dedup batch was created")
+	assert.Contains(err.Error(), "rerun deduplicate to review the updated plan")
+	assert.NotContains(out, "Batch ID:")
+	assert.Equal(sharedID, storedRFC822IDForCLI(t, f.Store, messageIDs[1]), "derivation committed")
+	var hidden int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE id IN (?, ?) AND deleted_at IS NOT NULL`),
+		messageIDs[0], messageIDs[1],
+	).Scan(&hidden))
+	assert.Zero(hidden, "plan fence hides no messages")
+}
+
+func withDeduplicateTestConfig(t *testing.T) {
+	t.Helper()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+}
+
+func createPendingRFC822Message(
+	t *testing.T,
+	st *store.Store,
+	sourceID, conversationID int64,
+	sourceMessageID, rfc822MessageID string,
+) int64 {
+	t.Helper()
+	id, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        sourceID,
+		SourceMessageID: sourceMessageID,
+		MessageType:     "email",
+		SizeEstimate:    1000,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRaw(id, []byte(
+		"Message-ID: <"+rfc822MessageID+">\r\nFrom: sender@example.test\r\n\r\nBody")))
+	return id
+}
+
+func storedRFC822IDForCLI(t *testing.T, st *store.Store, messageID int64) string {
+	t.Helper()
+	var value sql.NullString
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT rfc822_message_id FROM messages WHERE id = ?`), messageID).Scan(&value))
+	return value.String
+}
 
 func TestDeduplicateNonInteractiveFormsUseDaemonRunner(t *testing.T) {
 	tests := []struct {

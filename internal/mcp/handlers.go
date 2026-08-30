@@ -2350,7 +2350,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		BatchID:      manifest.ID,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
-		NextStep:     "Run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged' to execute deletion (gated for v1), or 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
+		NextStep:     "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
 	}
 
 	return jsonResult(resp)

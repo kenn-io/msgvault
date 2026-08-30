@@ -487,6 +487,20 @@ func TestCatalogSchemas(t *testing.T) {
 	t.Run("valid numeric defaults and clamps", testNumericCompatibility)
 }
 
+func TestStageDeletionToolDescriptionNamesBothConsentPaths(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tool := stageDeletionDefinition(&handlers{}).tool()
+	durable := "[deletion] remote_enabled = true"
+	oneCommand := "One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1"
+
+	require.Contains(tool.Description, durable)
+	require.Contains(tool.Description, "invoking CLI's config.toml for durable consent")
+	require.Contains(tool.Description, oneCommand)
+	assert.Less(strings.Index(tool.Description, durable), strings.Index(tool.Description, oneCommand),
+		"tool description must present durable invoking-CLI config first")
+}
+
 type numericCaptureEngine struct {
 	*querytest.MockEngine
 

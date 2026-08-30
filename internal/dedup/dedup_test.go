@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -115,6 +116,102 @@ func setArchivedAt(
 		archivedAt, messageID,
 	)
 	require.NoError(t, err, "set archived_at")
+}
+
+func setRFC822MessageID(
+	t *testing.T, st *store.Store, messageID int64, rfc822MessageID string,
+) {
+	t.Helper()
+	_, err := st.DB().Exec(
+		st.Rebind("UPDATE messages SET rfc822_message_id = ? WHERE id = ?"),
+		rfc822MessageID, messageID,
+	)
+	require.NoError(t, err, "set rfc822_message_id")
+}
+
+func TestEngine_ScanKeepsMalformedRFC822DiscoveryGroupIsolated(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	const bracketedID = "< isolated@example.test>"
+	firstID := addMessage(t, f.Store, f.Source, "bracketed-first", bracketedID, false)
+	secondID := addMessage(t, f.Store, f.Source, "bracketed-second", bracketedID, false)
+	bareID := addMessage(t, f.Store, f.Source, "bare-singleton", " isolated@example.test", false)
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Len(report.Groups, 1)
+	group := report.Groups[0]
+	assert.Equal(bracketedID, group.Key)
+	require.Len(group.Messages, 2)
+	assert.ElementsMatch(
+		[]int64{firstID, secondID},
+		[]int64{group.Messages[0].ID, group.Messages[1].ID},
+	)
+
+	summary, err := engine.Execute(t.Context(), report, "malformed-group-isolation")
+	require.NoError(err)
+	assert.Equal(1, summary.GroupsMerged)
+	assertSoftDeleted(t, f.Store, bareID, false)
+
+	var hiddenBracketed int
+	for _, messageID := range []int64{firstID, secondID} {
+		var deletedAt sql.NullTime
+		err := f.Store.DB().QueryRow(
+			f.Store.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), messageID,
+		).Scan(&deletedAt)
+		require.NoError(err)
+		if deletedAt.Valid {
+			hiddenBracketed++
+		}
+	}
+	assert.Equal(1, hiddenBracketed)
+}
+
+func TestEngine_ScanMergesEmbeddedNULMessageIDForms(t *testing.T) {
+	testutil.SkipIfPostgres(t, "PostgreSQL TEXT rejects embedded NUL bytes")
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	groupID := "engine\x00nul@example.test"
+	bareID := addMessage(t, f.Store, f.Source, "nul-bare", groupID, false)
+	bracketedID := addMessage(t, f.Store, f.Source, "nul-bracketed", "<"+groupID+">", false)
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Len(report.Groups, 1)
+	group := report.Groups[0]
+	assert.Equal(groupID, group.Key)
+	require.Len(group.Messages, 2)
+	assert.ElementsMatch(
+		[]int64{bareID, bracketedID},
+		[]int64{group.Messages[0].ID, group.Messages[1].ID},
+	)
+
+	summary, err := engine.Execute(t.Context(), report, "embedded-nul-forms")
+	require.NoError(err)
+	assert.Equal(1, summary.GroupsMerged)
+
+	var hidden int
+	for _, messageID := range []int64{bareID, bracketedID} {
+		var deletedAt sql.NullTime
+		err := f.Store.DB().QueryRow(
+			f.Store.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), messageID,
+		).Scan(&deletedAt)
+		require.NoError(err)
+		if deletedAt.Valid {
+			hidden++
+		}
+	}
+	assert.Equal(1, hidden)
 }
 
 func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
@@ -820,6 +917,8 @@ func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
 		t, st, source, "full-copy", raw,
 		time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
 	)
+	setRFC822MessageID(t, st, partialID, strings.Trim(messageID, "<>"))
+	setRFC822MessageID(t, st, fullID, strings.Trim(messageID, "<>"))
 	_, err = st.DB().Exec(
 		st.Rebind("DELETE FROM attachments WHERE message_id = ?"), partialID,
 	)
@@ -883,6 +982,8 @@ func TestEngine_CrossMailboxPartialFullKeepsAttachmentCompleteCopy(t *testing.T)
 		t, st, fullSource, "mailbox-b-full", raw,
 		time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
 	)
+	setRFC822MessageID(t, st, partialID, strings.Trim(messageID, "<>"))
+	setRFC822MessageID(t, st, fullID, strings.Trim(messageID, "<>"))
 	_, err = st.DB().Exec(
 		st.Rebind("DELETE FROM attachments WHERE message_id = ?"), partialID,
 	)
@@ -1266,4 +1367,211 @@ func TestEngine_AliasOnlyAfterDiscoveryConfirmation(t *testing.T) {
 
 	after := plan(identityAddresses)
 	assert.True(after.MatchedIdentity, "confirmed alias counts as sender identity")
+}
+
+func TestEngine_ScanPlansRFC822BackfillWithoutWriting(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := addMessage(t, f.Store, f.Source, "missing-rfc822", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(messageID,
+		[]byte("Message-ID: <derived@example.test>\r\nSubject: Planned\r\n\r\nBody")))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+
+	assert.Equal(int64(1), report.BackfillCandidates)
+	assert.Equal(int64(0), report.BackfillFailed)
+	assert.Equal(int64(-1), report.BackfilledCount)
+	assert.Equal(int64(1), report.PendingRFC822IDBackfill())
+	assert.NotEmpty(report.BackfillPlanDigest)
+	assert.Equal(0, report.DuplicateGroups)
+
+	var storedID sql.NullString
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"),
+		messageID,
+	).Scan(&storedID)
+	require.NoError(err)
+	assert.False(storedID.Valid, "Scan must not persist the planned derivation")
+}
+
+func TestEngine_ScanMalformedOnlyBackfillDoesNotExposePendingWork(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := addMessage(t, f.Store, f.Source, "malformed-rfc822", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(messageID,
+		[]byte("Subject: Missing Message-ID\r\n\r\nBody")))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+
+	assert.Equal(int64(1), report.BackfillCandidates)
+	assert.Equal(int64(1), report.BackfillFailed)
+	assert.Equal(int64(0), report.BackfilledCount)
+	assert.Equal(int64(0), report.PendingRFC822IDBackfill())
+	assert.Equal(0, report.DuplicateGroups)
+}
+
+func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	winnerID := addMessage(t, f.Store, f.Source, "winner", "stable@example.test", false)
+	loserID := addMessage(t, f.Store, f.Source, "loser", "stable@example.test", false)
+	derivedID := addMessage(t, f.Store, f.Source, "derived", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(derivedID,
+		[]byte("Message-ID: <unrelated@example.test>\r\nSubject: Unrelated\r\n\r\nBody")))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Equal(int64(1), report.PendingRFC822IDBackfill())
+	require.Len(report.Groups, 1)
+
+	summary, err := engine.Execute(t.Context(), report, "unchanged-plan")
+	require.NoError(err)
+	assert.Equal(int64(1), summary.RFC822IDsBackfilled)
+	assert.Equal(1, summary.GroupsMerged)
+	assertSoftDeleted(t, f.Store, winnerID, false)
+	assertSoftDeleted(t, f.Store, loserID, true)
+
+	var storedID sql.NullString
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"),
+		derivedID,
+	).Scan(&storedID)
+	require.NoError(err)
+	assert.Equal(sql.NullString{String: "unrelated@example.test", Valid: true}, storedID)
+}
+
+func TestEngine_ExecuteStopsBeforeMergeWhenBackfillRevealsDuplicate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	const rfc822ID = "revealed@example.test"
+	raw := []byte("Message-ID: <" + rfc822ID + ">\r\nSubject: Same\r\n\r\nBody")
+	winnerID := addMessage(t, f.Store, f.Source, "persisted", "<"+rfc822ID+">", false)
+	loserID := addMessage(t, f.Store, f.Source, "derivable", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(winnerID, raw))
+	require.NoError(f.Store.UpsertMessageRaw(loserID, raw))
+
+	deletionsDir := filepath.Join(t.TempDir(), "deletions")
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs:           []int64{f.Source.ID},
+		Account:                    f.Source.Identifier,
+		DeleteDupsFromSourceServer: true,
+		DeletionsDir:               deletionsDir,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Equal(int64(1), report.PendingRFC822IDBackfill())
+	require.Empty(report.Groups)
+
+	summary, err := engine.Execute(t.Context(), report, "changed-plan")
+	require.Error(err)
+	require.ErrorIs(err, dedup.ErrPlanChangedAfterRFC822Backfill)
+	assert.Equal(int64(1), summary.RFC822IDsBackfilled)
+	assert.Equal(0, summary.GroupsMerged)
+	assertSoftDeleted(t, f.Store, winnerID, false)
+	assertSoftDeleted(t, f.Store, loserID, false)
+
+	var batched int
+	err = f.Store.DB().QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE delete_batch_id IS NOT NULL",
+	).Scan(&batched)
+	require.NoError(err)
+	assert.Equal(0, batched)
+
+	mgr, err := deletion.NewManager(deletionsDir)
+	require.NoError(err)
+	pending, err := mgr.ListPending()
+	require.NoError(err)
+	assert.Empty(pending)
+
+	refreshed, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Len(refreshed.Groups, 1)
+	group := refreshed.Groups[0]
+	assert.Equal("message-id", group.KeyType)
+	assert.Equal(rfc822ID, group.Key)
+	assert.Equal(winnerID, group.Messages[group.Survivor].ID)
+	var loserIDs []int64
+	for i, message := range group.Messages {
+		if i != group.Survivor {
+			loserIDs = append(loserIDs, message.ID)
+		}
+	}
+	assert.Equal([]int64{loserID}, loserIDs)
+}
+
+func TestEngine_FormatReportShowsBackfillCandidatesReadyAndFailures(t *testing.T) {
+	assert := assert.New(t)
+	f := storetest.New(t)
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+	}, nil)
+
+	report := &dedup.Report{
+		BackfilledCount:    -2,
+		BackfillCandidates: 3,
+		BackfillFailed:     1,
+	}
+	formatted := engine.FormatReport(report)
+	assert.Contains(formatted,
+		"3 messages with missing RFC822 Message-ID were inspected.")
+	assert.Contains(formatted,
+		"2 RFC822 Message-ID values are ready to be derived from stored MIME after confirmation.")
+	assert.Contains(formatted,
+		"1 message could not provide a usable Message-ID and will be skipped.")
+	assert.NotContains(formatted, "Backfilled")
+
+	malformedOnly := engine.FormatReport(&dedup.Report{
+		BackfillCandidates: 1,
+		BackfillFailed:     1,
+	})
+	assert.Contains(malformedOnly,
+		"1 message with missing RFC822 Message-ID was inspected.")
+	assert.Contains(malformedOnly,
+		"1 message could not provide a usable Message-ID and will be skipped.")
+	assert.NotContains(malformedOnly, "ready to be derived")
+}
+
+func TestEngine_PlanChangedErrorReportsCommittedDerivationAndNoBatch(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	const rfc822ID = "error-detail@example.test"
+	raw := []byte("Message-ID: <" + rfc822ID + ">\r\nSubject: Same\r\n\r\nBody")
+	persistedID := addMessage(t, f.Store, f.Source, "persisted-error", rfc822ID, false)
+	derivedID := addMessage(t, f.Store, f.Source, "derived-error", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(persistedID, raw))
+	require.NoError(f.Store.UpsertMessageRaw(derivedID, raw))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs:           []int64{f.Source.ID},
+		Account:                    f.Source.Identifier,
+		DeleteDupsFromSourceServer: true,
+		DeletionsDir:               filepath.Join(t.TempDir(), "deletions"),
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+
+	_, err = engine.Execute(t.Context(), report, "error-detail")
+	require.Error(err)
+	require.ErrorIs(err, dedup.ErrPlanChangedAfterRFC822Backfill)
+	require.ErrorContains(err, "1 RFC822 Message-ID derivation was committed")
+	require.ErrorContains(err,
+		"no duplicate messages were hidden and no dedup batch was created; rerun deduplicate to review the updated plan")
 }

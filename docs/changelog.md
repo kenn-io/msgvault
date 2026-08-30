@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-30
 title: Changelog
 description: Release history for msgvault
 ---
@@ -31,6 +32,14 @@ All notable changes to msgvault, grouped by release.
 
 **Features**
 
+- Starting in v0.20.0, remote deletion remains permanently opt-in. The
+  invoking CLI can grant durable consent with
+  `[deletion] remote_enabled = true`; `MSGVAULT_ENABLE_REMOTE_DELETE=1`
+  remains a permanent one-command
+  alternative, with no planned automatic removal of the guardrail. Invoking
+  clients safely forward consent through local and remote daemon execution;
+  daemon-host config and environment are not treated as client consent.
+
 - Exact source selection is available through `--source-id` on `sync`,
   `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
   Account arguments continue to accept identifiers and display names, while
@@ -58,6 +67,12 @@ All notable changes to msgvault, grouped by release.
 
 **Bug fixes**
 
+- Deduplication now derives missing RFC822 Message-ID metadata only after the
+  user confirms the reviewed plan, applies the exact derivation plan atomically,
+  rescans, and refuses duplicate hiding when the actionable plan changes.
+- Remote deletion forwarding strips daemon-host opt-in state and accepts only
+  authenticated invoking-client consent, preventing a server's configuration
+  or environment from authorizing an unrelated client command.
 - Everything and Files now page narrow analytical metadata before enriching
   participant details, preventing default listings on multi-million-message
   archives from exhausting the interactive DuckDB memory budget.

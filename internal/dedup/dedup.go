@@ -214,19 +214,33 @@ type Report struct {
 	BySourcePair               map[string]int // "gmail+mbox" -> groups
 	SampleGroups               []DuplicateGroup
 	Groups                     []DuplicateGroup
-	BackfilledCount            int64
+	BackfilledCount            int64 // compatibility: -N means N ready; never positive in Scan
+	BackfillCandidates         int64
+	BackfillFailed             int64
+	BackfillPlanDigest         string
+	rfc822Backfill             store.RFC822IDBackfillPlan
 	ContentHashGroups          int
 	SkippedDecompressionErrors int
 }
 
+// PendingRFC822IDBackfill reports how many planned RFC822 Message-ID values
+// are ready to be derived after confirmation.
+func (r *Report) PendingRFC822IDBackfill() int64 {
+	if r == nil || r.BackfilledCount >= 0 {
+		return 0
+	}
+	return -r.BackfilledCount
+}
+
 // ExecutionSummary summarises the results of dedup execution.
 type ExecutionSummary struct {
-	GroupsMerged      int
-	MessagesRemoved   int
-	LabelsTransferred int
-	RawMIMEBackfilled int
-	BatchID           string
-	StagedManifests   []StagedManifest
+	GroupsMerged        int
+	MessagesRemoved     int
+	LabelsTransferred   int
+	RawMIMEBackfilled   int
+	RFC822IDsBackfilled int64
+	BatchID             string
+	StagedManifests     []StagedManifest
 }
 
 // StagedManifest records a single deletion manifest created by dedup.
@@ -262,18 +276,9 @@ type remoteKey struct {
 // grouping; the CLI ensures this by iterating sources one at a time when
 // no explicit --account is given.
 //
-// Side effect (non-dry-run only): if the scoped sources contain messages
-// with no rfc822_message_id but with stored MIME, Scan calls
-// store.BackfillRFC822IDs to derive the column from the stored headers
-// before grouping. The backfill is idempotent metadata derivation — it
-// fills a previously-NULL column from data already on the row, never
-// overwrites a non-NULL value, and changes no message content. It happens
-// during scan (rather than during merge) because the duplicate groups it
-// surfaces are needed for the report the user is shown before the merge
-// confirmation. The dedup-batch backup-before-merge contract still holds:
-// the backup is sized for the merge (which soft-deletes losers and
-// transfers labels), not for this metadata catch-up. Dry-run mode skips
-// the backfill and reports the count as a "would-backfill" preview.
+// Scan is read-only. Missing RFC822 Message-ID values that can be derived
+// from stored MIME are retained as an exact plan for Execute to apply only
+// after confirmation.
 func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	if len(e.config.AccountSourceIDs) == 0 {
 		return nil, errors.New("AccountSourceIDs must be non-empty; use per-source iteration for unscoped dedup")
@@ -288,42 +293,11 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		"dry_run", e.config.DryRun,
 	)
 
-	count, err := e.store.CountMessagesWithoutRFC822ID(
-		e.config.AccountSourceIDs...,
+	backfillPlan, err := e.store.PlanRFC822IDBackfill(
+		ctx, e.config.AccountSourceIDs,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("count messages without rfc822 id: %w", err)
-	}
-
-	var backfilledCount int64
-	if count > 0 && e.config.DryRun {
-		e.logger.Info(
-			"dry-run: backfill needed before dedup can run — "+
-				"messages missing rfc822_message_id will be skipped",
-			"count", count)
-		backfilledCount = -count // negative signals "needed but skipped"
-	} else if count > 0 {
-		e.logger.Info("backfilling rfc822_message_id from stored MIME",
-			"count", count)
-		var backfillFailed int64
-		backfilledCount, backfillFailed, err = e.store.BackfillRFC822IDs(
-			e.config.AccountSourceIDs,
-			func(done, total int64) {
-				e.logger.Info("backfill progress",
-					"done", done, "total", total)
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("backfill rfc822 ids: %w", err)
-		}
-		if backfilledCount > 0 {
-			e.logger.Info("backfilled rfc822_message_id",
-				"count", backfilledCount)
-		}
-		if backfillFailed > 0 {
-			e.logger.Warn("backfill: some messages could not be parsed",
-				"failed", backfillFailed)
-		}
+		return nil, fmt.Errorf("plan RFC822 ID backfill: %w", err)
 	}
 
 	totalMessages, err := e.store.CountActiveMessages(
@@ -366,9 +340,13 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	}
 
 	report := &Report{
-		TotalMessages:   totalMessages,
-		BySourcePair:    make(map[string]int),
-		BackfilledCount: backfilledCount,
+		TotalMessages:      totalMessages,
+		BySourcePair:       make(map[string]int),
+		BackfilledCount:    -int64(len(backfillPlan.Items)),
+		BackfillCandidates: backfillPlan.Candidates,
+		BackfillFailed:     backfillPlan.Failed,
+		BackfillPlanDigest: backfillPlan.Digest(),
+		rfc822Backfill:     backfillPlan,
 	}
 
 	for _, sg := range storeGroups {
@@ -520,7 +498,9 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		"groups", report.DuplicateGroups,
 		"messages_to_prune", report.DuplicateMessages,
 		"content_hash_groups", report.ContentHashGroups,
-		"backfilled", report.BackfilledCount,
+		"backfill_candidates", report.BackfillCandidates,
+		"backfill_ready", report.PendingRFC822IDBackfill(),
+		"backfill_failed", report.BackfillFailed,
 		"skipped_decompression_errors", report.SkippedDecompressionErrors,
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
@@ -979,6 +959,102 @@ func PlannedRemoteDeletionTargets(
 	return targets, nil
 }
 
+// ErrPlanChangedAfterRFC822Backfill means the actionable deduplication plan
+// no longer matches the plan the user confirmed.
+var ErrPlanChangedAfterRFC822Backfill = errors.New(
+	"deduplication plan changed after RFC822 Message-ID derivation",
+)
+
+type actionableGroup struct {
+	KeyType    string
+	Key        string
+	SurvivorID int64
+	LoserIDs   []int64
+}
+
+type actionablePlan struct {
+	Groups        []actionableGroup
+	RemoteTargets []RemoteDeletionTarget
+}
+
+func (e *Engine) canonicalActionablePlan(
+	ctx context.Context, report *Report,
+) (actionablePlan, error) {
+	if report == nil {
+		return actionablePlan{}, errors.New("dedup report is nil")
+	}
+
+	plan := actionablePlan{Groups: make([]actionableGroup, 0, len(report.Groups))}
+	for _, group := range report.Groups {
+		if group.Survivor < 0 || group.Survivor >= len(group.Messages) {
+			return actionablePlan{}, fmt.Errorf(
+				"duplicate group %q has invalid survivor index %d",
+				group.Key, group.Survivor,
+			)
+		}
+		canonical := actionableGroup{
+			KeyType:    group.KeyType,
+			Key:        group.Key,
+			SurvivorID: group.Messages[group.Survivor].ID,
+			LoserIDs:   make([]int64, 0, len(group.Messages)-1),
+		}
+		for i, message := range group.Messages {
+			if i != group.Survivor {
+				canonical.LoserIDs = append(canonical.LoserIDs, message.ID)
+			}
+		}
+		slices.Sort(canonical.LoserIDs)
+		plan.Groups = append(plan.Groups, canonical)
+	}
+	sort.Slice(plan.Groups, func(i, j int) bool {
+		left, right := plan.Groups[i], plan.Groups[j]
+		if left.KeyType != right.KeyType {
+			return left.KeyType < right.KeyType
+		}
+		if left.Key != right.Key {
+			return left.Key < right.Key
+		}
+		if left.SurvivorID != right.SurvivorID {
+			return left.SurvivorID < right.SurvivorID
+		}
+		return slices.Compare(left.LoserIDs, right.LoserIDs) < 0
+	})
+
+	if e.config.DeleteDupsFromSourceServer {
+		var err error
+		plan.RemoteTargets, err = PlannedRemoteDeletionTargets(ctx, report)
+		if err != nil {
+			return actionablePlan{}, err
+		}
+		sort.Slice(plan.RemoteTargets, func(i, j int) bool {
+			left, right := plan.RemoteTargets[i], plan.RemoteTargets[j]
+			if left.SourceID != right.SourceID {
+				return left.SourceID < right.SourceID
+			}
+			if left.SourceType != right.SourceType {
+				return left.SourceType < right.SourceType
+			}
+			if left.SourceIdentifier != right.SourceIdentifier {
+				return left.SourceIdentifier < right.SourceIdentifier
+			}
+			return left.SourceMessageID < right.SourceMessageID
+		})
+	}
+	return plan, nil
+}
+
+func actionablePlansEqual(left, right actionablePlan) bool {
+	if !slices.Equal(left.RemoteTargets, right.RemoteTargets) {
+		return false
+	}
+	return slices.EqualFunc(left.Groups, right.Groups, func(a, b actionableGroup) bool {
+		return a.KeyType == b.KeyType &&
+			a.Key == b.Key &&
+			a.SurvivorID == b.SurvivorID &&
+			slices.Equal(a.LoserIDs, b.LoserIDs)
+	})
+}
+
 // Execute merges every duplicate group: unions labels onto the
 // survivor, soft-deletes the pruned duplicates, and — when
 // DeleteDupsFromSourceServer is enabled AND a pruned copy shares a
@@ -998,9 +1074,51 @@ func (e *Engine) Execute(
 		"stage_remote_deletion", e.config.DeleteDupsFromSourceServer,
 	)
 
+	backfilled, err := e.store.ApplyRFC822IDBackfill(
+		ctx,
+		e.config.AccountSourceIDs,
+		report.rfc822Backfill,
+		func(done, total int64) {
+			e.logger.Info("RFC822 Message-ID derivation progress",
+				"done", done, "total", total)
+		},
+	)
+	if err != nil {
+		return summary, fmt.Errorf("apply RFC822 ID backfill plan: %w", err)
+	}
+	summary.RFC822IDsBackfilled = backfilled
+
+	refreshed, err := e.Scan(ctx)
+	if err != nil {
+		return summary, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)
+	}
+	confirmedPlan, err := e.canonicalActionablePlan(ctx, report)
+	if err != nil {
+		return summary, fmt.Errorf("canonicalize confirmed deduplication plan: %w", err)
+	}
+	refreshedPlan, err := e.canonicalActionablePlan(ctx, refreshed)
+	if err != nil {
+		return summary, fmt.Errorf("canonicalize refreshed deduplication plan: %w", err)
+	}
+	if !actionablePlansEqual(confirmedPlan, refreshedPlan) {
+		derivationNoun, derivationVerb := "derivations", "were"
+		if backfilled == 1 {
+			derivationNoun, derivationVerb = "derivation", "was"
+		}
+		return summary, fmt.Errorf(
+			"%w: %d RFC822 Message-ID %s %s committed; "+
+				"no duplicate messages were hidden and no dedup batch was created; "+
+				"rerun deduplicate to review the updated plan",
+			ErrPlanChangedAfterRFC822Backfill,
+			backfilled,
+			derivationNoun,
+			derivationVerb,
+		)
+	}
+	report = refreshed
+
 	remoteByKey := make(map[remoteKey][]string)
 	if e.config.DeleteDupsFromSourceServer {
-		var err error
 		remoteByKey, err = remoteDeletionTargets(ctx, report)
 		if err != nil {
 			return summary, err
@@ -1266,18 +1384,35 @@ func (e *Engine) FormatReport(r *Report) string {
 	var sb strings.Builder
 	sb.WriteString("\n=== Deduplication Report ===\n\n")
 
-	if r.BackfilledCount < 0 {
+	wroteBackfillStatus := false
+	if r.BackfillCandidates > 0 {
+		verb := "were"
+		if r.BackfillCandidates == 1 {
+			verb = "was"
+		}
 		fmt.Fprintf(&sb,
-			"Note: %d messages need RFC822 Message-ID backfill "+
-				"from stored MIME (skipped in dry-run).\n"+
-				"These messages will be backfilled and included "+
-				"when you re-run without --dry-run.\n\n",
-			-r.BackfilledCount)
-	} else if r.BackfilledCount > 0 {
+			"%d message%s with missing RFC822 Message-ID %s inspected.\n",
+			r.BackfillCandidates, pluralSuffix(r.BackfillCandidates), verb)
+		wroteBackfillStatus = true
+	}
+	if pending := r.PendingRFC822IDBackfill(); pending > 0 {
+		verb := "are"
+		if pending == 1 {
+			verb = "is"
+		}
 		fmt.Fprintf(&sb,
-			"Backfilled %d messages with RFC822 Message-ID "+
-				"from stored MIME.\n\n",
-			r.BackfilledCount)
+			"%d RFC822 Message-ID value%s %s ready to be derived from stored MIME after confirmation.\n",
+			pending, pluralSuffix(pending), verb)
+		wroteBackfillStatus = true
+	}
+	if r.BackfillFailed > 0 {
+		fmt.Fprintf(&sb,
+			"%d message%s could not provide a usable Message-ID and will be skipped.\n",
+			r.BackfillFailed, pluralSuffix(r.BackfillFailed))
+		wroteBackfillStatus = true
+	}
+	if wroteBackfillStatus {
+		sb.WriteString("\n")
 	}
 
 	if r.DuplicateGroups == 0 {
@@ -1356,6 +1491,13 @@ func (e *Engine) FormatReport(r *Report) string {
 	return sb.String()
 }
 
+func pluralSuffix(count int64) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // FormatMethodology returns a detailed explanation of how dedup works.
 func (e *Engine) FormatMethodology() string {
 	var sb strings.Builder
@@ -1405,9 +1547,10 @@ func (e *Engine) FormatMethodology() string {
 		"supplementary fallback.\n")
 	sb.WriteString("  Messages are grouped by the RFC822 Message-ID " +
 		"header.\n")
-	sb.WriteString("  Messages missing that header are backfilled " +
-		"from stored MIME\n")
-	sb.WriteString("  before the scan runs.")
+	sb.WriteString("  Derivable Message-IDs missing from stored metadata are planned " +
+		"during the scan\n")
+	sb.WriteString("  and applied only after confirmation; dedup rescans and stops if " +
+		"the plan changes.")
 	if e.config.ContentHashFallback {
 		sb.WriteString(" Every remaining message with stored MIME is then compared via\n")
 		sb.WriteString("  a normalized raw-MIME hash that strips transport " +

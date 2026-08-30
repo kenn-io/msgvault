@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-30
 title: Deleting Email
 description: Staging messages for deletion, reviewing manifests, and executing deletes from Gmail or IMAP.
 ---
@@ -80,8 +81,9 @@ curl -X DELETE -H "Authorization: Bearer $MSGVAULT_API_KEY" \
 ```
 
 API staging still only creates or cancels local manifests. Remote deletion
-continues to require the explicit `delete-staged` execution step and the
-`MSGVAULT_ENABLE_REMOTE_DELETE=1` guard.
+continues to require the explicit `delete-staged` execution step and invoking
+CLI consent, configured durably or supplied for one command as described
+below.
 
 ## Staging Steps
 
@@ -124,26 +126,42 @@ Staged deletions create manifests that record exactly which messages will be aff
 msgvault delete-staged --list
 
 # Execute deletion for a Gmail account (moves to trash by default)
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com
+msgvault delete-staged --account you@gmail.com
 
 # Execute deletion for an IMAP account (permanent)
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@fastmail.com
+msgvault delete-staged --account you@fastmail.com
 
 # Permanently delete Gmail messages instead of moving them to trash
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com --permanent
+msgvault delete-staged --account you@gmail.com --permanent
 ```
 
 Gmail deletion moves messages to trash by default, which is recoverable for 30 days in Gmail. Use `--permanent` for Gmail batch-API permanent deletion. For IMAP accounts, msgvault uses `UID STORE \Deleted` followed by `UID EXPUNGE` to permanently remove messages. On large batches it falls back to per-message deletion. Dry-run mode works for both Gmail and IMAP accounts.
 
 ## Enabling Remote Deletion
 
-Remote deletion is gated behind an environment variable so it can never run by accident. Set `MSGVAULT_ENABLE_REMOTE_DELETE=1` on the command that executes deletions:
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail.
+
+Durable consent belongs in the invoking CLI's `config.toml`:
+
+```toml
+[deletion]
+remote_enabled = true
+```
+
+As a one-command alternative:
 
 ```bash
 MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com
 ```
 
-Read-only modes (`msgvault delete-staged --list` and `--dry-run`) work without the gate, so you can always review exactly what is staged before you enable execution.
+When remote mode is configured, the invoking CLI forwards its effective
+consent for that operation. The remote daemon's own `[deletion]` section is
+not server policy for a command invoked elsewhere. Staging, listing,
+inspecting, and dry-running deletion batches remain ungated, so you can always
+review exactly what is staged before enabling execution.
 
 ## Permission Upgrade
 

@@ -274,7 +274,7 @@ func runCancelDeletion(cmd *cobra.Command, args []string) error {
 var (
 	// deletePermanent opts in to permanent batch deletion. Default is
 	// trash (30-day Gmail recovery), which is the safer choice for the
-	// v1 release: every other rung of the deletion progression
+	// deletion progression: every other rung
 	// (dedup-hide, local hard delete) is locally reversible, so the
 	// remote rung should be too unless the user explicitly says
 	// otherwise.
@@ -302,14 +302,15 @@ const (
 	deleteStagedScopeEscalationHeadline      = "PERMISSION UPGRADE REQUIRED"
 )
 
-// remoteDeleteEnvVar gates execution of staged deletions against Gmail
-// for the v1 release. Staging, listing, and inspecting manifests stay
-// available unconditionally so the rest of the pipeline can be exercised;
-// only the destructive Gmail-API call is gated.
+// remoteDeleteEnvVar enables staged deletion execution for one command.
+// Durable consent comes from the invoking CLI's deletion.remote_enabled
+// config. Staging, listing, and inspecting manifests stay available
+// unconditionally; only the destructive source-server call is gated.
 const remoteDeleteEnvVar = "MSGVAULT_ENABLE_REMOTE_DELETE"
 
 func remoteDeleteEnabled() bool {
-	return os.Getenv(remoteDeleteEnvVar) == "1"
+	return os.Getenv(remoteDeleteEnvVar) == "1" ||
+		(!isDaemonCLISubprocess() && cfg != nil && cfg.Deletion.RemoteEnabled)
 }
 
 type deleteStagedPlanOptions struct {
@@ -443,7 +444,9 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 			totalMessages += len(m.GmailIDs)
 		}
 		fmt.Fprintf(&out, "\nTotal: %d messages across %d batch(es)\n", totalMessages, len(manifests))
-		out.WriteString("\nUse 'msgvault delete-staged' to execute, or 'msgvault show-deletion <id>' for details.\n")
+		out.WriteString("\nUse 'msgvault show-deletion <id>' for details.\n")
+		out.WriteString("To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'.\n")
+		out.WriteString("One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.\n")
 		plan.Stdout = out.String()
 		return plan, nil
 	}
@@ -491,10 +494,7 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 	plan.NeedsExecution = true
 	if !opts.RemoteDeleteEnabled {
 		plan.BlockedError = fmt.Sprintf(
-			"remote deletion is gated in this release; "+
-				"set %s=1 to opt in "+
-				"(use 'msgvault delete-staged --list' or --dry-run to inspect "+
-				"staged batches without executing)",
+			"remote deletion is gated; set [deletion] remote_enabled = true in the invoking CLI's config.toml for durable consent; one-command alternative: %s=1",
 			remoteDeleteEnvVar,
 		)
 		plan.Stdout = out.String()
@@ -858,16 +858,25 @@ The default is trash because every other rung of the deletion progression
 in msgvault is locally reversible; the remote rung is too unless the user
 explicitly opts out of recoverability.
 
-Execution is gated for the v1 release. Set MSGVAULT_ENABLE_REMOTE_DELETE=1 to
-opt in. Read-only modes (--list, --dry-run) work without the gate.
+Starting in v0.20.0, remote deletion remains permanently opt-in. In the
+invoking CLI's config.toml, enable it durably with:
+
+  [deletion]
+  remote_enabled = true
+
+Or enable one command with MSGVAULT_ENABLE_REMOTE_DELETE=1. Both mechanisms
+are permanent; there is no planned automatic removal of the guardrail. A
+remote daemon's deletion section is not policy for a command invoked
+elsewhere. Staging and read-only modes (--list, --dry-run) work without the
+gate.
 
 Examples:
   msgvault delete-staged --list         # Show staged batches (always allowed)
   msgvault delete-staged --dry-run      # Preview without executing (always allowed)
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged batch-123
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --permanent
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes`,
+  msgvault delete-staged                 # With durable config consent
+  msgvault delete-staged batch-123       # With durable config consent
+  msgvault delete-staged --permanent     # With durable config consent
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes  # One command`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDeleteStagedHTTP(cmd, args)

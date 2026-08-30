@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-30
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1884,7 +1885,14 @@ msgvault delete-staged [batch-id] [flags]
 | `--account` | Filter to one source by identifier or unique display name |
 | `--source-id ID` | Filter to exactly one source by numeric ID; mutually exclusive with `--account` |
 
-Execution requires `MSGVAULT_ENABLE_REMOTE_DELETE=1`. `--list` and `--dry-run` work without the gate. `--permanent` and `--yes` are mutually exclusive because permanent deletion always requires the destructive confirmation prompt.
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail. A remote daemon's own
+`[deletion]` section is not server policy for a command invoked elsewhere.
+Staging, `--list`, and `--dry-run` remain ungated. `--permanent` and `--yes`
+are mutually exclusive because permanent deletion always requires the
+destructive confirmation prompt.
 
 ---
 

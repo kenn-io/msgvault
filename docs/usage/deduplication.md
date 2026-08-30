@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-27
+last_edited: 2026-08-30
 title: Deduplication
 description: Find and merge duplicate messages across accounts and collections with a reversible, five-rung safety ladder that never deletes anything by default.
 ---
@@ -81,7 +81,7 @@ Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 i
 - **Rung 01, scan.** `deduplicate --dry-run` reports the duplicate groups it found, the proposed survivor for each, and why. Nothing is modified.
 - **Rung 02, hide.** `deduplicate` applies the scan. Pruned copies are hidden from normal reads but kept on disk, and the run prints a batch ID. `--undo <batch-id>` restores them.
 - **Rung 03, local hard delete.** `delete-deduped` permanently removes hidden rows from the local archive to reclaim disk. It acts on named batches via `--batch` and refuses to touch rows it did not hide; all selected batches commit as one transaction, so cancellation rolls the whole selection back. `--all-hidden` purges every hidden row and always prompts for confirmation. Undo cannot recover purged rows.
-- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list`, target one batch with `delete-staged <batch-id>`, and note that execution is gated behind `MSGVAULT_ENABLE_REMOTE_DELETE=1`. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
+- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list` and target one batch with `delete-staged <batch-id>`. Execution requires durable `[deletion] remote_enabled = true` consent in the invoking CLI config, or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
 
 !!! note "What \"hidden\" means"
     A hidden copy is excluded from search, the Web UI, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
@@ -148,9 +148,19 @@ msgvault deduplicate --collection Personal --delete-dups-from-source-server
 # Review the pending deletion manifests
 msgvault delete-staged --list
 
-# Execute one batch against the source server (gated)
+# Execute one batch against the source server after durable config consent
+msgvault delete-staged <batch-id>
+
+# Or grant consent for this command only
 MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged <batch-id>
 ```
+
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail. A remote daemon's own
+`[deletion]` section is not policy for a command invoked elsewhere. Staging,
+listing, inspecting, and dry-running deletion batches remain ungated.
 
 See [Deleting Email](/usage/deletion/) for the full workflow.
 

@@ -367,6 +367,12 @@ type Dialect interface {
 	// integer comparisons against it, so the bare column name is correct.
 	BoolTrueExpr(col string) string
 
+	// RFC822CanonicalIDExpr returns the SQL expression used to group stored
+	// Message-IDs after removing one structurally valid pair of angle brackets.
+	// SQLite must operate on BLOB bytes because its TEXT length and substring
+	// functions stop at embedded NUL; PostgreSQL TEXT rejects NUL at write time.
+	RFC822CanonicalIDExpr(col string) string
+
 	// BuildFTSArg formats a slice of user-supplied search terms into the
 	// single string argument that FTSSearchClause's WHERE fragment binds
 	// against the dialect's FTS function. Both dialects emit prefix-match

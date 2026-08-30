@@ -301,6 +301,23 @@ func (d *SQLiteDialect) InsertOrIgnore(sql string) string { return sql }
 // BoolTrueExpr returns "col = 1" — SQLite stores booleans as 0/1 INTEGER.
 func (d *SQLiteDialect) BoolTrueExpr(col string) string { return col + " = 1" }
 
+// RFC822CanonicalIDExpr strips one clean angle-bracket pair from a stored
+// Message-ID. Every CASE result remains a BLOB so SQLite compares and groups
+// the complete byte string, including bytes after an embedded NUL. The
+// one-byte guards are cast back to TEXT solely to compare with ASCII literals.
+func (d *SQLiteDialect) RFC822CanonicalIDExpr(col string) string {
+	blob := fmt.Sprintf("CAST(%s AS BLOB)", col)
+	return fmt.Sprintf(`CASE
+		WHEN LENGTH(%[1]s) > 2
+		 AND CAST(SUBSTR(%[1]s, 1, 1) AS TEXT) = '<'
+		 AND CAST(SUBSTR(%[1]s, LENGTH(%[1]s), 1) AS TEXT) = '>'
+		 AND CAST(SUBSTR(%[1]s, 2, 1) AS TEXT) NOT IN ('<', '>', ' ')
+		 AND CAST(SUBSTR(%[1]s, LENGTH(%[1]s) - 1, 1) AS TEXT) NOT IN ('<', '>', ' ')
+			THEN SUBSTR(%[1]s, 2, LENGTH(%[1]s) - 2)
+			ELSE %[1]s
+	END`, blob)
+}
+
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 

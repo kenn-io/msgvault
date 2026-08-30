@@ -75,6 +75,19 @@ func TestServerConfigDefaults(t *testing.T) {
 	assert.Empty(t, cfg.Server.APIKey)
 }
 
+func TestDeletionConfigDefaultsDisabledAndLoadsRemoteEnabled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	assert.False(NewDefaultConfig().Deletion.RemoteEnabled)
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte("[deletion]\nremote_enabled = true\n"), 0o600))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+	assert.True(cfg.Deletion.RemoteEnabled)
+}
+
 func TestAnalyticsConfigDefaults(t *testing.T) {
 	assertions := assert.New(t)
 	cfg := NewDefaultConfig()

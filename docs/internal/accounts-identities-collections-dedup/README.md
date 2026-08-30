@@ -1,3 +1,7 @@
+---
+last_edited: 2026-08-30
+---
+
 # Accounts, Identities, Collections, and Deduplication
 
 **Shipped May 3, 2026.** Features for managing the growing size and
@@ -278,11 +282,16 @@ msgvault delete-staged <batch-id>
 
 By default, `delete-staged` moves messages to the source's trash
 (e.g. Gmail's ~30-day Gmail/Trash). Permanent removal requires an
-explicit `--permanent` flag and interactive confirmation. As a v1
-guardrail, the whole remote-delete command is gated behind an
-environment variable (`MSGVAULT_ENABLE_REMOTE_DELETE=1`); read-only
-inspection (`list-deletions`, `show-deletion`, `--list`, `--dry-run`)
-is always permitted.
+explicit `--permanent` flag and interactive confirmation.
+
+Starting in v0.20.0, remote deletion remains permanently opt-in. The
+invoking CLI may enable it durably with
+`[deletion] remote_enabled = true` or for one command with
+`MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both
+mechanisms are permanent; there is no planned automatic removal of the
+guardrail. A remote daemon's own `[deletion]` section is not server
+policy for a command invoked elsewhere. Staging and read-only inspection
+(`list-deletions`, `show-deletion`, `--list`, `--dry-run`) remain ungated.
 
 To cancel a staged batch before it executes:
 
@@ -329,6 +338,9 @@ groups (e.g. one copy on Gmail, another in mbox) stage nothing.
 ```sh
 msgvault list-deletions
 msgvault show-deletion <batch-id>
+msgvault delete-staged <batch-id> # after durable invoking-CLI config consent
+
+# One-command alternative
 MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged <batch-id>
 ```
 

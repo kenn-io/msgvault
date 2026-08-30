@@ -83,6 +83,9 @@ type AccountIdentity struct {
 	ConfirmedAt  time.Time
 }
 
+// Callers comparing identifiers must use NormalizeIdentifierForCompare or
+// EqualIdentifier; raw string equality violates the case-insensitive email
+// and case-preserving non-email contract.
 // looksLikeEmail returns true for tokens that have the shape of an
 // email address. Emails are matched case-insensitively in the identity
 // store; other identifier shapes (phone E.164, Matrix MXIDs like
