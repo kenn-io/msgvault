@@ -93,6 +93,7 @@ CREATE TABLE messages (
     subject TEXT,
     message_type TEXT NOT NULL DEFAULT 'email',
     source_id INTEGER,
+    conversation_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,

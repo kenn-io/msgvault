@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -99,6 +100,53 @@ func TestFusedSearch_VectorOnly_BM25ScoreIsNaN(t *testing.T) {
 	require.Equalf(int64(2), hits[0].MessageID, "expected msg 2 at top, got %+v", hits)
 	assert.Truef(math.IsNaN(hits[0].BM25Score), "BM25Score should be NaN for vector-only, got %v", hits[0].BM25Score)
 	assert.False(math.IsNaN(hits[0].VectorScore), "VectorScore should be present")
+}
+
+func TestNormalizeFusedMainDSNHandlesNetURLWindowsPath(t *testing.T) {
+	got, err := normalizeFusedMainDSN(
+		`file://C:%5CUsers%5Crunner%5Carchive.db?cache=shared`,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, `file:///C:/Users/runner/archive.db?cache=shared`, got)
+}
+
+func TestFusedSearch_MainFileURIWithQuery(t *testing.T) {
+	require := require.New(t)
+	ctx := t.Context()
+	main, mainPath := openFusedMainDB(t)
+	uriPath := filepath.ToSlash(mainPath)
+	if filepath.VolumeName(mainPath) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	mainDSN := (&url.URL{
+		Scheme:   "file",
+		Path:     uriPath,
+		RawQuery: "cache=shared",
+	}).String()
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(t.TempDir(), "vectors.db"),
+		MainPath:  mainDSN,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	generation := seedAndEmbed(t, b, map[int64][]float32{
+		2: unitVec(768, 1),
+	})
+	require.NoError(b.ActivateGeneration(ctx, generation, true))
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"meeting"},
+		Generation: generation,
+		KPerSignal: 10,
+		Limit:      5,
+		RRFK:       60,
+	})
+	require.NoError(err, "FusedSearch through file URI")
+	require.NotEmpty(hits)
+	assert.Equal(t, int64(2), hits[0].MessageID)
 }
 
 // TestFusedSearch_AnnSaturation_VectorOnly proves ANN-side saturation

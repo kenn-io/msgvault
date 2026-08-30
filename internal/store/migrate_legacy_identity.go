@@ -330,7 +330,7 @@ func (s *Store) legacyIdentityMigrationAppliedTx(ctx context.Context, tx *logged
 
 func SourceTypeUsesEmailIdentity(sourceType string) bool {
 	switch sourceType {
-	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail", "pst":
+	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail", "pst", "eml":
 		return true
 	}
 	return false

@@ -48,6 +48,12 @@ func SetFTS5AvailableForTest(s *Store, v bool) {
 	s.fts5Available = v
 }
 
+// SetSenderRepairMessageLockHookForTest pauses sender repair immediately after
+// it has acquired the message-level recipient-write lock.
+func (s *Store) SetSenderRepairMessageLockHookForTest(fn func()) {
+	s.senderRepairMessageLockHook = fn
+}
+
 // SetCardDAVConflictResolutionSnapshotHookForTest pauses keep-remote after its
 // unlocked routing snapshot and before the ordered resolution transaction.
 func (s *Store) SetCardDAVConflictResolutionSnapshotHookForTest(fn func()) {

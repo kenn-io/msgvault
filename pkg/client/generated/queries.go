@@ -789,7 +789,7 @@ type SearchMessagesQuery struct {
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
-	// Mode Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes
+	// Mode Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid
 	Mode *string `json:"mode,omitempty"`
 
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
@@ -818,6 +818,9 @@ type SearchMessagesQuery struct {
 
 	// Collection Restrict to one collection
 	Collection *string `json:"collection,omitempty"`
+
+	// ConversationID Exact conversation ID (all search modes)
+	ConversationID *int64 `json:"conversation_id,omitempty"`
 
 	// Sender Exact sender email/address filter (vector or hybrid mode only)
 	Sender *string `json:"sender,omitempty"`

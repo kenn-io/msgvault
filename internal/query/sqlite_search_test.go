@@ -23,6 +23,7 @@ func TestSearch_Filters(t *testing.T) {
 		name      string
 		query     *search.Query
 		wantCount int
+		setup     func(*testEnv)
 		validator func(MessageSummary) bool
 		validDesc string
 	}{
@@ -71,6 +72,27 @@ func TestSearch_Filters(t *testing.T) {
 			wantCount: 1,
 		},
 		{
+			name:      "ConversationIDFilter",
+			query:     &search.Query{ConversationIDs: []int64{1, 104}},
+			wantCount: 4,
+			setup: func(env *testEnv) {
+				_, err := env.DB.Exec(`
+					INSERT INTO conversations (
+						id, source_id, source_conversation_id, conversation_type, title
+					) VALUES
+						(104, 1, 'thread104', 'email_thread', 'Included thread'),
+						(105, 1, 'thread105', 'email_thread', 'Excluded thread');
+					UPDATE messages SET conversation_id = 104 WHERE id = 4;
+					UPDATE messages SET conversation_id = 105 WHERE id = 5;
+				`)
+				require.NoError(t, err, "seed conversation filter scope")
+			},
+			validator: func(m MessageSummary) bool {
+				return m.ConversationID == 1 || m.ConversationID == 104
+			},
+			validDesc: "ConversationID is in requested scope",
+		},
+		{
 			name:      "SizeFilter",
 			query:     &search.Query{LargerThan: new(largerThan)},
 			wantCount: 1,
@@ -87,6 +109,9 @@ func TestSearch_Filters(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
+			if tc.setup != nil {
+				tc.setup(env)
+			}
 			results := assertSearchCount(t, env, tc.query, tc.wantCount)
 			if tc.validator != nil {
 				assertAllResults(t, results, tc.validDesc, tc.validator)
@@ -468,6 +493,34 @@ func TestMergeFilterIntoQuery_DoesNotMutateOriginal(t *testing.T) {
 
 	require.Len(t, q.FromAddrs, 1, "Original query was mutated")
 	assert.Equal(t, "original@example.com", q.FromAddrs[0], "Original query was mutated")
+}
+
+func TestMergeFilterIntoQuery_ConversationID(t *testing.T) {
+	conversationID := int64(42)
+	original := &search.Query{ConversationIDs: []int64{7, 42}}
+
+	merged := MergeFilterIntoQuery(original, MessageFilter{ConversationID: &conversationID})
+
+	assert.Equal(t, []int64{42}, merged.ConversationIDs,
+		"drill-down conversation must scope the merged search")
+	assert.Equal(t, []int64{7, 42}, original.ConversationIDs,
+		"merge must not mutate the original query")
+}
+
+func TestMergeFilterIntoQuery_ConflictingConversationIDMatchesNothing(t *testing.T) {
+	conversationID := int64(42)
+	original := &search.Query{ConversationIDs: []int64{7, 8}}
+
+	merged := MergeFilterIntoQuery(original, MessageFilter{ConversationID: &conversationID})
+
+	require.NotNil(t, merged.ConversationIDs,
+		"a conflicting scope must remain distinguishable from no scope")
+	assert.Empty(t, merged.ConversationIDs, "conflicting scopes must match nothing")
+	conditions, _ := appendConversationFilter(
+		nil, nil, "m.conversation_id", merged.ConversationIDs,
+	)
+	assert.Equal(t, []string{"1=0"}, conditions,
+		"an explicit empty scope must become a match-nothing condition")
 }
 
 // TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope verifies that

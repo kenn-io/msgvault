@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,17 @@ func TestRunBuildCacheSubprocessCommandStreamsStderrOnSuccess(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "cache build warning\n", stderr.String())
+}
+
+func TestBuildCacheAcceptsSQLiteFileURI(t *testing.T) {
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
+
+	result, err := buildCache(dbURI, filepath.Join(tmpDir, "analytics"), true)
+
+	require.NoError(t, err, "buildCache with file URI")
+	assert.NotNil(t, result)
 }
 
 // setupTestSQLite creates a test SQLite database with realistic email data.

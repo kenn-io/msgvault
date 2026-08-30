@@ -133,3 +133,23 @@ func TestEmailModeScopesMessageQueries(t *testing.T) {
 		assert.Equal(t, emailMessageType, captured.MessageType)
 	})
 }
+
+func TestConversationOnlyDrillScopesMessageReload(t *testing.T) {
+	require := require.New(t)
+	var captured query.MessageFilter
+	engine := newMockEngine(MockConfig{})
+	engine.ListMessagesFunc = func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+		captured = filter
+		return nil, nil
+	}
+	conversationID := int64(42)
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.allMessages = true
+	model.drillFilter = query.MessageFilter{ConversationID: &conversationID}
+
+	msg, ok := model.loadMessages()().(messagesLoadedMsg)
+	require.True(ok)
+	require.NoError(msg.err)
+	require.NotNil(captured.ConversationID)
+	assert.Equal(t, conversationID, *captured.ConversationID)
+}

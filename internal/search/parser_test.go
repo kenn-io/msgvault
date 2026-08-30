@@ -494,3 +494,32 @@ func TestQuery_IsEmpty(t *testing.T) {
 		assert.False(t, q.IsEmpty(), "IsEmpty() = true for query with AccountIDs set")
 	})
 }
+
+func TestParseConversationID(t *testing.T) {
+	assert := assert.New(t)
+	q := Parse("conversation_id:42 conversation_id:84")
+
+	require.NoError(t, q.Err())
+	assert.Equal([]int64{42, 84}, q.ConversationIDs)
+	assert.False(q.IsEmpty())
+	assert.True(q.HasOperators())
+}
+
+func TestQueryHasOperatorsPreservesExplicitEmptyConversationScope(t *testing.T) {
+	q := &Query{ConversationIDs: []int64{}}
+
+	assert.True(t, q.HasOperators())
+	assert.False(t, q.IsEmpty())
+}
+
+func TestParseConversationIDRejectsNonPositiveAndInvalidValues(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc", ""} {
+		t.Run(value, func(t *testing.T) {
+			q := Parse("conversation_id:" + value)
+
+			require.Error(t, q.Err())
+			assert.Empty(t, q.ConversationIDs)
+			assert.Empty(t, q.TextTerms, "known invalid operator must not widen into text search")
+		})
+	}
+}

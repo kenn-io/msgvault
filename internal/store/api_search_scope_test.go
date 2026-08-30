@@ -145,3 +145,58 @@ func TestSearchMessagesQuery_DeletionScope(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchMessagesQuery_ConversationIDScoping guards the store API path used
+// by callers that bypass the analytics query engine. Multiple IDs are one
+// conversation scope, so they match any listed conversation while excluding
+// messages from every other thread.
+func TestSearchMessagesQuery_ConversationIDScoping(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	first := f.NewMessage().
+		WithSourceMessageID("conversation-scope-first").
+		Create(t, f.Store)
+
+	secondConversation, err := f.Store.EnsureConversation(
+		f.Source.ID, "conversation-scope-second", "Second Thread",
+	)
+	require.NoError(err, "EnsureConversation second")
+	second := storetest.NewMessage(f.Source.ID, secondConversation).
+		WithSourceMessageID("conversation-scope-second").
+		Create(t, f.Store)
+
+	thirdConversation, err := f.Store.EnsureConversation(
+		f.Source.ID, "conversation-scope-third", "Third Thread",
+	)
+	require.NoError(err, "EnsureConversation third")
+	storetest.NewMessage(f.Source.ID, thirdConversation).
+		WithSourceMessageID("conversation-scope-third").
+		Create(t, f.Store)
+
+	msgs, total, err := f.Store.SearchMessagesQuery(&search.Query{
+		ConversationIDs: []int64{f.ConvID, secondConversation},
+	}, 0, 50)
+	require.NoError(err, "SearchMessagesQuery")
+	assert.Equal(int64(2), total, "scoped total")
+	gotIDs := make([]int64, 0, len(msgs))
+	for _, msg := range msgs {
+		gotIDs = append(gotIDs, msg.ID)
+	}
+	assert.ElementsMatch([]int64{first, second}, gotIDs, "scoped message IDs")
+}
+
+func TestSearchMessagesQuery_ExplicitEmptyConversationScopeMatchesNothing(t *testing.T) {
+	f := storetest.New(t)
+	f.NewMessage().
+		WithSourceMessageID("conversation-scope-must-not-widen").
+		Create(t, f.Store)
+
+	msgs, total, err := f.Store.SearchMessagesQuery(&search.Query{
+		ConversationIDs: []int64{},
+	}, 0, 50)
+
+	require.NoError(t, err, "SearchMessagesQuery")
+	assert.Zero(t, total, "explicit empty scope total")
+	assert.Empty(t, msgs, "explicit empty scope messages")
+}

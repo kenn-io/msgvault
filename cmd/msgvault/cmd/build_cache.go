@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -375,15 +376,19 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 }
 
 func runBuildCacheLocalMode(mode buildCacheMode) error {
-	dbPath := cfg.DatabaseDSN()
+	dbDSN := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 	builderOverrides := analyticsBuilderOverrides(cfg.Analytics)
 
 	// The Parquet cache is a SQLite -> DuckDB ETL; feeding a postgres:// DSN to
 	// the SQLite driver inside buildCache fails immediately with a confusing
 	// driver error.
-	if store.IsPostgresURL(dbPath) {
+	if store.IsPostgresURL(dbDSN) {
 		return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+	}
+	dbPath, err := resolveCacheSQLitePath(dbDSN)
+	if err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -458,10 +463,23 @@ func firstBuilderOverrides(overrides []duckdbutil.BuilderOverrides) duckdbutil.B
 	return overrides[0]
 }
 
+func resolveCacheSQLitePath(dsn string) (string, error) {
+	_, path, err := sqliteutil.ResolveDSN(dsn)
+	if err != nil {
+		return "", fmt.Errorf("resolve SQLite database path for cache build: %w", err)
+	}
+	return path, nil
+}
+
 func buildCacheDerivedOnly(
 	dbPath, analyticsDir string,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	var err error
+	dbPath, err = resolveCacheSQLitePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -655,6 +673,11 @@ func buildCacheScheduled(
 	now func() time.Time,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	var err error
+	dbPath, err = resolveCacheSQLitePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -694,6 +717,11 @@ func buildCacheImpl(
 	fullRebuild, recheckStaleness bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	var err error
+	dbPath, err = resolveCacheSQLitePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 

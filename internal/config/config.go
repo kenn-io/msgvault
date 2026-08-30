@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/mail"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1064,31 +1064,7 @@ func (c *Config) DatabaseDSN() string {
 // cannot operate on.
 func (c *Config) DatabasePath() (string, error) {
 	dsn := c.DatabaseDSN()
-	if strings.HasPrefix(dsn, "file:") {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return "", fmt.Errorf("parse file: URI %q: %w", dsn, err)
-		}
-		// SQLite accepts both file:/abs/path (Path) and file:rel/path
-		// (Opaque) shapes. url.Parse decodes percent-encoding for Path
-		// but NOT for Opaque, so a relative file: URI like
-		// "file:my%20vault.db" leaves the encoding intact in u.Opaque
-		// and the on-disk filename never matches. PathUnescape handles
-		// the relative-form case explicitly.
-		path := u.Path
-		if path == "" {
-			decoded, err := url.PathUnescape(u.Opaque)
-			if err != nil {
-				return "", fmt.Errorf("decode file: URI opaque part %q: %w", u.Opaque, err)
-			}
-			path = decoded
-		}
-		if path == "" {
-			return "", fmt.Errorf("empty file: URI in database DSN: %q", dsn)
-		}
-		return path, nil
-	}
-	if strings.Contains(dsn, "://") {
+	if strings.Contains(dsn, "://") && !strings.HasPrefix(dsn, "file:") {
 		// postgres://, mysql://, etc. — non-file DSN; backup is
 		// SQLite-specific and the caller can't operate on these.
 		return "", fmt.Errorf(
@@ -1097,7 +1073,8 @@ func (c *Config) DatabasePath() (string, error) {
 				"plain filesystem path or file: URI)", dsn,
 		)
 	}
-	return dsn, nil
+	_, path, err := sqliteutil.ResolveDSN(dsn)
+	return path, err
 }
 
 // AttachmentsDir returns the path to the attachments directory.

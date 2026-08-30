@@ -24,6 +24,7 @@ func TestSourceTypeUsesEmailIdentity(t *testing.T) {
 		{"hey", true},
 		{"apple-mail", true},
 		{"pst", true},
+		{"eml", true},
 		// Phone/handle-keyed sources.
 		{"whatsapp", false},
 		{"apple_messages", false},

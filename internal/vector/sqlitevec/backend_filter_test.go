@@ -38,3 +38,29 @@ func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 	})
 	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
 }
+
+func TestVectorFilterConversationIDsBeforeRanking(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{
+		1: unitVec(768, 0), 2: unitVec(768, 0), 3: unitVec(768, 0),
+	})
+	_, err := b.mainDB.ExecContext(ctx, `
+		UPDATE messages
+		SET conversation_id = CASE id WHEN 2 THEN 22 ELSE 11 END
+	`)
+	require.NoError(t, err)
+
+	filter := vector.Filter{ConversationIDs: []int64{22}}
+	hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(2), hits[0].MessageID)
+
+	fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen,
+		KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter,
+	})
+	require.NoError(t, err)
+	require.Len(t, fused, 1)
+	assert.Equal(t, int64(2), fused[0].MessageID)
+}

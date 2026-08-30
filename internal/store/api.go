@@ -646,6 +646,22 @@ func (s *Store) searchMessagesQueryImpl(
 			"m.source_id IN ("+strings.Join(placeholders, ",")+")")
 	}
 
+	// conversation_id: filters one or more internal conversation scopes.
+	// Repeated operators are alternatives within the same dimension.
+	if q.ConversationIDs != nil {
+		if len(q.ConversationIDs) == 0 {
+			conditions = append(conditions, "1=0")
+		} else {
+			placeholders := make([]string, len(q.ConversationIDs))
+			for i, id := range q.ConversationIDs {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			conditions = append(conditions,
+				"m.conversation_id IN ("+strings.Join(placeholders, ",")+")")
+		}
+	}
+
 	// has:attachment
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions,

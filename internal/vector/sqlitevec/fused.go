@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -69,6 +70,15 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	sourceIDs, err := idsToJSON(req.Filter.SourceIDs)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode source_ids: %w", err)
+	}
+	var conversationIDs sql.NullString
+	conversationSQL := ""
+	if len(req.Filter.ConversationIDs) > 0 {
+		conversationIDs, err = idsToJSON(req.Filter.ConversationIDs)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode conversation_ids: %w", err)
+		}
+		conversationSQL = `AND m.conversation_id IN (SELECT value FROM json_each(:conversation_ids))`
 	}
 	var exactMessageTypes []string
 	includeLegacyEmail := false
@@ -186,6 +196,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	filterWhere := fmt.Sprintf(`%s
        AND (:message_ids IS NULL OR m.id IN (SELECT value FROM json_each(:message_ids)))
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
+	   %s
        %s
        %s
        %s
@@ -202,7 +213,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
              SELECT 1 FROM json_each(:subject_patterns) sp
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
        %s`,
-		store.LiveMessagesWhere("m", true), messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
+		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
@@ -310,6 +321,9 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	filterArgs := []any{
 		sql.Named("message_ids", messageIDs),
 		sql.Named("source_ids", sourceIDs),
+	}
+	if conversationIDs.Valid {
+		filterArgs = append(filterArgs, sql.Named("conversation_ids", conversationIDs))
 	}
 	if hasMessageType {
 		filterArgs = append(filterArgs, sql.Named("message_types", messageTypes))
@@ -487,7 +501,11 @@ func (b *Backend) openFusedConn(ctx context.Context) (*sql.DB, error) {
 	if b.mainPath == "" {
 		return nil, errors.New("FusedSearch requires MainPath in Options")
 	}
-	conn, err := sql.Open(DriverName(), b.mainPath)
+	mainDSN, err := normalizeFusedMainDSN(b.mainPath)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := sql.Open(DriverName(), mainDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open main for fused: %w", err)
 	}
@@ -500,6 +518,14 @@ func (b *Backend) openFusedConn(ctx context.Context) (*sql.DB, error) {
 		return nil, fmt.Errorf("attach vectors.db: %w", err)
 	}
 	return conn, nil
+}
+
+func normalizeFusedMainDSN(mainPath string) (string, error) {
+	normalized, _, err := sqliteutil.ResolveDSN(mainPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve main database path for fused search: %w", err)
+	}
+	return normalized, nil
 }
 
 // idsToJSON encodes an int64 slice as a JSON array for the json_each

@@ -37,6 +37,9 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 	if len(f.SourceIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.source_id = ANY(%s::bigint[])", bind(int64Array(f.SourceIDs))))
 	}
+	if len(f.ConversationIDs) > 0 {
+		clauses = append(clauses, fmt.Sprintf("m.conversation_id = ANY(%s::bigint[])", bind(int64Array(f.ConversationIDs))))
+	}
 	if len(f.MessageTypes) > 0 {
 		var exact []string
 		includeLegacyEmail := false

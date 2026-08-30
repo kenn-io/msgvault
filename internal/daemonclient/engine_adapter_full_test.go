@@ -117,8 +117,37 @@ func TestEngineSemanticSearchUsesHybridEndpointAndReturnsRankedSummaries(t *test
 	assert.Equal(int64(2048), message.SizeEstimate)
 }
 
-func TestEngineSemanticSearchRejectsScopesItCannotPreserve(t *testing.T) {
+func TestEngineSemanticSearchPreservesConversationScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	conversationID := int64(9)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search", r.URL.Path)
+		assert.Equal("hybrid", r.URL.Query().Get("mode"))
+		assert.Equal("9", r.URL.Query().Get("conversation_id"))
+		writeJSONResponse(t, w, map[string]any{
+			"query": "find invoice", "mode": "hybrid", "returned": 0,
+			"pool_saturated": false, "has_more": false, "took_ms": 1,
+			"generation": map[string]any{
+				"id": 9, "model": "test-model", "dimension": 4,
+				"fingerprint": "test:4", "state": "active",
+			},
+			"results": []any{},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	engine := NewEngineAdapter(newTestStore(srv, ""))
+	result, err := engine.SearchSemanticMessages(t.Context(), query.SemanticMessageSearchRequest{
+		Query:  "find invoice",
+		Filter: query.MessageFilter{ConversationID: &conversationID},
+	})
+
+	require.NoError(err)
+	assert.Empty(result.Messages)
+}
+
+func TestEngineSemanticSearchRejectsScopesItCannotPreserve(t *testing.T) {
 	tests := []struct {
 		name    string
 		filter  query.MessageFilter
@@ -132,11 +161,6 @@ func TestEngineSemanticSearchRejectsScopesItCannotPreserve(t *testing.T) {
 		{
 			name:    "display-name scope",
 			filter:  query.MessageFilter{SenderName: "Test Sender"},
-			wantErr: "cannot preserve",
-		},
-		{
-			name:    "conversation scope",
-			filter:  query.MessageFilter{ConversationID: &conversationID},
 			wantErr: "cannot preserve",
 		},
 	}

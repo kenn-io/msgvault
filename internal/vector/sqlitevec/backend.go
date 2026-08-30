@@ -1319,6 +1319,12 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 			args = append(args, id)
 		}
 	}
+	if len(f.ConversationIDs) > 0 {
+		clauses = append(clauses, inClause("m.conversation_id", f.ConversationIDs))
+		for _, id := range f.ConversationIDs {
+			args = append(args, id)
+		}
+	}
 	if len(f.MessageTypes) > 0 {
 		var exact []string
 		includeLegacyEmail := false

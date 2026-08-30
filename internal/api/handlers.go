@@ -727,8 +727,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query().Get("q")
-	if query == "" {
+	searchText := r.URL.Query().Get("q")
+	if searchText == "" {
 		writeError(w, http.StatusBadRequest, "missing_query", "Query parameter 'q' is required")
 		return
 	}
@@ -747,7 +747,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	parsedQuery := parseSearchQueryRequest(r, query)
+	parsedQuery := parseSearchQueryRequest(r, searchText)
 	if err := parsedQuery.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
@@ -832,7 +832,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.handleHybridSearch(
-			w, r, query, parsedQuery, structuredFilter,
+			w, r, searchText, parsedQuery, structuredFilter,
 			mode, explain, offset, pageSize, includeMatches, minScore, scope,
 		)
 		return
@@ -842,6 +842,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_mode",
 			fmt.Sprintf("mode must be one of fts|vector|hybrid, got %q", mode))
 		return
+	}
+	if conversationID, ok, err := queryInt64(r, "conversation_id"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		parsedQuery = query.MergeFilterIntoQuery(parsedQuery, query.MessageFilter{
+			ConversationID: &conversationID,
+		})
 	}
 	if param, ok := firstPresentQueryParam(r, semanticSearchStructuredFilterParamNames); ok {
 		writeError(w, http.StatusBadRequest, "unsupported_filter_mode",
@@ -879,18 +887,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if useQuery {
 			messages, total, err = searcher.SearchMessagesQueryContext(r.Context(), parsedQuery, offset, pageSize)
 		} else {
-			messages, total, err = searcher.SearchMessagesContext(r.Context(), query, offset, pageSize)
+			messages, total, err = searcher.SearchMessagesContext(r.Context(), searchText, offset, pageSize)
 		}
 	} else if useQuery {
 		messages, total, err = s.store.SearchMessagesQuery(parsedQuery, offset, pageSize)
 	} else {
-		messages, total, err = s.store.SearchMessages(query, offset, pageSize)
+		messages, total, err = s.store.SearchMessages(searchText, offset, pageSize)
 	}
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
 		}
-		s.logger.Error("search failed", "query", query, "error", err)
+		s.logger.Error("search failed", "query", searchText, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return
 	}
@@ -901,7 +909,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchResult{
-		Query:    query,
+		Query:    searchText,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
@@ -3563,16 +3571,14 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 
 	// Reject filter fields that the search engines cannot honor.
 	// SenderName/RecipientName use display names that aren't indexed
-	// for search, ConversationID scoping isn't implemented, and
-	// EmptyValueTargets is an aggregate-only concept. The parsed
+	// for search, and EmptyValueTargets is an aggregate-only concept. The parsed
 	// message_type: operator is honored by the query engine; the
 	// filter parameter form is still list-search-only.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
-		filter.ConversationID != nil || filter.HasEmptyTargets() ||
-		filter.MessageType != "" {
+		filter.HasEmptyTargets() || filter.MessageType != "" {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Fast search does not support sender_name, recipient_name, "+
-				"conversation_id, empty_targets, or message_type filters")
+				"empty_targets, or message_type filters")
 		return
 	}
 
@@ -3663,12 +3669,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// successfully but silently do nothing, letting deep search
 	// escape the current drill-down scope.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
-		filter.TimeRange.Period != "" || filter.ConversationID != nil ||
-		filter.HasEmptyTargets() || filter.MessageType != "" {
+		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
+		filter.MessageType != "" {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Deep search does not support sender_name, recipient_name, "+
-				"time_period, conversation_id, empty_targets, or "+
-				"message_type filters")
+				"time_period, empty_targets, or message_type filters")
 		return
 	}
 

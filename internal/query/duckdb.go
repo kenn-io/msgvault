@@ -874,6 +874,9 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 			args = append(args, conditionArgs...)
 		}
 	}
+	conditions, args = appendConversationFilter(
+		conditions, args, "msg.conversation_id", q.ConversationIDs,
+	)
 
 	// from: filter - match sender email
 	for _, from := range q.FromAddrs {
@@ -2130,6 +2133,9 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 
 	// Account filter
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, q.AccountIDs)
+	conditions, args = appendConversationFilter(
+		conditions, args, "m.conversation_id", q.ConversationIDs,
+	)
 
 	if limit == 0 {
 		limit = 100
@@ -2264,6 +2270,10 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// must never honor an opt-in.
 	conditions = append(conditions, store.LiveMessagesWhere("msg", true))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	if filter.ConversationID != nil {
+		conditions = append(conditions, "msg.conversation_id = ?")
+		args = append(args, *filter.ConversationID)
+	}
 	if filter.MessageType != "" {
 		condition, conditionArgs := duckDBMessageTypeCondition("msg", []string{filter.MessageType})
 		if condition != "" {
@@ -2997,6 +3007,10 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		}
 	}
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	if filter.ConversationID != nil {
+		conditions = append(conditions, "msg.conversation_id = ?")
+		args = append(args, *filter.ConversationID)
+	}
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, duckDBDateParam(*filter.After))
@@ -3174,6 +3188,9 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 
 	// Account filter
 	conditions, args = appendSourceFilter(conditions, args, "msg.", nil, q.AccountIDs)
+	conditions, args = appendConversationFilter(
+		conditions, args, "msg.conversation_id", q.ConversationIDs,
+	)
 
 	// Default conditions if none specified
 	if len(conditions) == 0 {

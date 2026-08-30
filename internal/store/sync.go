@@ -360,7 +360,7 @@ func (s *Store) StartSync(sourceID int64, syncType string) (int64, error) {
 func (s *Store) StartSyncContext(ctx context.Context, sourceID int64, syncType string) (int64, error) {
 	const maxAttempts = 5
 	for range maxAttempts {
-		id, err := s.startSyncOnce(ctx, sourceID)
+		id, err := s.startSyncOnce(ctx, sourceID, syncType)
 		if err == nil {
 			return id, nil
 		}
@@ -371,7 +371,7 @@ func (s *Store) StartSyncContext(ctx context.Context, sourceID int64, syncType s
 	return 0, fmt.Errorf("start sync: gave up after %d retries on busy", maxAttempts)
 }
 
-func (s *Store) startSyncOnce(ctx context.Context, sourceID int64) (retID int64, retErr error) {
+func (s *Store) startSyncOnce(ctx context.Context, sourceID int64, syncType string) (retID int64, retErr error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("acquire connection: %w", err)
@@ -431,11 +431,11 @@ func (s *Store) startSyncOnce(ctx context.Context, sourceID int64) (retID int64,
 	}
 	if err := conn.QueryRowContext(ctx,
 		rebind(fmt.Sprintf(`
-			INSERT INTO sync_runs (source_id, started_at, status, messages_processed, messages_added, messages_updated, errors_count)
-			VALUES (?, %s, 'running', 0, 0, 0, 0)
+			INSERT INTO sync_runs (source_id, sync_type, started_at, status, messages_processed, messages_added, messages_updated, errors_count)
+			VALUES (?, ?, %s, 'running', 0, 0, 0, 0)
 			RETURNING id
 		`, now)),
-		sourceID,
+		sourceID, syncType,
 	).Scan(&syncRunID); err != nil {
 		return 0, fmt.Errorf("insert sync_run: %w", err)
 	}
@@ -896,6 +896,40 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("latest checkpointed sync for source %d: %w", sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
+// GetLatestCheckpointedSyncByType returns the newest recoverable checkpoint
+// for one sync type since that type's last completion. Checkpoints created by
+// another importer for the same source are never considered resumable state.
+func (s *Store) GetLatestCheckpointedSyncByType(sourceID int64, syncType string) (*SyncRun, error) {
+	row := s.db.QueryRow(`
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after
+		FROM sync_runs sr
+		WHERE sr.source_id = ?
+		  AND sr.sync_type = ?
+		  AND status IN ('running', 'failed')
+		  AND cursor_before IS NOT NULL AND cursor_before != ''
+		  AND id > COALESCE((
+		    SELECT MAX(completed.id)
+		    FROM sync_runs completed
+		    WHERE completed.source_id = ?
+		      AND completed.sync_type = ?
+		      AND completed.status = 'completed'
+		  ), 0)
+		ORDER BY id DESC
+		LIMIT 1
+	`, sourceID, syncType, sourceID, syncType)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf(
+			"latest checkpointed %s sync for source %d: %w",
+			syncType, sourceID, ErrSyncRunNotFound,
+		)
 	}
 	return run, err
 }

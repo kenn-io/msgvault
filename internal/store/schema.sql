@@ -1527,6 +1527,7 @@ CREATE TABLE IF NOT EXISTS visual_work_claims (
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    sync_type TEXT NOT NULL DEFAULT '',
 
     started_at DATETIME NOT NULL,
     completed_at DATETIME,

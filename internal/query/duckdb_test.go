@@ -2045,6 +2045,7 @@ func TestDuckDBEngine_ListMessages_Filters(t *testing.T) {
 func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
+	conversationID := int64(101)
 
 	tests := []struct {
 		name    string
@@ -2095,6 +2096,11 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
 			name:    "label=work_case_insensitive",
 			filter:  MessageFilter{Label: "work"},
 			wantIDs: []string{"msg1", "msg4"},
+		},
+		{
+			name:    "conversation=101",
+			filter:  MessageFilter{ConversationID: &conversationID},
+			wantIDs: []string{"msg1", "msg2"},
 		},
 		{
 			name:    "time_period=2024-01",
@@ -2823,6 +2829,53 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDuckDBEngine_SearchFastConversationIDFilter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := buildStandardTestData(t).BuildEngine()
+
+	results, err := engine.SearchFast(context.Background(), &search.Query{
+		ConversationIDs: []int64{101, 104},
+	}, MessageFilter{}, 100, 0)
+	require.NoError(err, "SearchFast")
+	require.Len(results, 3, "messages in conversations 101 and 104")
+	for _, result := range results {
+		assert.Contains([]int64{101, 104}, result.ConversationID,
+			"result conversation ID")
+	}
+
+	conversationID := int64(103)
+	results, err = engine.SearchFast(context.Background(), &search.Query{}, MessageFilter{
+		ConversationID: &conversationID,
+	}, 100, 0)
+	require.NoError(err, "SearchFast drill-down")
+	require.Len(results, 1, "message in drill-down conversation")
+	assert.Equal(conversationID, results[0].ConversationID,
+		"drill-down result conversation ID")
+}
+
+func TestDuckDBEngine_ConversationIDFilterScopesAggregatesAndStats(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := buildStandardTestData(t).BuildEngine()
+	ctx := context.Background()
+	const query = "conversation_id:101"
+
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = query
+	rows, err := engine.Aggregate(ctx, ViewSenders, opts)
+	require.NoError(err, "Aggregate")
+	var aggregateCount int64
+	for _, row := range rows {
+		aggregateCount += row.Count
+	}
+	assert.Equal(int64(2), aggregateCount, "aggregate message count")
+
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{SearchQuery: query})
+	require.NoError(err, "GetTotalStats")
+	assert.Equal(int64(2), stats.MessageCount, "stats message count")
 }
 
 // TestBuildSearchConditions_UsesILIKENotRegex verifies that the fast search

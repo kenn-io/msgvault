@@ -751,7 +751,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "searchMessages":
 		return mergeParams([]*huma.Param{
 			queryStringParam("q", "Search query", true),
-			queryStringParam("mode", "Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes", false),
+			queryStringParam("mode", "Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid", false),
 			queryIntegerParam("page", "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
 			queryIntegerParam("page_size", "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
 			queryIntegerParam("offset", "Zero-based ranking offset for vector or hybrid search (default 0)"),
@@ -921,6 +921,7 @@ func messageFilterParams() []*huma.Param {
 
 func semanticMessageFilterParams() []*huma.Param {
 	return []*huma.Param{
+		queryIntegerParam("conversation_id", "Exact conversation ID (all search modes)"),
 		queryStringParam("sender", "Exact sender email/address filter (vector or hybrid mode only)", false),
 		queryStringParam(recipientParam, "Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only)", false),
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),

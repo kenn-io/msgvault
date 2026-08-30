@@ -21479,7 +21479,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: "Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes"
+        - description: "Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid"
           in: query
           name: mode
           schema:
@@ -21532,6 +21532,12 @@ paths:
           name: collection
           schema:
             type: string
+        - description: Exact conversation ID (all search modes)
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
         - description: Exact sender email/address filter (vector or hybrid mode only)
           in: query
           name: sender

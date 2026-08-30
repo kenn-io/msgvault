@@ -325,6 +325,7 @@ func attachmentProducingCommand(args []string) bool {
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
+		"import-eml",
 		"import-emlx",
 		"import-gvoice",
 		"import-imessage",

@@ -1285,6 +1285,10 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	conditions = append(conditions, store.LiveMessagesWhere("m", true))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", filter.SourceID, filter.SourceIDs)
+	if filter.ConversationID != nil {
+		conditions = append(conditions, "m.conversation_id = ?")
+		args = append(args, *filter.ConversationID)
+	}
 	if filter.MessageType != "" {
 		condition, conditionArgs := sqliteMessageTypeCondition("m", []string{filter.MessageType})
 		if condition != "" {
@@ -1726,6 +1730,9 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 
 	// Account filter
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, q.AccountIDs)
+	conditions, args = appendConversationFilter(
+		conditions, args, "m.conversation_id", q.ConversationIDs,
+	)
 
 	return conditions, args, ftsJoin
 }
@@ -1972,6 +1979,10 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	merged.SubjectTerms = append([]string(nil), q.SubjectTerms...)
 	merged.Labels = append([]string(nil), q.Labels...)
 	merged.MessageTypes = append([]string(nil), q.MessageTypes...)
+	if q.ConversationIDs != nil {
+		merged.ConversationIDs = make([]int64, len(q.ConversationIDs))
+		copy(merged.ConversationIDs, q.ConversationIDs)
+	}
 	// Deep-copy AccountIDs alongside the other slices so the merged
 	// query never aliases the original's slice header. Filter overrides
 	// below replace the deep-copied slice when set.
@@ -1989,6 +2000,21 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		copy(merged.AccountIDs, filter.SourceIDs)
 	} else if filter.SourceID != nil {
 		merged.AccountIDs = []int64{*filter.SourceID}
+	}
+	if filter.ConversationID != nil {
+		if q.ConversationIDs == nil {
+			merged.ConversationIDs = []int64{*filter.ConversationID}
+		} else {
+			merged.ConversationIDs = make([]int64, 0, 1)
+			for _, conversationID := range q.ConversationIDs {
+				if conversationID == *filter.ConversationID {
+					merged.ConversationIDs = append(
+						merged.ConversationIDs, conversationID,
+					)
+					break
+				}
+			}
+		}
 	}
 
 	// Sender filter - append to existing from: filters
@@ -2065,7 +2091,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Note: SenderName, RecipientName, ConversationID, and
+	// Note: SenderName, RecipientName, and
 	// EmptyValueTargets cannot be represented in search.Query
 	// and are not merged. Deep search within those drill-down
 	// contexts will not be scoped to the current view.

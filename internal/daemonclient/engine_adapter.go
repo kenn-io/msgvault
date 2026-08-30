@@ -75,7 +75,7 @@ func (e *Engine) SearchSemanticMessages(
 		return nil, errors.New("semantic TUI search does not support multi-account source scope")
 	}
 	if !query.SemanticMessageSearchSupportsFilter(filter) {
-		return nil, errors.New("semantic TUI search cannot preserve the current display-name, conversation, or empty-value scope")
+		return nil, errors.New("semantic TUI search cannot preserve the current display-name or empty-value scope")
 	}
 	parsed := search.Parse(request.Query)
 	if err := parsed.Err(); err != nil {
