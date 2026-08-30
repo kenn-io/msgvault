@@ -556,6 +556,25 @@ func (i IdentitySearchSortField) Validate() error {
 	}
 }
 
+type ImportJobResponseStatus string
+
+const (
+	Done    ImportJobResponseStatus = "done"
+	Failed  ImportJobResponseStatus = "failed"
+	Queued  ImportJobResponseStatus = "queued"
+	Running ImportJobResponseStatus = "running"
+)
+
+// Validate checks if the ImportJobResponseStatus value is valid
+func (i ImportJobResponseStatus) Validate() error {
+	switch i {
+	case Done, Failed, Queued, Running:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ImportJobResponseStatus value, got: %v", i))
+	}
+}
+
 type MeetingImportResponseStatus string
 
 const (

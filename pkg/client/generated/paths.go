@@ -259,6 +259,15 @@ type RejectIdentityMatchCandidatePath struct {
 	ID int64 `json:"id"`
 }
 
+type GetImportJobPath struct {
+	// JobID Historical import job ID
+	JobID string `json:"job_id" validate:"required"`
+}
+
+func (g GetImportJobPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

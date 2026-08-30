@@ -270,6 +270,7 @@ type Server struct {
 	visualCoverageRateLimiter *RateLimiter
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
+	importJobs                *importJobManager
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -540,6 +541,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		daemonVersion:            opts.DaemonVersion,
 		idleTracker:              opts.IdleTracker,
 		operationGate:            opts.OperationGate,
+		importJobs:               newImportJobManager(),
 		blobStore:                opts.BlobStore,
 		remoteImages:             newRemoteImageFetcher(),
 		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
@@ -777,6 +779,10 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	var importJobsErr error
+	if s.importJobs != nil {
+		importJobsErr = s.importJobs.shutdown(ctx)
+	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -796,10 +802,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	server := s.server
 	s.serverMu.RUnlock()
 	if server == nil {
-		return nil
+		return importJobsErr
 	}
 	s.logger.Info("shutting down API server")
-	return server.Shutdown(ctx)
+	return errors.Join(importJobsErr, server.Shutdown(ctx))
 }
 
 // Router returns the HTTP router for testing.
