@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -683,17 +682,17 @@ func firstOrZero(times []time.Time) time.Time {
 // deterministic form of the deletion run, and the one that does not need a race
 // to go wrong.
 //
-// One transaction issues several stamping statements spaced out in time — the
-// shape of a chunked batch reading its input from a pipe — while autocommit
-// traffic commits alongside it and a consumer polls hard across every gap. The
+// One transaction issues several stamping statements one at a time — the shape
+// of a chunked batch reading its input from a pipe — while autocommit traffic
+// commits alongside it and a consumer polls after every statement. The
 // feed must never, on any of those pages, claim to be complete through an
 // instant at or past the batch's FIRST stamp: everything from that stamp
 // onwards is uncommitted for the whole window, so a cursor placed inside the
 // range strands whatever sits above it.
 //
-// Unlike the tombstone count, this does not depend on the race being lost. Each
-// gap is polled to exhaustion, so a bound that steps into the range is observed
-// directly.
+// Unlike the tombstone count, this does not depend on the race being lost. A
+// bound that steps into the range is wrong on every poll while the transaction
+// remains open, so one poll after each statement observes it directly.
 func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -748,10 +747,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 				firstStamp = readWatermarkInTx(t, st, tx, id)
 			}
 			// Poll across the gap the way a consumer does between chunks.
-			deadline := time.Now().Add(25 * time.Millisecond)
-			for time.Now().Before(deadline) {
-				consumer.mustPoll(t, st)
-			}
+			consumer.mustPoll(t, st)
 		}
 	})
 
@@ -1089,31 +1085,37 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 	// import runs. Each poll takes the write lock briefly for the commit bound.
 	consumer := newChangeFeedConsumer()
 	var (
-		polls      int
-		pollErr    error
-		firstBound time.Time
-		lastBound  time.Time
+		polls                       int
+		firstBound                  time.Time
+		lastBound                   time.Time
+		deliveredFromImporterDuring bool
 	)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().Add(changeFeedCatchUpBudget)
+	for {
 		page, err := consumer.poll(st)
-		if err != nil {
-			pollErr = err
-			break
-		}
-		if page.ServerTime.IsZero() {
-			pollErr = errors.New("a poll that returns must report a server time")
-			break
-		}
+		require.NoError(err, "the feed must not error while an import holds the write lock")
+		require.False(page.ServerTime.IsZero(), "a poll that returns must report a server time")
 		polls++
-		if page.CompleteThrough.IsZero() {
-			continue
+		if !page.CompleteThrough.IsZero() {
+			if firstBound.IsZero() {
+				firstBound = page.CompleteThrough
+			}
+			if page.CompleteThrough.After(lastBound) {
+				lastBound = page.CompleteThrough
+			}
 		}
-		if firstBound.IsZero() {
-			firstBound = page.CompleteThrough
+		for _, message := range page.Messages {
+			if message.ID > lastSeededID {
+				deliveredFromImporterDuring = true
+				break
+			}
 		}
-		if page.CompleteThrough.After(lastBound) {
-			lastBound = page.CompleteThrough
+		if imported.Load() > 0 && !firstBound.IsZero() &&
+			lastBound.After(firstBound) && deliveredFromImporterDuring {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
 		}
 	}
 	close(stop)
@@ -1121,12 +1123,8 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 	close(importErrs)
 
 	require.NoError(<-importErrs, "the import path must not fail while the feed polls")
-	require.NoError(pollErr, "the feed must not error while an import holds the write lock")
-	require.Greaterf(polls, 2,
-		"the feed completed only %d polls in 5s against an active import; "+
-			"that is a stall, not contention", polls)
 	require.Positive(imported.Load(),
-		"the importer never completed a write in 5s, so nothing here was under "+
+		"the importer never completed a write before the timeout, so nothing here was under "+
 			"contention and the rest of this test proves nothing")
 
 	require.Falsef(firstBound.IsZero(),
@@ -1134,7 +1132,7 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 			"lock to the importer, so complete_through stayed at zero and the feed "+
 			"can never return a row while an import is running", polls)
 	assert.Truef(lastBound.After(firstBound),
-		"the commit bound stood still at %s across %d polls in 5s: a bound that "+
+		"the commit bound stood still at %s across %d polls before the timeout: a bound that "+
 			"never advances holds every later change back indefinitely", firstBound, polls)
 
 	consumer.mu.Lock()

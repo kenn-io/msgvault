@@ -282,6 +282,21 @@ for expected implementation text. Those checks are usually tautological. Use
 real execution, parser/tool-native validation, or a documented manual release
 check instead.
 
+### Timing and liveness tests
+
+Use a wall-clock deadline only as a safety bound while waiting for an observable
+state transition. Stop waiting as soon as that state appears. Choose a generous
+deadline so a loaded CI runner does not change the result and a healthy run does
+not pay the full wait.
+
+Do not run an operation for a fixed duration and require an arbitrary number of
+polls, iterations, writes, or other successes. That measures runner throughput,
+not correctness. Assert the owned behavior instead, such as a delivered message,
+an advanced cursor, or an acquired lock. Use synchronization or a controllable
+clock when the test owns the boundary. Put actual throughput and latency
+requirements in benchmarks or explicitly controlled performance tests, not the
+ordinary correctness suite.
+
 **Mapping rule:**
 - `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.
 - `assert.X` — continues after failure (replaces what was `t.Errorf` / `t.Error`). Use for independent value checks where reporting multiple failures helps debugging.

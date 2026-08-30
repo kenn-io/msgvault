@@ -47,6 +47,12 @@ for expected implementation text. Those checks are usually tautological; prefer
 real execution, parser/tool-native validation, or a documented manual release
 check.
 
+## Testing — Wall-clock liveness
+
+Follow `CLAUDE.md`'s "Timing and liveness tests" rule. A timeout may bound a
+wait for an observable state transition. It must not turn runner throughput into
+a correctness requirement.
+
 ## Custom Helpers
 
 `internal/testutil` retains non-assertion helpers (`MakeSet`, `NewTestStore`, fixture builders, etc.). It no longer provides `AssertEqual` / `MustNoErr` / similar — those were removed in favor of calling testify directly.
