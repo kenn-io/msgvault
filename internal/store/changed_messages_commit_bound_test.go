@@ -1059,6 +1059,11 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 
 	stop := make(chan struct{})
 	var workers sync.WaitGroup
+	stopWorkers := sync.OnceFunc(func() {
+		close(stop)
+		workers.Wait()
+	})
+	t.Cleanup(stopWorkers)
 
 	// Importer: the production write path, running continuously. It reports
 	// through a channel and a counter rather than asserting, because require's
@@ -1118,8 +1123,7 @@ func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.
 			break
 		}
 	}
-	close(stop)
-	workers.Wait()
+	stopWorkers()
 	close(importErrs)
 
 	require.NoError(<-importErrs, "the import path must not fail while the feed polls")
