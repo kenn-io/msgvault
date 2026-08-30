@@ -691,6 +691,23 @@ func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
 	require.True(conclusive)
 }
 
+func TestSourceMessageMatchesPropagatesMissingLabelHeaders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
+	const messageID = "missing-label-headers@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+	client := newTestClient(t, addr)
+	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
+
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapv2.UID(1))
+	matches, conclusive, err := client.SourceMessageMatches(
+		context.Background(), "INBOX|1", messageID)
+	require.Error(err)
+	assert.False(matches)
+	assert.False(conclusive)
+}
+
 func TestSourceMessageMatchesRejectsUIDValidityChange(t *testing.T) {
 	require := require.New(t)
 	addr, user := testutil.StartIMAPMemServer(

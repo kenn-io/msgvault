@@ -456,7 +456,7 @@ func TestIncompleteLabelMapDisablesCrossMailboxDedup(t *testing.T) {
 	}
 }
 
-func TestApplyLabelFetchResultsMarksOnlyMissingUID(t *testing.T) {
+func TestApplyLabelFetchResultsKeepsOmittedUIDAmbiguous(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	results := newLabelBatchResults([]string{"Archive|10", "Archive|11"})
@@ -481,10 +481,11 @@ func TestApplyLabelFetchResultsMarksOnlyMissingUID(t *testing.T) {
 	assert.Equal([]string{"Archive"}, results[0].LabelIDs)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].LabelIDs)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	require.Error(results[1].Err)
+	require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone)
 }
 
-func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
+func TestApplyFetchResultsKeepsOmittedUIDAmbiguous(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	results := newRawBatchResults([]string{"Archive|10", "Archive|11"})
@@ -508,7 +509,8 @@ func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 	assert.Equal([]byte("raw-10"), results[0].Message.Raw)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].Message)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	require.Error(results[1].Err)
+	require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone)
 }
 
 func TestApplyFetchResultsMarksMissingRawBody(t *testing.T) {
@@ -705,7 +707,6 @@ func fetchMessageBufferWithoutEnvelope(raw []byte) *imapclient.FetchMessageBuffe
 		},
 	}
 }
-
 func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -757,4 +758,98 @@ func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan 
 		}
 	}()
 	return listener.Addr().String(), fetchCommand
+}
+
+// TestMissingUIDKeepsEarlierMembershipObservationUntilRevalidated covers the
+// observation the label map records during enumeration. A single omitted UID
+// is ambiguous until the client revalidates it, so the observation must stay
+// available for a retry rather than being discarded as gone.
+func TestMissingUIDKeepsEarlierMembershipObservationUntilRevalidated(t *testing.T) {
+	enumerated := func() []MembershipObservation {
+		return []MembershipObservation{
+			{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+			{Mailbox: "Archive", UID: 11, SourceMessageID: "Archive|11"},
+		}
+	}
+	uidToIdx := map[imapapi.UID]int{
+		imapapi.UID(10): 0,
+		imapapi.UID(11): 1,
+	}
+	chunk := []batchFetchItem{
+		{idx: 0, uid: imapapi.UID(10)},
+		{idx: 1, uid: imapapi.UID(11)},
+	}
+
+	t.Run("raw fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		c := Client{observedMemberships: enumerated()}
+		results := newRawBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer("message-10", []byte("raw-10")),
+		}
+
+		c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+		require.Error(results[1].Err)
+		require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone)
+		assert.Contains(observedUIDs(&c), uint32(11))
+		assert.Contains(observedUIDs(&c), uint32(10))
+	})
+
+	t.Run("label fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		c := Client{observedMemberships: enumerated()}
+		results := newLabelBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer(
+				"message-10",
+				[]byte("Message-ID: <message-10@example.com>\r\n\r\n"),
+			),
+		}
+
+		c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+		require.Error(results[1].Err)
+		require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone)
+		assert.Contains(observedUIDs(&c), uint32(11))
+		assert.Contains(observedUIDs(&c), uint32(10))
+	})
+}
+
+func observedUIDs(c *Client) []uint32 {
+	uids := make([]uint32, 0, len(c.observedMemberships))
+	for _, observation := range c.observedMemberships {
+		uids = append(uids, observation.UID)
+	}
+	return uids
+}
+
+// TestReturnedUIDWithoutHeadersKeepsMembershipObservation is the other side of
+// TestMissingUIDDropsEarlierMembershipObservation. The server returned the
+// UID, so the message is still in the mailbox. Classifying that as gone would
+// let the run acknowledge a live message and drop its observation, and a
+// mailbox that resets its memberships would then delete the row and tombstone
+// the message.
+func TestReturnedUIDWithoutHeadersKeepsMembershipObservation(t *testing.T) {
+	c := Client{observedMemberships: []MembershipObservation{
+		{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+	}}
+	results := newLabelBatchResults([]string{"Archive|10"})
+	msgs := []*imapclient.FetchMessageBuffer{
+		{UID: imapapi.UID(10), Envelope: &imapapi.Envelope{MessageID: "message-10"}},
+	}
+
+	c.applyLabelFetchResults(
+		results,
+		map[imapapi.UID]int{imapapi.UID(10): 0},
+		"Archive",
+		[]batchFetchItem{{idx: 0, uid: imapapi.UID(10)}},
+		msgs,
+	)
+
+	require.ErrorIs(t, results[0].Err, errIMAPLabelBodyMissing)
+	require.NotErrorIs(t, results[0].Err, gmailapi.ErrMessageGone)
+	assert.Contains(t, observedUIDs(&c), uint32(10))
 }

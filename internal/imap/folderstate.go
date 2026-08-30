@@ -75,6 +75,20 @@ func (c *Client) recordMembershipLocked(
 	})
 }
 
+// forgetMembershipLocked drops any observation of one mailbox UID recorded
+// earlier in the run after a revalidated FETCH absence. Its observation must
+// not reach the durable commit: nothing ingested the message, so membership
+// resolution finds no row to map it to and rolls back every mailbox cursor in
+// the source. Deletion detection retires the stored membership on the next run.
+func (c *Client) forgetMembershipLocked(mailbox string, uid imap.UID) {
+	c.observedMemberships = slices.DeleteFunc(
+		c.observedMemberships,
+		func(observation MembershipObservation) bool {
+			return observation.Mailbox == mailbox && observation.UID == uint32(uid)
+		},
+	)
+}
+
 // FolderState is the change-detection state of one mailbox.
 type FolderState struct {
 	UIDValidity   uint32

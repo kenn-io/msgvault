@@ -18,7 +18,18 @@ import (
 )
 
 var errIMAPRawBodyMissing = errors.New("IMAP fetch result did not include raw body")
-var errIMAPFetchResultMissing = errors.New("IMAP fetch result missing from response")
+var errIMAPFetchResultMissing = fmt.Errorf(
+	"IMAP fetch result missing from response: %w", gmailapi.ErrMessageGone)
+var errIMAPFetchResultAmbiguous = errors.New(
+	"IMAP fetch result omitted requested UID")
+
+// errIMAPLabelBodyMissing is the label-fetch counterpart of
+// errIMAPRawBodyMissing. The server returned the UID, so the message is still
+// in the mailbox and only its headers are missing. That is a fetch failure,
+// not the expunge race, and it must not reach gmailapi.ErrMessageGone: a run
+// that acknowledged it would drop a live message from an authoritative
+// snapshot.
+var errIMAPLabelBodyMissing = errors.New("IMAP fetch result did not include message headers")
 var errIMAPSkippedAfterChunkFailed = errors.New("IMAP fetch skipped after earlier chunk failure")
 
 type batchFetchItem struct {
@@ -189,7 +200,7 @@ func (c *Client) applyFetchResults(
 			continue
 		}
 		if results[item.idx].Message == nil && results[item.idx].Err == nil {
-			results[item.idx].Err = errIMAPFetchResultMissing
+			results[item.idx].Err = errIMAPFetchResultAmbiguous
 		}
 	}
 }
@@ -317,6 +328,10 @@ func (c *Client) fetchMailboxBatch(
 		}
 
 		c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		if err := c.revalidateRawFetchResults(
+			ctx, mailbox, chunk, fetchOpts, results); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -401,7 +416,7 @@ func (c *Client) applyLabelFetchResults(
 		}
 		seenUIDs[msgBuf.UID] = true
 		if len(msgBuf.BodySection) == 0 {
-			results[idx].Err = errIMAPFetchResultMissing
+			results[idx].Err = errIMAPLabelBodyMissing
 			continue
 		}
 		rfc822MessageID := rawMIMEMessageID(msgBuf.BodySection[0].Bytes)
@@ -414,9 +429,85 @@ func (c *Client) applyLabelFetchResults(
 
 	for _, item := range chunk {
 		if !seenUIDs[item.uid] && results[item.idx].Err == nil {
-			results[item.idx].Err = errIMAPFetchResultMissing
+			results[item.idx].Err = errIMAPFetchResultAmbiguous
 		}
 	}
+}
+
+func (c *Client) revalidateRawFetchResults(
+	ctx context.Context,
+	mailbox string,
+	chunk []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+	results []gmailapi.RawMessageBatchResult,
+) error {
+	for _, item := range chunk {
+		if !errors.Is(results[item.idx].Err, errIMAPFetchResultAmbiguous) {
+			continue
+		}
+
+		var uidSet imap.UIDSet
+		uidSet.AddNum(item.uid)
+		msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+		if fatal {
+			return err
+		}
+		if err != nil {
+			results[item.idx].Err = err
+			continue
+		}
+
+		c.applyFetchResults(
+			results,
+			map[imap.UID]int{item.uid: item.idx},
+			mailbox,
+			[]batchFetchItem{item},
+			msgs,
+		)
+		if errors.Is(results[item.idx].Err, errIMAPFetchResultAmbiguous) {
+			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
+		}
+	}
+	return nil
+}
+
+func (c *Client) revalidateLabelFetchResults(
+	ctx context.Context,
+	mailbox string,
+	chunk []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+	results []gmailapi.MessageLabelsBatchResult,
+) error {
+	for _, item := range chunk {
+		if !errors.Is(results[item.idx].Err, errIMAPFetchResultAmbiguous) {
+			continue
+		}
+
+		var uidSet imap.UIDSet
+		uidSet.AddNum(item.uid)
+		msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+		if fatal {
+			return err
+		}
+		if err != nil {
+			results[item.idx].Err = err
+			continue
+		}
+
+		c.applyLabelFetchResults(
+			results,
+			map[imap.UID]int{item.uid: item.idx},
+			mailbox,
+			[]batchFetchItem{item},
+			msgs,
+		)
+		if errors.Is(results[item.idx].Err, errIMAPFetchResultAmbiguous) {
+			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
+		}
+	}
+	return nil
 }
 
 func (c *Client) selectLabelBatchMailbox(
@@ -482,6 +573,10 @@ func (c *Client) fetchMailboxLabelBatch(
 			return nil
 		}
 		c.applyLabelFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		if err := c.revalidateLabelFetchResults(
+			ctx, mailbox, chunk, fetchOpts, results); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -612,8 +707,9 @@ func (c *Client) SeedValidatedMessageDedup(
 }
 
 // SourceMessageExists reports whether an exact mailbox|uid identifier still
-// exists. A missing FETCH result is definitive absence; all other failures are
-// returned so callers can retry without replacing a canonical identifier.
+// exists. Only a revalidated missing FETCH result is definitive absence; all
+// other failures are returned so callers can retry without replacing a
+// canonical identifier.
 func (c *Client) SourceMessageExists(
 	ctx context.Context, messageID string,
 ) (bool, error) {

@@ -470,3 +470,59 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 		Mailbox: "INBOX", UIDValidity: 17, UIDNext: 4, HighestModSeq: 101,
 	}}, states)
 }
+
+// TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists is the durable half
+// of the expunge race. The sync treats a message that left the mailbox between
+// enumeration and fetch as handled, so the run finishes without errors and
+// reaches this commit. Nothing ingested that message, so its enumeration
+// observation would find no message row to resolve and would roll back every
+// mailbox cursor in the source.
+func TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists(t *testing.T) {
+	require := require.New(t)
+	addr, _, hideUID := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+	hideUID()
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	require.NoError(err)
+
+	client := listedIMAPClient(t, addr)
+	results, err := client.GetMessageLabelsBatch(
+		context.Background(), []string{"INBOX|1", "INBOX|2"})
+	require.NoError(err)
+	require.Len(results, 2)
+	require.NoError(results[0].Err)
+	require.ErrorIs(results[1].Err, gmail.ErrMessageGone)
+
+	// Only the survivor was ingested, which is what the run itself would have
+	// stored: the message that left the mailbox was acknowledged, never fetched.
+	seedIMAPMessage(t, st, src, "INBOX|1", "")
+
+	require.NoError(saveIMAPFolderStates(
+		context.Background(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+
+	loaded, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	require.Contains(loaded, "INBOX")
+	assert.Equal(t, []uint32{1}, loaded["INBOX"].KnownUIDs)
+}
+
+// TestSaveIMAPFolderStates_LiveMessageWithoutHeadersBlocksPersistence is the
+// other side of that line. The server returned the UID, so the message is
+// still in the mailbox and only its headers are missing. Acknowledging it
+// would drop a live message from the authoritative snapshot, so it stays a
+// fetch error and the commit does not run.
+func TestSaveIMAPFolderStates_LiveMessageWithoutHeadersBlocksPersistence(t *testing.T) {
+	require := require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
+	client := listedIMAPClient(t, addr)
+	// The in-memory server answers a FETCH of a UID expunged by another
+	// session with an empty body rather than leaving it out of the response.
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapapi.UID(2))
+	results, err := client.GetMessageLabelsBatch(
+		context.Background(), []string{"INBOX|1", "INBOX|2"})
+	require.NoError(err)
+	require.Len(results, 2)
+	require.Error(results[1].Err)
+	assert.NotErrorIs(t, results[1].Err, gmail.ErrMessageGone)
+}
