@@ -216,6 +216,23 @@ func TestListMessages_DateFilterDisablesFolderTracking(t *testing.T) {
 		"date-filtered runs must not record folder states")
 }
 
+func TestListMessages_DateFilterLimitsResults(t *testing.T) {
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
+	testutil.AppendIMAPMessageAt(t, user, "INBOX", "before window",
+		time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC))
+	testutil.AppendIMAPMessageAt(t, user, "INBOX", "inside window",
+		time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC))
+	testutil.AppendIMAPMessageAt(t, user, "INBOX", "after window",
+		time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC))
+
+	client := newTestClient(t, addr, WithDateFilter(
+		time.Date(2026, time.January, 10, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC),
+	))
+
+	assert.Equal(t, []string{"INBOX|2"}, listAllMessages(t, client))
+}
+
 func TestListMessages_AllMailboxUnsupportedQresyncUsesFullFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

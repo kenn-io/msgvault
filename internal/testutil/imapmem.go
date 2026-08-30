@@ -6,6 +6,7 @@ import (
 	"net"
 	"sort"
 	"testing"
+	"time"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -122,11 +123,26 @@ func AppendIMAPMessageWithoutMessageID(
 	messageBody string,
 ) {
 	t.Helper()
+	AppendIMAPMessageAt(t, user, mailbox, messageBody, time.Time{})
+}
+
+// AppendIMAPMessageAt appends one synthetic RFC822 message with the supplied
+// body and internal date to a mailbox of an in-memory IMAP test user.
+func AppendIMAPMessageAt(
+	t *testing.T,
+	user *imapmemserver.User,
+	mailbox string,
+	messageBody string,
+	internalDate time.Time,
+) {
+	t.Helper()
 	body := fmt.Appendf(nil,
 		"From: alice@example.com\r\nTo: bob@example.com\r\n\r\n%s\r\n",
 		messageBody,
 	)
-	_, err := user.Append(mailbox, imapLiteral{bytes.NewReader(body)}, &imap.AppendOptions{})
+	_, err := user.Append(mailbox, imapLiteral{bytes.NewReader(body)}, &imap.AppendOptions{
+		Time: internalDate,
+	})
 	require.NoError(t, err)
 }
 
