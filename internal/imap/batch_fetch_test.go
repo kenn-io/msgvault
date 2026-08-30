@@ -819,3 +819,31 @@ func observedUIDs(c *Client) []uint32 {
 	}
 	return uids
 }
+
+// TestReturnedUIDWithoutHeadersKeepsMembershipObservation is the other side of
+// TestMissingUIDDropsEarlierMembershipObservation. The server returned the
+// UID, so the message is still in the mailbox. Classifying that as gone would
+// let the run acknowledge a live message and drop its observation, and a
+// mailbox that resets its memberships would then delete the row and tombstone
+// the message.
+func TestReturnedUIDWithoutHeadersKeepsMembershipObservation(t *testing.T) {
+	c := Client{observedMemberships: []MembershipObservation{
+		{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+	}}
+	results := newLabelBatchResults([]string{"Archive|10"})
+	msgs := []*imapclient.FetchMessageBuffer{
+		{UID: imapapi.UID(10), Envelope: &imapapi.Envelope{MessageID: "message-10"}},
+	}
+
+	c.applyLabelFetchResults(
+		results,
+		map[imapapi.UID]int{imapapi.UID(10): 0},
+		"Archive",
+		[]batchFetchItem{{idx: 0, uid: imapapi.UID(10)}},
+		msgs,
+	)
+
+	require.ErrorIs(t, results[0].Err, errIMAPLabelBodyMissing)
+	require.NotErrorIs(t, results[0].Err, gmailapi.ErrMessageGone)
+	assert.Contains(t, observedUIDs(&c), uint32(10))
+}

@@ -20,6 +20,14 @@ import (
 var errIMAPRawBodyMissing = errors.New("IMAP fetch result did not include raw body")
 var errIMAPFetchResultMissing = fmt.Errorf(
 	"IMAP fetch result missing from response: %w", gmailapi.ErrMessageGone)
+
+// errIMAPLabelBodyMissing is the label-fetch counterpart of
+// errIMAPRawBodyMissing. The server returned the UID, so the message is still
+// in the mailbox and only its headers are missing. That is a fetch failure,
+// not the expunge race, and it must not reach gmailapi.ErrMessageGone: a run
+// that acknowledged it would drop a live message from an authoritative
+// snapshot.
+var errIMAPLabelBodyMissing = errors.New("IMAP fetch result did not include message headers")
 var errIMAPSkippedAfterChunkFailed = errors.New("IMAP fetch skipped after earlier chunk failure")
 
 type batchFetchItem struct {
@@ -403,8 +411,7 @@ func (c *Client) applyLabelFetchResults(
 		}
 		seenUIDs[msgBuf.UID] = true
 		if len(msgBuf.BodySection) == 0 {
-			results[idx].Err = errIMAPFetchResultMissing
-			c.forgetMembershipLocked(mailbox, msgBuf.UID)
+			results[idx].Err = errIMAPLabelBodyMissing
 			continue
 		}
 		rfc822MessageID := rawMIMEMessageID(msgBuf.BodySection[0].Bytes)
@@ -556,7 +563,8 @@ func (c *Client) sourceMessageMetadata(
 			"source message validation returned %d results", len(results))
 	}
 	if results[0].Err != nil {
-		if errors.Is(results[0].Err, errIMAPFetchResultMissing) {
+		if errors.Is(results[0].Err, errIMAPFetchResultMissing) ||
+			errors.Is(results[0].Err, errIMAPLabelBodyMissing) {
 			return "", false, nil
 		}
 		return "", false, results[0].Err
