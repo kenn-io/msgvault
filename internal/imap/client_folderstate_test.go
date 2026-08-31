@@ -1197,3 +1197,24 @@ func TestLabelMapSelectReconnectsAfterDroppedConnection(t *testing.T) {
 	assert.Equal(map[string]bool{messageID: true}, labels)
 	assert.Empty(unidentified)
 }
+
+// TestSourceMessageExistsIsNotDefiniteWhenHeadersMissing pins the boundary of
+// "definitive absence". Only a UID the server leaves out of the response is
+// absent. A UID it returns without headers is a live message, and reporting it
+// as absent lets SourceMessageMatches conclude a mismatch and rekey it.
+func TestSourceMessageExistsIsNotDefiniteWhenHeadersMissing(t *testing.T) {
+	require := require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
+	client := newTestClient(t, addr)
+
+	// Select INBOX first. The in-memory server then answers a FETCH of a UID
+	// another session expunged with an empty body, rather than leaving it out.
+	exists, err := client.SourceMessageExists(context.Background(), "INBOX|1")
+	require.NoError(err)
+	require.True(exists)
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapv2.UID(2))
+
+	_, err = client.SourceMessageExists(context.Background(), "INBOX|2")
+	require.Error(err, "a live message without headers is not definitive absence")
+	require.NotErrorIs(err, errIMAPFetchResultMissing)
+}

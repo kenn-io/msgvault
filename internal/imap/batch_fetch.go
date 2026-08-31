@@ -563,8 +563,10 @@ func (c *Client) sourceMessageMetadata(
 			"source message validation returned %d results", len(results))
 	}
 	if results[0].Err != nil {
-		if errors.Is(results[0].Err, errIMAPFetchResultMissing) ||
-			errors.Is(results[0].Err, errIMAPLabelBodyMissing) {
+		// Only an absent UID is definitive absence. A returned UID whose
+		// headers are missing is a live message, and reporting it as absent
+		// would let SourceMessageMatches conclude a mismatch and rekey it.
+		if errors.Is(results[0].Err, errIMAPFetchResultMissing) {
 			return "", false, nil
 		}
 		return "", false, results[0].Err
