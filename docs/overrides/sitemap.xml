@@ -1,10 +1,16 @@
 {#-
-  Zensical only includes nav pages in the sitemap; keep the homepage indexed too.
+  Zensical only includes nav pages in the sitemap; keep the site tiers indexed too.
 -#}
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://msgvault.io/</loc>
+  </url>
+  <url>
+    <loc>https://msgvault.io/guide/</loc>
+  </url>
+  <url>
+    <loc>https://msgvault.io/docs/</loc>
   </url>
   {%- for page in pages -%}
     {%- if page.canonical_url %}

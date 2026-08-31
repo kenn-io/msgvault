@@ -23,7 +23,7 @@ the PowerShell installer selects the native package when the release provides
 one and falls back to the AMD64 package under emulation for older releases.
 
 !!! tip "Running on a headless server?"
-    msgvault works on headless machines (SSH, VPS, NAS, Docker), but OAuth requires a browser for the initial authorization. You'll authorize on your local machine and copy the token file to the server. See [Headless Server Setup](/guides/oauth-setup/#headless-server-setup) for the copy-token workflow, or jump to the [Remote Deployment](/guides/remote-deployment/) guide for a full NAS/server setup with Docker Compose.
+    msgvault works on headless machines (SSH, VPS, NAS, Docker), but OAuth requires a browser for the initial authorization. You'll authorize on your local machine and copy the token file to the server. See [Headless Server Setup](/docs/guides/oauth-setup/#headless-server-setup) for the copy-token workflow, or jump to the [Remote Deployment](/docs/guides/remote-deployment/) guide for a full NAS/server setup with Docker Compose.
 
 Verify the installation:
 
@@ -68,7 +68,7 @@ On Windows, use the native PowerShell helper:
 ```
 
 It detects AMD64 or ARM64 automatically and writes `msgvault.exe` in the
-repository root. See [Development and Roadmap](/development/#windows) for the
+repository root. See [Development and Roadmap](/docs/development/#windows) for the
 one-time MSYS2 compiler prerequisites.
 
 Verify the installation:
@@ -79,7 +79,7 @@ msgvault --help
 
 ## Configure OAuth
 
-Create a Google Cloud project, enable the Gmail API, and download your `client_secret.json`. If you plan to archive Google Calendar, enable the Google Calendar API too. See the full [OAuth Setup Guide](/guides/oauth-setup/).
+Create a Google Cloud project, enable the Gmail API, and download your `client_secret.json`. If you plan to archive Google Calendar, enable the Google Calendar API too. See the full [OAuth Setup Guide](/docs/guides/oauth-setup/).
 
 ### Where to put config.toml
 
@@ -112,7 +112,7 @@ $env:MSGVAULT_HOME = "E:\msgvault"
 export MSGVAULT_HOME=/mnt/data/msgvault
 ```
 
-The `--home` flag takes priority over `MSGVAULT_HOME`. See [Configuration](/configuration/) for all options.
+The `--home` flag takes priority over `MSGVAULT_HOME`. See [Configuration](/docs/configuration/) for all options.
 
 ### Create the config file
 
@@ -134,9 +134,9 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 msgvault add-account you@gmail.com
 ```
 
-This opens your browser for OAuth consent. For headless servers, see the [copy-token workflow](/guides/oauth-setup/#headless-server-setup).
+This opens your browser for OAuth consent. For headless servers, see the [copy-token workflow](/docs/guides/oauth-setup/#headless-server-setup).
 
-If you plan to deploy to a remote host (NAS, cloud VM, etc.), run `msgvault setup` after this step to generate a ready-to-run deployment bundle with Docker Compose and remote configuration. See the [Remote Deployment](/guides/remote-deployment/) guide.
+If you plan to deploy to a remote host (NAS, cloud VM, etc.), run `msgvault setup` after this step to generate a ready-to-run deployment bundle with Docker Compose and remote configuration. See the [Remote Deployment](/docs/guides/remote-deployment/) guide.
 
 ## Add an IMAP Account
 
@@ -153,7 +153,7 @@ Common IMAP servers:
 | Provider | Host | Port | Notes |
 |---|---|---|---|
 | Fastmail | `imap.fastmail.com` | 993 | App password recommended |
-| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`add-o365`](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for OAuth (recommended); or app password with 2FA |
+| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`add-o365`](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for OAuth (recommended); or app password with 2FA |
 | Yahoo | `imap.mail.yahoo.com` | 993 | [App password](#yahoo-app-passwords) required |
 | iCloud | `imap.mail.me.com` | 993 | App-specific password required |
 | Gmail (IMAP) | `imap.gmail.com` | 993 | Use `add-account` for Gmail API instead |
@@ -175,10 +175,10 @@ msgvault sync-full you@fastmail.com
 IMAP accounts are stored in the same database as Gmail accounts. All tools
 (Web UI, TUI, search, MCP, and REST API) work with IMAP messages the same way.
 To start with only part of a large account, see
-[IMAP Folder Sync](/usage/imap/) for `--folder` and `--skip-folder` examples.
+[IMAP Folder Sync](/docs/usage/imap/) for `--folder` and `--skip-folder` examples.
 
 !!! tip "Microsoft 365 / Outlook.com"
-    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
+    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
 
 <span id="yahoo-app-passwords"></span>
 
@@ -228,7 +228,7 @@ Gmail's "storage used" number includes attachments at full size. Your on-disk fo
 - **Attachments** are extracted and stored as-is (PDFs, images, etc. are already compressed). Identical attachments across messages are deduplicated by content hash.
 - **Parquet analytics cache** is a lightweight projection for the Web UI and TUI — typically a few MB even for large archives.
 
-Use `--limit` or a date range for your first sync to gauge the ratio for your mailbox before committing to a full sync. After syncing, `msgvault stats` shows the actual sizes. See [Data Storage](/architecture/storage/) for details on compression and storage layers.
+Use `--limit` or a date range for your first sync to gauge the ratio for your mailbox before committing to a full sync. After syncing, `msgvault stats` shows the actual sizes. See [Data Storage](/docs/architecture/storage/) for details on compression and storage layers.
 
 ### Full Sync Flags
 
@@ -294,10 +294,10 @@ msgvault tui
 msgvault stats
 ```
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="lazy">
+  <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="lazy">
 </figure>
-See [Web UI](/web-ui/), [Searching](/usage/searching/), and [Interactive
-TUI](/usage/tui/) for more.
+See [Web UI](/docs/web-ui/), [Searching](/docs/usage/searching/), and [Interactive
+TUI](/docs/usage/tui/) for more.
 
 ## Optional: Sync Google Calendar
 
@@ -310,7 +310,7 @@ msgvault sync-calendar you@gmail.com
 ```
 
 Calendar sync is read-only. Events become searchable with
-`--message-type calendar_event`; see [Google Calendar](/usage/calendar/) for the
+`--message-type calendar_event`; see [Google Calendar](/docs/usage/calendar/) for the
 full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
@@ -330,7 +330,7 @@ runtime or separately installed web files are required.
 
 For a server or NAS, prefer HTTPS at a reverse proxy and configure only that
 proxy in `server.trusted_proxies`. Plain HTTP is an explicit private-network
-tradeoff because its session cookie cannot be marked `Secure`. See [Web UI](/web-ui/)
+tradeoff because its session cookie cannot be marked `Secure`. See [Web UI](/docs/web-ui/)
 for URL discovery, search/index states, keyboard controls, and deployment
 examples.
 
@@ -345,7 +345,7 @@ msgvault sync-teams user@example.com
 ```
 
 Teams messages become searchable with `--message-type teams`. See
-[Microsoft Teams](/usage/teams/) for required Graph permissions, scheduling,
+[Microsoft Teams](/docs/usage/teams/) for required Graph permissions, scheduling,
 and inline media backfill.
 
 ## Optional: Sync Discord
@@ -361,7 +361,7 @@ msgvault sync-discord 123456789012345678
 
 Discord messages become searchable with `--message-type discord`. The bot API
 is guild-only and does not expose personal direct-message history. See
-[Discord](/usage/discord/) for least-privilege setup, scheduling, filters,
+[Discord](/docs/usage/discord/) for least-privilege setup, scheduling, filters,
 repair behavior, and attachment limits.
 
 ## Optional: Configure Backups
@@ -382,5 +382,5 @@ Record the repository in `config.toml` so future commands can omit `--repo`:
 repo = "~/Backups/msgvault"
 ```
 
-See [Backup](/usage/backup/) for restore, verification, scheduling, and
+See [Backup](/docs/usage/backup/) for restore, verification, scheduling, and
 secret-handling details.

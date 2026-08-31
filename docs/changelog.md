@@ -444,7 +444,7 @@ All notable changes to msgvault, grouped by release.
   the single archive writer: concurrent operations queue with a visible
   `Waiting:` message, read-only commands run immediately, and scheduled
   syncs yield to interactive commands. See the
-  [Daemon Migration Guide](/guides/daemon-migration/).
+  [Daemon Migration Guide](/docs/guides/daemon-migration/).
 - Daemon lifecycle management via `msgvault serve start|status|stop|restart`,
   with automatic restart of older local daemons on binary upgrade
   (`[server].daemon_auto_restart`).
@@ -634,7 +634,7 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- **Vector search (semantic and hybrid).** msgvault can now embed your archive using a configured OpenAI-compatible embedding endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) and search it by meaning, not just keywords. `msgvault search --mode vector` runs pure semantic search; `--mode hybrid` fuses BM25 and vector similarity via Reciprocal Rank Fusion. Exposed through local CLI search (`msgvault search`), the HTTP API (`GET /api/v1/search?mode=vector|hybrid`), and the MCP server (`search_messages` mode argument plus a new `find_similar_messages` tool). See [Vector Search](/usage/vector-search/).
+- **Vector search (semantic and hybrid).** msgvault can now embed your archive using a configured OpenAI-compatible embedding endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) and search it by meaning, not just keywords. `msgvault search --mode vector` runs pure semantic search; `--mode hybrid` fuses BM25 and vector similarity via Reciprocal Rank Fusion. Exposed through local CLI search (`msgvault search`), the HTTP API (`GET /api/v1/search?mode=vector|hybrid`), and the MCP server (`search_messages` mode argument plus a new `find_similar_messages` tool). See [Vector Search](/docs/usage/vector-search/).
 - `msgvault build-embeddings` command to generate and maintain the local vector index. Incremental by default; `--full-rebuild` creates a new generation and atomically activates it once coverage reaches zero. Same-model rebuilds keep answering against the previous active generation while the new one is built, with active-generation top-ups frozen until activation; model or dimension changes return `index_stale` until activation.
 - Background embedding via the daemon scheduler. A new `[vector.embed.schedule]` config block drives the embed worker on cron and/or after every successful scheduled sync, so `msgvault serve` can keep the vector index current without manual intervention.
 - `/api/v1/stats` gains a `vector_search` sub-object reporting the active generation, any in-flight rebuild, and the actionable missing embedding count for the generation the worker will target next.
@@ -643,7 +643,7 @@ All notable changes to msgvault, grouped by release.
 **Improvements**
 
 - `search` command gains `--mode fts|vector|hybrid` and `--explain` flags. `--explain` includes per-signal scores (RRF, BM25, vector) in table and JSON output for ranking inspection.
-- Configuration gains a full `[vector]` block with sub-tables for the embedding endpoint, message preprocessing, hybrid ranking, and the embed scheduler. See [Configuration: vector](/configuration/#vector).
+- Configuration gains a full `[vector]` block with sub-tables for the embedding endpoint, message preprocessing, hybrid ranking, and the embed scheduler. See [Configuration: vector](/docs/configuration/#vector).
 - `remove-account` deletes attachment files from disk when they were unique to the removed account. Files shared across multiple accounts are preserved automatically, and an in-progress sync on any account skips file deletion to avoid racing new attachment writes.
 
 **Bug fixes**
@@ -672,7 +672,7 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- Structured file logging with per-run correlation IDs. Every CLI invocation gets a unique `run_id` on every log line, making it easy to trace a single run across shared log files. New `msgvault logs` command for viewing and tailing logs. File logging is opt-in; see [Configuration: Log](/configuration/#log) for setup.
+- Structured file logging with per-run correlation IDs. Every CLI invocation gets a unique `run_id` on every log line, making it easy to trace a single run across shared log files. New `msgvault logs` command for viewing and tailing logs. File logging is opt-in; see [Configuration: Log](/docs/configuration/#log) for setup.
 
 **Improvements**
 
@@ -725,9 +725,9 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- SQL query interface via `msgvault query`. Run arbitrary SQL against DuckDB over Parquet with `--format json|csv|table`. See [SQL Queries](/usage/querying/).
+- SQL query interface via `msgvault query`. Run arbitrary SQL against DuckDB over Parquet with `--format json|csv|table`. See [SQL Queries](/docs/usage/querying/).
 - Microsoft 365 OAuth2 support via `msgvault add-o365` for Outlook.com and organizational accounts. Auto-detects personal vs. org IMAP hosts.
-- Text message import: `import-whatsapp`, `import-imessage`, and `import-gvoice` for WhatsApp, iMessage, and Google Voice. See [Text Messages](/usage/text-messages/).
+- Text message import: `import-whatsapp`, `import-imessage`, and `import-gvoice` for WhatsApp, iMessage, and Google Voice. See [Text Messages](/docs/usage/text-messages/).
 - TUI text mode: press `m` to toggle between Email and Texts for browsing imported text conversations.
 - `--after` and `--before` date filters for `sync-full` with IMAP accounts.
 - CC and BCC recipients exposed in the message API responses.

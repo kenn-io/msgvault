@@ -251,7 +251,7 @@ all supported standalone attachment sources. The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
 Hosted document embeddings are not enabled by this configuration.
 
-See [Document Attachment Indexing](/usage/document-indexing/) for the complete
+See [Document Attachment Indexing](/docs/usage/document-indexing/) for the complete
 probe, consent, build, and recovery flow.
 
 ### `[oauth]`
@@ -270,7 +270,7 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 | `client_secrets` | — | Path to the org's `client_secret.json` |
 | `service_account_key` | — | Path to the org's Google service account key JSON |
 
-See [OAuth Setup: Google Workspace Accounts](/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
+See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
 
 Discord's `--oauth-app` value is only a protected bot-token binding label. It
 is not resolved from this section and does not require an `[oauth.apps]` entry.
@@ -292,7 +292,7 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 
@@ -311,7 +311,7 @@ Exactly one source selector is required. Prefer `source_id` when two sources
 share an identifier or display name. With automatic confirmation disabled,
 `msgvault identity discover --source-id <id> --provider` fetches the inventory
 for an explicit preview; add `--apply` only after reviewing it. See [People,
-Profiles, and Source Identities](/usage/people/#fastmail-alias-inventory).
+Profiles, and Source Identities](/docs/usage/people/#fastmail-alias-inventory).
 
 ### `[discord]`
 
@@ -337,7 +337,7 @@ and forum post. Top-level channels match directly. A child inherits its
 parent's state unless its own ID appears explicitly. An explicit child include
 can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
-[Discord](/usage/discord/#configure-media-repairs-and-channel-filters).
+[Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
 ### `[log]`
 
@@ -355,7 +355,7 @@ Log files are named `msgvault-YYYY-MM-DD.log` (UTC date), written as newline-del
 
 When SQL logging is enabled, slow/error entries include query arguments and streaming query durations, which makes it easier to diagnose expensive reads without enabling full trace output.
 
-Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/cli-reference/#logs).
+Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/docs/cli-reference/#logs).
 
 ### `[sync]`
 
@@ -365,7 +365,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/api-server/) for API endpoint documentation and [MCP Server](/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -387,7 +387,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser
 access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
-clients—in `trusted_proxies`. See [Web UI](/web-ui/) for the complete security
+clients—in `trusted_proxies`. See [Web UI](/docs/web-ui/) for the complete security
 model and the plain-HTTP warning.
 
 For MCP Streamable HTTP, send `[server].api_key` as `Authorization: Bearer
@@ -457,11 +457,11 @@ Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.
 
-This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/architecture/postgresql/) for the current scope.
+This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
 
 ### `[backup]`
 
-Default settings for `msgvault backup`. See [Backup](/usage/backup/) for the
+Default settings for `msgvault backup`. See [Backup](/docs/usage/backup/) for the
 capture, verify, and restore workflow.
 
 | Key | Default | Description |
@@ -551,7 +551,7 @@ enabled = true
 
 ### `[beeper]`
 
-Archive chats from a locally running [Beeper Desktop](/usage/beeper/). A single
+Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
 block (not a list): the Beeper Desktop API is loopback-only, so there is one
 instance per machine and the daemon must run beside it. Authorize first with
 `msgvault add-beeper`.
@@ -581,7 +581,7 @@ max_media_mb = 100                # per-attachment download cap (MiB)
 
 ### `[slack]`
 
-Archive [Slack workspaces](/usage/slack/). A single block covers every
+Archive [Slack workspaces](/docs/usage/slack/). A single block covers every
 registered workspace (tokens are per-workspace files). Authorize each
 workspace first with `msgvault add-slack`.
 
@@ -611,7 +611,7 @@ Each entry is one Granola account. `identifier` is a stable source label;
 `account_email` is the primary identity used for organizer attribution.
 `msgvault serve` runs it on the given cron schedule. Register the account
 first with `msgvault add-granola`. See
-[Meeting Transcripts](/usage/meetings/).
+[Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
 [[granola]]
@@ -643,7 +643,7 @@ the archive; removing it prevents the scheduler from silently recreating it.
 Circleback meeting sync is configured with top-level `[[circleback]]`
 entries. Authentication is browser OAuth (`msgvault add-circleback`); no
 secret lives in the config file. See
-[Meeting Transcripts](/usage/meetings/).
+[Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
 [[circleback]]
@@ -669,7 +669,7 @@ opt-out flag.
 
 ### `[vector]`
 
-Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
+Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/docs/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
 
 | Key | Default | Description |
 |---|---|---|
@@ -800,5 +800,5 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `msgvault.db` | SQLite database (system of record when PostgreSQL is not configured) |
 | `attachments/` | Content-addressed attachment files |
 | `tokens/` | OAuth tokens per account |
-| `logs/` | Structured log files (when [file logging](/configuration/#log) is enabled) |
+| `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |

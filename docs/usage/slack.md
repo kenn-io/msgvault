@@ -138,7 +138,7 @@ schedule = "*/30 * * * *"
 ```
 
 The daemon then syncs every registered workspace on the schedule. See
-[Configuration](/configuration/#slack) for the full option list
+[Configuration](/docs/configuration/#slack) for the full option list
 (channel include/exclude filters, media caps).
 
 ## Identity unification

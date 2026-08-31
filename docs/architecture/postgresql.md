@@ -147,7 +147,7 @@ workspaces; and Relationships' ranking, timeline, and identity link/unlink
 cache refresh) have no PostgreSQL equivalent: those endpoints detect the
 missing DuckDB/Parquet cache and return a named unavailable-cache state
 rather than falling back to live SQL. If you see that state on a PostgreSQL
-backend, it is expected — the [cache troubleshooting guidance](/web-ui/#cache-states)
+backend, it is expected — the [cache troubleshooting guidance](/docs/web-ui/#cache-states)
 applies to SQLite archives only.
 
 ## Current Scope
@@ -192,5 +192,5 @@ that generation's embedding rows so old vectors do not consume search candidate
 budget for the active generation. Frequent full rebuilds can create dead tuples,
 so monitor autovacuum on the embedding tables and run maintenance when needed.
 
-See [Search Ranking Across Backends](/architecture/search-ranking/) for
+See [Search Ranking Across Backends](/docs/architecture/search-ranking/) for
 ranking differences between SQLite, PostgreSQL, sqlite-vec, and pgvector.

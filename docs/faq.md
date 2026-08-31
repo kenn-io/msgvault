@@ -21,11 +21,11 @@ The MCP server's lack of sync capability offers some protection here, since an a
 uses. Open it to search and group across email, chat, calendar, and meeting
 data, inspect people and files, monitor sources, and review staged deletions.
 The same server supports automations, integrations, and scheduled background
-sync. See [Web UI](/web-ui/) and [Web UI & API Server](/api-server/) for details.
+sync. See [Web UI](/docs/web-ui/) and [Web UI & API Server](/docs/api-server/) for details.
 
 <p class="faq-question">Where is my email data stored?</p>
 
-By default, everything stays on your local machine. msgvault stores messages in a SQLite database and Parquet analytics files inside your `MSGVAULT_HOME` directory (defaults to `~/.msgvault`). If you configure a remote deployment, that archive lives on your own server. See [Data Storage](/architecture/storage/) for details.
+By default, everything stays on your local machine. msgvault stores messages in a SQLite database and Parquet analytics files inside your `MSGVAULT_HOME` directory (defaults to `~/.msgvault`). If you configure a remote deployment, that archive lives on your own server. See [Data Storage](/docs/architecture/storage/) for details.
 
 <p class="faq-question">Can I use msgvault with non-Gmail accounts?</p>
 
@@ -34,20 +34,20 @@ Discord guilds, Slack workspaces, Beeper Desktop chats, Google Calendar, and sup
 note services. You can also import email from PST, MBOX, or Apple Mail and
 chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
 Backup & Restore. All messages use the same Web UI, search, TUI, MCP, REST API,
-and export surfaces. See [Setup Guide](/setup/#add-an-imap-account),
-[Importing Local Email](/usage/importing/), [Text Messages](/usage/text-messages/),
-and [Discord](/usage/discord/) or [Slack](/usage/slack/).
+and export surfaces. See [Setup Guide](/docs/setup/#add-an-imap-account),
+[Importing Local Email](/docs/usage/importing/), [Text Messages](/docs/usage/text-messages/),
+and [Discord](/docs/usage/discord/) or [Slack](/docs/usage/slack/).
 
 <p class="faq-question">Can msgvault archive Discord direct messages?</p>
 
 No. Discord bot tokens expose guilds the bot has joined, not a person's direct
 messages. msgvault does not accept user tokens or implement selfbots. It can
 archive accessible guild channels, threads, forum posts, and attachments; see
-[Discord](/usage/discord/).
+[Discord](/docs/usage/discord/).
 
 <p class="faq-question">Does deleting email in msgvault delete it from Gmail?</p>
 
-Only if you explicitly run the full deletion workflow. Staging messages for deletion in the Web UI or TUI does not touch Gmail or your IMAP provider. You must run `MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged` to execute staged deletions. Gmail messages move to trash by default; `--permanent` opts into permanent Gmail deletion. IMAP deletion removes messages from the provider. Your local archive is always preserved. See [Deleting Email](/usage/deletion/) for the complete process.
+Only if you explicitly run the full deletion workflow. Staging messages for deletion in the Web UI or TUI does not touch Gmail or your IMAP provider. You must run `MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged` to execute staged deletions. Gmail messages move to trash by default; `--permanent` opts into permanent Gmail deletion. IMAP deletion removes messages from the provider. Your local archive is always preserved. See [Deleting Email](/docs/usage/deletion/) for the complete process.
 
 ---
 

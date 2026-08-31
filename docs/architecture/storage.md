@@ -128,7 +128,7 @@ string when checking already-imported source items.
 
 SQLite uses an FTS5 virtual table named `messages_fts`. PostgreSQL uses a `search_fts` `tsvector` column on `messages` with a GIN index.
 
-Both power `msgvault search`, but the rankers differ. See [Search Ranking Across Backends](/architecture/search-ranking/).
+Both power `msgvault search`, but the rankers differ. See [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
 ### Relationships
 
@@ -146,7 +146,7 @@ PostgreSQL uses native types such as `BIGINT GENERATED ALWAYS AS IDENTITY`, `TIM
 
 For semantic search, pgvector stores index generations, pending embedding work, and embedding vectors in the same PostgreSQL database. There is no separate `vectors.db` on PostgreSQL.
 
-There is currently no SQLite to PostgreSQL migration command. Use PostgreSQL for a new archive or re-sync/import into an empty PostgreSQL database. See [PostgreSQL Backend](/architecture/postgresql/) for setup and operational notes.
+There is currently no SQLite to PostgreSQL migration command. Use PostgreSQL for a new archive or re-sync/import into an empty PostgreSQL database. See [PostgreSQL Backend](/docs/architecture/postgresql/) for setup and operational notes.
 
 ## Parquet (Analytics Cache)
 
@@ -258,7 +258,7 @@ Use `pack-attachments` to migrate the eligible loose backlog immediately,
 `unpack-attachments` to restore cataloged packed objects to loose files before
 downgrading. The last command is local-only and requires the daemon to be
 stopped because it removes production pack files. See the [CLI
-reference](/cli-reference/#pack-attachments) and [Backup](/usage/backup/) guide
+reference](/docs/cli-reference/#pack-attachments) and [Backup](/docs/usage/backup/) guide
 for maintenance and restore behavior.
 
 Set `[data].loose_attachments = true` when file-oriented backup or storage

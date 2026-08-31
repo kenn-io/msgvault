@@ -1,0 +1,38 @@
+# msgvault
+
+> msgvault is a local-first, open-source archive for a lifetime of email,
+> chat, meetings, calendars, and contacts — one database with a durable people
+> layer, keyword and semantic search, an MCP server, and agent skills, owned
+> and operated by you.
+
+The product and guide pages have exact Markdown twins; documentation pages are
+served as HTML. Markdown versions are canonical for machine readers.
+
+## Product
+
+- [Product overview](https://msgvault.io/index.md): what msgvault is, every
+  supported source, the people layer, search modes, interfaces, and the
+  deletion safety model
+- [Archive lifecycle guide](https://msgvault.io/guide.md): capture, preserve,
+  resolve, curate, understand, search, analyze, act, own
+
+## Docs
+
+- [Documentation index](https://msgvault.io/docs/): all operating documentation
+- [Setup guide](https://msgvault.io/docs/setup/): installation and first sync
+- [CLI reference](https://msgvault.io/docs/cli-reference/): every command and flag
+- [Configuration](https://msgvault.io/docs/configuration/): config.toml reference
+- [Web UI](https://msgvault.io/docs/web-ui/): the browser application
+- [Searching](https://msgvault.io/docs/usage/searching/): query syntax and modes
+- [Vector search](https://msgvault.io/docs/usage/vector-search/): semantic and hybrid setup
+- [Document attachment indexing](https://msgvault.io/docs/usage/document-indexing/): Docbank-backed extraction
+- [People, profiles, and identities](https://msgvault.io/docs/usage/people/): the people layer
+- [MCP server](https://msgvault.io/docs/usage/chat/): AI assistant integration
+- [Deleting email](https://msgvault.io/docs/usage/deletion/): staging and gated execution
+- [Backup](https://msgvault.io/docs/usage/backup/): snapshot repositories
+- [Architecture overview](https://msgvault.io/docs/architecture/overview/): design decisions
+
+## Other
+
+- [GitHub repository](https://github.com/kenn-io/msgvault): source, issues, releases
+- [Changelog](https://msgvault.io/docs/changelog/): release history

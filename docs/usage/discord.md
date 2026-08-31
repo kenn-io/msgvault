@@ -278,10 +278,10 @@ msgvault query --format table "
 "
 ```
 
-In the [TUI](/usage/tui/), press `m` to switch to Texts mode. Discord channels
+In the [TUI](/docs/usage/tui/), press `m` to switch to Texts mode. Discord channels
 and threads appear alongside other chat conversations. The HTTP search and
 message endpoints use the same `message_type = discord` filter; see the
-[Web Server](/api-server/). If vector search is enabled, run
+[Web Server](/docs/api-server/). If vector search is enabled, run
 `msgvault embeddings build` after a manual sync or enable
 `[vector.embed.schedule].run_after_sync` for scheduled syncs.
 

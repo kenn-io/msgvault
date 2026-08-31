@@ -122,7 +122,7 @@ With a `[remote]` server configured, tokens live on the remote host, so
 authorization happens there — same as pre-daemon remote behavior. For
 headless remote setups, keep using `add-account --headless` or
 `msgvault export-token` to push a locally minted token to the server (see
-[Remote Deployment](/guides/remote-deployment/)).
+[Remote Deployment](/docs/guides/remote-deployment/)).
 
 ## Gotcha: `--local` means "local daemon"
 
@@ -198,4 +198,4 @@ shows version, uptime, and vector-search state.
 **Something is off after upgrading. What is the first thing to try?**
 `msgvault daemon restart`. It re-reads config, picks up the current binary and
 environment, and re-registers the runtime record. See
-[Troubleshooting](/troubleshooting/) for more.
+[Troubleshooting](/docs/troubleshooting/) for more.

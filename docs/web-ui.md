@@ -16,22 +16,22 @@ provenance-documented Enron-derived fixture imported through the real daemon;
 the ordinary browser checks continue to use small synthetic API fixtures.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
   <figcaption>Relationships ranked view and selected activity timeline.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
+  <img src="/docs/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
   <figcaption>Relationships workspace in light theme with compact density.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
+  <img src="/docs/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
   <figcaption>Dark theme with comfortable density.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
   <figcaption>Light theme with compact density.</figcaption>
 </figure>
 
@@ -148,7 +148,7 @@ and filters continue to scope both the timeline and file table.
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and
 typed profile attributes are separate curated operations; see [People,
-Profiles, and Source Identities](/usage/people/).
+Profiles, and Source Identities](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting

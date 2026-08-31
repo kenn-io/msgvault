@@ -14,7 +14,7 @@ embedding endpoint configured in `[vector.embeddings]` to build/query semantic
 vectors, then stores those vectors in `vectors.db` on SQLite or pgvector tables
 on PostgreSQL.
 
-<img src="/assets/static/how-it-works.svg" alt="msgvault architecture: Gmail API syncs to SQLite, then offline Parquet analytics, FTS5 search, TUI, and MCP Server" style="width: 100%; max-width: 960px; margin: 1.5rem auto; display: block;" />
+<img src="/docs/assets/static/how-it-works.svg" alt="msgvault architecture: Gmail API syncs to SQLite, then offline Parquet analytics, FTS5 search, TUI, and MCP Server" style="width: 100%; max-width: 960px; margin: 1.5rem auto; display: block;" />
 
 ## Package Structure
 

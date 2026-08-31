@@ -174,7 +174,7 @@ query_prefix = "search_query: "
 
 pgvector embeddings live in the PostgreSQL database. `db_path` and
 `vectors.db` apply only to the SQLite sqlite-vec backend. See
-[PostgreSQL Backend](/architecture/postgresql/) for database setup.
+[PostgreSQL Backend](/docs/architecture/postgresql/) for database setup.
 
 ### Model task prefixes
 
@@ -444,7 +444,7 @@ curl "http://localhost:8080/api/v1/search?q=planning+offsite&mode=vector&explain
 ```
 
 Response shape differs from the FTS path; see the
-[Web UI & API Server](/api-server/#get-apiv1search) reference for details.
+[Web UI & API Server](/docs/api-server/#get-apiv1search) reference for details.
 HTTP vector/hybrid responses support only the first page; bump
 `page_size` (capped at `max_page_size_hybrid`) to retrieve a larger
 candidate page.
@@ -579,6 +579,6 @@ are marked complete and not sent to the embedding endpoint.
 
 ## See Also
 
-- [Web UI & API Server](/api-server/): browser interface and HTTP API reference.
-- [Searching](/usage/searching/): Full-text search syntax.
-- [Search Ranking Across Backends](/architecture/search-ranking/): Ranking differences between SQLite, PostgreSQL, sqlite-vec, and pgvector.
+- [Web UI & API Server](/docs/api-server/): browser interface and HTTP API reference.
+- [Searching](/docs/usage/searching/): Full-text search syntax.
+- [Search Ranking Across Backends](/docs/architecture/search-ranking/): Ranking differences between SQLite, PostgreSQL, sqlite-vec, and pgvector.
