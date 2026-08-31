@@ -178,19 +178,19 @@ func (s *missingUIDSession) Fetch(
 // SEARCH still report it, so a run enumerates the UID and then cannot fetch
 // it. That is the expunge race as a real server presents it.
 //
-// The returned function starts hiding the UID. Call it between two runs to
-// make a message disappear after it was already archived.
+// The returned function sets whether the UID is hidden. Call it between two
+// runs to make a message disappear, or to bring it back.
 func StartIMAPMemServerWithMissingUID(
 	t *testing.T,
 	messagesPerMailbox map[string]int,
 	mailbox string,
 	uid imap.UID,
-) (string, *imapmemserver.User, func()) {
+) (string, *imapmemserver.User, func(hidden bool)) {
 	t.Helper()
 	config := &missingUIDConfig{mailbox: mailbox, uid: uid}
 	addr, user := startIMAPMemServer(
 		t, messagesPerMailbox, nil, "", 0, "", config)
-	return addr, user, func() { config.hidden.Store(true) }
+	return addr, user, func(hidden bool) { config.hidden.Store(hidden) }
 }
 
 // AppendIMAPMessage appends one synthetic RFC822 message to a mailbox
