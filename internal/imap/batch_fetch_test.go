@@ -924,3 +924,68 @@ func TestOmittedUIDIsRecheckedBeforeItCountsAsGone(t *testing.T) {
 		assert.Contains(observedUIDs(client), uint32(2))
 	})
 }
+
+// startOmitThenDieIMAPServer answers one FETCH with a response that leaves
+// uid out, then stops serving and closes its listener. The recheck that
+// follows therefore hits a dead socket and cannot reconnect.
+func startOmitThenDieIMAPServer(t *testing.T, uid imapapi.UID) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = io.WriteString(conn, "* OK [CAPABILITY IMAP4rev1] synthetic server ready\r\n")
+		reader := bufio.NewReader(conn)
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return
+			}
+			tag, command, _ := strings.Cut(strings.TrimSpace(line), " ")
+			upper := strings.ToUpper(command)
+			switch {
+			case strings.HasPrefix(upper, "LOGIN"):
+				_, _ = fmt.Fprintf(conn, "%s OK LOGIN completed\r\n", tag)
+			case strings.HasPrefix(upper, "SELECT"):
+				_, _ = io.WriteString(conn,
+					"* FLAGS (\\Seen)\r\n* 2 EXISTS\r\n* OK [UIDVALIDITY 1]\r\n* OK [UIDNEXT 3]\r\n")
+				_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
+			case strings.HasPrefix(upper, "UID FETCH"):
+				// Answer with every requested UID except the one under test,
+				// then refuse to serve anything further.
+				_, _ = fmt.Fprintf(conn,
+					"* 1 FETCH (UID %d FLAGS () INTERNALDATE \"01-Jan-2026 00:00:00 +0000\" "+
+						"RFC822.SIZE 5 BODY[] {5}\r\nhello)\r\n", uid-1)
+				_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
+				_ = listener.Close()
+				return
+			default:
+				_, _ = fmt.Fprintf(conn, "%s BAD unsupported synthetic command\r\n", tag)
+			}
+		}
+	}()
+	return addr
+}
+
+// TestRecheckReconnectFailureEndsTheBatch covers the invariant the recheck must
+// not break. fetchChunk reports a failed reconnect as fatal, and a fatal
+// failure has already cleared c.conn, so the batch cannot continue: the next
+// chunk would dereference a nil connection. The recheck has to propagate that
+// the way the first fetch of a chunk already does.
+func TestRecheckReconnectFailureEndsTheBatch(t *testing.T) {
+	require := require.New(t)
+	addr := startOmitThenDieIMAPServer(t, imapapi.UID(2))
+	client := newTestClient(t, addr)
+
+	_, err := client.GetMessagesRawBatchWithErrors(
+		t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+	require.Error(err, "a failed reconnect during the recheck must end the batch")
+}

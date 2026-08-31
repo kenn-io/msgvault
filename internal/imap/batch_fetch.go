@@ -329,8 +329,12 @@ func (c *Client) fetchMailboxBatch(
 
 		omitted := c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
 		if len(omitted) > 0 {
-			omitted = c.recheckOmittedRaw(
+			var fatalErr error
+			omitted, fatalErr = c.recheckOmittedRaw(
 				ctx, results, uidToIdx, mailbox, omitted, fetchOpts)
+			if fatalErr != nil {
+				return fatalErr
+			}
 		}
 		for _, item := range omitted {
 			results[item.idx].Err = errIMAPFetchResultMissing
@@ -361,19 +365,25 @@ func (c *Client) recheckOmittedRaw(
 	mailbox string,
 	omitted []batchFetchItem,
 	fetchOpts *imap.FetchOptions,
-) []batchFetchItem {
+) ([]batchFetchItem, error) {
 	var uidSet imap.UIDSet
 	for _, item := range omitted {
 		uidSet.AddNum(item.uid)
 	}
-	msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	if fatal {
+		// The reconnect failed, so there is no connection left to run the next
+		// chunk on. The batch has to end here, exactly as it does when the
+		// first fetch of a chunk hits this.
+		return nil, err
+	}
 	if err != nil {
 		c.logger.Warn("could not recheck UIDs missing from a FETCH response",
 			"mailbox", mailbox, "uids", len(omitted), "error", err)
 		markRawBatchError(results, omitted, err)
-		return nil
+		return nil, nil
 	}
-	return c.applyFetchResults(results, uidToIdx, mailbox, omitted, msgs)
+	return c.applyFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
 }
 
 // GetMessagesRawBatchWithErrors fetches multiple messages, grouping by mailbox for efficiency.
@@ -542,8 +552,12 @@ func (c *Client) fetchMailboxLabelBatch(
 		}
 		omitted := c.applyLabelFetchResults(results, uidToIdx, mailbox, chunk, msgs)
 		if len(omitted) > 0 {
-			omitted = c.recheckOmittedLabels(
+			var fatalErr error
+			omitted, fatalErr = c.recheckOmittedLabels(
 				ctx, results, uidToIdx, mailbox, omitted, fetchOpts)
+			if fatalErr != nil {
+				return fatalErr
+			}
 		}
 		for _, item := range omitted {
 			results[item.idx].Err = errIMAPFetchResultMissing
@@ -562,19 +576,22 @@ func (c *Client) recheckOmittedLabels(
 	mailbox string,
 	omitted []batchFetchItem,
 	fetchOpts *imap.FetchOptions,
-) []batchFetchItem {
+) ([]batchFetchItem, error) {
 	var uidSet imap.UIDSet
 	for _, item := range omitted {
 		uidSet.AddNum(item.uid)
 	}
-	msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	if fatal {
+		return nil, err
+	}
 	if err != nil {
 		c.logger.Warn("could not recheck UIDs missing from a label FETCH response",
 			"mailbox", mailbox, "uids", len(omitted), "error", err)
 		markLabelBatchError(results, omitted, err)
-		return nil
+		return nil, nil
 	}
-	return c.applyLabelFetchResults(results, uidToIdx, mailbox, omitted, msgs)
+	return c.applyLabelFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
 }
 
 // GetMessageLabelsBatch fetches only the Message-ID header needed to recover
