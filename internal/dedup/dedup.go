@@ -966,8 +966,6 @@ var ErrPlanChangedAfterRFC822Backfill = errors.New(
 )
 
 type actionableGroup struct {
-	KeyType    string
-	Key        string
 	SurvivorID int64
 	LoserIDs   []int64
 }
@@ -993,8 +991,6 @@ func (e *Engine) canonicalActionablePlan(
 			)
 		}
 		canonical := actionableGroup{
-			KeyType:    group.KeyType,
-			Key:        group.Key,
 			SurvivorID: group.Messages[group.Survivor].ID,
 			LoserIDs:   make([]int64, 0, len(group.Messages)-1),
 		}
@@ -1008,12 +1004,6 @@ func (e *Engine) canonicalActionablePlan(
 	}
 	sort.Slice(plan.Groups, func(i, j int) bool {
 		left, right := plan.Groups[i], plan.Groups[j]
-		if left.KeyType != right.KeyType {
-			return left.KeyType < right.KeyType
-		}
-		if left.Key != right.Key {
-			return left.Key < right.Key
-		}
 		if left.SurvivorID != right.SurvivorID {
 			return left.SurvivorID < right.SurvivorID
 		}
@@ -1048,9 +1038,7 @@ func actionablePlansEqual(left, right actionablePlan) bool {
 		return false
 	}
 	return slices.EqualFunc(left.Groups, right.Groups, func(a, b actionableGroup) bool {
-		return a.KeyType == b.KeyType &&
-			a.Key == b.Key &&
-			a.SurvivorID == b.SurvivorID &&
+		return a.SurvivorID == b.SurvivorID &&
 			slices.Equal(a.LoserIDs, b.LoserIDs)
 	})
 }

@@ -1458,6 +1458,45 @@ func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testi
 	assert.Equal(sql.NullString{String: "unrelated@example.test", Valid: true}, storedID)
 }
 
+func TestEngine_ExecuteAllowsGroupProvenanceChangeWhenDestructivePlanIsUnchanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	const stableRFC822ID = "z-stable@example.test"
+	stableWinnerID := addMessage(t, f.Store, f.Source, "stable-winner", stableRFC822ID, false)
+	stableLoserID := addMessage(t, f.Store, f.Source, "stable-loser", stableRFC822ID, false)
+	const rfc822ID = "reclassified@example.test"
+	raw := []byte("Message-ID: <" + rfc822ID + ">\r\nSubject: Same\r\n\r\nBody")
+	winnerID := addMessage(t, f.Store, f.Source, "stored-id", rfc822ID, false)
+	loserID := addMessage(t, f.Store, f.Source, "derivable-id", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(winnerID, raw))
+	require.NoError(f.Store.UpsertMessageRaw(loserID, raw))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs:    []int64{f.Source.ID},
+		Account:             f.Source.Identifier,
+		ContentHashFallback: true,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Equal(int64(1), report.PendingRFC822IDBackfill())
+	require.Len(report.Groups, 2)
+	assert.Equal("message-id", report.Groups[0].KeyType)
+	assert.Equal(stableRFC822ID, report.Groups[0].Key)
+	initialGroup := report.Groups[1]
+	assert.Equal("normalized-hash", initialGroup.KeyType)
+	assert.Equal(winnerID, initialGroup.Messages[initialGroup.Survivor].ID)
+
+	summary, err := engine.Execute(t.Context(), report, "reclassified-plan")
+	require.NoError(err)
+	assert.Equal(int64(1), summary.RFC822IDsBackfilled)
+	assert.Equal(2, summary.GroupsMerged)
+	assertSoftDeleted(t, f.Store, stableWinnerID, false)
+	assertSoftDeleted(t, f.Store, stableLoserID, true)
+	assertSoftDeleted(t, f.Store, winnerID, false)
+	assertSoftDeleted(t, f.Store, loserID, true)
+}
+
 func TestEngine_ExecuteStopsBeforeMergeWhenBackfillRevealsDuplicate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
