@@ -9,6 +9,10 @@ site_dir="$script_dir/site"
 rm -rf "$site_dir"
 MSGVAULT_DOCS_SITE_DIR="site/docs" "$script_dir/zensical-docs.sh" build
 
+# The sitemap indexes every tier, so serve it from the standard root path
+# crawlers probe, as the pre-tiered site did.
+mv "$site_dir/docs/sitemap.xml" "$site_dir/sitemap.xml"
+
 # The marketing and guide tiers ship as static files from website/; the
 # zensical docs tier lives under /docs/.
 website_dir="$repo_root/website"

@@ -445,11 +445,9 @@ def main() -> None:
 
     if not (SITE / "docs" / "404.html").exists():
         fail("missing docs/404.html")
-    if not (SITE / "docs" / "sitemap.xml").exists():
-        fail("missing docs/sitemap.xml")
-    sitemap_text = (SITE / "docs" / "sitemap.xml").read_text(
-        encoding="utf-8", errors="ignore"
-    )
+    if not (SITE / "sitemap.xml").exists():
+        fail("missing sitemap.xml at the site root")
+    sitemap_text = (SITE / "sitemap.xml").read_text(encoding="utf-8", errors="ignore")
     for url in REQUIRED_SITEMAP_URLS:
         if f"<loc>{url}</loc>" not in sitemap_text:
             fail(f"missing sitemap URL {url}")
