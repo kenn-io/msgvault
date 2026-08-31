@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -501,11 +500,9 @@ func TestStore_PlanRFC822IDBackfillDoesNotWriteAndSeparatesFailures(t *testing.T
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
 	assert.Equal(int64(3), plan.Candidates)
-	require.Len(plan.Items, 1)
-	assert.Equal(validID, plan.Items[0].MessageID)
-	assert.Equal(f.Source.ID, plan.Items[0].SourceID)
-	assert.Equal("planned@example.com", plan.Items[0].RFC822MessageID)
+	assert.Equal(int64(1), plan.Ready)
 	assert.Equal(int64(2), plan.Failed)
+	assert.NotEmpty(plan.Digest())
 
 	for _, messageID := range []int64{validID, malformedID, missingHeaderID, noRawID} {
 		var stored sql.NullString
@@ -528,10 +525,16 @@ func TestStore_PlanRFC822IDBackfillSanitizesInvalidUTF8(t *testing.T) {
 
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
-	require.Len(plan.Items, 1)
-	assert.True(utf8.ValidString(plan.Items[0].RFC822MessageID))
-	assert.Equal("m-\uFFFD\uFFFD@example.com", plan.Items[0].RFC822MessageID)
+	require.Equal(int64(1), plan.Ready)
 	assert.Empty(storedRFC822ID(t, f.Store, messageID))
+
+	updated, err := f.Store.ApplyRFC822IDBackfill(
+		t.Context(), []int64{f.Source.ID}, plan, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), updated)
+	storedID := storedRFC822ID(t, f.Store, messageID)
+	assert.True(utf8.ValidString(storedID))
+	assert.Equal("m-\uFFFD\uFFFD@example.com", storedID)
 }
 
 func TestStore_ApplyRFC822IDBackfillCommitsSanitizedInvalidUTF8ID(t *testing.T) {
@@ -549,7 +552,7 @@ func TestStore_ApplyRFC822IDBackfillCommitsSanitizedInvalidUTF8ID(t *testing.T) 
 
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
-	require.Len(plan.Items, 2)
+	require.Equal(int64(2), plan.Ready)
 
 	progressCalls := 0
 	updated, err := f.Store.ApplyRFC822IDBackfill(
@@ -581,7 +584,7 @@ func TestStore_PlanRFC822IDBackfillExcludesNonMIMEStoredRows(t *testing.T) {
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
 	assert.Equal(int64(0), plan.Candidates)
-	assert.Empty(plan.Items)
+	assert.Equal(int64(0), plan.Ready)
 	assert.Equal(int64(0), plan.Failed)
 	assert.Empty(storedRFC822ID(t, f.Store, messageID))
 }
@@ -596,13 +599,13 @@ func TestStore_RFC822IDBackfillPlanDigestBindsRowsAndRawInput(t *testing.T) {
 		"Message-ID: <first@example.com>\r\n\r\nFirst body")))
 	firstPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
 	require.NoError(err)
-	require.Len(firstPlan.Items, 1)
+	require.Equal(int64(1), firstPlan.Ready)
 
 	require.NoError(f.Store.UpsertMessageRaw(firstID, []byte(
 		"Message-ID: <replacement@example.com>\r\n\r\nReplacement body")))
 	replacedRawPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
 	require.NoError(err)
-	require.Len(replacedRawPlan.Items, 1)
+	require.Equal(int64(1), replacedRawPlan.Ready)
 	assert.NotEqual(firstPlan.Digest(), replacedRawPlan.Digest())
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
@@ -613,51 +616,44 @@ func TestStore_RFC822IDBackfillPlanDigestBindsRowsAndRawInput(t *testing.T) {
 		"Message-ID: <replacement@example.com>\r\n\r\nReplacement body")))
 	replacedRowPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
 	require.NoError(err)
-	require.Len(replacedRowPlan.Items, 1)
+	require.Equal(int64(1), replacedRowPlan.Ready)
 	assert.Equal(replacedRawPlan.Candidates, replacedRowPlan.Candidates)
 	assert.NotEqual(replacedRawPlan.Digest(), replacedRowPlan.Digest())
 }
 
-func TestStore_RFC822IDBackfillPlanDigestStableAcrossItemOrder(t *testing.T) {
-	firstFingerprint := sha256.Sum256([]byte("first"))
-	secondFingerprint := sha256.Sum256([]byte("second"))
-	items := []store.RFC822IDBackfillItem{
-		{MessageID: 20, SourceID: 2, RFC822MessageID: "second@example.com", RawInputSHA256: secondFingerprint},
-		{MessageID: 10, SourceID: 1, RFC822MessageID: "first@example.com", RawInputSHA256: firstFingerprint},
-	}
-	forward := store.RFC822IDBackfillPlan{Candidates: 2, Items: items, Failed: 0}
-	reversed := store.RFC822IDBackfillPlan{Candidates: 2, Items: []store.RFC822IDBackfillItem{items[1], items[0]}, Failed: 0}
-
-	assert.Equal(t, forward.Digest(), reversed.Digest())
-}
-
 func TestStore_RFC822IDBackfillPlanDigestIgnoresNonExecutableCounts(t *testing.T) {
-	fingerprint := sha256.Sum256([]byte("executable-raw-input"))
-	items := []store.RFC822IDBackfillItem{{
-		MessageID:       10,
-		SourceID:        1,
-		RFC822MessageID: "executable@example.com",
-		RawInputSHA256:  fingerprint,
-	}}
-	base := store.RFC822IDBackfillPlan{Candidates: 3, Items: items, Failed: 2}
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := newRFC822Message(t, f, "digest-counts", "")
+	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
+		"Message-ID: <digest-counts@example.com>\r\n\r\nBody")))
+	base, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
+	require.NoError(err)
+	require.Equal(int64(1), base.Ready)
 
 	tests := []struct {
-		name string
-		plan store.RFC822IDBackfillPlan
+		name   string
+		mutate func(*store.RFC822IDBackfillPlan)
 	}{
 		{
 			name: "candidate-only substitution",
-			plan: store.RFC822IDBackfillPlan{Candidates: 4, Items: items, Failed: 2},
+			mutate: func(plan *store.RFC822IDBackfillPlan) {
+				plan.Candidates++
+			},
 		},
 		{
 			name: "failed-only substitution",
-			plan: store.RFC822IDBackfillPlan{Candidates: 3, Items: items, Failed: 1},
+			mutate: func(plan *store.RFC822IDBackfillPlan) {
+				plan.Failed++
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, base.Digest(), tt.plan.Digest())
+			changed := base
+			tt.mutate(&changed)
+			assert.Equal(t, base.Digest(), changed.Digest())
 		})
 	}
 }
@@ -675,16 +671,16 @@ func TestStore_RFC822IDBackfillRawFingerprintDistinguishesNullCompression(t *tes
 	require.NoError(err)
 	nullPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
 	require.NoError(err)
-	require.Len(nullPlan.Items, 1)
+	require.Equal(int64(1), nullPlan.Ready)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE message_raw SET compression = '' WHERE message_id = ?`), messageID)
 	require.NoError(err)
 	emptyPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
 	require.NoError(err)
-	require.Len(emptyPlan.Items, 1)
+	require.Equal(int64(1), emptyPlan.Ready)
 
-	assert.NotEqual(nullPlan.Items[0].RawInputSHA256, emptyPlan.Items[0].RawInputSHA256)
+	assert.NotEqual(nullPlan.Digest(), emptyPlan.Digest())
 }
 
 func TestStore_ApplyRFC822IDBackfillCommitsExactPlan(t *testing.T) {
@@ -700,7 +696,7 @@ func TestStore_ApplyRFC822IDBackfillCommitsExactPlan(t *testing.T) {
 		"Message-ID: <apply-second@example.com>\r\n\r\nSecond")))
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
-	require.Len(plan.Items, 2)
+	require.Equal(int64(2), plan.Ready)
 
 	var progressCalls int
 	updated, err := f.Store.ApplyRFC822IDBackfill(
@@ -786,7 +782,7 @@ func twoMessageRFC822IDBackfillPlan(
 		"Message-ID: <"+prefix+"-second@example.com>\r\n\r\nSecond")))
 	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(t, err)
-	require.Len(t, plan.Items, 2)
+	require.Equal(t, int64(2), plan.Ready)
 	return firstID, secondID, plan
 }
 

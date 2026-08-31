@@ -87,8 +87,10 @@ type Store struct {
 	personEnrichmentOwnershipBarrier      func(phase string, tx *loggedTx)
 
 	// Zero means "use the production batch size"; see
-	// contentChangedBackfillBatch. Per-Store for the same reason.
+	// contentChangedBackfillBatch and rfc822IDBackfillBatch. Per-Store for
+	// the same reason.
 	contentChangedBackfillBatchSizeOverride int64
+	rfc822IDBackfillBatchSizeOverride       int
 }
 
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes

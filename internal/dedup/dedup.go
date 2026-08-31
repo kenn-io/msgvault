@@ -342,7 +342,7 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	report := &Report{
 		TotalMessages:      totalMessages,
 		BySourcePair:       make(map[string]int),
-		BackfilledCount:    -int64(len(backfillPlan.Items)),
+		BackfilledCount:    -backfillPlan.Ready,
 		BackfillCandidates: backfillPlan.Candidates,
 		BackfillFailed:     backfillPlan.Failed,
 		BackfillPlanDigest: backfillPlan.Digest(),
@@ -1091,13 +1091,13 @@ func (e *Engine) Execute(
 	// The rescan and the stale-plan check it feeds exist to re-derive the
 	// actionable plan after ApplyRFC822IDBackfill committed new
 	// rfc822_message_id values. That only happens when the confirmed plan
-	// carried derivation work: with no planned items the backfill committed
+	// carried derivation work: with no ready derivations the backfill committed
 	// nothing, the confirmed report still describes the database exactly,
 	// and a second full Scan is pure overhead. Keep the check whenever the
-	// plan had items — including when they all failed validation and
+	// plan had ready work — including when it all failed validation and
 	// committed nothing, so a plan that no longer matches the database still
 	// stops the merge.
-	if len(report.rfc822Backfill.Items) > 0 {
+	if report.rfc822Backfill.Ready > 0 {
 		refreshed, err := e.Scan(ctx)
 		if err != nil {
 			return summary, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)

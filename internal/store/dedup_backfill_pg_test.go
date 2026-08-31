@@ -23,6 +23,66 @@ import (
 
 type rfc822IDBackfillApplyContextKey struct{}
 
+func TestStore_RFC822IDBackfillStreamsAcrossBoundedPages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	st.rfc822IDBackfillBatchSizeOverride = 2
+
+	source, err := st.GetOrCreateSource("gmail", "bounded-backfill@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(
+		source.ID, "bounded-backfill-conversation", "bounded backfill")
+	require.NoError(err)
+	messageIDs := make([]int64, 5)
+	for i := range messageIDs {
+		messageIDs[i], err = st.UpsertMessage(&Message{
+			ConversationID: conversationID,
+			SourceID:       source.ID,
+			SourceMessageID: fmt.Sprintf(
+				"bounded-backfill-%d", i),
+			MessageType: "email",
+		})
+		require.NoError(err)
+		require.NoError(st.UpsertMessageRaw(messageIDs[i], []byte(fmt.Sprintf(
+			"Message-ID: <bounded-backfill-%d@example.test>\r\n\r\nBody", i))))
+	}
+
+	plan, err := st.PlanRFC822IDBackfill(t.Context(), []int64{source.ID})
+	require.NoError(err)
+	assert.Equal(int64(5), plan.Candidates)
+	assert.Equal(int64(5), plan.Ready)
+	assert.Equal(int64(0), plan.Failed)
+	assert.NotEmpty(plan.Digest())
+	st.rfc822IDBackfillBatchSizeOverride = 3
+	repagedPlan, err := st.PlanRFC822IDBackfill(t.Context(), []int64{source.ID})
+	require.NoError(err)
+	assert.Equal(plan.Digest(), repagedPlan.Digest(),
+		"digest must not depend on bounded page boundaries")
+	st.rfc822IDBackfillBatchSizeOverride = 2
+
+	updated, err := st.ApplyRFC822IDBackfill(
+		t.Context(), []int64{source.ID}, plan, nil)
+	require.NoError(err)
+	assert.Equal(int64(5), updated)
+	for i, messageID := range messageIDs {
+		assert.Equal(fmt.Sprintf("bounded-backfill-%d@example.test", i),
+			internalStoredRFC822ID(t, st, messageID))
+	}
+}
+
+func newRFC822IDBackfillBackendStore(t *testing.T) *Store {
+	t.Helper()
+	if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
+		return newPGStoreInternal(t, dbURL)
+	}
+	st, err := OpenForTest(filepath.Join(t.TempDir(), "bounded-rfc822-backfill.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	return st
+}
+
 type rfc822IDBackfillStatementGate struct {
 	statements chan string
 }
@@ -414,7 +474,7 @@ func newInternalRFC822IDBackfillPlan(
 	secondID = newMessage("second")
 	plan, err = st.PlanRFC822IDBackfill(t.Context(), []int64{source.ID})
 	require.NoError(t, err)
-	require.Len(t, plan.Items, 2)
+	require.Equal(t, int64(2), plan.Ready)
 	return firstID, secondID, source.ID, plan
 }
 
