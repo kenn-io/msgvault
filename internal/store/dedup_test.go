@@ -112,6 +112,30 @@ func TestStore_DuplicateGroupsPreserveMalformedRFC822IDs(t *testing.T) {
 	)
 }
 
+func TestStore_BackfillRFC822IDsPreservesMalformedIDForDuplicateDiscovery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	const malformedID = "<<malformed-backfill@example.test>>"
+
+	_ = newRFC822Message(t, f, "malformed-stored", malformedID)
+	backfillID := newRFC822Message(t, f, "malformed-missing", "")
+	require.NoError(f.Store.UpsertMessageRaw(backfillID, []byte(
+		"Message-ID: "+malformedID+"\r\n\r\nBody")))
+
+	updated, failed, err := f.Store.BackfillRFC822IDs([]int64{f.Source.ID}, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), updated)
+	assert.Equal(int64(0), failed)
+	assert.Equal(malformedID, storedRFC822ID(t, f.Store, backfillID))
+
+	groups, err := f.Store.FindDuplicatesByRFC822ID(f.Source.ID)
+	require.NoError(err)
+	require.Len(groups, 1)
+	assert.Equal(malformedID, groups[0].RFC822MessageID)
+	assert.Equal(2, groups[0].Count)
+}
+
 func TestStore_DuplicateGroupFetchMatchesWhitespaceDiscoveryGroups(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

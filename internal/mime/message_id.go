@@ -5,11 +5,16 @@ import (
 	"unicode/utf8"
 )
 
-// NormalizeMessageID returns the canonical bare form used for RFC822
-// Message-ID comparison and storage, with invalid bytes made safe for SQL TEXT.
+// NormalizeMessageID returns the canonical form used for RFC822 Message-ID
+// comparison and storage. It unwraps one structurally valid angle-bracket pair,
+// preserves malformed bracket structure, and makes invalid bytes safe for SQL
+// TEXT.
 func NormalizeMessageID(id string) string {
 	id = strings.TrimSpace(id)
-	id = strings.Trim(id, "<>")
+	if len(id) > 2 && id[0] == '<' && id[len(id)-1] == '>' &&
+		!isMessageIDBracketEdge(id[1]) && !isMessageIDBracketEdge(id[len(id)-2]) {
+		id = id[1 : len(id)-1]
+	}
 	var normalized strings.Builder
 	normalized.Grow(len(id))
 	for len(id) > 0 {
@@ -23,4 +28,8 @@ func NormalizeMessageID(id string) string {
 		id = id[size:]
 	}
 	return normalized.String()
+}
+
+func isMessageIDBracketEdge(b byte) bool {
+	return b == '<' || b == '>' || b == ' '
 }
