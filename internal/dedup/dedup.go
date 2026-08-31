@@ -1088,34 +1088,45 @@ func (e *Engine) Execute(
 	}
 	summary.RFC822IDsBackfilled = backfilled
 
-	refreshed, err := e.Scan(ctx)
-	if err != nil {
-		return summary, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)
-	}
-	confirmedPlan, err := e.canonicalActionablePlan(ctx, report)
-	if err != nil {
-		return summary, fmt.Errorf("canonicalize confirmed deduplication plan: %w", err)
-	}
-	refreshedPlan, err := e.canonicalActionablePlan(ctx, refreshed)
-	if err != nil {
-		return summary, fmt.Errorf("canonicalize refreshed deduplication plan: %w", err)
-	}
-	if !actionablePlansEqual(confirmedPlan, refreshedPlan) {
-		derivationNoun, derivationVerb := "derivations", "were"
-		if backfilled == 1 {
-			derivationNoun, derivationVerb = "derivation", "was"
+	// The rescan and the stale-plan check it feeds exist to re-derive the
+	// actionable plan after ApplyRFC822IDBackfill committed new
+	// rfc822_message_id values. That only happens when the confirmed plan
+	// carried derivation work: with no planned items the backfill committed
+	// nothing, the confirmed report still describes the database exactly,
+	// and a second full Scan is pure overhead. Keep the check whenever the
+	// plan had items — including when they all failed validation and
+	// committed nothing, so a plan that no longer matches the database still
+	// stops the merge.
+	if len(report.rfc822Backfill.Items) > 0 {
+		refreshed, err := e.Scan(ctx)
+		if err != nil {
+			return summary, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)
 		}
-		return summary, fmt.Errorf(
-			"%w: %d RFC822 Message-ID %s %s committed; "+
-				"no duplicate messages were hidden and no dedup batch was created; "+
-				"rerun deduplicate to review the updated plan",
-			ErrPlanChangedAfterRFC822Backfill,
-			backfilled,
-			derivationNoun,
-			derivationVerb,
-		)
+		confirmedPlan, err := e.canonicalActionablePlan(ctx, report)
+		if err != nil {
+			return summary, fmt.Errorf("canonicalize confirmed deduplication plan: %w", err)
+		}
+		refreshedPlan, err := e.canonicalActionablePlan(ctx, refreshed)
+		if err != nil {
+			return summary, fmt.Errorf("canonicalize refreshed deduplication plan: %w", err)
+		}
+		if !actionablePlansEqual(confirmedPlan, refreshedPlan) {
+			derivationNoun, derivationVerb := "derivations", "were"
+			if backfilled == 1 {
+				derivationNoun, derivationVerb = "derivation", "was"
+			}
+			return summary, fmt.Errorf(
+				"%w: %d RFC822 Message-ID %s %s committed; "+
+					"no duplicate messages were hidden and no dedup batch was created; "+
+					"rerun deduplicate to review the updated plan",
+				ErrPlanChangedAfterRFC822Backfill,
+				backfilled,
+				derivationNoun,
+				derivationVerb,
+			)
+		}
+		report = refreshed
 	}
-	report = refreshed
 
 	remoteByKey := make(map[remoteKey][]string)
 	if e.config.DeleteDupsFromSourceServer {

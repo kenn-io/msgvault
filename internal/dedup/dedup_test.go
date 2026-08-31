@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1515,6 +1516,83 @@ func TestEngine_ExecuteStopsBeforeMergeWhenBackfillRevealsDuplicate(t *testing.T
 		}
 	}
 	assert.Equal([]int64{loserID}, loserIDs)
+}
+
+// scanStartCounter is a concurrency-safe slog.Handler that counts how many
+// times the engine logged a scan start. Scan logs exactly one "dedup scan
+// start" per invocation, so the count observes how many full scans ran
+// without the test having to wrap the store.
+type scanStartCounter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (h *scanStartCounter) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *scanStartCounter) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == "dedup scan start" {
+		h.mu.Lock()
+		h.count++
+		h.mu.Unlock()
+	}
+	return nil
+}
+
+func (h *scanStartCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *scanStartCounter) WithGroup(string) slog.Handler { return h }
+
+func (h *scanStartCounter) scans() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+// TestEngine_ExecuteSkipsRescanWhenNoBackfillWasPlanned pins the fix for the
+// review finding that Execute always ran a second full Scan after
+// ApplyRFC822IDBackfill, even when the confirmed plan contained no RFC822
+// Message-ID derivation items. Even when failed candidates were inspected,
+// no items means the backfill commits nothing, so the confirmed report still
+// describes the database and the rescan is pure overhead. The stale-plan
+// safety check itself stays exercised, on the derivation path, by
+// TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged and
+// TestEngine_ExecuteStopsBeforeMergeWhenBackfillRevealsDuplicate.
+func TestEngine_ExecuteSkipsRescanWhenNoBackfillWasPlanned(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	winnerID := addMessage(t, f.Store, f.Source, "winner", "skip-rescan@example.test", false)
+	loserID := addMessage(t, f.Store, f.Source, "loser", "skip-rescan@example.test", false)
+	malformedID := addMessage(t, f.Store, f.Source, "malformed-no-message-id", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(malformedID,
+		[]byte("Subject: Missing Message-ID\r\n\r\nBody")))
+
+	scans := &scanStartCounter{}
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, slog.New(scans))
+
+	report, err := engine.Scan(t.Context())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	require.Equal(int64(1), report.BackfillCandidates,
+		"fixture must include a failed candidate but no applicable item")
+	require.Equal(int64(1), report.BackfillFailed,
+		"fixture must include a failed candidate but no applicable item")
+	require.Equal(int64(0), report.PendingRFC822IDBackfill(),
+		"fixture must plan no RFC822 derivation")
+
+	require.Equal(1, scans.scans(), "the explicit Scan must be the only initial scan")
+	summary, err := engine.Execute(t.Context(), report, "skip-rescan")
+	require.NoError(err, "Execute")
+
+	assert.Equal(1, scans.scans(),
+		"Execute must not run a second full scan when no derivation was planned")
+	assert.Equal(int64(0), summary.RFC822IDsBackfilled, "RFC822IDsBackfilled")
+	assert.Equal(1, summary.GroupsMerged, "GroupsMerged")
+	assertSoftDeleted(t, f.Store, winnerID, false)
+	assertSoftDeleted(t, f.Store, loserID, true)
 }
 
 func TestEngine_FormatReportShowsBackfillCandidatesReadyAndFailures(t *testing.T) {

@@ -318,6 +318,17 @@ func (d *SQLiteDialect) RFC822CanonicalIDExpr(col string) string {
 	END`, blob)
 }
 
+// RFC822CanonicalIDIndexDefinition defines the composite expression/source
+// index. SQLite groups BLOB bytes, so the indexed CASE results preserve bytes
+// after embedded NUL. Canonical ID leads the index so GROUP BY streams in index
+// order; source_id lets the production scope filter use the same index.
+func (d *SQLiteDialect) RFC822CanonicalIDIndexDefinition() string {
+	return fmt.Sprintf(
+		"ON messages(%s, source_id)",
+		d.RFC822CanonicalIDExpr("rfc822_message_id"),
+	)
+}
+
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 

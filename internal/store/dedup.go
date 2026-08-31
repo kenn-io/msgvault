@@ -28,6 +28,13 @@ type DuplicateGroupKey struct {
 // expand to the same stored Message-ID representation.
 var ErrRFC822StorageFormCollision = errors.New("RFC822 Message-ID storage form collision")
 
+// rfc822CanonicalIndexName is the canonical Message-ID/source covering index
+// used by duplicate discovery. SQLite's production query names it explicitly:
+// without that choice the cost-based planner prefers idx_messages_source for a
+// scoped query and rebuilds a temporary GROUP BY B-tree, defeating the
+// expression index this path exists to use.
+const rfc822CanonicalIndexName = "idx_messages_rfc822_message_id_canonical"
+
 // DuplicateMessageRow holds metadata needed to select the survivor in a
 // duplicate group. Lightweight return type for the store layer.
 type DuplicateMessageRow struct {
@@ -168,11 +175,26 @@ func rfc822MessageIDStorageForms(id string) []string {
 	return forms
 }
 
-func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
+// findDuplicatesByRFC822IDQuery builds the exact SQL statement and bind
+// arguments FindDuplicatesByRFC822ID executes. It exists so the query-plan
+// regression tests can EXPLAIN the production statement rather than a copy
+// that would silently drift from it — the GROUP BY expression must match the
+// idx_messages_rfc822_message_id_canonical expression index byte for byte.
+func (s *Store) findDuplicatesByRFC822IDQuery(sourceIDs []int64) (string, []any) {
 	canonicalID := s.dialect.RFC822CanonicalIDExpr("rfc822_message_id")
+	from := "messages"
+	if len(sourceIDs) > 0 && !s.IsPostgreSQL() {
+		// SQLite otherwise estimates the equality lookup through
+		// idx_messages_source as cheaper, then sorts every scoped row into a
+		// temporary GROUP BY B-tree. The canonical/source index is ordered for
+		// grouping and covers the source filter, so select it for the exact
+		// production shape. PostgreSQL has no INDEXED BY syntax and retains its
+		// cost-based choice.
+		from += " INDEXED BY " + rfc822CanonicalIndexName
+	}
 	query := `
 		SELECT ` + canonicalID + `, COUNT(*) AS cnt
-		FROM messages
+		FROM ` + from + `
 		WHERE rfc822_message_id IS NOT NULL
 		  AND rfc822_message_id != ''
 		  AND ` + canonicalID + ` != ''
@@ -189,6 +211,11 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 	query += `
 		GROUP BY ` + canonicalID + `
 		HAVING COUNT(*) > 1`
+	return query, args
+}
+
+func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
+	query, args := s.findDuplicatesByRFC822IDQuery(sourceIDs)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

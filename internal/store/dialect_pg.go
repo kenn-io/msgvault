@@ -297,6 +297,17 @@ func (d *PostgreSQLDialect) RFC822CanonicalIDExpr(col string) string {
 	END`, col)
 }
 
+// RFC822CanonicalIDIndexDefinition defines the composite expression index over
+// canonical Message-ID and source. A bare CASE is not valid PostgreSQL index
+// syntax, so the expression has its required extra parenthesis pair. The
+// functions in the expression are immutable and therefore indexable.
+func (d *PostgreSQLDialect) RFC822CanonicalIDIndexDefinition() string {
+	return fmt.Sprintf(
+		"ON messages((%s), source_id)",
+		d.RFC822CanonicalIDExpr("rfc822_message_id"),
+	)
+}
+
 // JSONBindExpr returns "?::JSONB" — PG won't implicit-cast text to JSONB,
 // so a bare placeholder bound to a Go string raises a column-type
 // mismatch on the sources.sync_config write path.
