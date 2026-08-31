@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>msgvault — the system of record for your conversations</title>
+    <title>msgvault — the system of record for your communications</title>
     <meta name="description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
     <link rel="canonical" href="https://msgvault.io/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="The system of record for your conversations and relationships.">
+    <meta property="og:title" content="The system of record for your communications and relationships.">
     <meta property="og:description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
     <meta property="og:url" content="https://msgvault.io/">
     <meta property="og:site_name" content="msgvault">
     <meta property="og:image" content="https://msgvault.io/docs/assets/static/og-image.png">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="The system of record for your conversations and relationships.">
+    <meta name="twitter:title" content="The system of record for your communications and relationships.">
     <meta name="twitter:description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
     <meta name="twitter:image" content="https://msgvault.io/docs/assets/static/og-image.png">
   </head>
@@ -104,19 +104,42 @@
     </header>
 
     <main id="main">
-      <section class="hero" aria-labelledby="hero-title">
-        <h1 id="hero-title">The system of record for your conversations and relationships.</h1>
-        <p class="lede">msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts. One database, one people layer, keyword and semantic search — answered in milliseconds, on hardware you control.</p>
-        <div class="install-command" data-install-command data-command="curl -fsSL https://msgvault.io/install.sh | bash">
-          <code>curl -fsSL https://msgvault.io/install.sh | bash</code>
-          <button class="button install-copy" type="button" data-install-copy>Copy</button>
+      <section class="hero branded" aria-labelledby="hero-title">
+        <p class="hero-brand">
+          <svg viewBox="0 0 32 32" aria-hidden="true" fill="none">
+            <rect x="2" y="7" width="28" height="20" rx="2" fill="#0a0a0a" stroke="#e8e8e8" stroke-width="1.5"/>
+            <polyline points="2,7 16,18 30,7" fill="none" stroke="#e8e8e8" stroke-width="1.5" stroke-linejoin="round"/>
+            <rect x="11" y="15" width="10" height="8" rx="1.5" fill="#e8e8e8"/>
+            <path d="M13.5,15 V12 a2.5,2.5 0 0 1 5,0 V15" fill="none" stroke="#e8e8e8" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="16" cy="19.5" r="1.5" fill="#0a0a0a"/>
+            <rect x="15.25" y="20" width="1.5" height="2" rx="0.5" fill="#0a0a0a"/>
+          </svg>
+          msgvault
+        </p>
+        <h1 id="hero-title">The system of record for your communications and relationships.</h1>
+        <p class="lede">msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts. It keeps everything in one database on your own hardware, resolves the people behind decades of messages, and searches by keyword or by meaning.</p>
+        <div class="install-matrix">
+          <div class="install-row" data-install-command data-command="curl -fsSL https://msgvault.io/install.sh | bash">
+            <span class="install-label">macOS / Linux</span>
+            <code>curl -fsSL https://msgvault.io/install.sh | bash</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="brew install msgvault">
+            <span class="install-label">Homebrew</span>
+            <code>brew install msgvault</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="irm https://msgvault.io/install.ps1 | iex">
+            <span class="install-label">Windows</span>
+            <code class="ps">irm https://msgvault.io/install.ps1 | iex</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
         </div>
-        <p class="install-hint">macOS and Linux · <code>brew install msgvault</code> · <a href="/docs/setup/">Windows install</a><span data-install-status aria-live="polite"></span></p>
+        <p class="install-hint">Installers fetch the latest release and verify its SHA-256 checksum. Also on <a href="https://prefix.dev/channels/conda-forge/packages/msgvault">conda-forge</a>, or <a href="/docs/setup/">build from source</a>.<span data-install-status aria-live="polite"></span></p>
         <div class="actions">
           <a class="button primary" href="/guide/">See how it works</a>
           <a class="button" href="/docs/">Read the docs</a>
         </div>
-        <p class="hero-meta">Local-first · MIT · Alpha · CLI · Web · TUI · HTTP API · MCP · Go</p>
       </section>
 
       <section class="site-section" aria-labelledby="record-title">
@@ -159,14 +182,14 @@
             <p>A promoted profile gets a stable ID and vCard UID, so names, notes, and typed attributes survive later identity changes. Merges are atomic and reversible.</p>
           </article>
           <article class="proof">
-            <p class="proof-tag">A fact ledger</p>
+            <p class="proof-tag">Fact ledger</p>
             <h3>Curate facts with provenance.</h3>
             <p>Organizations, employment history, typed relationships, and custom attributes rest on immutable evidence, deterministic decisions, and per-person pins.</p>
           </article>
           <article class="proof">
-            <p class="proof-tag">Relationship rhythm</p>
-            <h3>See every relationship's pulse.</h3>
-            <p>An activity calendar tracks each relationship's temperature across email, chat, calendar, and meetings — current and peak, year by year.</p>
+            <p class="proof-tag">Activity</p>
+            <h3>Watch each relationship over time.</h3>
+            <p>An activity calendar tracks interaction with each person across email, chat, calendar, and meetings, year by year, including current and peak relationship temperature.</p>
           </article>
         </div>
       </section>
@@ -175,9 +198,9 @@
         <div class="section-heading">
           <div>
             <p class="section-index">03 / Operation</p>
-            <h2 id="operation-title">A workspace built for interrogation.</h2>
+            <h2 id="operation-title">Work the archive in the browser.</h2>
           </div>
-          <p>The daemon serves a dense, keyboard-driven browser application: relationships, a unified Everything table, files, saved views, source status, deletion staging, and settings — every analytical slice URL-addressable.</p>
+          <p>The daemon serves a dense, keyboard-driven browser application: relationships, a unified Everything table, files, saved views, source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and Forward restore exact views.</p>
         </div>
         <figure class="capture">
           <a href="/docs/assets/static/relationships-dark-comfortable-darwin.png" data-lightbox>
@@ -196,31 +219,31 @@
         <div class="section-heading">
           <div>
             <p class="section-index">04 / Intelligence</p>
-            <h2 id="intelligence-title">AI understanding, on your terms.</h2>
+            <h2 id="intelligence-title">Semantic search and document understanding.</h2>
           </div>
-          <p>Keyword search works offline, always. Semantic search, document extraction, and visual search are opt-in lanes with explicit consent for exactly what leaves your machine — and to whom.</p>
+          <p>Keyword search works offline, always. Semantic search, document extraction, and visual search are opt-in, with explicit consent recording exactly what leaves your machine and where it goes.</p>
         </div>
         <figure class="diagram pipeline">
           <img src="/assets/intelligence-pipeline.svg" alt="The msgvault archive feeding an FTS5 keyword index, vector embeddings, and Docbank document extraction, fused by hybrid retrieval for the CLI, Web UI, TUI, and MCP agents">
         </figure>
         <div class="proof-grid">
           <article class="proof">
-            <p class="proof-tag">Search three ways</p>
+            <p class="proof-tag">Hybrid search</p>
             <h3>Fuse keywords and meaning.</h3>
-            <p>FTS5 with Gmail-style operators, pure semantic search, or hybrid BM25-plus-vector fusion with reciprocal rank fusion — and an explain mode that shows why each result ranked.</p>
+            <p>FTS5 with Gmail-style operators, pure semantic search, or hybrid BM25-plus-vector fusion via reciprocal rank fusion, with an explain mode that shows why each result ranked.</p>
           </article>
           <article class="proof">
-            <p class="proof-tag">Your models</p>
+            <p class="proof-tag">Local models</p>
             <h3>Point at any embedding server.</h3>
-            <p>Any OpenAI-compatible endpoint works: Ollama, llama.cpp, LM Studio, or Apple's on-device model. Embedding scope is a privacy boundary — out-of-scope accounts are never sent anywhere.</p>
+            <p>Any OpenAI-compatible endpoint works: Ollama, llama.cpp, LM Studio, or Apple's on-device model. Embedding scope is a privacy boundary; out-of-scope accounts are never sent anywhere.</p>
           </article>
           <article class="proof">
-            <p class="proof-tag">Documents on the record</p>
+            <p class="proof-tag">Attachments</p>
             <h3>Read the attachments too.</h3>
-            <p>Powered by the embedded <a href="https://github.com/kenn-io/docbank">Docbank</a> document engine: OCR extraction, normalized chunks, lexical and semantic document search, and visual search over images — consent-gated and fail-closed.</p>
+            <p>The embedded <a href="https://github.com/kenn-io/docbank">Docbank</a> document engine handles OCR extraction, normalized chunks, lexical and semantic document search, and visual search over images. Consent-gated and fail-closed.</p>
           </article>
           <article class="proof">
-            <p class="proof-tag">Agents at the table</p>
+            <p class="proof-tag">Agents</p>
             <h3>Give your AI the whole archive.</h3>
             <p>An MCP server exposes search, people, files, and analytics tools to Claude Desktop and other agents; bundled agent skills install into Claude Code and Codex. Profile writes stay behind explicit flags.</p>
           </article>
@@ -232,7 +255,7 @@
           <div>
             <p class="section-index">05 / Interfaces</p>
             <h2 id="interfaces-title">One archive across every surface.</h2>
-            <p class="lede">The daemon owns all writes and serializes every mutation. People, scripts, and agents work through interfaces suited to the task — against the same record.</p>
+            <p class="lede">The daemon owns all writes and serializes every mutation. People, scripts, and agents work through the interface suited to the task, against the same record.</p>
             <ul class="interface-list">
               <li><strong>CLI</strong><span>Scriptable sync, search, and repair.</span></li>
               <li><strong>Web</strong><span>Analytical workspaces in the browser.</span></li>
@@ -256,9 +279,9 @@
         <div class="section-heading">
           <div>
             <p class="section-index">06 / Ownership</p>
-            <h2 id="ownership-title">Archive first. Delete on your terms.</h2>
+            <h2 id="ownership-title">Archive everything. Then delete upstream.</h2>
           </div>
-          <p>The end goal is leverage over your own data: once everything is safely archived and verified, you can start deleting from the provider — deliberately, and with a paper trail.</p>
+          <p>Once the archive is complete and verified, you can start deleting from the provider. Every step is explicit and reviewed, and nothing is irreversible until the last one.</p>
         </div>
         <div class="choice-grid">
           <article class="choice">
@@ -290,7 +313,7 @@
             <p class="section-index">07 / Boundary</p>
             <h2 id="boundary-title">Not a mail client. Not a takeout file.</h2>
           </div>
-          <p>msgvault is closer to a personal data warehouse for communications: a living system of record you operate, query, and extend — not a viewport and not cold storage.</p>
+          <p>msgvault is a data warehouse for your communications: a system of record you operate, query, and extend. Not a viewport, and not cold storage.</p>
         </div>
         <div class="boundary-grid">
           <article class="boundary">

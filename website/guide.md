@@ -1,7 +1,7 @@
 # The archive lifecycle
 
-One archive moves through nine deliberate stages. Your data stays local,
-complete, and yours at every stop.
+One archive moves through nine stages. Your data stays local and complete at
+every stop.
 
 1. [Capture](#capture)
 2. [Preserve](#preserve)
@@ -62,8 +62,8 @@ Every intelligence lane is disposable and rebuildable; the record is not.
 
 Full-text search with Gmail-style operators answers instantly and offline.
 Semantic and hybrid modes fuse BM25 with vectors through reciprocal rank
-fusion, with explainable ranking and honest coverage states — msgvault never
-quietly substitutes one mode for another.
+fusion, with explainable ranking and honest coverage states; msgvault never quietly
+substitutes one mode for another.
 
 [Searching](/docs/usage/searching/)
 
@@ -80,16 +80,15 @@ time. Drill down from a decade to a single message in the TUI or the browser.
 Staging and execution never share a surface. Any interface can stage a
 deletion manifest for review; only the CLI executes it, behind an explicit
 environment gate, defaulting to recoverable trash. The local archive is never
-modified — deleted mail remains searchable forever.
+modified, and deleted mail remains searchable.
 
 [Deleting email](/docs/usage/deletion/)
 
 ## Own
 
-Run it on a laptop or serve it from your own NAS — the daemon carries the Web
+Run it on a laptop or serve it from your own NAS: the daemon carries the Web
 UI, HTTP API, scheduler, and MCP server in one binary. Verifiable backup
-snapshots restore the archive with no provider in the loop. Your
-conversations, your hardware, your rules.
+snapshots restore the archive with no provider in the loop.
 
 [Backup and restore](/docs/usage/backup/)
 

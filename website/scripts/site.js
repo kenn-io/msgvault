@@ -36,26 +36,29 @@ function installLightboxes() {
   });
 }
 
-function installCopyButton() {
-  const root = document.querySelector("[data-install-command]");
+function installCopyButtons() {
   const status = document.querySelector("[data-install-status]");
-  const button = root?.querySelector("[data-install-copy]");
-  const command = root instanceof HTMLElement ? root.dataset.command : undefined;
-  if (!(button instanceof HTMLButtonElement) || !(status instanceof HTMLElement) || !command) return;
+  if (!(status instanceof HTMLElement)) return;
 
   let resetTimer;
-  button.addEventListener("click", async () => {
-    clearTimeout(resetTimer);
-    try {
-      await navigator.clipboard.writeText(command);
-      status.textContent = "Copied";
-      resetTimer = setTimeout(() => {
-        status.textContent = "";
-      }, 2000);
-    } catch {
-      status.textContent = "Copy failed — select the command text instead";
-    }
-  });
+  for (const root of document.querySelectorAll("[data-install-command]")) {
+    const button = root.querySelector("[data-install-copy]");
+    const command = root instanceof HTMLElement ? root.dataset.command : undefined;
+    if (!(button instanceof HTMLButtonElement) || !command) continue;
+
+    button.addEventListener("click", async () => {
+      clearTimeout(resetTimer);
+      try {
+        await navigator.clipboard.writeText(command);
+        status.textContent = "Copied";
+        resetTimer = setTimeout(() => {
+          status.textContent = "";
+        }, 2000);
+      } catch {
+        status.textContent = "Copy failed — select the command text instead";
+      }
+    });
+  }
 }
 
 function readCache(key, now) {
@@ -121,7 +124,7 @@ async function installRepoFacts() {
 }
 
 installLightboxes();
-installCopyButton();
+installCopyButtons();
 installRepoFacts().catch((error) => {
   console.warn("github api unavailable, keeping the static header", error);
 });

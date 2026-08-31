@@ -1,8 +1,11 @@
-# The system of record for your conversations and relationships
+# msgvault
+
+**The system of record for your communications and relationships.**
 
 msgvault is a local-first, open-source archive for a lifetime of email, chat,
-meetings, calendars, and contacts. One database, one people layer, keyword and
-semantic search — answered in milliseconds, on hardware you control.
+meetings, calendars, and contacts. It keeps everything in one database on your
+own hardware, resolves the people behind decades of messages, and searches by
+keyword or by meaning.
 
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
@@ -22,14 +25,18 @@ Or with Homebrew:
 brew install msgvault
 ```
 
-On Windows:
+On Windows (PowerShell):
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex"
+irm https://msgvault.io/install.ps1 | iex
 ```
 
-Then [follow the archive lifecycle](/guide/) or read the
-[setup documentation](/docs/setup/).
+The installers fetch the latest GitHub release and verify its SHA-256
+checksum. msgvault is also on
+[conda-forge](https://prefix.dev/channels/conda-forge/packages/msgvault), and
+the [setup documentation](/docs/setup/) covers building from source.
+
+Then [follow the archive lifecycle](/guide/).
 
 ## Every channel. One archive.
 
@@ -63,52 +70,53 @@ display names alone never merge two people.
 A promoted profile gets a stable ID and vCard UID, so names, notes, and typed
 attributes survive later identity changes. Merges are atomic and reversible.
 
-### A fact ledger
+### Fact ledger
 
 Organizations, employment history, typed relationships, and custom attributes
 rest on immutable evidence, deterministic decisions, and per-person pins.
 
-### Relationship rhythm
+### Activity
 
-An activity calendar tracks each relationship's temperature across email, chat,
-calendar, and meetings — current and peak, year by year.
+An activity calendar tracks interaction with each person across email, chat,
+calendar, and meetings, year by year, including current and peak relationship
+temperature.
 
-## A workspace built for interrogation
+## Work the archive in the browser
 
 The daemon serves a dense, keyboard-driven browser application: relationships,
 a unified Everything table, files, saved views, source status, deletion
-staging, and settings — every analytical slice URL-addressable.
+staging, and settings. Every analytical slice is URL-addressable, so Back and
+Forward restore exact views.
 
 **In development:** an open pull request adds Directory and Reviews workspaces —
 durable-person search, profile maintenance and history, identity and merge
 review queues, the privacy-gated fact ledger, CardDAV publication, and a
 self-describing Settings surface with write-only credential management.
 
-## AI understanding, on your terms
+## Semantic search and document understanding
 
 Keyword search works offline, always. Semantic search, document extraction,
-and visual search are opt-in lanes with explicit consent for exactly what
-leaves your machine — and to whom.
+and visual search are opt-in, with explicit consent recording exactly what
+leaves your machine and where it goes.
 
-- **Search three ways:** FTS5 with Gmail-style operators, pure semantic search,
-  or hybrid BM25-plus-vector fusion with reciprocal rank fusion — and an
+- **Hybrid search:** FTS5 with Gmail-style operators, pure semantic search,
+  or hybrid BM25-plus-vector fusion via reciprocal rank fusion, with an
   explain mode that shows why each result ranked.
-- **Your models:** any OpenAI-compatible endpoint works — Ollama, llama.cpp,
+- **Local models:** any OpenAI-compatible endpoint works: Ollama, llama.cpp,
   LM Studio, or Apple's on-device model. Embedding scope is a privacy
   boundary; out-of-scope accounts are never sent anywhere.
-- **Documents on the record:** powered by the embedded
-  [Docbank](https://github.com/kenn-io/docbank) document engine — OCR
+- **Attachments:** the embedded
+  [Docbank](https://github.com/kenn-io/docbank) document engine handles OCR
   extraction, normalized chunks, lexical and semantic document search, and
-  visual search over images, consent-gated and fail-closed.
-- **Agents at the table:** an MCP server exposes search, people, files, and
-  analytics tools to Claude Desktop and other agents; bundled agent skills
-  install into Claude Code and Codex. Profile writes stay behind explicit
-  flags.
+  visual search over images. Consent-gated and fail-closed.
+- **Agents:** an MCP server exposes search, people, files, and analytics
+  tools to Claude Desktop and other agents; bundled agent skills install into
+  Claude Code and Codex. Profile writes stay behind explicit flags.
 
 ## One archive across every surface
 
 The daemon owns all writes and serializes every mutation. People, scripts, and
-agents work through interfaces suited to the task — against the same record.
+agents work through the interface suited to the task, against the same record.
 
 - **CLI:** scriptable sync, search, and repair.
 - **Web:** analytical workspaces in the browser.
@@ -119,11 +127,11 @@ agents work through interfaces suited to the task — against the same record.
 
 [Connect an agent](/docs/usage/chat/) or [inspect the API](/docs/api-server/).
 
-## Archive first. Delete on your terms.
+## Archive everything. Then delete upstream.
 
-The end goal is leverage over your own data: once everything is safely
-archived and verified, you can start deleting from the provider —
-deliberately, and with a paper trail.
+Once the archive is complete and verified, you can start deleting from the
+provider. Every step is explicit and reviewed, and nothing is irreversible
+until the last one.
 
 - **Verify:** integrity verification checks the archive against the mailbox
   before you trust it with anything irreversible.
@@ -136,9 +144,8 @@ deliberately, and with a paper trail.
 
 ## Not a mail client. Not a takeout file.
 
-msgvault is closer to a personal data warehouse for communications: a living
-system of record you operate, query, and extend — not a viewport and not cold
-storage.
+msgvault is a data warehouse for your communications: a system of record you
+operate, query, and extend. Not a viewport, and not cold storage.
 
 - **Mail client:** the provider is the record. A client renders whatever the
   server still holds; identity, search, and history live and die with the
