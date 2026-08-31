@@ -62,7 +62,7 @@ type Store struct {
 	sqliteOptimizeMu          sync.Mutex
 	documentVectorOperationMu sync.Mutex
 	// Test-only seams into migration, backfill, and transaction paths, nil in
-	// production and settable only from export_test.go. They belong to the
+	// production and settable only from test files. They belong to the
 	// Store rather than the package because more than one Store can be
 	// active at once inside a single test binary — test fixtures build their
 	// schemas concurrently — and a hook installed by one test must never fire
@@ -70,6 +70,7 @@ type Store struct {
 	// they were also a data race between a test that installs one and any
 	// concurrent migration that reads it.
 	initSchemaWindowHook                  func()
+	beforeLargeIndexBuildHook             func()
 	attributeSeedReadHook                 func(slug string)
 	contentChangedBackfillBatchHook       func(fromID, toID int64) error
 	backfillFTSBatchErrHook               func(fromID, toID int64) error
@@ -1128,6 +1129,30 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
+	// A missing messages table identifies a fresh PostgreSQL schema. Build the
+	// canonical Message-ID expression index inline after the schema files create
+	// the empty table: CREATE INDEX is cheap there, while making every fresh test
+	// schema pay CREATE INDEX CONCURRENTLY adds the multi-phase coordination cost
+	// that concurrent DDL exists to tolerate on populated archives. Existing
+	// schemas deliberately skip the inline build; if their index is missing or
+	// INVALID, buildLargeIndexesConcurrently repairs it without blocking writers.
+	freshPostgreSQLSchema := false
+	if s.IsPostgreSQL() {
+		var messagesTableExists bool
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_class
+				WHERE relname = 'messages'
+				  AND relnamespace = current_schema()::regnamespace
+				  AND relkind IN ('r', 'p')
+			)
+		`).Scan(&messagesTableExists); err != nil {
+			return fmt.Errorf("inspect PostgreSQL schema freshness: %w", err)
+		}
+		freshPostgreSQLSchema = !messagesTableExists
+	}
+
 	// Load and execute schema files provided by the dialect.
 	for _, filename := range s.dialect.SchemaFiles() {
 		schema, err := schemaFS.ReadFile(filename)
@@ -1140,6 +1165,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		// unable to reach an upgrade that has not started moving yet.
 		if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
 			return fmt.Errorf("execute %s: %w", filename, err)
+		}
+	}
+	if freshPostgreSQLSchema {
+		if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+
+			rfc822CanonicalIndexName+` `+s.dialect.RFC822CanonicalIDIndexDefinition()); err != nil {
+			return fmt.Errorf("create fresh-schema canonical RFC822 Message-ID index: %w", err)
 		}
 	}
 	// Legacy databases may hold duplicate (message_id, content_hash)
@@ -1471,14 +1502,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// Identity discovery scans one source in message-ID order. On SQLite the
 	// plain idx_messages_source index already orders ties by rowid, so no
 	// separate composite index is needed there (see schema.sql). PostgreSQL
-	// still needs the explicit composite index, built via CREATE INDEX
-	// CONCURRENTLY on a dedicated connection so a one-time build over an
-	// existing archive never blocks writers or needs the pool-wide
+	// still needs the explicit composite indexes. Fresh schemas build the
+	// canonical RFC822 index inline above while messages is empty; the helper's
+	// IF NOT EXISTS is then a no-op. Missing indexes on existing archives are
+	// built via CREATE INDEX CONCURRENTLY on a dedicated connection so the
+	// one-time build never blocks writers or needs the pool-wide
 	// statement_timeout escape hatch (CONCURRENTLY cannot run inside a
-	// transaction at all, so runMaintenance does not apply here). Carries
-	// ctx like every other statement in this method: a cancelled build
-	// leaves at worst an INVALID leftover, which the next start drops and
-	// rebuilds.
+	// transaction at all, so runMaintenance does not apply here). Carries ctx
+	// like every other statement in this method: a cancelled build leaves at
+	// worst an INVALID leftover, which the next start drops and rebuilds.
+	if s.beforeLargeIndexBuildHook != nil {
+		s.beforeLargeIndexBuildHook()
+	}
 	s.buildLargeIndexesConcurrently(ctx)
 
 	// Partial expression indexes for live-message listing and date filtering.
@@ -1621,11 +1656,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// planner matches them; dedup_index_test.go and dedup_index_pg_test.go pin
 	// scoped query plans against drift.
 	//
-	// PostgreSQL builds the composite index earlier through
-	// buildLargeIndexesConcurrently: CREATE INDEX CONCURRENTLY must run outside
-	// a transaction to avoid blocking writers on an existing archive, and that
-	// path also drops INVALID leftovers before retrying. SQLite has no concurrent
-	// DDL and creates it here. IF NOT EXISTS keeps both paths idempotent.
+	// PostgreSQL creates this index inline near the start of InitSchema when the
+	// messages table did not exist beforehand. Existing archives build it earlier
+	// through buildLargeIndexesConcurrently: CREATE INDEX CONCURRENTLY must run
+	// outside a transaction to avoid blocking writers, and that path also drops
+	// INVALID leftovers before retrying. SQLite has no concurrent DDL and creates
+	// it here. IF NOT EXISTS keeps every path idempotent.
 	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if _, err := tx.ExecContext(ctx, `
 			CREATE INDEX IF NOT EXISTS idx_messages_rfc822_message_id

@@ -31,6 +31,24 @@ func pgCanonicalIndexValid(t *testing.T, s *Store) bool {
 	return valid
 }
 
+func pgCanonicalIndexOID(t *testing.T, s *Store) int64 {
+	t.Helper()
+	var oid int64
+	require.NoError(t, s.db.QueryRow(`
+		SELECT COALESCE((
+			SELECT c.oid::BIGINT
+			FROM pg_class c
+			JOIN pg_index i ON i.indexrelid = c.oid
+			JOIN pg_class target ON target.oid = i.indrelid
+			WHERE c.relname = $1
+			  AND target.relname = 'messages'
+			  AND c.relnamespace = current_schema()::regnamespace
+			  AND i.indisvalid = true
+		), 0)
+	`, rfc822CanonicalIndexName).Scan(&oid))
+	return oid
+}
+
 // TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex
 // verifies the PostgreSQL half of the canonical Message-ID expression index:
 // InitSchema builds it for fresh schemas, rebuilds it for existing databases
@@ -49,17 +67,39 @@ func TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex(t *te
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
-	s := newPGStoreInternal(t, dbURL)
+	s := newUninitializedPGStoreInternal(t, dbURL)
 
+	var freshIndexPresentBeforeConcurrentBuild bool
+	s.beforeLargeIndexBuildHook = func() {
+		freshIndexPresentBeforeConcurrentBuild = pgCanonicalIndexValid(t, s)
+	}
+	require.NoError(s.InitSchema(), "initialize fresh schema")
+	require.True(freshIndexPresentBeforeConcurrentBuild,
+		"fresh schema must create the canonical index before concurrent upgrade builds")
 	require.True(pgCanonicalIndexValid(t, s),
 		"fresh schema must build "+rfc822CanonicalIndexName)
+	freshOID := pgCanonicalIndexOID(t, s)
+	require.NotZero(freshOID, "fresh canonical index OID")
+
+	s.beforeLargeIndexBuildHook = nil
+	require.NoError(s.InitSchema(), "repeat InitSchema on the initialized schema")
+	assert.Equal(freshOID, pgCanonicalIndexOID(t, s),
+		"repeated InitSchema must retain, not rebuild, the canonical index")
 
 	_, err := s.db.Exec(`DROP INDEX ` + rfc822CanonicalIndexName)
 	require.NoError(err, "drop the index to simulate a pre-index database")
 	require.False(pgCanonicalIndexValid(t, s), "index must be gone after the drop")
+	var upgradeIndexPresentBeforeConcurrentBuild bool
+	s.beforeLargeIndexBuildHook = func() {
+		upgradeIndexPresentBeforeConcurrentBuild = pgCanonicalIndexValid(t, s)
+	}
 	require.NoError(s.InitSchema(), "re-init must upgrade the existing database")
+	require.False(upgradeIndexPresentBeforeConcurrentBuild,
+		"existing schema must leave a missing index for the concurrent upgrade path")
 	require.True(pgCanonicalIndexValid(t, s),
 		"upgraded database must rebuild "+rfc822CanonicalIndexName)
+	assert.NotEqual(freshOID, pgCanonicalIndexOID(t, s),
+		"upgrade must create a replacement index after the original was dropped")
 
 	conn, err := s.db.Conn(t.Context())
 	require.NoError(err, "acquire connection")

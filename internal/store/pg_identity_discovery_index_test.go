@@ -15,7 +15,6 @@ import (
 // the only guard that the concurrent path actually creates them.
 var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_messages_source_id", "messages"},
-	{"idx_messages_rfc822_message_id_canonical", "messages"},
 	{"idx_participants_email_lower", "participants"},
 	{"idx_participant_identifiers_value_lower", "participant_identifiers"},
 }
