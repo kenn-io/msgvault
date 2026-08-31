@@ -559,20 +559,24 @@ func syncedIMAPClient(
 	return client, results
 }
 
-// TestSaveIMAPFolderStates_RepublishMissingUIDRecoversNextRun measures what
-// treating an omitted UID as gone costs on a republish, rather than arguing
-// about it.
+// TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount measures
+// what a confirmed-gone UID costs a republish. The server here leaves the UID
+// out of every response, including the recheck, so this is a message that
+// really did leave the mailbox.
 //
 // A republish keeps only what the run read: ApplyIMAPMailboxDeltas answers a
 // Reset delta by deleting every membership row for the mailbox and
-// re-inserting the observations. A live UID the server failed to return is
-// therefore deleted, and tombstoned when that was its last mailbox.
+// re-inserting the observations. The UID is therefore deleted, and tombstoned
+// when that was its last mailbox.
 //
-// This test does not claim the reading is right. It pins the bound: the cost
-// is one cycle, the message row is never deleted, and the next run restores
-// both the membership and the message. If run three ever fails, the reading is
-// not reversible and the sentinel needs a revalidating fetch behind it.
-func TestSaveIMAPFolderStates_RepublishMissingUIDRecoversNextRun(t *testing.T) {
+// **The recovery asserted here is the message-count check, and it does not
+// exist on every path.** planMailboxScan reconciles a mailbox by comparing the
+// server's MESSAGES count against the saved UID list, and it runs only when
+// the account is not using QRESYNC -- paths B and C of the sync. A QRESYNC
+// account advances HIGHESTMODSEQ instead and never revisits the mailbox on its
+// own. That gap is why an omission is rechecked before it is believed, and
+// TestOmittedUIDIsRecheckedBeforeItCountsAsGone covers the recheck itself.
+func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()

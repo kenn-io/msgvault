@@ -125,7 +125,26 @@ type missingUIDSession struct {
 type missingUIDConfig struct {
 	mailbox string
 	uid     imap.UID
-	hidden  atomic.Bool
+	// hideRemaining is negative to hide the UID from every FETCH, zero to hide
+	// it from none, and positive to hide it from that many more responses.
+	hideRemaining atomic.Int64
+}
+
+// takeHide reports whether this FETCH response must leave the UID out, and
+// spends one of a limited budget when the budget is what allows it.
+func (c *missingUIDConfig) takeHide() bool {
+	for {
+		remaining := c.hideRemaining.Load()
+		if remaining == 0 {
+			return false
+		}
+		if remaining < 0 {
+			return true
+		}
+		if c.hideRemaining.CompareAndSwap(remaining, remaining-1) {
+			return true
+		}
+	}
 }
 
 func (s *missingUIDSession) Select(
@@ -152,12 +171,16 @@ func (s *missingUIDSession) Fetch(
 		return nil
 	}
 	uidSet, ok := numSet.(imap.UIDSet)
-	if !ok || !s.config.hidden.Load() ||
-		s.selected != s.config.mailbox || !uidSet.Contains(s.config.uid) {
+	if !ok || s.selected != s.config.mailbox || !uidSet.Contains(s.config.uid) {
 		return fetch(numSet)
 	}
 	uids, static := uidSet.Nums()
 	if !static {
+		return fetch(numSet)
+	}
+	// Spend the budget only once the response is known to be one that would
+	// have carried the UID, so a one-shot omission is not used up elsewhere.
+	if !s.config.takeHide() {
 		return fetch(numSet)
 	}
 	kept := make([]imap.UID, 0, len(uids))
@@ -190,7 +213,35 @@ func StartIMAPMemServerWithMissingUID(
 	config := &missingUIDConfig{mailbox: mailbox, uid: uid}
 	addr, user := startIMAPMemServer(
 		t, messagesPerMailbox, nil, "", 0, "", config)
-	return addr, user, func(hidden bool) { config.hidden.Store(hidden) }
+	return addr, user, func(hidden bool) {
+		if hidden {
+			config.hideRemaining.Store(-1)
+			return
+		}
+		config.hideRemaining.Store(0)
+	}
+}
+
+// StartIMAPMemServerOmittingUIDOnce runs an in-memory IMAP server that leaves
+// one UID out of the next FETCH response that would have carried it, and
+// returns it on every later fetch.
+//
+// That is a live message the server dropped from one response, not an expunge.
+// A run that believes the first omission loses it; a run that asks again finds
+// it. StartIMAPMemServerWithMissingUID is the other shape, where the message
+// really is gone and stays gone.
+func StartIMAPMemServerOmittingUIDOnce(
+	t *testing.T,
+	messagesPerMailbox map[string]int,
+	mailbox string,
+	uid imap.UID,
+) (string, *imapmemserver.User) {
+	t.Helper()
+	config := &missingUIDConfig{mailbox: mailbox, uid: uid}
+	config.hideRemaining.Store(1)
+	addr, user := startIMAPMemServer(
+		t, messagesPerMailbox, nil, "", 0, "", config)
+	return addr, user
 }
 
 // AppendIMAPMessage appends one synthetic RFC822 message to a mailbox

@@ -4671,12 +4671,16 @@ func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
 	require.NoError(secondClient.Close())
 }
 
-// TestIMAPMessageMissingFromFetchIsRecoveredNextRun bounds what an omitted UID
-// costs. Treating it as gone is a guess about a live server, so the guess must
-// not be durable: the UID never enters the saved UID set, the mailbox no
+// TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt bounds what a confirmed-gone
+// UID costs. The server hides it from every response here, including the
+// recheck, so the run is right to treat it as gone -- but the verdict must
+// still not be durable. The UID never enters the saved UID set, the mailbox no
 // longer matches its message count, and the next run enumerates it and
 // archives the message.
-func TestIMAPMessageMissingFromFetchIsRecoveredNextRun(t *testing.T) {
+//
+// The message-count recovery this asserts belongs to the non-QRESYNC paths.
+// See TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount.
+func TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)

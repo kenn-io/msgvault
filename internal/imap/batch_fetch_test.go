@@ -476,12 +476,15 @@ func TestApplyLabelFetchResultsMarksOnlyMissingUID(t *testing.T) {
 	}
 
 	var c Client
-	c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	omitted := c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
 
 	assert.Equal([]string{"Archive"}, results[0].LabelIDs)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].LabelIDs)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	// The omission is reported, not acted on. Calling it gone is the caller's
+	// decision, and only after the server has been asked a second time.
+	assert.Equal([]batchFetchItem{{idx: 1, uid: imapapi.UID(11)}}, omitted)
+	require.NoError(results[1].Err)
 }
 
 func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
@@ -501,14 +504,15 @@ func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 	}
 
 	var c Client
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
 
 	require.NotNil(results[0].Message)
 	assert.Equal("Archive|10", results[0].Message.ID)
 	assert.Equal([]byte("raw-10"), results[0].Message.Raw)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].Message)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	assert.Equal([]batchFetchItem{{idx: 1, uid: imapapi.UID(11)}}, omitted)
+	require.NoError(results[1].Err)
 }
 
 func TestApplyFetchResultsMarksMissingRawBody(t *testing.T) {
@@ -759,11 +763,32 @@ func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan 
 	return listener.Addr().String(), fetchCommand
 }
 
+// markConfirmedGone is what the chunk loops do once a second FETCH has also
+// left a UID out. It is inlined here so these tests cover the same end state
+// they covered before the recheck moved the decision out of the apply step.
+func markConfirmedGone(
+	c *Client,
+	raw []gmailapi.RawMessageBatchResult,
+	labels []gmailapi.MessageLabelsBatchResult,
+	mailbox string,
+	omitted []batchFetchItem,
+) {
+	for _, item := range omitted {
+		if raw != nil {
+			raw[item.idx].Err = errIMAPFetchResultMissing
+		}
+		if labels != nil {
+			labels[item.idx].Err = errIMAPFetchResultMissing
+		}
+		c.forgetMembershipLocked(mailbox, item.uid)
+	}
+}
+
 // TestMissingUIDDropsEarlierMembershipObservation covers the observation the
-// label map records during enumeration. When the message is expunged before
-// the run fetches it, the fetch reports it gone and the run acknowledges it,
-// so nothing ingests the message. The stale observation must not survive to
-// the durable commit, which would find no message row to map it to.
+// label map records during enumeration. When a message is confirmed gone --
+// left out of a FETCH response and then left out of the recheck -- nothing
+// ingests it, so the stale observation must not survive to the durable commit,
+// which would find no message row to map it to.
 func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
 	enumerated := func() []MembershipObservation {
 		return []MembershipObservation{
@@ -787,7 +812,8 @@ func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
 			fetchMessageBuffer("message-10", []byte("raw-10")),
 		}
 
-		c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		markConfirmedGone(&c, results, nil, "Archive", omitted)
 
 		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
 		assert.NotContains(t, observedUIDs(&c), uint32(11))
@@ -804,7 +830,8 @@ func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
 			),
 		}
 
-		c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		omitted := c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		markConfirmedGone(&c, nil, results, "Archive", omitted)
 
 		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
 		assert.NotContains(t, observedUIDs(&c), uint32(11))
@@ -846,4 +873,54 @@ func TestReturnedUIDWithoutHeadersKeepsMembershipObservation(t *testing.T) {
 	require.ErrorIs(t, results[0].Err, errIMAPLabelBodyMissing)
 	require.NotErrorIs(t, results[0].Err, gmailapi.ErrMessageGone)
 	assert.Contains(t, observedUIDs(&c), uint32(10))
+}
+
+// TestOmittedUIDIsRecheckedBeforeItCountsAsGone is the reason the recheck
+// exists. The server drops one live UID from the first FETCH response and
+// returns it on the next, which is a response the server got wrong rather than
+// a message that left the mailbox.
+//
+// Believing the first omission loses the message on a QRESYNC account: the run
+// acknowledges the UID, stores no membership for it, and still advances
+// HIGHESTMODSEQ, so no later CHANGEDSINCE fetch reports it again. Only the
+// paths that reconcile a mailbox by message count recover on their own, so the
+// omission must not be believed the first time on any path.
+func TestOmittedUIDIsRecheckedBeforeItCountsAsGone(t *testing.T) {
+	t.Run("label fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDOnce(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+
+		results, err := client.GetMessageLabelsBatch(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.NoError(results[1].Err,
+			"a UID the server returns on the recheck is a live message")
+		assert.Contains(observedUIDs(client), uint32(2),
+			"a rechecked message keeps the membership the commit publishes")
+	})
+
+	t.Run("raw fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDOnce(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+
+		results, err := client.GetMessagesRawBatchWithErrors(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.NoError(results[1].Err,
+			"a UID the server returns on the recheck is a live message")
+		require.NotNil(results[1].Message)
+		assert.Contains(observedUIDs(client), uint32(2))
+	})
 }
