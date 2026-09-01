@@ -717,11 +717,6 @@ func buildCacheImpl(
 	fullRebuild, recheckStaleness bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
-	var err error
-	dbPath, err = resolveCacheSQLitePath(dbPath)
-	if err != nil {
-		return nil, err
-	}
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -853,6 +848,14 @@ func buildCacheLocked(
 	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	// Callers pass the configured DSN, which may be a file: URI; everything
+	// below (sqlite ?mode=ro opens, the DuckDB attach, filepath.Dir for the
+	// staging dir) needs a plain filesystem path.
+	var err error
+	dbPath, err = resolveCacheSQLitePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
 	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
 		return nil, err
 	}
