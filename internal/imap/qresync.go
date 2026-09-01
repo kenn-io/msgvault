@@ -124,7 +124,7 @@ func (c *Client) tryBuildQresyncMessageList(
 		}
 		prior := c.priorFolderStates[mailbox]
 		var delta MailboxDelta
-		delta, err := c.collectQresyncMailbox(mailbox, prior)
+		delta, err := c.collectQresyncMailbox(ctx, mailbox, prior)
 		if err != nil {
 			return false, err
 		}
@@ -151,7 +151,9 @@ func (c *Client) tryBuildQresyncMessageList(
 	return true, nil
 }
 
-func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (MailboxDelta, error) {
+func (c *Client) collectQresyncMailbox(
+	ctx context.Context, mailbox string, prior FolderState,
+) (MailboxDelta, error) {
 	c.clearQresyncCapture()
 	selected, err := c.conn.Select(mailbox, &imap.SelectOptions{CondStore: true}).Wait()
 	if err != nil {
@@ -239,6 +241,12 @@ func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (Mailb
 	}
 	knownUIDs := slices.Collect(maps.Keys(known))
 	slices.Sort(knownUIDs)
+
+	if err := c.verifyQresyncCoverage(
+		ctx, mailbox, prior, uint32(selected.UIDNext), changedSet, vanishedSet,
+	); err != nil {
+		return MailboxDelta{}, err
+	}
 
 	return MailboxDelta{
 		Mailbox: mailbox,
@@ -336,4 +344,86 @@ func mergeKnownUIDs(prior []uint32, additions []imap.UID) []uint32 {
 	values := slices.Collect(maps.Keys(known))
 	slices.Sort(values)
 	return values
+}
+
+// verifyQresyncCoverage checks that the CHANGEDSINCE response accounted for
+// every message that arrived since the last run.
+//
+// A server that leaves a live UID out of that response looks exactly like one
+// that had nothing to report for it, and nothing downstream can tell the two
+// apart: the UID never reaches KnownUIDs, it is never listed or fetched, no
+// error is recorded, and HIGHESTMODSEQ still advances past it. No later run
+// has a reason to ask about it again, so the message is lost for good.
+//
+// Only UIDs at or above the previous UIDNEXT can be checked, and they are the
+// only ones that need it. A message with a UID that high was appended after
+// the last run read UIDNEXT, so its mod-sequence is above the one this fetch
+// asked about and the server was obliged to report it. An omission below that
+// mark costs nothing, because the message is already in the baseline.
+//
+// UIDs are handed out in sequence, so the growth in UIDNEXT is exactly how
+// many were assigned since the last run, and each of them has to come back
+// either as changed or as vanished. When that many are accounted for the
+// response is complete by arithmetic alone and nothing is asked of the server:
+// the ordinary case of new mail arriving costs nothing, which is what QRESYNC
+// is for.
+//
+// Only a shortfall is worth a question, and then the question goes to UID
+// SEARCH, which is independent of the FETCH that misbehaved.
+//
+// Neither the message count nor the size of KnownUIDs appears here. KnownUIDs
+// is read back from stored memberships, so it drifts from the server in both
+// directions -- short when an earlier run failed to ingest something, long
+// when messages left without the server reporting VANISHED -- and drift in the
+// second direction hides exactly the omission this is looking for.
+func (c *Client) verifyQresyncCoverage(
+	ctx context.Context,
+	mailbox string,
+	prior FolderState,
+	currentUIDNext uint32,
+	changedSet, vanishedSet map[imap.UID]struct{},
+) error {
+	if currentUIDNext <= prior.UIDNext {
+		return nil
+	}
+	// Unsigned throughout: prior.UIDNext is below currentUIDNext here, so the
+	// difference is a real count, and int is 32 bits wide on a 32-bit build.
+	assigned := currentUIDNext - prior.UIDNext
+
+	accounted := uint32(0)
+	for uid := range changedSet {
+		if uint32(uid) >= prior.UIDNext {
+			accounted++
+		}
+	}
+	for uid := range vanishedSet {
+		if uint32(uid) >= prior.UIDNext {
+			accounted++
+		}
+	}
+	if accounted >= assigned {
+		return nil
+	}
+
+	present, err := c.enumerateMailbox(ctx, mailbox, imap.UID(prior.UIDNext))
+	if err != nil {
+		return fmt.Errorf("QRESYNC coverage search in %q: %w", mailbox, err)
+	}
+	for _, uid := range present {
+		// "UID SEARCH UID n:*" returns the last message even when n is past
+		// it, so a UID below the high water mark here is an artefact of the
+		// search and not a new message. RFC 3501 6.4.8.
+		if uint32(uid) < prior.UIDNext {
+			continue
+		}
+		if _, changed := changedSet[uid]; changed {
+			continue
+		}
+		if _, vanished := vanishedSet[uid]; vanished {
+			continue
+		}
+		return fmt.Errorf(
+			"QRESYNC %q left UID %d out of the CHANGEDSINCE response", mailbox, uid)
+	}
+	return nil
 }
