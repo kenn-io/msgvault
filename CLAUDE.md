@@ -189,13 +189,17 @@ There are two PostgreSQL configurations to cover: the pgvector build
 (`make test-pg-shipped`). Run `make test-pg-both` rather than both of those —
 the tag changes the test binary of only the packages listed in
 `PG_SHIPPED_ONLY_PKGS` in the Makefile, so the second full run would reprove
-the first. Fixtures build their schemas in concurrent
-batches (`internal/testutil/pg_warm_pool.go`) rather than one at a time: a
-fixture that finds the buffer empty builds several and the next few claim
-theirs for free. All of that happens inside the claiming fixture's own setup —
-the pool runs no background work, so it can never issue a statement while a
-test body is running. Each schema is still private to its test, still built by
-the same `InitSchema()` path, and still dropped on cleanup.
+the first. Each test binary builds the schema once into a template — a
+SQLite file copied per test, or a PostgreSQL template database cloned per
+test with `CREATE DATABASE ... TEMPLATE` (`internal/testutil/sqlite_template.go`,
+`internal/testutil/pg_template.go`) — instead of replaying `InitSchema()` for
+every fixture. Nothing runs in the background, so no fixture ever issues a
+schema statement while a test body is running. Each database is still private
+to its test, still produced by the same `InitSchema()` path, and still dropped
+on cleanup. A PostgreSQL template is owned through a session advisory lock the
+server releases when the binary exits, so the next binary reclaims whatever an
+earlier one left behind; a role without `CREATEDB` falls back to a private
+schema in the configured database.
 
 ## Parquet Analytics
 
