@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,16 +19,25 @@ import (
 )
 
 type qresyncServerConfig struct {
-	capabilities             []string
-	mailboxes                []string
-	uidValidity              uint32
-	uidNext                  uint32
-	highestModSeq            uint64
-	selectHighestModSeq      uint64
-	selectFailureConnection  int
-	selectFailureAt          int
-	numMessages              *uint32
-	searchUIDs               []imapv2.UID
+	capabilities            []string
+	mailboxes               []string
+	uidValidity             uint32
+	uidNext                 uint32
+	highestModSeq           uint64
+	selectHighestModSeq     uint64
+	selectFailureConnection int
+	selectFailureAt         int
+	numMessages             *uint32
+	// selectExists is the EXISTS count SELECT reports. It defaults to the size
+	// of searchUIDs, which is right whenever nothing vanishes; a test whose
+	// scenario expunges messages must state the post-expunge count, because a
+	// server cannot report a message gone and still count it.
+	selectExists *uint32
+	searchUIDs   []imapv2.UID
+	// omitFromFetch names UIDs the server leaves out of a plain UID FETCH
+	// response while still reporting them from SEARCH, which is how a server
+	// that drops a live message from a response behaves.
+	omitFromFetch            []imapv2.UID
 	fetchChanged             []imapv2.UID
 	fetchVanished            []imapv2.UID
 	filterVanishedByFetchSet bool
@@ -132,8 +142,17 @@ func serveQresyncTestConn(
 				len(cfg.searchUIDs), cfg.uidValidity, cfg.uidNext, selectModSeq)
 			_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID FETCH"):
-			writeVanished(conn, qresyncVanishedForFetch(command, cfg))
-			writeFetchResponses(conn, cfg.fetchChanged, cfg.highestModSeq)
+			// Only a CHANGEDSINCE fetch is entitled to answer with a subset:
+			// that is what "changed since" means. A plain UID FETCH returns
+			// every message it was asked for, so it answers with the whole
+			// mailbox, which is what the callers of this fixture request.
+			if strings.Contains(upper, "CHANGEDSINCE") {
+				writeVanished(conn, qresyncVanishedForFetch(command, cfg))
+				writeFetchResponses(conn, cfg.fetchChanged, cfg.highestModSeq)
+			} else {
+				writeFetchResponses(
+					conn, withoutUIDs(cfg.searchUIDs, cfg.omitFromFetch), cfg.highestModSeq)
+			}
 			_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID SEARCH"):
 			_, _ = fmt.Fprintf(conn, "* SEARCH%s\r\n%s OK UID SEARCH completed\r\n",
@@ -205,6 +224,19 @@ func writeFetchResponses(w io.Writer, uids []imapv2.UID, modSeq uint64) {
 	for i, uid := range uids {
 		_, _ = fmt.Fprintf(w, "* %d FETCH (UID %d FLAGS (\\Seen) MODSEQ (%d))\r\n", i+1, uid, modSeq)
 	}
+}
+
+func withoutUIDs(uids, omit []imapv2.UID) []imapv2.UID {
+	if len(omit) == 0 {
+		return uids
+	}
+	kept := make([]imapv2.UID, 0, len(uids))
+	for _, uid := range uids {
+		if !slices.Contains(omit, uid) {
+			kept = append(kept, uid)
+		}
+	}
+	return kept
 }
 
 func formatSearchUIDs(uids []imapv2.UID) string {
@@ -769,4 +801,36 @@ func TestListMessagesQresyncErrorStillCoversSkippedMailboxes(t *testing.T) {
 		assert.Equal([]uint32{1, 2, 3}, delta.State.KnownUIDs, "%s", delta.Mailbox)
 	}
 	assert.Len(client.ObservedFolderStates(), len(mailboxes))
+}
+
+// TestLabelMapOmittedUIDSuppressesAuthoritativeSnapshot covers the label map's
+// half of reading a server's silence as fact. SEARCH reports the UID, so the
+// run knows the message is there, and then every FETCH leaves it out. Nothing
+// downstream can see that: the message is absent from the map with no error
+// against it.
+//
+// Publishing that map as authoritative is what loses the message. A republish
+// deletes every membership row the run did not observe, and for a mailbox
+// whose membership comes only from this map there is no later fetch to put it
+// back. The map must therefore declare itself incomplete, which suppresses the
+// snapshot and leaves the stored rows alone.
+func TestLabelMapOmittedUIDSuppressesAuthoritativeSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	addr, _ := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1"},
+		uidValidity:   77,
+		uidNext:       4,
+		searchUIDs:    []imapv2.UID{1, 2, 3},
+		omitFromFetch: []imapv2.UID{2},
+	})
+	client := newQresyncTestClient(t, addr, nil)
+
+	listQresyncMessages(t, client)
+
+	assert.False(client.LabelsSnapshotComplete(),
+		"a label map missing a UID the server reported is not authoritative")
+	assert.Empty(client.ObservedMailboxDeltas(),
+		"an incomplete label map must not publish a mailbox topology")
+	assert.Empty(client.ObservedFolderStates(),
+		"nor the folder states derived from it")
 }
