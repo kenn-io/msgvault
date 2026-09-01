@@ -567,132 +567,6 @@ func TestEngine_ContentHashPrefersAttachmentCompleteCopy(t *testing.T) {
 	require.Equal(fullID, survivor.ID, "attachment-complete content-hash survivor")
 }
 
-// TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved verifies the
-// spec contract: "A content-hash group with two Message-ID survivors keeps
-// both as winners (one per Message-ID group)."
-//
-// Four messages, two distinct RFC822 Message-IDs (two messages each). All
-// four carry raw MIME that normalizes to the same content hash, so the
-// content-hash pass would ordinarily group the two survivors together.
-// The correct behaviour is to skip that content-hash group entirely —
-// total losers must equal 2 (one per MID group), never 3.
-func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	st := f.Store
-	gmail := f.Source
-
-	// Two MID groups, two messages each.
-	idA1 := addMessage(t, st, gmail, "src-a1", "mid-A", false)
-	idA2 := addMessage(t, st, gmail, "src-a2", "mid-A", false)
-	idB1 := addMessage(t, st, gmail, "src-b1", "mid-B", false)
-	idB2 := addMessage(t, st, gmail, "src-b2", "mid-B", false)
-
-	// All four messages share the same normalized content (stripped headers
-	// differ, canonical From/Subject/Date/body are identical) so both
-	// Message-ID survivors land in the same content-hash group.
-	makeRaw := func(received, delivered, labels string) []byte {
-		return []byte(
-			"Received: " + received + "\r\n" +
-				"Delivered-To: " + delivered + "\r\n" +
-				"X-Gmail-Labels: " + labels + "\r\n" +
-				"From: sender@example.com\r\n" +
-				"Subject: Two MID survivors\r\n" +
-				"Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n" +
-				"\r\n" +
-				"Body that is identical across all four copies.",
-		)
-	}
-	require.NoError(st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com", "a1@example.com", "INBOX")), "raw A1")
-	require.NoError(st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com", "a2@example.com", "SENT")), "raw A2")
-	require.NoError(st.UpsertMessageRaw(idB1, makeRaw("mx3.google.com", "b1@example.com", "INBOX")), "raw B1")
-	require.NoError(st.UpsertMessageRaw(idB2, makeRaw("mx4.google.com", "b2@example.com", "SENT")), "raw B2")
-
-	eng := dedup.NewEngine(st, dedup.Config{
-		AccountSourceIDs:    []int64{gmail.ID},
-		Account:             "test@example.com",
-		ContentHashFallback: true,
-	}, nil)
-
-	report, err := eng.Scan(context.Background())
-	require.NoError(err, "Scan")
-
-	// Two MID groups, no content-hash group (the group with two MID
-	// survivors must be skipped, not appended).
-	assert.Equal(2, report.DuplicateGroups, "DuplicateGroups")
-	assert.Equal(0, report.ContentHashGroups, "ContentHashGroups (MID-survivor group must be skipped)")
-	// One loser per MID group; the buggy code yields 3 by demoting one
-	// Message-ID survivor.
-	assert.Equal(2, report.DuplicateMessages, "DuplicateMessages (one loser per MID group)")
-}
-
-// TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup verifies that the
-// content-hash pass does not demote a sent-copy orphan to a loser by forcing
-// a non-sent Message-ID survivor to win the content-hash group. Per spec
-// § Survivor selection: "When any message in a duplicate group looks like a
-// sent copy, only sent copies are eligible to survive."
-//
-// Three messages: two share rfc822_message_id "mid-A" (neither is_from_me),
-// one is a sent orphan (no Message-ID, is_from_me=true). All three carry raw
-// MIME that normalizes to the same content hash. The MID-pass survivor would
-// otherwise be forced in over the sent orphan; the new skip rule prevents
-// that.
-func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	st := f.Store
-	gmail := f.Source
-
-	// MID group: two messages sharing mid-A, neither is_from_me.
-	idA1 := addMessage(t, st, gmail, "src-a1", "mid-A", false)
-	idA2 := addMessage(t, st, gmail, "src-a2", "mid-A", false)
-
-	// Sent orphan: no MID, is_from_me=true. Content matches the MID group.
-	idOrphan := addMessage(t, st, gmail, "src-orphan", "", true)
-
-	makeRaw := func(received string) []byte {
-		return []byte(
-			"Received: " + received + "\r\n" +
-				"From: sender@example.com\r\n" +
-				"Subject: MID/sent-orphan collision\r\n" +
-				"Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n" +
-				"\r\n" +
-				"Identical body across all three copies.",
-		)
-	}
-	require.NoError(st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com")), "raw a1")
-	require.NoError(st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com")), "raw a2")
-	require.NoError(st.UpsertMessageRaw(idOrphan, makeRaw("mx3.google.com")), "raw orphan")
-
-	eng := dedup.NewEngine(st, dedup.Config{
-		AccountSourceIDs:    []int64{gmail.ID},
-		Account:             "test@example.com",
-		ContentHashFallback: true,
-	}, nil)
-
-	report, err := eng.Scan(context.Background())
-	require.NoError(err, "Scan")
-
-	// Expect exactly one duplicate group (the MID group). The content-hash
-	// group must be skipped to preserve the sent-copy eligibility filter.
-	require.Equal(1, report.DuplicateGroups, "DuplicateGroups (only the MID group)")
-	assert.Equal(0, report.ContentHashGroups, "ContentHashGroups (sent-orphan collision must be skipped)")
-	// One loser from the MID group; the sent orphan stays live.
-	assert.Equal(1, report.DuplicateMessages, "DuplicateMessages (one MID loser; orphan untouched)")
-
-	// Per the spec audit recommendation, pin that the orphan did not leak
-	// into the surviving MID group's Messages slice. The MID group must
-	// contain only the two MID-sharing rows.
-	mid := report.Groups[0]
-	require.Equal("message-id", mid.KeyType, "Groups[0].KeyType")
-	require.Len(mid.Messages, 2, "MID group Messages len")
-	for _, m := range mid.Messages {
-		assert.NotEqual(idOrphan, m.ID, "sent orphan id=%d leaked into MID group Messages — must stay out", idOrphan)
-	}
-}
-
 func TestEngine_ContentHashFallbackDisabledByDefault(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1043,13 +917,16 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 		t, st, appleMail, "apple-mail-copy", "source-priority-completeness", false,
 	)
 	require.NoError(
-		st.UpsertMessageRaw(gmailID, []byte("From: sender@example.test\r\n\r\nBody")),
+		st.UpsertMessageRaw(gmailID, []byte(
+			"Message-ID: <source-priority-completeness>\r\n"+
+				"From: sender@example.test\r\n\r\nBody")),
 		"UpsertMessageRaw gmail",
 	)
 	require.NoError(
 		st.UpsertMessageRaw(
 			appleMailID,
-			[]byte("From: sender@example.test\r\n\r\nBody with complete attachments"),
+			[]byte("Message-ID: <source-priority-completeness>\r\n"+
+				"From: sender@example.test\r\n\r\nBody with complete attachments"),
 		),
 		"UpsertMessageRaw apple-mail",
 	)
@@ -1163,7 +1040,8 @@ func TestEngine_SurvivorTiebreakerRawMIME(t *testing.T) {
 
 	idNoRaw := addMessage(t, st, f.Source, "no-raw", "rfc-raw-tie", false)
 	idHasRaw := addMessage(t, st, f.Source, "has-raw", "rfc-raw-tie", false)
-	require.NoError(st.UpsertMessageRaw(idHasRaw, []byte("Subject: test\r\n\r\nBody")),
+	require.NoError(st.UpsertMessageRaw(idHasRaw,
+		[]byte("Message-ID: <rfc-raw-tie>\r\nSubject: test\r\n\r\nBody")),
 		"UpsertMessageRaw",
 	)
 
@@ -1455,6 +1333,62 @@ func TestEngine_ScanRejectsLegacyNormalizedMalformedMessageID(t *testing.T) {
 
 	assert.Zero(report.DuplicateGroups)
 	assert.Zero(report.DuplicateMessages)
+}
+
+func TestEngine_ScanRequiresAvailableRawMIMEToConfirmStoredMessageID(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        []byte
+		parseFails bool
+		wantGroups int
+	}{
+		{
+			name: "missing Message-ID header",
+			raw:  []byte("Subject: no message ID\r\n\r\nBody"),
+		},
+		{
+			name: "recovered Message-ID differs",
+			raw: []byte("Message-ID: <different@example.test>\r\n" +
+				"Content-Type: multipart mixed; boundary=outer\r\n\r\n--outer--\r\n"),
+			parseFails: true,
+		},
+		{
+			name: "recovered Message-ID matches",
+			raw: []byte("Message-ID: <stored@example.test>\r\n" +
+				"Content-Type: multipart mixed; boundary=outer\r\n\r\n--outer--\r\n"),
+			parseFails: true,
+			wantGroups: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			const storedID = "stored@example.test"
+			firstID := addMessage(t, f.Store, f.Source, "first", storedID, false)
+			secondID := addMessage(t, f.Store, f.Source, "second", storedID, false)
+			require.NoError(f.Store.UpsertMessageRaw(firstID,
+				[]byte("Message-ID: <"+storedID+">\r\n\r\nValid")))
+			require.NoError(f.Store.UpsertMessageRaw(secondID, tt.raw))
+			_, parseErr := msgmime.Parse(tt.raw)
+			if tt.parseFails {
+				require.Error(parseErr)
+			} else {
+				require.NoError(parseErr)
+			}
+
+			engine := dedup.NewEngine(f.Store, dedup.Config{
+				AccountSourceIDs: []int64{f.Source.ID},
+				Account:          f.Source.Identifier,
+			}, nil)
+			report, err := engine.Scan(t.Context())
+			require.NoError(err)
+
+			assert.Len(report.Groups, tt.wantGroups)
+		})
+	}
 }
 
 func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testing.T) {

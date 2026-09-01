@@ -795,8 +795,10 @@ func decodeRawMIME(raw []byte, compression string) ([]byte, error) {
 }
 
 type duplicateRawMIMEInfo struct {
-	normalizedHash   string
-	rfc822MessageID  string
+	normalizedHash  string
+	rfc822MessageID string
+	// messageIDChecked is true whenever raw MIME exists. An empty ID means
+	// the raw message could not confirm the stored value.
 	messageIDChecked bool
 }
 
@@ -807,16 +809,17 @@ func (e *Engine) inspectDuplicateRawMIME(
 	err := e.store.StreamMessageRaw(
 		messageIDs,
 		func(messageID int64, rawData []byte, compression string) {
+			info := duplicateRawMIMEInfo{messageIDChecked: true}
 			raw, decodeErr := decodeRawMIME(rawData, compression)
 			if decodeErr != nil {
+				infoByID[messageID] = info
 				e.logger.Warn("dedup: raw MIME fingerprint failed",
 					"message_id", messageID, "err", decodeErr)
 				return
 			}
-			info := duplicateRawMIMEInfo{normalizedHash: sha256Hex(normalizeRawMIME(raw))}
-			parsed, parseErr := msgmime.Parse(raw)
-			if parseErr == nil && parsed.MessageID != "" {
-				info.messageIDChecked = true
+			info.normalizedHash = sha256Hex(normalizeRawMIME(raw))
+			parsed, _ := msgmime.ParseWithRecovery(raw, "")
+			if parsed != nil {
 				info.rfc822MessageID = msgmime.NormalizeMessageID(parsed.MessageID)
 			}
 			infoByID[messageID] = info

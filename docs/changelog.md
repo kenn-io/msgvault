@@ -72,9 +72,10 @@ All notable changes to msgvault, grouped by release.
   rescans, and refuses duplicate hiding when the actionable plan changes. Its
   CLI/daemon plan contract reports pending derivations explicitly and rejects
   incompatible peers instead of showing misleading consent text.
-- Deduplication no longer derives metadata from malformed bracketed Message-IDs
-  and checks legacy-normalized stored IDs against raw MIME before merging. It
-  preserves the established threading behavior for imported conversations.
+- Deduplication no longer derives metadata from malformed bracketed Message-IDs.
+  When raw MIME is available, its recoverable Message-ID header must match the
+  stored value before that message can join a Message-ID duplicate group. The
+  importer preserves established conversation threading behavior.
 - Remote deletion forwarding strips daemon-host opt-in state and accepts only
   authenticated invoking-client consent, preventing a server's configuration
   or environment from authorizing an unrelated client command.
