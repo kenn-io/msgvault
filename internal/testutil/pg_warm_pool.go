@@ -49,10 +49,11 @@ const (
 	// That bound is per test binary. `go test ./...` builds one binary per
 	// package and runs up to -p of them at once, so a wide fan-out against a
 	// small shared server can still exceed its limit in aggregate; there is no
-	// cross-process budget here. warmPoolBatchEnv lowers this side of that
-	// arithmetic, and -p lowers the other. The failure mode is not corruption:
-	// a refill that cannot connect gives up and fixtures create their own
-	// schemas exactly as they did before the pool existed.
+	// cross-process budget here. The Makefile's PostgreSQL targets bound the
+	// other side with -p (PG_TEST_PARALLEL), and warmPoolBatchEnv lowers this
+	// one. The failure mode is not corruption: a refill that cannot connect
+	// gives up and fixtures create their own schemas exactly as they did before
+	// the pool existed.
 	warmPoolBatch = 4
 
 	// warmPoolDisableEnv set to "0" turns the pool off and sends every fixture
