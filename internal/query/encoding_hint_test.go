@@ -20,6 +20,7 @@ func TestIsEncodingError(t *testing.T) {
 		{"encoding error", errors.New("Invalid string encoding found in Parquet file"), true},
 		{"wrapped encoding error", fmt.Errorf("aggregate query: %w", errors.New("Invalid string encoding found in Parquet file")), true},
 		{"encoding error substring", errors.New("scan: Invalid string encoding found in Parquet file foo.parquet"), true},
+		{"CSV invalid unicode", errors.New("CSV Error on Line: 4\nInvalid unicode (byte sequence mismatch) detected"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,5 +54,16 @@ func TestHintRepairEncoding(t *testing.T) {
 		wrapped := fmt.Errorf("aggregate query: %w", inner)
 		got := HintRepairEncoding(wrapped)
 		assert.Contains(t, got.Error(), "repair-encoding")
+	})
+
+	t.Run("CSV encoding error explains DuckDB option", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		orig := errors.New("CSV Error on Line: 4\nInvalid unicode (byte sequence mismatch) detected\nignore_errors = false")
+		got := HintRepairEncoding(orig)
+		require.Error(got)
+		assert.Contains(got.Error(), "msgvault repair-encoding")
+		assert.Contains(got.Error(), "not a msgvault option")
+		assert.ErrorIs(got, orig)
 	})
 }

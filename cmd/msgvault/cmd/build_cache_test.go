@@ -2159,6 +2159,75 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	assert.Equal("Test émoji 🎉 and unicode", subject, "unicode should be preserved")
 }
 
+func TestBuildCacheCSVInvalidUTF8ExplainsRepairPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE attachments SET filename = CAST(X'80' AS TEXT) WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
+	require.Error(err)
+	assert.Contains(err.Error(), "msgvault repair-encoding")
+	assert.Contains(err.Error(), "not a msgvault option")
+}
+
+func TestBuildCacheCSVInvalidUTF8InUnrepairedFieldScopesGuidance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE messages SET source_message_id = CAST(X'80' AS TEXT) WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
+	require.Error(err)
+	assert.Contains(err.Error(), "msgvault repair-encoding")
+	assert.Contains(err.Error(), "common archived text fields")
+	assert.Contains(err.Error(), "if the cache rebuild still fails")
+	assert.Contains(err.Error(), "messages")
+}
+
+// TestBuildCacheCSVInvalidUTF8PastSampleExplainsRepairPath covers the case
+// where DuckDB's CSV sniffer does not reach the invalid row, so the error
+// surfaces during the Parquet export instead of view creation.
+func TestBuildCacheCSVInvalidUTF8PastSampleExplainsRepairPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`
+		INSERT INTO messages (source_id, source_message_id, sent_at)
+		WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < 30000)
+		SELECT 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
+	`)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE messages SET subject = CAST(X'80' AS TEXT) WHERE id = (SELECT MAX(id) FROM messages)`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
+	require.Error(err)
+	assert.Contains(err.Error(), "export messages")
+	assert.Contains(err.Error(), "msgvault repair-encoding")
+	assert.Contains(err.Error(), "not a msgvault option")
+}
+
 func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
