@@ -470,3 +470,176 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 		Mailbox: "INBOX", UIDValidity: 17, UIDNext: 4, HighestModSeq: 101,
 	}}, states)
 }
+
+// TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists is the durable half
+// of the expunge race. The sync treats a message that left the mailbox between
+// enumeration and fetch as handled, so the run finishes without errors and
+// reaches this commit. Nothing ingested that message, so its enumeration
+// observation would find no message row to resolve and would roll back every
+// mailbox cursor in the source.
+func TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists(t *testing.T) {
+	require := require.New(t)
+	addr, _, hideUID := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+	hideUID(true)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	require.NoError(err)
+
+	client := listedIMAPClient(t, addr)
+	results, err := client.GetMessageLabelsBatch(
+		context.Background(), []string{"INBOX|1", "INBOX|2"})
+	require.NoError(err)
+	require.Len(results, 2)
+	require.NoError(results[0].Err)
+	require.ErrorIs(results[1].Err, gmail.ErrMessageGone)
+
+	// Only the survivor was ingested, which is what the run itself would have
+	// stored: the message that left the mailbox was acknowledged, never fetched.
+	seedIMAPMessage(t, st, src, "INBOX|1", "")
+
+	require.NoError(saveIMAPFolderStates(
+		context.Background(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+
+	loaded, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	require.Contains(loaded, "INBOX")
+	assert.Equal(t, []uint32{1}, loaded["INBOX"].KnownUIDs)
+}
+
+// TestSaveIMAPFolderStates_LiveMessageWithoutHeadersBlocksPersistence is the
+// other side of that line. The server returned the UID, so the message is
+// still in the mailbox and only its headers are missing. Acknowledging it
+// would drop a live message from the authoritative snapshot, so it stays a
+// fetch error and the commit does not run.
+func TestSaveIMAPFolderStates_LiveMessageWithoutHeadersBlocksPersistence(t *testing.T) {
+	require := require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
+	client := listedIMAPClient(t, addr)
+	// The in-memory server answers a FETCH of a UID expunged by another
+	// session with an empty body rather than leaving it out of the response.
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapapi.UID(2))
+	results, err := client.GetMessageLabelsBatch(
+		context.Background(), []string{"INBOX|1", "INBOX|2"})
+	require.NoError(err)
+	require.Len(results, 2)
+	require.Error(results[1].Err)
+	assert.NotErrorIs(t, results[1].Err, gmail.ErrMessageGone)
+}
+
+// syncedIMAPClient enumerates the server the way a run does and refreshes the
+// labels of every message it listed, so the client ends holding the membership
+// observations the commit will publish.
+func syncedIMAPClient(
+	t *testing.T, addr string, opts ...imaplib.Option,
+) (*imaplib.Client, []gmail.MessageLabelsBatchResult) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := listedIMAPClient(t, addr, opts...)
+	var ids []string
+	pageToken := ""
+	for {
+		resp, err := client.ListMessages(ctx, "", pageToken)
+		require.NoError(t, err)
+		for _, msg := range resp.Messages {
+			ids = append(ids, msg.ID)
+		}
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
+	}
+	if len(ids) == 0 {
+		return client, nil
+	}
+	results, err := client.GetMessageLabelsBatch(ctx, ids)
+	require.NoError(t, err)
+	return client, results
+}
+
+// TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount measures
+// what a confirmed-gone UID costs a republish. The server here leaves the UID
+// out of every response, including the recheck, so this is a message that
+// really did leave the mailbox.
+//
+// A republish keeps only what the run read: ApplyIMAPMailboxDeltas answers a
+// Reset delta by deleting every membership row for the mailbox and
+// re-inserting the observations. The UID is therefore deleted, and tombstoned
+// when that was its last mailbox.
+//
+// **The recovery asserted here is the message-count check, and it does not
+// exist on every path.** planMailboxScan reconciles a mailbox by comparing the
+// server's MESSAGES count against the saved UID list, and it runs only when
+// the account is not using QRESYNC -- paths B and C of the sync. A QRESYNC
+// account advances HIGHESTMODSEQ instead and never revisits the mailbox on its
+// own. That gap is why an omission is rechecked before it is believed, and
+// TestOmittedUIDIsRecheckedBeforeItCountsAsGone covers the recheck itself.
+func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	addr, _, hideUID := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	require.NoError(err)
+
+	// Run one: the healthy baseline. No saved state, so the mailbox is
+	// republished and both messages are stored.
+	first, firstLabels := syncedIMAPClient(t, addr)
+	require.Len(firstLabels, 2)
+	require.NoError(firstLabels[0].Err)
+	require.NoError(firstLabels[1].Err)
+	seedObservedIMAPMessages(t, st, src, first)
+	require.NoError(saveIMAPFolderStates(
+		ctx, st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+	require.NoError(first.Close())
+	require.Equal(2, imapMembershipRowCount(t, st, src.ID))
+	require.Zero(imapTombstonedMessageCount(t, st, src.ID))
+
+	// Run two: another republish, with the server leaving UID 2 out of every
+	// FETCH response. The run treats it as gone and finishes without errors,
+	// so the commit proceeds -- which on main it never did.
+	hideUID(true)
+	second, secondLabels := syncedIMAPClient(t, addr)
+	require.Len(secondLabels, 2)
+	require.ErrorIs(secondLabels[1].Err, gmail.ErrMessageGone)
+	seedObservedIMAPMessages(t, st, src, second)
+	require.NoError(saveIMAPFolderStates(
+		ctx, st, src, second, completedIMAPSyncSummary(t, st, src), 0))
+	require.NoError(second.Close())
+
+	assert.Equal(1, imapMembershipRowCount(t, st, src.ID),
+		"a republish deletes the membership of a UID it did not read back")
+	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID),
+		"losing its last mailbox tombstones the message -- this is the cost")
+
+	// Run three: the server stops hiding the UID. The saved baseline is one
+	// row short of the server's message count, so the mailbox cannot be
+	// skipped, and reading it again restores both the membership and the
+	// message.
+	hideUID(false)
+	third, thirdLabels := syncedIMAPClient(t, addr, imapFolderStateOptions(st, src, false)...)
+	// The recovery is the count check, not another republish. The saved
+	// baseline holds one UID and the server reports two, so the mailbox is
+	// read again and the one missing UID is diffed back in.
+	thirdDeltas := third.ObservedMailboxDeltas()
+	require.Len(thirdDeltas, 1)
+	assert.False(thirdDeltas[0].Reset,
+		"the mailbox recovers by diff, not by republishing it again")
+	assert.Equal([]imapapi.UID{2}, thirdDeltas[0].ChangedUIDs)
+	seedObservedIMAPMessages(t, st, src, third)
+	require.NoError(saveIMAPFolderStates(
+		ctx, st, src, third, completedIMAPSyncSummary(t, st, src), 0))
+	require.NoError(third.Close())
+	for _, result := range thirdLabels {
+		require.NoError(result.Err)
+	}
+
+	assert.Equal(2, imapMembershipRowCount(t, st, src.ID),
+		"the next run must read the mailbox again and restore the membership")
+	assert.Zero(imapTombstonedMessageCount(t, st, src.ID),
+		"a message that regains a mailbox must lose its tombstone")
+}

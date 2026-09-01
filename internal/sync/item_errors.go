@@ -16,6 +16,7 @@ const (
 	syncItemKindBatchFetchError = "batch_fetch_error"
 	syncItemKindFetchError      = "fetch_error"
 	syncItemKindGmailNotFound   = "gmail_not_found"
+	syncItemKindMessageGone     = "message_gone"
 	syncItemKindIngestError     = "ingest_error"
 	syncItemKindDeleteError     = "delete_error"
 )
@@ -56,6 +57,22 @@ func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, message
 func isGmailNotFound(err error) bool {
 	var notFound *gmail.NotFoundError
 	return errors.As(err, &notFound)
+}
+
+// messageGoneKind reports whether the source no longer holds the message, and
+// the sync-item kind that records why. A Gmail 404 and an IMAP UID expunged
+// between enumeration and fetch mean the same thing to the run: the message was
+// handled, not failed. Both must be acknowledged, or the folder they belong to
+// never saves its high water mark.
+func messageGoneKind(err error) (string, bool) {
+	switch {
+	case isGmailNotFound(err):
+		return syncItemKindGmailNotFound, true
+	case errors.Is(err, gmail.ErrMessageGone):
+		return syncItemKindMessageGone, true
+	default:
+		return "", false
+	}
 }
 
 func syncItemErrorMessage(err error, fallback string) string {

@@ -18,7 +18,16 @@ import (
 )
 
 var errIMAPRawBodyMissing = errors.New("IMAP fetch result did not include raw body")
-var errIMAPFetchResultMissing = errors.New("IMAP fetch result missing from response")
+var errIMAPFetchResultMissing = fmt.Errorf(
+	"IMAP fetch result missing from response: %w", gmailapi.ErrMessageGone)
+
+// errIMAPLabelBodyMissing is the label-fetch counterpart of
+// errIMAPRawBodyMissing. The server returned the UID, so the message is still
+// in the mailbox and only its headers are missing. That is a fetch failure,
+// not the expunge race, and it must not reach gmailapi.ErrMessageGone: a run
+// that acknowledged it would drop a live message from an authoritative
+// snapshot.
+var errIMAPLabelBodyMissing = errors.New("IMAP fetch result did not include message headers")
 var errIMAPSkippedAfterChunkFailed = errors.New("IMAP fetch skipped after earlier chunk failure")
 
 type batchFetchItem struct {
@@ -99,7 +108,7 @@ func (c *Client) applyFetchResults(
 	mailbox string,
 	chunk []batchFetchItem,
 	msgs []*imapclient.FetchMessageBuffer,
-) {
+) []batchFetchItem {
 	seenReturnedUIDs := make(map[imap.UID]bool, len(msgs))
 	for _, msgBuf := range msgs {
 		idx, ok := uidToIdx[msgBuf.UID]
@@ -184,14 +193,16 @@ func (c *Client) applyFetchResults(
 		results[idx].Err = nil
 	}
 
+	var omitted []batchFetchItem
 	for _, item := range chunk {
 		if seenReturnedUIDs[item.uid] {
 			continue
 		}
 		if results[item.idx].Message == nil && results[item.idx].Err == nil {
-			results[item.idx].Err = errIMAPFetchResultMissing
+			omitted = append(omitted, item)
 		}
 	}
+	return omitted
 }
 
 // batchMailboxOrder returns the mailboxes sorted by name, except that
@@ -316,9 +327,63 @@ func (c *Client) fetchMailboxBatch(
 			return nil
 		}
 
-		c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		omitted := c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		if len(omitted) > 0 {
+			var fatalErr error
+			omitted, fatalErr = c.recheckOmittedRaw(
+				ctx, results, uidToIdx, mailbox, omitted, fetchOpts)
+			if fatalErr != nil {
+				return fatalErr
+			}
+		}
+		for _, item := range omitted {
+			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
+		}
 	}
 	return nil
+}
+
+// recheckOmittedRaw re-asks the server for the UIDs a chunk's FETCH response
+// left out, and returns the ones it leaves out a second time.
+//
+// A UID missing from a FETCH response is not an expunge notice. The server can
+// drop a UID for its own reasons, and believing the first omission loses the
+// message outright on a QRESYNC account: the run acknowledges the UID, stores
+// no membership for it, and still advances HIGHESTMODSEQ, so no later
+// CHANGEDSINCE fetch has any reason to report it. Only the paths that
+// reconcile a mailbox by message count recover on their own.
+//
+// The recheck costs one extra FETCH for a chunk that had an omission, and
+// nothing at all for a chunk that did not. When the recheck itself fails
+// nothing was learned, so the UIDs are recorded as fetch errors rather than
+// absences, which holds the commit back instead of acting on a guess.
+func (c *Client) recheckOmittedRaw(
+	ctx context.Context,
+	results []gmailapi.RawMessageBatchResult,
+	uidToIdx map[imap.UID]int,
+	mailbox string,
+	omitted []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+) ([]batchFetchItem, error) {
+	var uidSet imap.UIDSet
+	for _, item := range omitted {
+		uidSet.AddNum(item.uid)
+	}
+	msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	if fatal {
+		// The reconnect failed, so there is no connection left to run the next
+		// chunk on. The batch has to end here, exactly as it does when the
+		// first fetch of a chunk hits this.
+		return nil, err
+	}
+	if err != nil {
+		c.logger.Warn("could not recheck UIDs missing from a FETCH response",
+			"mailbox", mailbox, "uids", len(omitted), "error", err)
+		markRawBatchError(results, omitted, err)
+		return nil, nil
+	}
+	return c.applyFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
 }
 
 // GetMessagesRawBatchWithErrors fetches multiple messages, grouping by mailbox for efficiency.
@@ -392,7 +457,7 @@ func (c *Client) applyLabelFetchResults(
 	mailbox string,
 	chunk []batchFetchItem,
 	msgs []*imapclient.FetchMessageBuffer,
-) {
+) []batchFetchItem {
 	seenUIDs := make(map[imap.UID]bool, len(msgs))
 	for _, msgBuf := range msgs {
 		idx, ok := uidToIdx[msgBuf.UID]
@@ -400,8 +465,10 @@ func (c *Client) applyLabelFetchResults(
 			continue
 		}
 		seenUIDs[msgBuf.UID] = true
-		if len(msgBuf.BodySection) == 0 {
-			results[idx].Err = errIMAPFetchResultMissing
+		// An empty section is as unreadable as an absent one, and the UID was
+		// returned either way, so this is a fetch failure and not an absence.
+		if len(msgBuf.BodySection) == 0 || len(msgBuf.BodySection[0].Bytes) == 0 {
+			results[idx].Err = errIMAPLabelBodyMissing
 			continue
 		}
 		rfc822MessageID := rawMIMEMessageID(msgBuf.BodySection[0].Bytes)
@@ -412,11 +479,13 @@ func (c *Client) applyLabelFetchResults(
 		results[idx].Err = nil
 	}
 
+	var omitted []batchFetchItem
 	for _, item := range chunk {
 		if !seenUIDs[item.uid] && results[item.idx].Err == nil {
-			results[item.idx].Err = errIMAPFetchResultMissing
+			omitted = append(omitted, item)
 		}
 	}
+	return omitted
 }
 
 func (c *Client) selectLabelBatchMailbox(
@@ -481,9 +550,48 @@ func (c *Client) fetchMailboxLabelBatch(
 			markLabelBatchError(results, items[end:], errIMAPSkippedAfterChunkFailed)
 			return nil
 		}
-		c.applyLabelFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		omitted := c.applyLabelFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		if len(omitted) > 0 {
+			var fatalErr error
+			omitted, fatalErr = c.recheckOmittedLabels(
+				ctx, results, uidToIdx, mailbox, omitted, fetchOpts)
+			if fatalErr != nil {
+				return fatalErr
+			}
+		}
+		for _, item := range omitted {
+			results[item.idx].Err = errIMAPFetchResultMissing
+			c.forgetMembershipLocked(mailbox, item.uid)
+		}
 	}
 	return nil
+}
+
+// recheckOmittedLabels is recheckOmittedRaw for the label fetch. See that
+// function for why one omission is not enough to call a message gone.
+func (c *Client) recheckOmittedLabels(
+	ctx context.Context,
+	results []gmailapi.MessageLabelsBatchResult,
+	uidToIdx map[imap.UID]int,
+	mailbox string,
+	omitted []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+) ([]batchFetchItem, error) {
+	var uidSet imap.UIDSet
+	for _, item := range omitted {
+		uidSet.AddNum(item.uid)
+	}
+	msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+	if fatal {
+		return nil, err
+	}
+	if err != nil {
+		c.logger.Warn("could not recheck UIDs missing from a label FETCH response",
+			"mailbox", mailbox, "uids", len(omitted), "error", err)
+		markLabelBatchError(results, omitted, err)
+		return nil, nil
+	}
+	return c.applyLabelFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
 }
 
 // GetMessageLabelsBatch fetches only the Message-ID header needed to recover
@@ -552,6 +660,9 @@ func (c *Client) sourceMessageMetadata(
 			"source message validation returned %d results", len(results))
 	}
 	if results[0].Err != nil {
+		// Only an absent UID is definitive absence. A returned UID whose
+		// headers are missing is a live message, and reporting it as absent
+		// would let SourceMessageMatches conclude a mismatch and rekey it.
 		if errors.Is(results[0].Err, errIMAPFetchResultMissing) {
 			return "", false, nil
 		}

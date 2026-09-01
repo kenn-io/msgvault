@@ -4594,3 +4594,123 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 	assertMessageNotHasLabel(t, env.Store, "msg1", "STARRED")
 	assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
 }
+
+func TestIMAPMessageGoneBeforeRawFetchStillSavesFolderState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	// UID 2 is enumerated but never fetchable, so the run reaches its body
+	// fetch and the server leaves it out of the response.
+	addr, user, hideUID := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"Archive": 0, "INBOX": 0}, "Archive", imapv2.UID(2))
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "survivor@example.com")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "vanished@example.com")
+	hideUID(true)
+
+	acknowledged := make(map[string]imapclient.FolderState)
+	client := newSyncTestIMAPClient(
+		t, addr,
+		imapclient.WithFolderStateSave(
+			func(mailbox string, state imapclient.FolderState) {
+				acknowledged[mailbox] = state
+			},
+		),
+	)
+	env.Syncer = New(client, env.Store, opts)
+	summary := runFullSync(t, env)
+
+	assert.Equal(int64(0), summary.Errors,
+		"a message that left the mailbox before its body fetch is a race, not an error")
+	assert.Contains(acknowledged, "Archive",
+		"a message gone before its body fetch must not hold back the high water mark")
+	assertMessageCount(t, env.Store, 1)
+	require.NoError(client.Close())
+}
+
+func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user, hideUID := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"Archive": 0, "INBOX": 0}, "Archive", imapv2.UID(1))
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "expunged@example.com")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "survivor@example.com")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+	require.NoError(firstClient.Close())
+
+	// Both messages are archived, so the second run refreshes their labels
+	// rather than fetching bodies. UID 1 leaves the mailbox before it does so.
+	hideUID(true)
+
+	acknowledged := make(map[string]imapclient.FolderState)
+	secondClient := newSyncTestIMAPClient(
+		t, addr,
+		imapclient.WithFolderStateSave(
+			func(mailbox string, state imapclient.FolderState) {
+				acknowledged[mailbox] = state
+			},
+		),
+	)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+
+	assert.Equal(int64(0), summary.Errors,
+		"a message that left the mailbox mid-run is a race, not a fetch error")
+	assert.Contains(acknowledged, "Archive",
+		"an expunged message must not hold back the mailbox high water mark")
+	require.NoError(secondClient.Close())
+}
+
+// TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt bounds what a confirmed-gone
+// UID costs. The server hides it from every response here, including the
+// recheck, so the run is right to treat it as gone -- but the verdict must
+// still not be durable. The UID never enters the saved UID set, the mailbox no
+// longer matches its message count, and the next run enumerates it and
+// archives the message.
+//
+// The message-count recovery this asserts belongs to the non-QRESYNC paths.
+// See TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount.
+func TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user, setUIDHidden := testutil.StartIMAPMemServerWithMissingUID(
+		t, map[string]int{"Archive": 0, "INBOX": 0}, "Archive", imapv2.UID(2))
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "survivor@example.com")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "omitted@example.com")
+
+	setUIDHidden(true)
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assert.Equal(int64(0), summary.Errors)
+	assertMessageCount(t, env.Store, 1)
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.Close())
+
+	// The server stops hiding the UID. The saved state never recorded it, so
+	// the mailbox is not provably unchanged and the run reads it again.
+	setUIDHidden(false)
+	secondClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+
+	assert.Equal(int64(0), summary.Errors)
+	assertMessageCount(t, env.Store, 2)
+	require.NoError(secondClient.Close())
+}

@@ -561,6 +561,15 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
+			if errors.Is(labelResult.Err, gmail.ErrMessageGone) {
+				// The message left the mailbox mid-run. Deletion detection
+				// retires it; acknowledging here is what lets the folder keep
+				// its high water mark instead of re-enumerating next run.
+				s.logger.Debug("skipping message expunged before label fetch",
+					"id", sourceMessageID)
+				result.acknowledged = append(result.acknowledged, sourceMessageID)
+				continue
+			}
 			if labelResult.Err != nil {
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
@@ -684,9 +693,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				inconclusiveRefreshes[sourceMessageID]
 			raw := fetch.Message
 			if raw == nil {
-				if isGmailNotFound(fetch.Err) {
+				if kind, gone := messageGoneKind(fetch.Err); gone {
 					s.logger.Debug("skipping message deleted before fetch", "id", sourceMessageID)
-					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, fetch.Err)
 					if !alreadyExists {
 						result.skipped++
 					}

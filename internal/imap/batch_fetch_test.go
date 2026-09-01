@@ -476,12 +476,15 @@ func TestApplyLabelFetchResultsMarksOnlyMissingUID(t *testing.T) {
 	}
 
 	var c Client
-	c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	omitted := c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
 
 	assert.Equal([]string{"Archive"}, results[0].LabelIDs)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].LabelIDs)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	// The omission is reported, not acted on. Calling it gone is the caller's
+	// decision, and only after the server has been asked a second time.
+	assert.Equal([]batchFetchItem{{idx: 1, uid: imapapi.UID(11)}}, omitted)
+	require.NoError(results[1].Err)
 }
 
 func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
@@ -501,14 +504,15 @@ func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 	}
 
 	var c Client
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
 
 	require.NotNil(results[0].Message)
 	assert.Equal("Archive|10", results[0].Message.ID)
 	assert.Equal([]byte("raw-10"), results[0].Message.Raw)
 	require.NoError(results[0].Err)
 	assert.Nil(results[1].Message)
-	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+	assert.Equal([]batchFetchItem{{idx: 1, uid: imapapi.UID(11)}}, omitted)
+	require.NoError(results[1].Err)
 }
 
 func TestApplyFetchResultsMarksMissingRawBody(t *testing.T) {
@@ -757,4 +761,231 @@ func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan 
 		}
 	}()
 	return listener.Addr().String(), fetchCommand
+}
+
+// markConfirmedGone is what the chunk loops do once a second FETCH has also
+// left a UID out. It is inlined here so these tests cover the same end state
+// they covered before the recheck moved the decision out of the apply step.
+func markConfirmedGone(
+	c *Client,
+	raw []gmailapi.RawMessageBatchResult,
+	labels []gmailapi.MessageLabelsBatchResult,
+	mailbox string,
+	omitted []batchFetchItem,
+) {
+	for _, item := range omitted {
+		if raw != nil {
+			raw[item.idx].Err = errIMAPFetchResultMissing
+		}
+		if labels != nil {
+			labels[item.idx].Err = errIMAPFetchResultMissing
+		}
+		c.forgetMembershipLocked(mailbox, item.uid)
+	}
+}
+
+// TestMissingUIDDropsEarlierMembershipObservation covers the observation the
+// label map records during enumeration. When a message is confirmed gone --
+// left out of a FETCH response and then left out of the recheck -- nothing
+// ingests it, so the stale observation must not survive to the durable commit,
+// which would find no message row to map it to.
+func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
+	enumerated := func() []MembershipObservation {
+		return []MembershipObservation{
+			{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+			{Mailbox: "Archive", UID: 11, SourceMessageID: "Archive|11"},
+		}
+	}
+	uidToIdx := map[imapapi.UID]int{
+		imapapi.UID(10): 0,
+		imapapi.UID(11): 1,
+	}
+	chunk := []batchFetchItem{
+		{idx: 0, uid: imapapi.UID(10)},
+		{idx: 1, uid: imapapi.UID(11)},
+	}
+
+	t.Run("raw fetch", func(t *testing.T) {
+		c := Client{observedMemberships: enumerated()}
+		results := newRawBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer("message-10", []byte("raw-10")),
+		}
+
+		omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		markConfirmedGone(&c, results, nil, "Archive", omitted)
+
+		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
+		assert.NotContains(t, observedUIDs(&c), uint32(11))
+		assert.Contains(t, observedUIDs(&c), uint32(10))
+	})
+
+	t.Run("label fetch", func(t *testing.T) {
+		c := Client{observedMemberships: enumerated()}
+		results := newLabelBatchResults([]string{"Archive|10", "Archive|11"})
+		msgs := []*imapclient.FetchMessageBuffer{
+			fetchMessageBuffer(
+				"message-10",
+				[]byte("Message-ID: <message-10@example.com>\r\n\r\n"),
+			),
+		}
+
+		omitted := c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		markConfirmedGone(&c, nil, results, "Archive", omitted)
+
+		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)
+		assert.NotContains(t, observedUIDs(&c), uint32(11))
+		assert.Contains(t, observedUIDs(&c), uint32(10))
+	})
+}
+
+func observedUIDs(c *Client) []uint32 {
+	uids := make([]uint32, 0, len(c.observedMemberships))
+	for _, observation := range c.observedMemberships {
+		uids = append(uids, observation.UID)
+	}
+	return uids
+}
+
+// TestReturnedUIDWithoutHeadersKeepsMembershipObservation is the other side of
+// TestMissingUIDDropsEarlierMembershipObservation. The server returned the
+// UID, so the message is still in the mailbox. Classifying that as gone would
+// let the run acknowledge a live message and drop its observation, and a
+// mailbox that resets its memberships would then delete the row and tombstone
+// the message.
+func TestReturnedUIDWithoutHeadersKeepsMembershipObservation(t *testing.T) {
+	c := Client{observedMemberships: []MembershipObservation{
+		{Mailbox: "Archive", UID: 10, SourceMessageID: "Archive|10"},
+	}}
+	results := newLabelBatchResults([]string{"Archive|10"})
+	msgs := []*imapclient.FetchMessageBuffer{
+		{UID: imapapi.UID(10), Envelope: &imapapi.Envelope{MessageID: "message-10"}},
+	}
+
+	c.applyLabelFetchResults(
+		results,
+		map[imapapi.UID]int{imapapi.UID(10): 0},
+		"Archive",
+		[]batchFetchItem{{idx: 0, uid: imapapi.UID(10)}},
+		msgs,
+	)
+
+	require.ErrorIs(t, results[0].Err, errIMAPLabelBodyMissing)
+	require.NotErrorIs(t, results[0].Err, gmailapi.ErrMessageGone)
+	assert.Contains(t, observedUIDs(&c), uint32(10))
+}
+
+// TestOmittedUIDIsRecheckedBeforeItCountsAsGone is the reason the recheck
+// exists. The server drops one live UID from the first FETCH response and
+// returns it on the next, which is a response the server got wrong rather than
+// a message that left the mailbox.
+//
+// Believing the first omission loses the message on a QRESYNC account: the run
+// acknowledges the UID, stores no membership for it, and still advances
+// HIGHESTMODSEQ, so no later CHANGEDSINCE fetch reports it again. Only the
+// paths that reconcile a mailbox by message count recover on their own, so the
+// omission must not be believed the first time on any path.
+func TestOmittedUIDIsRecheckedBeforeItCountsAsGone(t *testing.T) {
+	t.Run("label fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDOnce(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+
+		results, err := client.GetMessageLabelsBatch(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.NoError(results[1].Err,
+			"a UID the server returns on the recheck is a live message")
+		assert.Contains(observedUIDs(client), uint32(2),
+			"a rechecked message keeps the membership the commit publishes")
+	})
+
+	t.Run("raw fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDOnce(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+
+		results, err := client.GetMessagesRawBatchWithErrors(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.NoError(results[1].Err,
+			"a UID the server returns on the recheck is a live message")
+		require.NotNil(results[1].Message)
+		assert.Contains(observedUIDs(client), uint32(2))
+	})
+}
+
+// startOmitThenDieIMAPServer answers one FETCH with a response that leaves
+// uid out, then stops serving and closes its listener. The recheck that
+// follows therefore hits a dead socket and cannot reconnect.
+func startOmitThenDieIMAPServer(t *testing.T, uid imapapi.UID) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = io.WriteString(conn, "* OK [CAPABILITY IMAP4rev1] synthetic server ready\r\n")
+		reader := bufio.NewReader(conn)
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return
+			}
+			tag, command, _ := strings.Cut(strings.TrimSpace(line), " ")
+			upper := strings.ToUpper(command)
+			switch {
+			case strings.HasPrefix(upper, "LOGIN"):
+				_, _ = fmt.Fprintf(conn, "%s OK LOGIN completed\r\n", tag)
+			case strings.HasPrefix(upper, "SELECT"):
+				_, _ = io.WriteString(conn,
+					"* FLAGS (\\Seen)\r\n* 2 EXISTS\r\n* OK [UIDVALIDITY 1]\r\n* OK [UIDNEXT 3]\r\n")
+				_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
+			case strings.HasPrefix(upper, "UID FETCH"):
+				// Answer with every requested UID except the one under test,
+				// then refuse to serve anything further.
+				_, _ = fmt.Fprintf(conn,
+					"* 1 FETCH (UID %d FLAGS () INTERNALDATE \"01-Jan-2026 00:00:00 +0000\" "+
+						"RFC822.SIZE 5 BODY[] {5}\r\nhello)\r\n", uid-1)
+				_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
+				_ = listener.Close()
+				return
+			default:
+				_, _ = fmt.Fprintf(conn, "%s BAD unsupported synthetic command\r\n", tag)
+			}
+		}
+	}()
+	return addr
+}
+
+// TestRecheckReconnectFailureEndsTheBatch covers the invariant the recheck must
+// not break. fetchChunk reports a failed reconnect as fatal, and a fatal
+// failure has already cleared c.conn, so the batch cannot continue: the next
+// chunk would dereference a nil connection. The recheck has to propagate that
+// the way the first fetch of a chunk already does.
+func TestRecheckReconnectFailureEndsTheBatch(t *testing.T) {
+	require := require.New(t)
+	addr := startOmitThenDieIMAPServer(t, imapapi.UID(2))
+	client := newTestClient(t, addr)
+
+	_, err := client.GetMessagesRawBatchWithErrors(
+		t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+	require.Error(err, "a failed reconnect during the recheck must end the batch")
 }
