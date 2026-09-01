@@ -89,8 +89,10 @@ jobs:
           make lint-tools
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      # The three largest packages run in test-sharded below; this covers the
+      # rest. Together they are exactly `make test`.
       - name: Test
-        run: make test
+        run: make test-unsharded
 
       - name: Test build without vector backends
         run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
@@ -103,6 +105,35 @@ jobs:
 
       - name: Vulnerability check
         run: make vulncheck
+
+  # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
+  # that run one at a time inside one binary, so whole they set the wall clock
+  # of the test lane. Each runs here as four concurrent processes of the same
+  # binary — scripts/test-package-shards.sh, the Linux twin of the Windows
+  # lane's script — on its own runner.
+  test-sharded:
+    name: test-sharded (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            package: ./cmd/msgvault/cmd
+          - name: store
+            package: ./internal/store
+          - name: api
+            package: ./internal/api
+    runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+
+      - name: Test package in isolated shards
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -528,9 +559,57 @@ jobs:
       # The target carries the same 60m timeout as `make test`:
       # the heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner, and this lane is the slowest one there is.
+      # The three largest packages run in test-postgres-sharded below, each
+      # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped
+        run: make test-pg-shipped-unsharded
 
       - name: Concurrency tests (-count=5)
         run: |
           go test -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+
+  # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
+  # one package per job, each with its own PostgreSQL service so four shards'
+  # connections never compete with the rest of the suite.
+  test-postgres-sharded:
+    name: test-postgres-sharded (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            package: ./cmd/msgvault/cmd
+          - name: store
+            package: ./internal/store
+          - name: api
+            package: ./internal/api
+    runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgvault_test
+          POSTGRES_PASSWORD: msgvault_test
+          POSTGRES_DB: msgvault_test
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MSGVAULT_TEST_DB: postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+
+      # Shipped build (no pgvector tag) against a stock postgres:16 image, as
+      # in test-postgres above.
+      - name: Test package in isolated shards (PostgreSQL)
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
