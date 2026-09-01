@@ -133,6 +133,43 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert.Zero(freelist)
 }
 
+func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	_, activeID, _ := seedGCCommandArchive(t)
+	firstRun := &cobra.Command{}
+	firstRun.SetContext(t.Context())
+	firstRun.SetOut(&bytes.Buffer{})
+	require.NoError(runGCLocal(firstRun, gcOptions{yes: true, noBackup: true}))
+
+	// An orphan left behind by an earlier sweep failure: no attachment row
+	// references it any more.
+	orphanHash := strings.Repeat("0c", 32)
+	orphanBlob := filepath.Join(cfg.AttachmentsDir(), orphanHash[:2], orphanHash)
+	require.NoError(os.MkdirAll(filepath.Dir(orphanBlob), 0o755), "create blob dir")
+	require.NoError(os.WriteFile(orphanBlob, []byte("orphan"), 0o600), "write orphan blob")
+	sharedBlob := seedGCLooseBlob(t, activeID, strings.Repeat("0d", 32))
+
+	var output bytes.Buffer
+	rerun := &cobra.Command{}
+	rerun.SetContext(t.Context())
+	rerun.SetOut(&output)
+	require.NoError(runGCLocal(rerun, gcOptions{yes: true}))
+
+	assert.Contains(output.String(), "Source-deleted messages to purge: 0")
+	assert.Contains(output.String(), "No source-deleted messages to purge.")
+	assert.Contains(output.String(), "Removed 1 unreferenced loose attachment blob(s).")
+	assert.NotContains(output.String(), "Backing up database")
+	assert.NotContains(output.String(), "Derived caches may contain deleted rows")
+	assert.NoFileExists(orphanBlob, "rerun must retry the orphan sweep")
+	assert.FileExists(sharedBlob, "a referenced blob must survive")
+	assert.True(gcMessageExists(t, cfg.DatabaseDSN(), activeID))
+
+	backups, err := filepath.Glob(cfg.DatabaseDSN() + ".gc-backup-*")
+	require.NoError(err, "glob GC backups")
+	assert.Empty(backups, "no backup when there are no rows to purge")
+}
+
 func TestRunGCLocalBacksUpFileURIDatabaseBesideArchive(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

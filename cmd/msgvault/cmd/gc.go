@@ -82,12 +82,6 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 	); err != nil {
 		return fmt.Errorf("write GC plan: %w", err)
 	}
-	if plan.SourceDeleted == 0 {
-		if _, err := fmt.Fprintln(out, "Nothing to purge."); err != nil {
-			return fmt.Errorf("write GC empty plan: %w", err)
-		}
-		return nil
-	}
 
 	if !options.yes {
 		confirmed, err := confirmDestructive(
@@ -104,7 +98,57 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 		}
 	}
 
-	if !options.noBackup {
+	if plan.SourceDeleted > 0 {
+		if err := purgeGCMessages(cmd, st, plan, options.noBackup); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(out, "No source-deleted messages to purge."); err != nil {
+		return fmt.Errorf("write GC empty plan: %w", err)
+	}
+
+	// The message delete cascades away attachment rows; reclaim the loose
+	// blob files those rows were the last reference to. The sweep runs even
+	// when nothing was purged so a rerun retries orphans an earlier sweep
+	// failed to remove. The daemon holds the attachment mutation lease around
+	// this whole subprocess (gc is an attachment-removal command) and runs an
+	// automatic repack afterwards for packed dead bytes.
+	removedBlobs, sweepErr := sweepUnreferencedLooseMedia(
+		ctx, st, cfg.AttachmentsDir(), os.Remove,
+	)
+	if _, err := fmt.Fprintf(
+		out, "Removed %d unreferenced loose attachment blob(s).\n", removedBlobs,
+	); err != nil {
+		return fmt.Errorf("write GC blob sweep summary: %w", err)
+	}
+	if plan.SourceDeleted > 0 {
+		if _, err := fmt.Fprintln(out,
+			"Derived caches may contain deleted rows; rebuild each enabled cache:",
+			"\n  msgvault build-cache --full-rebuild",
+			"\n  msgvault embeddings build --full-rebuild",
+		); err != nil {
+			return fmt.Errorf("write GC cache guidance: %w", err)
+		}
+	}
+	if sweepErr != nil {
+		if plan.SourceDeleted > 0 {
+			return fmt.Errorf(
+				"GC deleted and compacted, but loose attachment cleanup failed: %w",
+				sweepErr,
+			)
+		}
+		return fmt.Errorf("loose attachment cleanup failed: %w", sweepErr)
+	}
+	return nil
+}
+
+// purgeGCMessages backs up the database unless disabled, deletes the planned
+// source-deleted rows, and compacts the SQLite file.
+func purgeGCMessages(
+	cmd *cobra.Command, st *store.Store, plan store.GCPlan, noBackup bool,
+) error {
+	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
+	if !noBackup {
 		dbPath, err := cfg.DatabasePath()
 		if err != nil {
 			return fmt.Errorf("resolve database path for GC backup: %w", err)
@@ -142,33 +186,6 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 	}
 	if _, err := fmt.Fprintln(out, "SQLite archive compacted."); err != nil {
 		return fmt.Errorf("write GC compaction summary: %w", err)
-	}
-
-	// The message delete cascades away attachment rows; reclaim the loose
-	// blob files those rows were the last reference to. The daemon holds the
-	// attachment mutation lease around this whole subprocess (gc is an
-	// attachment-removal command) and runs an automatic repack afterwards for
-	// packed dead bytes.
-	removedBlobs, sweepErr := sweepUnreferencedLooseMedia(
-		ctx, st, cfg.AttachmentsDir(), os.Remove,
-	)
-	if _, err := fmt.Fprintf(
-		out, "Removed %d unreferenced loose attachment blob(s).\n", removedBlobs,
-	); err != nil {
-		return fmt.Errorf("write GC blob sweep summary: %w", err)
-	}
-	if _, err := fmt.Fprintln(out,
-		"Derived caches may contain deleted rows; rebuild each enabled cache:",
-		"\n  msgvault build-cache --full-rebuild",
-		"\n  msgvault embeddings build --full-rebuild",
-	); err != nil {
-		return fmt.Errorf("write GC cache guidance: %w", err)
-	}
-	if sweepErr != nil {
-		return fmt.Errorf(
-			"GC deleted and compacted, but loose attachment cleanup failed: %w",
-			sweepErr,
-		)
 	}
 	return nil
 }
