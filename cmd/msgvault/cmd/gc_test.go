@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,15 +99,24 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.SetOut(&output)
 
+	orphanBlob := seedGCLooseBlob(t, deletedID, strings.Repeat("0a", 32))
+	sharedBlob := seedGCLooseBlob(t, deletedID, strings.Repeat("0b", 32))
+	seedGCAttachmentRow(t, activeID, strings.Repeat("0b", 32))
+
 	require.NoError(runGCLocal(cmd, gcOptions{yes: true}))
 	assert.Contains(output.String(), "Source-deleted messages to purge: 1")
 	assert.Contains(output.String(), "Dedup-hidden messages retained: 1")
 	assert.Contains(output.String(), "Deleted 1 source-deleted message(s).")
 	assert.Contains(output.String(), "SQLite archive compacted.")
+	assert.Contains(output.String(), "Removed 1 unreferenced loose attachment blob(s).")
 	assert.False(gcMessageExists(t, cfg.DatabaseDSN(), deletedID))
 	assert.True(gcMessageExists(t, cfg.DatabaseDSN(), activeID))
 	assert.True(gcMessageExists(t, cfg.DatabaseDSN(), dedupID),
 		"dedup-only row must survive GC")
+	assert.NoFileExists(orphanBlob,
+		"a blob referenced only by the purged message must be swept")
+	assert.FileExists(sharedBlob,
+		"a blob still referenced by an active message must survive")
 
 	backups, err := filepath.Glob(cfg.DatabaseDSN() + ".gc-backup-*")
 	require.NoError(err, "glob GC backups")
@@ -192,6 +202,32 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64) {
 		sql.NullString{}), "store deleted payload")
 	require.NoError(st.Close(), "close seed store")
 	return deletedID, activeID, dedupID
+}
+
+// seedGCLooseBlob writes a loose content-addressed blob file and attaches it
+// to messageID, returning the blob's filesystem path.
+func seedGCLooseBlob(t *testing.T, messageID int64, hash string) string {
+	t.Helper()
+	seedGCAttachmentRow(t, messageID, hash)
+	fullPath := filepath.Join(
+		cfg.AttachmentsDir(), hash[:2], hash,
+	)
+	require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o755), "create blob dir")
+	require.NoError(t, os.WriteFile(fullPath, []byte("gc blob "+hash), 0o600),
+		"write loose blob")
+	return fullPath
+}
+
+func seedGCAttachmentRow(t *testing.T, messageID int64, hash string) {
+	t.Helper()
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(t, err, "open store for attachment seed")
+	defer func() { _ = st.Close() }()
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO attachments (message_id, filename, content_hash, storage_path)
+		VALUES (?, ?, ?, ?)
+	`), messageID, "blob.bin", hash, hash[:2]+"/"+hash)
+	require.NoError(t, err, "insert attachment row")
 }
 
 func gcMessageExists(t *testing.T, dbPath string, messageID int64) bool {

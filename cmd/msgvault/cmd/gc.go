@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -20,7 +21,8 @@ func newGCCmd() *cobra.Command {
 		Use:   "gc",
 		Short: "Purge source-deleted messages and compact the SQLite archive",
 		Long: `Permanently delete local archive rows already marked deleted from their
-source, then compact the SQLite database. Active messages and rows hidden only
+source, then compact the SQLite database and remove loose attachment blobs
+that no remaining message references. Active messages and rows hidden only
 by deduplication are retained.
 
 GC creates a point-in-time SQLite backup before deletion by default and asks
@@ -141,12 +143,32 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 	if _, err := fmt.Fprintln(out, "SQLite archive compacted."); err != nil {
 		return fmt.Errorf("write GC compaction summary: %w", err)
 	}
+
+	// The message delete cascades away attachment rows; reclaim the loose
+	// blob files those rows were the last reference to. The daemon holds the
+	// attachment mutation lease around this whole subprocess (gc is an
+	// attachment-removal command) and runs an automatic repack afterwards for
+	// packed dead bytes.
+	removedBlobs, sweepErr := sweepUnreferencedLooseMedia(
+		ctx, st, cfg.AttachmentsDir(), os.Remove,
+	)
+	if _, err := fmt.Fprintf(
+		out, "Removed %d unreferenced loose attachment blob(s).\n", removedBlobs,
+	); err != nil {
+		return fmt.Errorf("write GC blob sweep summary: %w", err)
+	}
 	if _, err := fmt.Fprintln(out,
 		"Derived caches may contain deleted rows; rebuild each enabled cache:",
 		"\n  msgvault build-cache --full-rebuild",
 		"\n  msgvault embeddings build --full-rebuild",
 	); err != nil {
 		return fmt.Errorf("write GC cache guidance: %w", err)
+	}
+	if sweepErr != nil {
+		return fmt.Errorf(
+			"GC deleted and compacted, but loose attachment cleanup failed: %w",
+			sweepErr,
+		)
 	}
 	return nil
 }
