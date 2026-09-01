@@ -292,37 +292,50 @@ func runDeduplicateInteractiveHTTP(cmd *cobra.Command) error {
 }
 
 func printDeduplicateBackfillPromptNote(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
-	if item.BackfilledCount <= 0 {
-		return
-	}
-	out := cmd.OutOrStdout()
-	if item.SourceID > 0 {
-		_, _ = fmt.Fprintf(
-			out,
-			"\nNote: scan already backfilled %d rfc822_message_id value(s) for %s from "+
-				"stored MIME. This is metadata derivation and is kept regardless of your answer.\n",
-			item.BackfilledCount,
-			item.ScopeLabel,
-		)
+	printDeduplicateBackfillPromptNoteTo(cmd.OutOrStdout(), item.PendingBackfillCount)
+}
+
+func printDeduplicateBackfillPromptNoteTo(out io.Writer, pending int64) {
+	if pending == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(
 		out,
-		"\nNote: scan already backfilled %d rfc822_message_id value(s) from stored MIME. "+
-			"This is metadata derivation and is kept regardless of your answer.\n",
-		item.BackfilledCount,
+		"\nThis will derive %d RFC822 Message-ID value(s) from stored MIME after confirmation. "+
+			"If that reveals a different duplicate plan, no messages will be hidden; "+
+			"rerun deduplicate to review it.\n",
+		pending,
 	)
 }
 
 func printDeduplicatePrompt(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
-	out := cmd.OutOrStdout()
+	scopeLabel := ""
 	if item.SourceID > 0 {
+		scopeLabel = item.ScopeLabel
+	}
+	printDeduplicateConfirmationPrompt(cmd.OutOrStdout(), scopeLabel, item.DuplicateMessages)
+}
+
+func printDeduplicateConfirmationPrompt(out io.Writer, scopeLabel string, duplicateMessages int) {
+	if duplicateMessages == 0 {
+		if scopeLabel != "" {
+			_, _ = fmt.Fprintf(
+				out,
+				"\nProceed with RFC822 Message-ID derivation for %s? [y/N]: ",
+				scopeLabel,
+			)
+			return
+		}
+		_, _ = fmt.Fprint(out, "\nProceed with RFC822 Message-ID derivation? [y/N]: ")
+		return
+	}
+	if scopeLabel != "" {
 		_, _ = fmt.Fprintf(
 			out,
 			"\nProceed with deduplication for %s? This will hide %d duplicates "+
 				"(reversible with --undo). [y/N]: ",
-			item.ScopeLabel,
-			item.DuplicateMessages,
+			scopeLabel,
+			duplicateMessages,
 		)
 		return
 	}
@@ -330,7 +343,7 @@ func printDeduplicatePrompt(cmd *cobra.Command, item daemonclient.CLIDeduplicate
 		out,
 		"\nProceed with deduplication? This will hide %d duplicates "+
 			"(reversible with --undo). [y/N]: ",
-		item.DuplicateMessages,
+		duplicateMessages,
 	)
 }
 
@@ -554,7 +567,7 @@ func planCLIDeduplicateItem(
 		out.WriteString("Scanning for duplicate messages...\n")
 		out.WriteString(engine.FormatMethodology())
 	}
-	if sourceID == 0 || report.DuplicateGroups > 0 || report.BackfilledCount != 0 {
+	if sourceID == 0 || report.DuplicateGroups > 0 || report.BackfillCandidates > 0 {
 		out.WriteString(engine.FormatReport(report))
 	}
 	if sourceID == 0 && report.DuplicateGroups == 0 {
@@ -565,14 +578,14 @@ func planCLIDeduplicateItem(
 		return api.CLIDeduplicatePlanItem{}, err
 	}
 	return api.CLIDeduplicatePlanItem{
-		SourceID:          sourceID,
-		ScopeLabel:        scopeLabel,
-		ScopeIsCollection: scopeIsCollection,
-		Stdout:            out.String(),
-		DuplicateMessages: report.DuplicateMessages,
-		BackfilledCount:   report.BackfilledCount,
-		PlanFingerprint:   fingerprint,
-		NeedsConfirmation: report.DuplicateGroups > 0,
+		SourceID:             sourceID,
+		ScopeLabel:           scopeLabel,
+		ScopeIsCollection:    scopeIsCollection,
+		Stdout:               out.String(),
+		DuplicateMessages:    report.DuplicateMessages,
+		PendingBackfillCount: report.PendingRFC822IDBackfill(),
+		PlanFingerprint:      fingerprint,
+		NeedsConfirmation:    report.DuplicateGroups > 0 || report.PendingRFC822IDBackfill() > 0,
 	}, nil
 }
 
@@ -592,6 +605,7 @@ func deduplicatePlanFingerprint(
 		ContentHashFallback   bool                         `json:"content_hash_fallback"`
 		DeleteFromSource      bool                         `json:"delete_from_source"`
 		SourcePreference      []string                     `json:"source_preference"`
+		BackfillPlanDigest    string                       `json:"backfill_plan_digest"`
 		Groups                []fingerprintGroup           `json:"groups"`
 		RemoteDeletionTargets []dedup.RemoteDeletionTarget `json:"remote_deletion_targets,omitempty"`
 	}
@@ -602,6 +616,7 @@ func deduplicatePlanFingerprint(
 		ContentHashFallback: cfgScoped.ContentHashFallback,
 		DeleteFromSource:    cfgScoped.DeleteDupsFromSourceServer,
 		SourcePreference:    append([]string(nil), cfgScoped.SourcePreference...),
+		BackfillPlanDigest:  report.BackfillPlanDigest,
 	}
 	slices.Sort(payload.SourceIDs)
 	if cfgScoped.DeleteDupsFromSourceServer {
@@ -748,18 +763,16 @@ func runDeduplicatePerSource(
 				return err
 			}
 		}
-		if report.DuplicateGroups == 0 {
+		hasExecutableWork := report.DuplicateGroups > 0 || report.PendingRFC822IDBackfill() > 0
+		if !hasExecutableWork {
 			if dedupPlanConfirmed {
 				return errors.New("deduplication plan changed; rerun deduplicate")
 			}
-			// Scan can backfill rfc822_message_id even when no duplicate
-			// groups are produced (idempotent metadata derivation). Report
-			// that side effect so the user knows the scan did something
-			// before falling through to the "No duplicates." message.
-			if report.BackfilledCount != 0 {
+			if report.BackfillCandidates > 0 {
 				fmt.Print(engineScoped.FormatReport(report))
+			} else {
+				fmt.Println("  No duplicates.")
 			}
-			fmt.Println("  No duplicates.")
 			fmt.Println()
 			continue
 		}
@@ -774,26 +787,8 @@ func runDeduplicatePerSource(
 		}
 
 		if !dedupYes && !dedupPlanConfirmed {
-			// See runDeduplicateOnce for the rationale on the
-			// rfc822-backfill note: scan already performed it
-			// (idempotent metadata derivation) regardless of the
-			// answer below, so the prompt explicitly scopes "hide N
-			// duplicates" to the merge that follows.
-			if report.BackfilledCount > 0 {
-				fmt.Printf(
-					"\nNote: scan already backfilled %d "+
-						"rfc822_message_id value(s) for %s from "+
-						"stored MIME. This is metadata derivation "+
-						"and is kept regardless of your answer.\n",
-					report.BackfilledCount, src.Identifier,
-				)
-			}
-			fmt.Printf(
-				"\nProceed with deduplication for %s? "+
-					"This will hide %d duplicates "+
-					"(reversible with --undo). [y/N]: ",
-				src.Identifier, report.DuplicateMessages,
-			)
+			printDeduplicateBackfillPromptNoteTo(os.Stdout, report.PendingRFC822IDBackfill())
+			printDeduplicateConfirmationPrompt(os.Stdout, src.Identifier, report.DuplicateMessages)
 			ok, err := readDedupYesNo(promptReader)
 			if err != nil {
 				return err
@@ -824,6 +819,7 @@ func runDeduplicatePerSource(
 			dedup.SanitizeFilenameComponent(src.Identifier),
 			randomBatchToken(),
 		)
+		printDedupExecutionPrelude(report)
 		summary, err := engineScoped.Execute(
 			cmd.Context(), report, batchID,
 		)
@@ -840,7 +836,9 @@ func runDeduplicatePerSource(
 			printAccumulatedUndoHint(executedBatches)
 			return fmt.Errorf("execute %s: %w", src.Identifier, err)
 		}
-		executedBatches = append(executedBatches, summary.BatchID)
+		if summary.GroupsMerged > 0 {
+			executedBatches = append(executedBatches, summary.BatchID)
+		}
 		printDedupSummary(summary)
 		fmt.Println()
 	}
@@ -921,7 +919,8 @@ func runDeduplicateOnce(
 		fmt.Println("\nDry run complete. No changes made.")
 		return nil
 	}
-	if report.DuplicateGroups == 0 {
+	hasExecutableWork := report.DuplicateGroups > 0 || report.PendingRFC822IDBackfill() > 0
+	if !hasExecutableWork {
 		if dedupPlanConfirmed {
 			return errors.New("deduplication plan changed; rerun deduplicate")
 		}
@@ -930,26 +929,8 @@ func runDeduplicateOnce(
 	}
 
 	if !dedupYes && !dedupPlanConfirmed {
-		// Surface the rfc822 backfill that scan already performed so
-		// the user knows what state the database is in before they
-		// answer. The backfill is idempotent metadata derivation
-		// (fills a previously-NULL column from stored MIME, never
-		// overwrites or changes content) and is kept regardless of
-		// this answer; the prompt and the backup that follows are
-		// scoped to the dedup merge itself.
-		if report.BackfilledCount > 0 {
-			fmt.Printf(
-				"\nNote: scan already backfilled %d rfc822_message_id "+
-					"value(s) from stored MIME. This is metadata "+
-					"derivation and is kept regardless of your answer.\n",
-				report.BackfilledCount,
-			)
-		}
-		fmt.Printf(
-			"\nProceed with deduplication? This will hide %d "+
-				"duplicates (reversible with --undo). [y/N]: ",
-			report.DuplicateMessages,
-		)
+		printDeduplicateBackfillPromptNoteTo(os.Stdout, report.PendingRFC822IDBackfill())
+		printDeduplicateConfirmationPrompt(os.Stdout, "", report.DuplicateMessages)
 		ok, err := readDedupYesNo(newDedupPromptReader(cmd))
 		if err != nil {
 			return err
@@ -977,7 +958,7 @@ func runDeduplicateOnce(
 		time.Now().Format("20060102-150405"),
 		randomBatchToken(),
 	)
-	fmt.Println("Merging duplicates...")
+	printDedupExecutionPrelude(report)
 	summary, err := engine.Execute(cmd.Context(), report, batchID)
 	if err != nil {
 		if summary != nil && summary.GroupsMerged > 0 {
@@ -994,12 +975,23 @@ func runDeduplicateOnce(
 	return nil
 }
 
+func printDedupExecutionPrelude(report *dedup.Report) {
+	if report.DuplicateGroups > 0 {
+		fmt.Println("Merging duplicates...")
+		return
+	}
+	fmt.Println("Deriving RFC822 Message-IDs...")
+}
+
 func printDedupSummary(summary *dedup.ExecutionSummary) {
 	fmt.Printf("\n=== Deduplication Complete ===\n")
-	fmt.Printf("Batch ID:            %s\n", summary.BatchID)
+	if summary.GroupsMerged > 0 {
+		fmt.Printf("Batch ID:            %s\n", summary.BatchID)
+	}
 	fmt.Printf("Groups merged:       %d\n", summary.GroupsMerged)
 	fmt.Printf("Messages pruned:     %d\n", summary.MessagesRemoved)
 	fmt.Printf("Labels transferred:  %d\n", summary.LabelsTransferred)
+	fmt.Printf("RFC822 Message-IDs derived: %d\n", summary.RFC822IDsBackfilled)
 	fmt.Printf("Raw MIME backfilled: %d\n", summary.RawMIMEBackfilled)
 
 	if len(summary.StagedManifests) > 0 {
@@ -1010,12 +1002,16 @@ func printDedupSummary(summary *dedup.ExecutionSummary) {
 		}
 		fmt.Println(
 			"\nRun 'msgvault delete-staged --list' to inspect, or " +
-				"MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged " +
-				"to remove the duplicates from the remote server.",
+				"enable '[deletion] remote_enabled = true' in the invoking CLI's " +
+				"config.toml and run 'msgvault delete-staged' to remove the " +
+				"duplicates from the remote server. For one command instead, run " +
+				"'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'.",
 		)
 	}
-	fmt.Printf("\nTo undo: msgvault deduplicate --undo %s\n",
-		summary.BatchID)
+	if summary.GroupsMerged > 0 {
+		fmt.Printf("\nTo undo: msgvault deduplicate --undo %s\n",
+			summary.BatchID)
+	}
 }
 
 func newDedupPromptReader(cmd *cobra.Command) *bufio.Reader {
@@ -1136,7 +1132,8 @@ func init() {
 	deduplicateCmd.Flags().BoolVar(&dedupDeleteFromSourceSrvr,
 		"delete-dups-from-source-server", false,
 		"DESTRUCTIVE: stage equivalent same-source duplicates for remote deletion "+
-			"(execution requires MSGVAULT_ENABLE_REMOTE_DELETE=1)")
+			"(execution requires durable [deletion] remote_enabled = true in the "+
+			"invoking CLI config, or MSGVAULT_ENABLE_REMOTE_DELETE=1 for one command)")
 	deduplicateCmd.Flags().BoolVarP(&dedupYes, "yes", "y", false,
 		"Skip confirmation prompt")
 	deduplicateCmd.Flags().BoolVar(&dedupPlanConfirmed, "dedup-plan-confirmed", false,

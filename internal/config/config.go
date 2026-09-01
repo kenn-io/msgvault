@@ -424,10 +424,16 @@ type Config struct {
 	Activity     ActivityConfig                  `toml:"activity"`
 	People       PeopleConfig                    `toml:"people"`
 	Teams        TeamsConfig                     `toml:"teams"`
+	Deletion     DeletionConfig                  `toml:"deletion"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
 	configPath string // resolved path to the loaded config file
+}
+
+// DeletionConfig records durable operator consent for remote deletion.
+type DeletionConfig struct {
+	RemoteEnabled bool `toml:"remote_enabled"`
 }
 
 // PeopleConfig keeps the existing archive sweep and external enrichment as

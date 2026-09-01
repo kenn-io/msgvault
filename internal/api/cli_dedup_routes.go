@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/opserr"
 )
 
 type cliDeleteDedupedPlanInput struct {
@@ -41,6 +44,13 @@ func (s *Server) registerCLIDedupHumaRoutes(api huma.API) {
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable},
 	}), func(ctx context.Context, input *cliDeduplicatePlanInput) (*cliDeduplicatePlanOutput, error) {
+		if input.Body.PlanProtocol != apiprotocol.DeduplicatePlanProtocol {
+			return nil, s.operationError(
+				opserr.Invalid(errors.New("deduplicate planning requires a compatible CLI; upgrade msgvault and retry")),
+				deduplicatePlanOperationErrorPolicy,
+				"Deduplicate planning failed",
+			)
+		}
 		planner, ok := s.store.(CLIDeduplicatePlanner)
 		if !ok {
 			return nil, cliStoreUnavailableError()

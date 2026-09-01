@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-30
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
@@ -47,7 +48,17 @@ archive accessible guild channels, threads, forum posts, and attachments; see
 
 <p class="faq-question">Does deleting email in msgvault delete it from Gmail?</p>
 
-Only if you explicitly run the full deletion workflow. Staging messages for deletion in the Web UI or TUI does not touch Gmail or your IMAP provider. You must run `MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged` to execute staged deletions. Gmail messages move to trash by default; `--permanent` opts into permanent Gmail deletion. IMAP deletion removes messages from the provider. Your local archive is always preserved. See [Deleting Email](/usage/deletion/) for the complete process.
+Only if you explicitly run the full deletion workflow. Staging messages for
+deletion in the Web UI or TUI does not touch Gmail or your IMAP provider.
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail. A remote daemon's own
+`[deletion]` section is not policy for a command invoked elsewhere. Gmail
+messages move to trash by default; `--permanent` opts into permanent Gmail
+deletion. IMAP deletion removes messages from the provider. Your local archive
+is always preserved. See [Deleting Email](/usage/deletion/) for the complete
+process.
 
 ---
 

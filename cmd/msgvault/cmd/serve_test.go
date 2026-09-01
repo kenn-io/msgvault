@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -1468,6 +1471,107 @@ func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
 		[]string{"sync-full", "--source-id", "42"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, SourceID: 42, SourceIDSet: true}),
 	)
+}
+
+func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	require.NoError(err)
+	binaryName := "msgvault"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binaryPath := filepath.Join(t.TempDir(), binaryName)
+	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec", "-o", binaryPath, "./cmd/msgvault")
+	build.Dir = repoRoot
+	buildOutput, err := build.CombinedOutput()
+	require.NoError(err, "build real msgvault binary: %s", buildOutput)
+
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return binaryPath, nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
+
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.toml")
+	configContents := fmt.Sprintf(`[data]
+data_dir = %q
+
+[server]
+api_key = %q
+
+[deletion]
+remote_enabled = true
+`, dataDir, "boundary-secret")
+	require.NoError(os.WriteFile(configPath, []byte(configContents), 0o600))
+	serverCfg, err := config.Load(configPath, "")
+	require.NoError(err)
+
+	savedCfg, savedCfgFile, savedHomeDir, savedUseLocal := cfg, cfgFile, homeDir, useLocal
+	cfg, cfgFile, homeDir, useLocal = serverCfg, configPath, "", false
+	t.Cleanup(func() {
+		cfg, cfgFile, homeDir, useLocal = savedCfg, savedCfgFile, savedHomeDir, savedUseLocal
+	})
+	t.Setenv(remoteDeleteEnvVar, "1")
+
+	st, err := store.Open(serverCfg.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "boundary@example.invalid")
+	require.NoError(err)
+
+	manager, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("daemon consent boundary", []string{"remote-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})
+	require.NoError(manager.SaveManifest(manifest))
+
+	daemon := api.NewServerWithOptions(api.ServerOptions{
+		Config: serverCfg,
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	body, err := json.Marshal(api.CLIRunRequest{
+		Args: []string{"delete-staged", "--yes", manifest.ID},
+	})
+	require.NoError(err)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Api-Key", "boundary-secret")
+	response := httptest.NewRecorder()
+
+	daemon.Router().ServeHTTP(response, request)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var events []api.CLIRunEvent
+	decoder := json.NewDecoder(response.Body)
+	for decoder.More() {
+		var event api.CLIRunEvent
+		require.NoError(decoder.Decode(&event))
+		events = append(events, event)
+	}
+	require.Len(events, 3, response.Body.String())
+	blocked := "remote deletion is gated; set [deletion] remote_enabled = true in the invoking CLI's config.toml for durable consent; one-command alternative: " +
+		remoteDeleteEnvVar + "=1"
+	var stdout, stderr, subprocessError string
+	for _, event := range events {
+		switch event.Type {
+		case "stdout":
+			stdout += event.Data
+		case "stderr":
+			stderr += event.Data
+		case "error":
+			subprocessError = event.Error
+		}
+	}
+	assert.Contains(stdout, "Deletion Summary:\n")
+	assert.Equal("Error: "+blocked+"\n", stderr)
+	assert.Equal(cliSubprocessExitSentinel, subprocessError)
+	assert.FileExists(filepath.Join(manager.PendingDir(), manifest.ID+".json"))
+	assert.NoFileExists(filepath.Join(manager.InProgressDir(), manifest.ID+".json"))
 }
 
 func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {

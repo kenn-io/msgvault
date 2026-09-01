@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-17"
+last_edited: 2026-08-30
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -98,6 +98,11 @@ auto_build_cache = true
 repo = "~/Backups/msgvault"
 zstd_level = 0
 
+[deletion]
+# Durable consent for remote deletion execution. Opt in deliberately;
+# defaults to false.
+remote_enabled = false
+
 [remote]
 # Remote msgvault endpoint for CLI remote mode
 url = "http://nas-ip:8080"
@@ -179,6 +184,18 @@ google_account = "you@gmail.com"
 owner_phone = "+14155551234"
 schedule = "30 4 * * *"
 ```
+
+## Remote Deletion Consent
+
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail.
+
+Consent belongs to the invoking CLI. When a command uses a remote daemon, the
+CLI forwards its effective consent for that operation; the remote daemon's own
+`[deletion]` section is not server policy for a command invoked elsewhere.
+Staging, listing, inspecting, and dry-running deletion batches remain ungated.
 
 ### Windows Paths
 

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-01
 title: Changelog
 description: Release history for msgvault
 ---
@@ -11,7 +12,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.4.0. The
+  current unreleased API schema is 2.13.0. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -30,6 +31,14 @@ All notable changes to msgvault, grouped by release.
   should pass `account` or stage each source separately.
 
 **Features**
+
+- Starting in v0.20.0, remote deletion remains permanently opt-in. The
+  invoking CLI can grant durable consent with
+  `[deletion] remote_enabled = true`; `MSGVAULT_ENABLE_REMOTE_DELETE=1`
+  remains a permanent one-command
+  alternative, with no planned automatic removal of the guardrail. Invoking
+  clients safely forward consent through local and remote daemon execution;
+  daemon-host config and environment are not treated as client consent.
 
 - Exact source selection is available through `--source-id` on `sync`,
   `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
@@ -58,6 +67,20 @@ All notable changes to msgvault, grouped by release.
 
 **Bug fixes**
 
+- Deduplication now derives missing RFC822 Message-ID metadata only after the
+  user confirms the reviewed plan, applies the exact derivation plan atomically,
+  rescans, and refuses duplicate hiding when the actionable plan changes. Its
+  CLI/daemon plan contract reports pending derivations explicitly and rejects
+  incompatible peers instead of showing misleading consent text.
+- Deduplication no longer derives metadata from malformed bracketed Message-IDs.
+  When raw MIME is available, its recoverable Message-ID header must match the
+  stored value before that message can join a Message-ID duplicate group. The
+  importer preserves established conversation threading behavior. PostgreSQL
+  reports derived IDs containing NUL bytes as failed candidates instead of
+  approving a value that its text type cannot store.
+- Remote deletion forwarding strips daemon-host opt-in state and accepts only
+  authenticated invoking-client consent, preventing a server's configuration
+  or environment from authorizing an unrelated client command.
 - Everything and Files now page narrow analytical metadata before enriching
   participant details, preventing default listings on multi-million-message
   archives from exhausting the interactive DuckDB memory budget.

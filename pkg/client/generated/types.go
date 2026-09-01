@@ -522,22 +522,36 @@ func (c CLICacheBuildEvent) Validate() error {
 }
 
 type CLIDeduplicatePlanItem struct {
-	BackfilledCount   *int64  `json:"backfilled_count,omitempty"`
-	DuplicateMessages *int64  `json:"duplicate_messages,omitempty"`
-	NeedsConfirmation bool    `json:"needs_confirmation"`
-	PlanFingerprint   *string `json:"plan_fingerprint,omitempty"`
-	ScopeIsCollection *bool   `json:"scope_is_collection,omitempty"`
-	ScopeLabel        *string `json:"scope_label,omitempty"`
-	SourceID          *int64  `json:"source_id,omitempty"`
-	Stdout            *string `json:"stdout,omitempty"`
+	DuplicateMessages    *int64  `json:"duplicate_messages,omitempty"`
+	NeedsConfirmation    bool    `json:"needs_confirmation"`
+	PendingBackfillCount *int64  `json:"pending_backfill_count,omitempty"`
+	PlanFingerprint      *string `json:"plan_fingerprint,omitempty"`
+	ScopeIsCollection    *bool   `json:"scope_is_collection,omitempty"`
+	ScopeLabel           *string `json:"scope_label,omitempty"`
+	SourceID             *int64  `json:"source_id,omitempty"`
+	Stdout               *string `json:"stdout,omitempty"`
 }
 
 type CLIDeduplicatePlanRequest struct {
-	Account                    *string `json:"account,omitempty"`
-	Collection                 *string `json:"collection,omitempty"`
-	ContentHash                *bool   `json:"content_hash,omitempty"`
-	DeleteDupsFromSourceServer *bool   `json:"delete_dups_from_source_server,omitempty"`
-	Prefer                     *string `json:"prefer,omitempty"`
+	Account                    *string                               `json:"account,omitempty"`
+	Collection                 *string                               `json:"collection,omitempty"`
+	ContentHash                *bool                                 `json:"content_hash,omitempty"`
+	DeleteDupsFromSourceServer *bool                                 `json:"delete_dups_from_source_server,omitempty"`
+	PlanProtocol               CLIDeduplicatePlanRequestPlanProtocol `json:"plan_protocol" validate:"required"`
+	Prefer                     *string                               `json:"prefer,omitempty"`
+}
+
+func (c CLIDeduplicatePlanRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.PlanProtocol).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PlanProtocol", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CLIDeduplicatePlanResponse struct {

@@ -596,9 +596,17 @@ func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			assert.Equal(http.MethodGet, r.Method, "health method")
+			writeJSONResponse(t, w, map[string]any{
+				"status": "ok", "api_schema_version": "2.13.0",
+			})
+			return
+		}
 		assert.Equal(http.MethodPost, r.Method, "method")
 		assert.Equal("/api/v1/cli/deduplicate/plan", r.URL.Path, "path")
 		var body struct {
+			PlanProtocol               string `json:"plan_protocol"`
 			Account                    string `json:"account"`
 			Collection                 string `json:"collection"`
 			Prefer                     string `json:"prefer"`
@@ -610,6 +618,7 @@ func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 			return
 		}
 		assert.Equal("alice@example.com", body.Account, "account")
+		assert.Equal(apiprotocol.DeduplicatePlanProtocol, body.PlanProtocol, "plan protocol")
 		assert.Empty(body.Collection, "collection")
 		assert.Equal("gmail,mbox", body.Prefer, "prefer")
 		assert.True(body.ContentHash, "content hash")
@@ -620,14 +629,14 @@ func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 			"prefix_stdout": "Deduping across collection\n",
 			"items": []map[string]any{
 				{
-					"source_id":           42,
-					"scope_label":         "alice@example.com",
-					"scope_is_collection": false,
-					"stdout":              "Duplicate groups found: 1\n",
-					"duplicate_messages":  2,
-					"backfilled_count":    3,
-					"plan_fingerprint":    "fp-client",
-					"needs_confirmation":  true,
+					"source_id":              42,
+					"scope_label":            "alice@example.com",
+					"scope_is_collection":    false,
+					"stdout":                 "Duplicate groups found: 1\n",
+					"duplicate_messages":     2,
+					"pending_backfill_count": 3,
+					"plan_fingerprint":       "fp-client",
+					"needs_confirmation":     true,
 				},
 			},
 			"footer_stdout": "No duplicates found in any source.\n",
@@ -656,9 +665,28 @@ func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("alice@example.com", got.Items[0].ScopeLabel, "scope label")
 	assert.Equal("Duplicate groups found: 1\n", got.Items[0].Stdout, "stdout")
 	assert.Equal(2, got.Items[0].DuplicateMessages, "duplicate messages")
-	assert.Equal(int64(3), got.Items[0].BackfilledCount, "backfilled count")
+	assert.Equal(int64(3), got.Items[0].PendingBackfillCount, "pending backfill count")
 	assert.Equal("fp-client", got.Items[0].PlanFingerprint, "fingerprint")
 	assert.True(got.Items[0].NeedsConfirmation, "needs confirmation")
+}
+
+func TestPlanCLIDeduplicateRejectsOldDaemonBeforeSubmittingPlan(t *testing.T) {
+	planPosts := 0
+	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{
+				"status": "ok", "api_schema_version": "2.12.0",
+			})
+			return
+		}
+		planPosts++
+		writeJSONResponse(t, w, map[string]any{"items": []any{}})
+	})
+
+	_, err := s.PlanCLIDeduplicate(context.Background(), CLIDeduplicatePlanRequest{})
+
+	require.ErrorContains(t, err, "deduplicate planning requires daemon API schema 2.13.0")
+	assert.Zero(t, planPosts, "plan must not be submitted to an older daemon")
 }
 
 // newTestStore creates a Client pointing at the given httptest server.

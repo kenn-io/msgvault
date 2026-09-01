@@ -16,6 +16,7 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/accountops"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
@@ -141,14 +142,14 @@ type CLIDeduplicatePlan struct {
 }
 
 type CLIDeduplicatePlanItem struct {
-	SourceID          int64
-	ScopeLabel        string
-	ScopeIsCollection bool
-	Stdout            string
-	DuplicateMessages int
-	BackfilledCount   int64
-	PlanFingerprint   string
-	NeedsConfirmation bool
+	SourceID             int64
+	ScopeLabel           string
+	ScopeIsCollection    bool
+	Stdout               string
+	DuplicateMessages    int
+	PendingBackfillCount int64
+	PlanFingerprint      string
+	NeedsConfirmation    bool
 }
 
 type CLIInitDB struct {
@@ -439,8 +440,9 @@ func (c *Client) RunCLISync(
 }
 
 const (
-	sourceIDSyncMinAPISchemaVersion   = "2.4.0"
-	searchDeletionMinAPISchemaVersion = "2.12.0"
+	sourceIDSyncMinAPISchemaVersion    = "2.4.0"
+	searchDeletionMinAPISchemaVersion  = "2.12.0"
+	deduplicatePlanMinAPISchemaVersion = "2.13.0"
 )
 
 func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
@@ -713,12 +715,25 @@ func (c *Client) PlanCLIDeduplicate(
 	ctx context.Context,
 	req CLIDeduplicatePlanRequest,
 ) (*CLIDeduplicatePlan, error) {
+	version, err := c.daemonAPISchemaVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check daemon deduplicate-plan capability: %w", err)
+	}
+	if !apiSchemaVersionAtLeast(version, deduplicatePlanMinAPISchemaVersion) {
+		return nil, fmt.Errorf(
+			"deduplicate planning requires daemon API schema %s or newer (daemon reports %q)",
+			deduplicatePlanMinAPISchemaVersion, version,
+		)
+	}
 	body := generated.PlanCLIDeduplicateBody{
 		Account:                    optionalString(req.Account),
 		Collection:                 optionalString(req.Collection),
 		Prefer:                     optionalString(req.Prefer),
 		ContentHash:                optionalBool(req.ContentHash),
 		DeleteDupsFromSourceServer: optionalBool(req.DeleteDupsFromSourceServer),
+		PlanProtocol: generated.CLIDeduplicatePlanRequestPlanProtocol(
+			apiprotocol.DeduplicatePlanProtocol,
+		),
 	}
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.PlanCLIDeduplicateResp, error) {
 		return client.PlanCLIDeduplicateWithResponse(ctx, &generated.PlanCLIDeduplicateRequestOptions{Body: &body})

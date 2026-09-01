@@ -8,16 +8,59 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestRemoteDeleteEnabledUsesConfigOrEnvironment(t *testing.T) {
+	t.Setenv(daemonCLISubprocessEnv, "")
+	tests := []struct {
+		name          string
+		configEnabled bool
+		envValue      string
+		want          bool
+	}{
+		{name: "both false"},
+		{name: "config only", configEnabled: true, want: true},
+		{name: "environment one only", envValue: "1", want: true},
+		{name: "both true", configEnabled: true, envValue: "1", want: true},
+		{name: "environment zero preserves config", configEnabled: true, envValue: "0", want: true},
+		{name: "environment zero does not enable", envValue: "0"},
+		{name: "environment true does not enable", envValue: "true"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(remoteDeleteEnvVar, tt.envValue)
+			savedCfg := cfg
+			cfg = config.NewDefaultConfig()
+			cfg.Deletion.RemoteEnabled = tt.configEnabled
+			t.Cleanup(func() { cfg = savedCfg })
+
+			assert.Equal(t, tt.want, remoteDeleteEnabled(false))
+		})
+	}
+
+	t.Run("captured daemon subprocess ignores config after parent marker changes", func(t *testing.T) {
+		t.Setenv(remoteDeleteEnvVar, "")
+		t.Setenv(daemonCLISubprocessEnv, "")
+		savedCfg := cfg
+		cfg = config.NewDefaultConfig()
+		cfg.Deletion.RemoteEnabled = true
+		t.Cleanup(func() { cfg = savedCfg })
+
+		assert.False(t, remoteDeleteEnabled(true))
+	})
+}
 
 func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
 	cmd := &cobra.Command{
@@ -178,6 +221,52 @@ func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 	})
 	require.NoError(err, "build changed plan")
 	assert.NotEqual(plan.PlanFingerprint, changed.PlanFingerprint, "fingerprint should change when confirmed manifest content changes")
+}
+
+func TestBuildDeleteStagedPlanListGuidanceNamesBothConsentPaths(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("pending", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "source@example.invalid",
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	listPlan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{List: true})
+	require.NoError(err)
+	durable := "[deletion] remote_enabled = true"
+	oneCommand := "One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1"
+	require.Contains(listPlan.Stdout, durable)
+	require.Contains(listPlan.Stdout, oneCommand)
+	assert.Less(strings.Index(listPlan.Stdout, durable), strings.Index(listPlan.Stdout, oneCommand),
+		"list guidance must present durable invoking-CLI config first")
+}
+
+func TestBuildDeleteStagedPlanBlockedErrorNamesBothConsentPaths(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("pending", []string{"gm-1"}, deletion.SourceReference{
+		ID: 11, Type: "gmail", Identifier: "source@example.invalid",
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	blockedPlan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{Yes: true})
+	require.NoError(err)
+	durable := "[deletion] remote_enabled = true"
+	require.Contains(blockedPlan.BlockedError, durable)
+	require.Contains(blockedPlan.BlockedError, "invoking CLI's config.toml for durable consent")
+	require.Contains(blockedPlan.BlockedError, "one-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1")
+	assert.Less(strings.Index(blockedPlan.BlockedError, durable), strings.Index(blockedPlan.BlockedError, remoteDeleteEnvVar),
+		"blocked error must present durable invoking-CLI config first")
 }
 
 func TestBuildDeleteStagedPlanFiltersVersionTwoBySourceID(t *testing.T) {

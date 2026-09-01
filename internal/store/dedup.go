@@ -1,12 +1,15 @@
 package store
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
+	"hash"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +22,23 @@ type DuplicateGroupKey struct {
 	RFC822MessageID string
 	Count           int
 }
+
+// ErrRFC822StorageFormCollision means two requested duplicate-group keys
+// expand to the same stored Message-ID representation.
+var ErrRFC822StorageFormCollision = errors.New("RFC822 Message-ID storage form collision")
+
+// ErrRFC822IDBackfillPlanChanged means the archive no longer matches the
+// exact RFC822 Message-ID derivation plan the user confirmed.
+var ErrRFC822IDBackfillPlanChanged = errors.New(
+	"RFC822 Message-ID derivation plan changed; rerun deduplicate to review the current plan",
+)
+
+// rfc822CanonicalIndexName is the canonical Message-ID/source covering index
+// used by duplicate discovery. SQLite's production query names it explicitly:
+// without that choice the cost-based planner prefers idx_messages_source for a
+// scoped query and rebuilds a temporary GROUP BY B-tree, defeating the
+// expression index this path exists to use.
+const rfc822CanonicalIndexName = "idx_messages_rfc822_message_id_canonical"
 
 // DuplicateMessageRow holds metadata needed to select the survivor in a
 // duplicate group. Lightweight return type for the store layer.
@@ -76,12 +96,123 @@ type DedupedBatchCount struct {
 	Count int64
 }
 
-func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
+type rfc822IDBackfillItem struct {
+	MessageID       int64
+	SourceID        int64
+	RFC822MessageID string
+	RawInputSHA256  [sha256.Size]byte
+}
+
+type RFC822IDBackfillPlan struct {
+	Candidates int64
+	Ready      int64
+	Failed     int64
+	digest     string
+}
+
+func (p RFC822IDBackfillPlan) Digest() string {
+	return p.digest
+}
+
+// rfc822IDBackfillDigest incrementally binds the exact executable derivation
+// stream without retaining it. Items are added in message-ID order by both
+// PlanRFC822IDBackfill and ApplyRFC822IDBackfill. Finalization binds the item
+// count separately so empty, truncated, and extended streams cannot compare
+// equal even though the count is not known when streaming begins.
+type rfc822IDBackfillDigest struct {
+	items hash.Hash
+	count int64
+}
+
+func newRFC822IDBackfillDigest() *rfc822IDBackfillDigest {
+	return &rfc822IDBackfillDigest{items: sha256.New()}
+}
+
+func (d *rfc822IDBackfillDigest) Add(item rfc822IDBackfillItem) {
+	writeRFC822IDBackfillInt64(d.items, item.MessageID)
+	writeRFC822IDBackfillInt64(d.items, item.SourceID)
+	writeRFC822IDBackfillBytes(d.items, []byte(item.RFC822MessageID))
+	writeRFC822IDBackfillBytes(d.items, item.RawInputSHA256[:])
+	d.count++
+}
+
+func (d *rfc822IDBackfillDigest) Sum() string {
+	const version = "msgvault-rfc822-id-backfill-plan-v2"
+	digest := sha256.New()
+	writeRFC822IDBackfillBytes(digest, []byte(version))
+	writeRFC822IDBackfillInt64(digest, d.count)
+	writeRFC822IDBackfillBytes(digest, d.items.Sum(nil))
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func writeRFC822IDBackfillInt64(dst hash.Hash, value int64) {
+	_ = binary.Write(dst, binary.BigEndian, value)
+}
+
+func writeRFC822IDBackfillBytes(dst hash.Hash, value []byte) {
+	writeRFC822IDBackfillInt64(dst, int64(len(value)))
+	_, _ = dst.Write(value)
+}
+
+func rfc822IDBackfillRawFingerprint(
+	rawData []byte, rawFormat string, compression sql.NullString,
+) [sha256.Size]byte {
+	digest := sha256.New()
+	writeRFC822IDBackfillBytes(digest, rawData)
+	writeRFC822IDBackfillBytes(digest, []byte(rawFormat))
+	if compression.Valid {
+		_, _ = digest.Write([]byte{1})
+		writeRFC822IDBackfillBytes(digest, []byte(compression.String))
+	} else {
+		_, _ = digest.Write([]byte{0})
+	}
+	var fingerprint [sha256.Size]byte
+	copy(fingerprint[:], digest.Sum(nil))
+	return fingerprint
+}
+
+func rfc822MessageIDStorageForms(id string) []string {
+	if id == "" {
+		return nil
+	}
+
+	// Mirror FindDuplicatesByRFC822ID's dialect expression exactly. SQLite
+	// groups BLOB bytes so embedded NUL remains ordinary data; PostgreSQL TEXT
+	// rejects NUL. Both unwrap <id> only when id's edge bytes are not brackets
+	// or an ASCII space. Trimming or UTF-8 repair here would make fetch disagree
+	// with discovery.
+	forms := []string{id}
+	first, last := id[0], id[len(id)-1]
+	if first != '<' && first != '>' && first != ' ' &&
+		last != '<' && last != '>' && last != ' ' {
+		forms = append(forms, "<"+id+">")
+	}
+	return forms
+}
+
+// findDuplicatesByRFC822IDQuery builds the exact SQL statement and bind
+// arguments FindDuplicatesByRFC822ID executes. It exists so the query-plan
+// regression tests can EXPLAIN the production statement rather than a copy
+// that would silently drift from it — the GROUP BY expression must match the
+// idx_messages_rfc822_message_id_canonical expression index byte for byte.
+func (s *Store) findDuplicatesByRFC822IDQuery(sourceIDs []int64) (string, []any) {
+	canonicalID := s.dialect.RFC822CanonicalIDExpr("rfc822_message_id")
+	from := "messages"
+	if len(sourceIDs) > 0 && !s.IsPostgreSQL() {
+		// SQLite otherwise estimates the equality lookup through
+		// idx_messages_source as cheaper, then sorts every scoped row into a
+		// temporary GROUP BY B-tree. The canonical/source index is ordered for
+		// grouping and covers the source filter, so select it for the exact
+		// production shape. PostgreSQL has no INDEXED BY syntax and retains its
+		// cost-based choice.
+		from += " INDEXED BY " + rfc822CanonicalIndexName
+	}
 	query := `
-		SELECT rfc822_message_id, COUNT(*) AS cnt
-		FROM messages
+		SELECT ` + canonicalID + `, COUNT(*) AS cnt
+		FROM ` + from + `
 		WHERE rfc822_message_id IS NOT NULL
 		  AND rfc822_message_id != ''
+		  AND ` + canonicalID + ` != ''
 		  AND ` + LiveMessagesWhere("", true)
 	var args []any
 	if len(sourceIDs) > 0 {
@@ -93,8 +224,13 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	query += `
-		GROUP BY rfc822_message_id
+		GROUP BY ` + canonicalID + `
 		HAVING COUNT(*) > 1`
+	return query, args
+}
+
+func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
+	query, args := s.findDuplicatesByRFC822IDQuery(sourceIDs)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -155,15 +291,25 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 func (s *Store) GetDuplicateGroupMessages(
 	rfc822ID string, sourceIDs ...int64,
 ) ([]DuplicateMessageRow, error) {
+	storageForms := rfc822MessageIDStorageForms(rfc822ID)
+	if len(storageForms) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(storageForms))
+	args := make([]any, 0, len(storageForms)+len(sourceIDs))
+	for i, form := range storageForms {
+		placeholders[i] = "?"
+		args = append(args, form)
+	}
 	query := `
 		SELECT ` + duplicateGroupMessageColumns + `
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		LEFT JOIN message_raw mr ON mr.message_id = m.id
-		WHERE m.rfc822_message_id = ? AND ` + LiveMessagesWhere("m", true)
-	args := []any{rfc822ID}
+		WHERE m.rfc822_message_id IN (` + strings.Join(placeholders, ",") + `)
+		  AND ` + LiveMessagesWhere("m", true)
 	if len(sourceIDs) > 0 {
-		placeholders := make([]string, len(sourceIDs))
+		placeholders = make([]string, len(sourceIDs))
 		for i, id := range sourceIDs {
 			placeholders[i] = "?"
 			args = append(args, id)
@@ -230,6 +376,28 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 	if len(rfc822IDs) == 0 {
 		return result, nil
 	}
+	storageForms := make([]string, 0, 2*len(rfc822IDs))
+	seenForms := make(map[string]struct{}, 2*len(rfc822IDs))
+	groupByStorageForm := make(map[string]string, 2*len(rfc822IDs))
+	for _, rfc822ID := range rfc822IDs {
+		for _, form := range rfc822MessageIDStorageForms(rfc822ID) {
+			if existingGroup, exists := groupByStorageForm[form]; exists && existingGroup != rfc822ID {
+				return nil, fmt.Errorf(
+					"%w: storage form %q maps to multiple duplicate groups %q and %q",
+					ErrRFC822StorageFormCollision, form, existingGroup, rfc822ID,
+				)
+			}
+			groupByStorageForm[form] = rfc822ID
+			if _, exists := seenForms[form]; exists {
+				continue
+			}
+			seenForms[form] = struct{}{}
+			storageForms = append(storageForms, form)
+		}
+	}
+	if len(storageForms) == 0 {
+		return result, nil
+	}
 
 	const selectCols = "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
 
@@ -256,9 +424,9 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 		LEFT JOIN message_raw mr ON mr.message_id = m.id
 		WHERE ` + sourceFilter + `m.rfc822_message_id IN (%s)
 		  AND ` + LiveMessagesWhere("m", true) + `
-		ORDER BY m.rfc822_message_id, m.id`
+		ORDER BY m.id`
 
-	err := queryInChunksContext(ctx, s.db, rfc822IDs, prefixArgs, queryTemplate,
+	err := queryInChunksContext(ctx, s.db, storageForms, prefixArgs, queryTemplate,
 		func(rows *loggedRows) error {
 			var dm DuplicateMessageRow
 			var rfc822ID string
@@ -283,11 +451,20 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			dm.HasAttachments = hasAttachments == 1
 			dm.IsFromMe = isFromMe == 1
 			dm.HasSentLabel = hasSent == 1
-			result[rfc822ID] = append(result[rfc822ID], dm)
+			groupID, ok := groupByStorageForm[rfc822ID]
+			if !ok {
+				return fmt.Errorf("unexpected RFC822 Message-ID storage form %q", rfc822ID)
+			}
+			result[groupID] = append(result[groupID], dm)
 			return nil
 		})
 	if err != nil {
 		return nil, fmt.Errorf("get duplicate group messages batch: %w", err)
+	}
+	for groupID := range result {
+		sort.Slice(result[groupID], func(i, j int) bool {
+			return result[groupID][i].ID < result[groupID][j].ID
+		})
 	}
 	return result, nil
 }
@@ -711,170 +888,291 @@ func (s *Store) CountSourceDeletedMessagesContext(
 	return count, err
 }
 
-func (s *Store) CountMessagesWithoutRFC822ID(sourceIDs ...int64) (int64, error) {
-	q := `SELECT COUNT(*) FROM messages m
-		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE (m.rfc822_message_id IS NULL OR m.rfc822_message_id = '')
-		  AND ` + LiveMessagesWhere("m", true)
-	var args []any
-	if len(sourceIDs) > 0 {
-		placeholders := make([]string, len(sourceIDs))
-		for i, id := range sourceIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		q += " AND m.source_id IN (" + strings.Join(placeholders, ",") + ")"
+const rfc822IDBackfillBatchSize = 1000
+
+func (s *Store) rfc822IDBackfillBatch() int {
+	if s.rfc822IDBackfillBatchSizeOverride > 0 {
+		return s.rfc822IDBackfillBatchSizeOverride
 	}
-	var count int64
-	err := s.db.QueryRow(q, args...).Scan(&count)
-	return count, err
+	return rfc822IDBackfillBatchSize
 }
 
-func (s *Store) BackfillRFC822IDs(
-	sourceIDs []int64,
-	progress func(done, total int64),
-) (updated int64, failed int64, err error) {
-	scopeClause := ""
-	var scopeArgs []any
-	if len(sourceIDs) > 0 {
-		placeholders := make([]string, len(sourceIDs))
-		for i, id := range sourceIDs {
-			placeholders[i] = "?"
-			scopeArgs = append(scopeArgs, id)
-		}
-		scopeClause = " AND m.source_id IN (" + strings.Join(placeholders, ",") + ")"
-	}
+type rfc822IDBackfillBatch struct {
+	items      []rfc822IDBackfillItem
+	candidates int64
+	failed     int64
+	lastID     int64
+}
 
-	var total int64
-	countQ := `SELECT COUNT(*) FROM messages m
+func (s *Store) rfc822IDBackfillBatchQuery(
+	sourceIDs []int64, lastID int64, lockRows bool,
+) (string, []any) {
+	scopeClause, scopeArgs := rfc822IDBackfillSourceScope(sourceIDs)
+	query := `SELECT m.id, m.source_id, mr.raw_data, mr.raw_format, mr.compression
+		FROM messages m
 		JOIN message_raw mr ON mr.message_id = m.id
 		WHERE (m.rfc822_message_id IS NULL OR m.rfc822_message_id = '')
-		  AND ` + LiveMessagesWhere("m", true) + scopeClause
-	err = s.db.QueryRow(countQ, scopeArgs...).Scan(&total)
-	if err != nil {
-		return 0, 0, fmt.Errorf("count backfill candidates: %w", err)
+		  AND mr.raw_format = 'mime'
+		  AND ` + LiveMessagesWhere("m", true) + `
+		  AND m.id > ?` + scopeClause + `
+		ORDER BY m.id
+		LIMIT ?`
+	if lockRows {
+		query += s.dialect.SelectForUpdate()
 	}
-	if total == 0 {
-		return 0, 0, nil
-	}
+	args := append([]any{lastID}, scopeArgs...)
+	args = append(args, s.rfc822IDBackfillBatch())
+	return s.dialect.Rebind(query), args
+}
 
-	const batchSize = 1000
+// readRFC822IDBackfillBatch derives at most one bounded plan or apply page and
+// closes its rows before returning. rawData is retained only for the row
+// currently being parsed; the returned slice contains compact derivation
+// metadata, never MIME payloads.
+func readRFC822IDBackfillBatch(
+	rows rowsScanner, rejectNULMessageID bool,
+) (rfc822IDBackfillBatch, error) {
+	batch := rfc822IDBackfillBatch{}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			item        rfc822IDBackfillItem
+			rawData     []byte
+			rawFormat   string
+			compression sql.NullString
+		)
+		if err := rows.Scan(
+			&item.MessageID, &item.SourceID, &rawData, &rawFormat, &compression,
+		); err != nil {
+			return rfc822IDBackfillBatch{}, fmt.Errorf("scan RFC822 ID backfill candidate: %w", err)
+		}
+		batch.candidates++
+		batch.lastID = item.MessageID
+		item.RawInputSHA256 = rfc822IDBackfillRawFingerprint(rawData, rawFormat, compression)
+		var ok bool
+		item.RFC822MessageID, ok = deriveRFC822MessageID(rawData, compression)
+		if !ok || (rejectNULMessageID && strings.IndexByte(item.RFC822MessageID, 0) >= 0) {
+			batch.failed++
+			continue
+		}
+		batch.items = append(batch.items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return rfc822IDBackfillBatch{}, fmt.Errorf("iterate RFC822 ID backfill candidates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return rfc822IDBackfillBatch{}, fmt.Errorf("close RFC822 ID backfill candidates: %w", err)
+	}
+	return batch, nil
+}
+
+func (s *Store) PlanRFC822IDBackfill(
+	ctx context.Context, sourceIDs []int64,
+) (RFC822IDBackfillPlan, error) {
 	lastID := int64(0)
+	plan := RFC822IDBackfillPlan{}
+	digest := newRFC822IDBackfillDigest()
 
 	for {
-		batchQ := `SELECT m.id FROM messages m
-			JOIN message_raw mr ON mr.message_id = m.id
-			WHERE (m.rfc822_message_id IS NULL OR m.rfc822_message_id = '')
-			  AND ` + LiveMessagesWhere("m", true) + `
-			  AND m.id > ?` + scopeClause + `
-			ORDER BY m.id
-			LIMIT ?`
-		batchArgs := append([]any{lastID}, scopeArgs...)
-		batchArgs = append(batchArgs, batchSize)
-		rows, err := s.db.Query(batchQ, batchArgs...)
+		query, args := s.rfc822IDBackfillBatchQuery(sourceIDs, lastID, false)
+		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
-			return updated, failed, fmt.Errorf("fetch backfill batch: %w", err)
+			return RFC822IDBackfillPlan{}, fmt.Errorf("fetch RFC822 ID backfill batch: %w", err)
 		}
-
-		var batchIDs []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return updated, failed, err
-			}
-			batchIDs = append(batchIDs, id)
+		batch, err := readRFC822IDBackfillBatch(rows, s.IsPostgreSQL())
+		if err != nil {
+			return RFC822IDBackfillPlan{}, err
 		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return updated, failed, err
+		plan.Candidates += batch.candidates
+		plan.Failed += batch.failed
+		for _, item := range batch.items {
+			digest.Add(item)
+			plan.Ready++
 		}
-		if len(batchIDs) == 0 {
+		if batch.candidates == 0 {
 			break
 		}
+		lastID = batch.lastID
+	}
 
-		updates := make([]struct {
-			id           int64
-			normalizedID string
-		}, 0, len(batchIDs))
-		// Failed rows are not updated and are not retried in this run:
-		// because lastID advances past every batch element below, the
-		// next batch query (m.id > lastID) skips them. The selection
-		// filter (rfc822_message_id IS NULL OR '') will pick them up
-		// again on the next BackfillRFC822IDs invocation.
-		seen := make(map[int64]bool, len(batchIDs))
-		streamErr := s.StreamMessageRaw(batchIDs, func(id int64, rawData []byte, compression string) {
-			seen[id] = true
-			raw := rawData
-			if compression == "zlib" {
-				r, err := zlib.NewReader(bytes.NewReader(rawData))
-				if err != nil {
-					failed++
-					return
-				}
-				decompressed, err := io.ReadAll(r)
-				_ = r.Close()
-				if err != nil {
-					failed++
-					return
-				}
-				raw = decompressed
-			}
-			parsed, err := mime.Parse(raw)
-			if err != nil || parsed.MessageID == "" {
-				failed++
-				return
-			}
-			normalizedID := strings.TrimSpace(parsed.MessageID)
-			normalizedID = strings.Trim(normalizedID, "<>")
-			if normalizedID == "" {
-				failed++
-				return
-			}
-			updates = append(updates, struct {
-				id           int64
-				normalizedID string
-			}{
-				id:           id,
-				normalizedID: normalizedID,
-			})
-		})
-		if streamErr != nil {
-			return updated, failed, fmt.Errorf("stream raw for backfill batch: %w", streamErr)
-		}
-		// Rows whose message_raw row went missing between the batch
-		// SELECT and the stream are counted as failed so totals reconcile.
-		for _, id := range batchIDs {
-			if !seen[id] {
-				failed++
-			}
-		}
+	plan.digest = digest.Sum()
+	return plan, nil
+}
 
-		var batchUpdated int64
-		err = s.withTx(func(tx *loggedTx) error {
-			for _, update := range updates {
-				if _, err := tx.Exec(
-					"UPDATE messages SET rfc822_message_id = ? WHERE id = ?",
-					update.normalizedID, update.id,
-				); err != nil {
-					return fmt.Errorf("update message %d: %w", update.id, err)
-				}
-				batchUpdated++
-			}
-			return nil
-		})
+func rfc822IDBackfillSourceScope(sourceIDs []int64) (string, []any) {
+	if len(sourceIDs) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(sourceIDs))
+	args := make([]any, len(sourceIDs))
+	for i, sourceID := range sourceIDs {
+		placeholders[i] = "?"
+		args[i] = sourceID
+	}
+	return " AND m.source_id IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+func (s *Store) ApplyRFC822IDBackfill(
+	ctx context.Context,
+	sourceIDs []int64,
+	plan RFC822IDBackfillPlan,
+	progress func(done, total int64),
+) (updated int64, retErr error) {
+	if plan.Ready == 0 {
+		return 0, nil
+	}
+	if err := validateRFC822IDBackfillPlan(plan); err != nil {
+		return 0, err
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("acquire RFC822 ID backfill connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, s.dialect.BeginWriteSQL()); err != nil {
+		return 0, fmt.Errorf("begin RFC822 ID backfill transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		retErr = finishRFC822IDBackfillTransaction(ctx, conn, committed, retErr)
+	}()
+
+	applied, digest, err := s.applyRFC822IDBackfillRows(ctx, conn, sourceIDs)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateAppliedRFC822IDBackfill(plan, digest); err != nil {
+		return 0, err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return 0, fmt.Errorf("commit RFC822 ID backfill transaction: %w", err)
+	}
+	committed = true
+	updated = applied
+	reportRFC822IDBackfillProgress(progress, plan.Candidates)
+	return updated, nil
+}
+
+func finishRFC822IDBackfillTransaction(
+	ctx context.Context, conn *sql.Conn, committed bool, retErr error,
+) error {
+	if committed {
+		return retErr
+	}
+	rollbackCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), manualTransactionCleanupTimeout)
+	defer cancel()
+	if _, err := conn.ExecContext(rollbackCtx, "ROLLBACK"); err != nil && retErr == nil {
+		return fmt.Errorf("rollback RFC822 ID backfill transaction: %w", err)
+	}
+	return retErr
+}
+
+func reportRFC822IDBackfillProgress(progress func(done, total int64), candidates int64) {
+	if progress != nil {
+		progress(candidates, candidates)
+	}
+}
+
+func validateRFC822IDBackfillPlan(plan RFC822IDBackfillPlan) error {
+	if plan.Ready < 0 || plan.Ready > plan.Candidates || plan.Digest() == "" {
+		return errors.New("invalid RFC822 ID backfill plan")
+	}
+	return nil
+}
+
+func (s *Store) applyRFC822IDBackfillRows(
+	ctx context.Context, conn *sql.Conn, sourceIDs []int64,
+) (int64, *rfc822IDBackfillDigest, error) {
+	applied := int64(0)
+	lastID := int64(0)
+	digest := newRFC822IDBackfillDigest()
+	for {
+		query, args := s.rfc822IDBackfillBatchQuery(sourceIDs, lastID, true)
+		//nolint:rowserrcheck // The bounded-page reader owns rows and checks Err.
+		rows, err := conn.QueryContext(ctx, query, args...)
 		if err != nil {
-			return updated, failed, fmt.Errorf(
-				"apply backfill batch ending at %d: %w",
-				batchIDs[len(batchIDs)-1], err,
-			)
+			return 0, digest, fmt.Errorf("fetch RFC822 ID backfill apply batch: %w", err)
 		}
-		updated += batchUpdated
+		batch, err := readRFC822IDBackfillBatch(rows, s.IsPostgreSQL())
+		if err != nil {
+			return 0, digest, err
+		}
+		batchApplied, err := s.applyRFC822IDBackfillBatch(ctx, conn, batch, digest)
+		if err != nil {
+			return 0, digest, err
+		}
+		applied += batchApplied
+		if batch.candidates == 0 {
+			return applied, digest, nil
+		}
+		lastID = batch.lastID
+	}
+}
 
-		lastID = batchIDs[len(batchIDs)-1]
-		if progress != nil {
-			progress(updated+failed, total)
+func (s *Store) applyRFC822IDBackfillBatch(
+	ctx context.Context,
+	conn *sql.Conn,
+	batch rfc822IDBackfillBatch,
+	digest *rfc822IDBackfillDigest,
+) (int64, error) {
+	for _, item := range batch.items {
+		digest.Add(item)
+		if err := s.updateRFC822IDBackfillItem(ctx, conn, item); err != nil {
+			return 0, err
 		}
 	}
-	return updated, failed, nil
+	return int64(len(batch.items)), nil
+}
+
+func (s *Store) updateRFC822IDBackfillItem(
+	ctx context.Context, conn *sql.Conn, item rfc822IDBackfillItem,
+) error {
+	result, err := conn.ExecContext(ctx, s.dialect.Rebind(
+		`UPDATE messages SET rfc822_message_id = ?
+		 WHERE id = ? AND source_id = ?
+		   AND (rfc822_message_id IS NULL OR rfc822_message_id = '')
+		   AND `+LiveMessagesWhere("", true)),
+		item.RFC822MessageID, item.MessageID, item.SourceID)
+	if err != nil {
+		return fmt.Errorf("update RFC822 ID backfill message %d: %w", item.MessageID, err)
+	}
+	matched, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for RFC822 ID backfill message %d: %w", item.MessageID, err)
+	}
+	if matched != 1 {
+		return fmt.Errorf(
+			"%w: message %d no longer matches the confirmed candidate",
+			ErrRFC822IDBackfillPlanChanged, item.MessageID,
+		)
+	}
+	return nil
+}
+
+func validateAppliedRFC822IDBackfill(
+	plan RFC822IDBackfillPlan, digest *rfc822IDBackfillDigest,
+) error {
+	if digest.count == plan.Ready && digest.Sum() == plan.Digest() {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: confirmed %d derivations but found %d",
+		ErrRFC822IDBackfillPlanChanged, plan.Ready, digest.count,
+	)
+}
+
+func deriveRFC822MessageID(rawData []byte, compression sql.NullString) (string, bool) {
+	raw, err := decodeMessageRaw(rawData, compression)
+	if err != nil {
+		return "", false
+	}
+	parsed, err := mime.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	normalizedID := mime.NormalizeMessageID(parsed.MessageID)
+	return normalizedID, normalizedID != ""
 }

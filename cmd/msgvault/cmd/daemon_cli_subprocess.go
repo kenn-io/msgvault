@@ -16,6 +16,8 @@ import (
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
 
+var daemonCLIExecutableResolver = os.Executable
+
 func isDaemonCLISubprocess() bool {
 	return os.Getenv(daemonCLISubprocessEnv) == strconv.Itoa(os.Getppid())
 }
@@ -113,7 +115,7 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string) error {
 }
 
 func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, env map[string]string, cwd string) (*exec.Cmd, error) {
-	exe, err := os.Executable()
+	exe, err := daemonCLIExecutableResolver()
 	if err != nil {
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
 	}
@@ -151,6 +153,9 @@ func daemonCLIChildEnv(base []string, parentPID int, extra map[string]string) []
 			continue
 		}
 		if key, ok := splitEnvEntry(entry); ok {
+			if strings.EqualFold(key, remoteDeleteEnvVar) {
+				continue
+			}
 			if extraValue, exists := extra[key]; exists {
 				if !extraReplaced[key] {
 					out = append(out, key+"="+extraValue)
@@ -165,6 +170,12 @@ func daemonCLIChildEnv(base []string, parentPID int, extra map[string]string) []
 		out = append(out, value)
 	}
 	for _, key := range sortedEnvKeys(extra) {
+		if strings.EqualFold(key, remoteDeleteEnvVar) {
+			if key == remoteDeleteEnvVar {
+				out = append(out, remoteDeleteEnvVar+"="+extra[key])
+			}
+			continue
+		}
 		if !extraReplaced[key] {
 			out = append(out, key+"="+extra[key])
 		}

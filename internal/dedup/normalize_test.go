@@ -92,3 +92,54 @@ func TestNormalizeRawMIME_DeterministicOutput(t *testing.T) {
 	hash2 := sha256Hex(normalizeRawMIME(raw2))
 	assert.Equal(t, hash1, hash2, "same message with different transport headers produced different hashes")
 }
+
+func TestContentHashConflictsWithMessageIDGroup(t *testing.T) {
+	tests := []struct {
+		name      string
+		group     DuplicateGroup
+		survivors map[int64]bool
+		want      bool
+	}{
+		{
+			name: "two Message-ID survivors",
+			group: DuplicateGroup{Messages: []DuplicateMessage{
+				{ID: 1}, {ID: 2},
+			}},
+			survivors: map[int64]bool{1: true, 2: true},
+			want:      true,
+		},
+		{
+			name: "Message-ID survivor and sent orphan",
+			group: DuplicateGroup{Messages: []DuplicateMessage{
+				{ID: 1}, {ID: 2, IsFromMe: true},
+			}},
+			survivors: map[int64]bool{1: true},
+			want:      true,
+		},
+		{
+			name: "Message-ID survivor and received orphan",
+			group: DuplicateGroup{Messages: []DuplicateMessage{
+				{ID: 1}, {ID: 2},
+			}},
+			survivors: map[int64]bool{1: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want,
+				contentHashConflictsWithMessageIDGroup(tt.group, tt.survivors))
+		})
+	}
+}
+
+func TestPreserveMessageIDSurvivor(t *testing.T) {
+	group := DuplicateGroup{
+		Messages: []DuplicateMessage{{ID: 1}, {ID: 2}},
+		Survivor: 0,
+	}
+
+	preserveMessageIDSurvivor(&group, map[int64]bool{2: true})
+
+	assert.Equal(t, 1, group.Survivor)
+}

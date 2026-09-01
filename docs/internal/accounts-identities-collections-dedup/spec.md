@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-27
+last_edited: 2026-08-30
 ---
 
 # Accounts, Identities, Collections, and Deduplication — Specification
@@ -490,12 +490,15 @@ decisions remain source-specific.
   the default, never inferred from dedup, and never applied in batch
   without the user acknowledging the source and scope at the moment
   of the action.
-- **Release guardrail.** The destructive `delete-staged` execute
-  path is gated behind the environment variable
-  `MSGVAULT_ENABLE_REMOTE_DELETE=1` for the v1 release. Read-only
-  modes (`--list`, `--dry-run`, `list-deletions`, `show-deletion`)
-  are always permitted. The gate is independent of `--permanent`.
-  Removal of the guardrail is a future release decision.
+- **Permanent guardrail.** Starting in v0.20.0, remote deletion remains
+  permanently opt-in. The invoking CLI may enable it durably with
+  `[deletion] remote_enabled = true` or for one command with
+  `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+  there is no planned automatic removal of the guardrail. A remote
+  daemon's own `[deletion]` section is not server policy for a command
+  invoked elsewhere. Read-only modes (`--list`, `--dry-run`,
+  `list-deletions`, `show-deletion`) and staging are always permitted.
+  The gate is independent of `--permanent`.
 
 ### Manifest format
 
@@ -669,7 +672,7 @@ Find duplicate messages and (with `--undo`) reverse a previous run.
 | `--undo <batch-id>` (repeatable)    | string... | (none)                        | Reverse one or more named batches.                                 |
 | `--account <name>`                  | string    | (none)                        | Per-source scope.                                                  |
 | `--collection <name>`               | string    | (none)                        | Cross-source scope inside one collection.                          |
-| `--delete-dups-from-source-server`  | bool      | `false`                       | DESTRUCTIVE: stage pruned duplicates for remote deletion. Execution still requires `MSGVAULT_ENABLE_REMOTE_DELETE=1`. |
+| `--delete-dups-from-source-server`  | bool      | `false`                       | DESTRUCTIVE: stage pruned duplicates for remote deletion. Execution requires durable invoking-CLI `[deletion] remote_enabled = true` consent or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. |
 | `--yes` / `-y`                      | bool      | `false`                       | Skip the confirmation prompt.                                      |
 
 Mutually exclusive flag pairs (enforced at the cobra layer):
@@ -722,10 +725,10 @@ the command errors with `must specify --batch or --all-hidden`.
 
 | Command                              | Notes                                                                                            |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `list-deletions`                     | List pending and recent deletion batches. Always permitted regardless of the env-var guardrail.  |
+| `list-deletions`                     | List pending and recent deletion batches. Always permitted regardless of the execution guardrail. |
 | `show-deletion <batch-id>`           | Show one batch's manifest. Read-only; permitted regardless of the guardrail.                     |
 | `cancel-deletion [batch-id] [--all]` | Cancel pending or in-progress batches. `--all` cancels every pending or in-progress batch.       |
-| `delete-staged [batch-id]`           | Execute pending remote deletions. Gated behind `MSGVAULT_ENABLE_REMOTE_DELETE=1`.                |
+| `delete-staged [batch-id]`           | Execute pending remote deletions. Requires durable invoking-CLI `[deletion] remote_enabled = true` consent or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. |
 
 `delete-staged` flags:
 
@@ -839,7 +842,7 @@ can recognize them.
 
 | Condition                                                          | Message                                                                                                       |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `delete-staged` invoked without `MSGVAULT_ENABLE_REMOTE_DELETE=1`  | (release-guardrail message naming the env var; refused before any API call)                                   |
+| `delete-staged` invoked without durable config or one-command environment consent | (guardrail message naming `[deletion] remote_enabled = true` first and `MSGVAULT_ENABLE_REMOTE_DELETE=1` as the one-command alternative; refused before any API call) |
 | `delete-staged` finds no account in manifest, `--account` not set  | `no account in deletion manifest - use --account flag`                                                        |
 | `delete-staged` finds multiple accounts pending, `--account` not set | `multiple accounts in pending batches (<list>) - use --account flag to specify which account`              |
 | Permanent confirmation prompt receives anything other than `delete` | `Cancelled. Drop --permanent to use trash deletion without elevated permissions.`                            |
@@ -931,8 +934,10 @@ Every question should answer cleanly without qualifications.
 - Does remote deletion stay same-source-only, default to moving to
   source trash, and require explicit confirmation for permanent
   removal?
-- Is the v1 release guardrail (`MSGVAULT_ENABLE_REMOTE_DELETE=1`)
-  still enforced for the destructive `delete-staged` execute path?
+- Is the permanent guardrail (`[deletion] remote_enabled = true` in the
+  invoking CLI config or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command)
+  still enforced for the destructive `delete-staged` execute path, without
+  treating remote daemon config as invoking-client policy?
 - Does undo avoid promising exact rollback, both in code and in
   user-facing text?
 - Do error messages match the verbatim strings in the

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-30
 title: Daemon Migration Guide
 description: What changes when CLI commands route through the msgvault daemon, and how to adapt scripts, environment variables, and workflows.
 ---
@@ -100,10 +101,18 @@ process, which does **not** inherit your shell's environment. Most
 environment variables are deliberately not forwarded; a short allowlist is
 passed through from your shell automatically:
 
+Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
+CLI may enable it durably with `[deletion] remote_enabled = true` or for one
+command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
+there is no planned automatic removal of the guardrail. The CLI forwards its
+effective consent with the operation. A remote daemon's own `[deletion]`
+section is not server policy for a command invoked elsewhere. Staging,
+listing, inspecting, and dry-running deletion batches remain ungated.
+
 | Variable | Used by |
 |---|---|
 | `MSGVAULT_IMAP_PASSWORD` | `add-imap` |
-| `MSGVAULT_ENABLE_REMOTE_DELETE` | `delete-staged` |
+| `MSGVAULT_ENABLE_REMOTE_DELETE` | One-command `delete-staged` consent; durable consent uses invoking-CLI config |
 | The variable named by `[vector.embeddings].api_key_env` | `embeddings build` / `embed` |
 
 If an operation needs any other environment variable (for example a proxy

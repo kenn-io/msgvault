@@ -128,6 +128,66 @@ func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
 	assert.Contains(stdout.String(), "Deletion complete!", "daemon output")
 }
 
+func TestDeleteStagedConfigConsentReachesRemotePlanAndExecution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	resetDeleteStagedRoutingGlobals(t)
+	t.Setenv(remoteDeleteEnvVar, "")
+
+	server, runRequests, planRequests := newDaemonCLIDeleteStagedTestServer(t, func(req daemonCLIDeleteStagedPlanTestRequest) {
+		assert.True(req.RemoteDeleteEnabled, "config consent reaches plan")
+	}, map[string]any{
+		"stdout":                "Deletion Summary:\n  Batches:  1\n  Messages: 1\n  Method:   trash (30-day recovery)\n\n",
+		"needs_execution":       true,
+		"needs_confirmation":    false,
+		"planned_batch_ids":     []string{"batch-123"},
+		"plan_fingerprint":      "fp-config-consent",
+		"remote_delete_env_var": remoteDeleteEnvVar,
+	}, func(req daemonCLIRunTestRequest) {
+		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "config consent becomes the synthetic marker")
+	}, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+	cfg.Deletion.RemoteEnabled = true
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetArgs([]string{"--yes", "batch-123"})
+
+	require.NoError(cmd.Execute(), "delete-staged")
+	assert.Equal(1, int(planRequests.Load()), "plan endpoint calls")
+	assert.Equal(1, int(runRequests.Load()), "runner endpoint calls")
+}
+
+func TestDeleteStagedDisabledConfigBlocksBeforeRemoteExecution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	resetDeleteStagedRoutingGlobals(t)
+	t.Setenv(remoteDeleteEnvVar, "")
+
+	blocked := "remote deletion is gated; set [deletion] remote_enabled = true in the invoking CLI's config.toml for durable consent; one-command alternative: " +
+		remoteDeleteEnvVar + "=1"
+	server, runRequests, planRequests := newDaemonCLIDeleteStagedTestServer(t, func(req daemonCLIDeleteStagedPlanTestRequest) {
+		assert.False(req.RemoteDeleteEnabled, "disabled config reaches plan")
+	}, map[string]any{
+		"stdout":                "Deletion Summary:\n  Batches:  1\n  Messages: 1\n  Method:   trash (30-day recovery)\n\n",
+		"needs_execution":       true,
+		"blocked_error":         blocked,
+		"planned_batch_ids":     []string{"batch-123"},
+		"plan_fingerprint":      "fp-disabled",
+		"remote_delete_env_var": remoteDeleteEnvVar,
+	}, nil)
+	configureRemoteDaemonForTest(t, server.URL)
+	cfg.Deletion.RemoteEnabled = false
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetArgs([]string{"--yes", "batch-123"})
+	err := cmd.Execute()
+
+	require.Error(err, "delete-staged")
+	assert.Equal(blocked, err.Error())
+	assert.Equal(1, int(planRequests.Load()), "plan endpoint calls")
+	assert.Zero(int(runRequests.Load()), "runner endpoint calls")
+}
+
 func TestDeleteStagedDisplayNamePlanPinsSourceIDForDaemonRunner(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

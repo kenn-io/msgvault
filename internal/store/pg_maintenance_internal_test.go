@@ -34,6 +34,17 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 // on cleanup.
 func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 	t.Helper()
+	st := newUninitializedPGStoreInternal(t, dbURL)
+	require.NoError(t, st.InitSchema(), "init schema")
+	return st
+}
+
+// newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
+// store without running InitSchema. Tests that need to observe a specific
+// schema-initialization boundary use this; ordinary tests use
+// newPGStoreInternal above.
+func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
+	t.Helper()
 
 	buf := make([]byte, 8)
 	_, err := rand.Read(buf)
@@ -67,7 +78,6 @@ func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 
 	st, err = Open(testURL)
 	require.NoError(t, err, "open store")
-	require.NoError(t, st.InitSchema(), "init schema")
 	return st
 }
 

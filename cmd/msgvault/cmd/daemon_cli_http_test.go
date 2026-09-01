@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 )
 
@@ -52,6 +54,7 @@ type daemonCLIDeleteStagedPlanTestRequest struct {
 }
 
 type daemonCLIDeduplicatePlanTestRequest struct {
+	PlanProtocol               string `json:"plan_protocol"`
 	Account                    string `json:"account"`
 	Collection                 string `json:"collection"`
 	Prefer                     string `json:"prefer"`
@@ -233,6 +236,14 @@ func newDaemonCLIDeduplicateTestServer(
 		Service: daemonService,
 		Version: Version,
 	}))
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "api_schema_version": api.APISchemaVersion,
+		})) {
+			return
+		}
+	})
 	mux.HandleFunc("/api/v1/cli/deduplicate/plan", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method, "plan method")
 		planRequests.Add(1)
@@ -242,6 +253,7 @@ func newDaemonCLIDeduplicateTestServer(
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		assert.Equal(t, apiprotocol.DeduplicatePlanProtocol, req.PlanProtocol, "plan protocol")
 		if checkPlan != nil {
 			checkPlan(req)
 		}
