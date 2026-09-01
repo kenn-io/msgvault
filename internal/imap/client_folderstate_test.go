@@ -1189,13 +1189,14 @@ func TestLabelMapSelectReconnectsAfterDroppedConnection(t *testing.T) {
 	// client holding a dead socket it has not noticed yet.
 	require.NoError(client.conn.Close())
 
-	labels, unidentified, err := client.fetchMailboxMessageIDs(
+	labels, unidentified, missing, err := client.fetchMailboxMessageIDs(
 		ctx, "Archive", []imapv2.UID{1})
 
 	require.NoError(err,
 		"a dropped connection must not fail the label map, which discards the run")
 	assert.Equal(map[string]bool{messageID: true}, labels)
 	assert.Empty(unidentified)
+	assert.Empty(missing)
 }
 
 // TestSourceMessageExistsIsNotDefiniteWhenHeadersMissing pins the boundary of
