@@ -929,7 +929,9 @@ func (s *Store) rfc822IDBackfillBatchQuery(
 // closes its rows before returning. rawData is retained only for the row
 // currently being parsed; the returned slice contains compact derivation
 // metadata, never MIME payloads.
-func readRFC822IDBackfillBatch(rows rowsScanner) (rfc822IDBackfillBatch, error) {
+func readRFC822IDBackfillBatch(
+	rows rowsScanner, rejectNULMessageID bool,
+) (rfc822IDBackfillBatch, error) {
 	batch := rfc822IDBackfillBatch{}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -949,7 +951,7 @@ func readRFC822IDBackfillBatch(rows rowsScanner) (rfc822IDBackfillBatch, error) 
 		item.RawInputSHA256 = rfc822IDBackfillRawFingerprint(rawData, rawFormat, compression)
 		var ok bool
 		item.RFC822MessageID, ok = deriveRFC822MessageID(rawData, compression)
-		if !ok {
+		if !ok || (rejectNULMessageID && strings.IndexByte(item.RFC822MessageID, 0) >= 0) {
 			batch.failed++
 			continue
 		}
@@ -977,7 +979,7 @@ func (s *Store) PlanRFC822IDBackfill(
 		if err != nil {
 			return RFC822IDBackfillPlan{}, fmt.Errorf("fetch RFC822 ID backfill batch: %w", err)
 		}
-		batch, err := readRFC822IDBackfillBatch(rows)
+		batch, err := readRFC822IDBackfillBatch(rows, s.IsPostgreSQL())
 		if err != nil {
 			return RFC822IDBackfillPlan{}, err
 		}
@@ -1094,7 +1096,7 @@ func (s *Store) applyRFC822IDBackfillRows(
 		if err != nil {
 			return 0, digest, fmt.Errorf("fetch RFC822 ID backfill apply batch: %w", err)
 		}
-		batch, err := readRFC822IDBackfillBatch(rows)
+		batch, err := readRFC822IDBackfillBatch(rows, s.IsPostgreSQL())
 		if err != nil {
 			return 0, digest, err
 		}

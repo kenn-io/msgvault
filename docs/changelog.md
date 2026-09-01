@@ -75,7 +75,9 @@ All notable changes to msgvault, grouped by release.
 - Deduplication no longer derives metadata from malformed bracketed Message-IDs.
   When raw MIME is available, its recoverable Message-ID header must match the
   stored value before that message can join a Message-ID duplicate group. The
-  importer preserves established conversation threading behavior.
+  importer preserves established conversation threading behavior. PostgreSQL
+  reports derived IDs containing NUL bytes as failed candidates instead of
+  approving a value that its text type cannot store.
 - Remote deletion forwarding strips daemon-host opt-in state and accepts only
   authenticated invoking-client consent, preventing a server's configuration
   or environment from authorizing an unrelated client command.

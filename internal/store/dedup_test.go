@@ -532,6 +532,38 @@ func TestStore_PlanRFC822IDBackfillSanitizesInvalidUTF8(t *testing.T) {
 	assert.Equal("m-\uFFFD\uFFFD@example.com", storedID)
 }
 
+func TestStore_RFC822IDBackfillHandlesNULByBackend(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := newRFC822Message(t, f, "plan-nul", "")
+	derivedID := "nul-\x00@example.test"
+	require.NoError(f.Store.UpsertMessageRaw(messageID,
+		[]byte("Message-ID: <"+derivedID+">\r\n\r\nBody")))
+
+	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
+	require.NoError(err)
+	require.Equal(int64(1), plan.Candidates)
+	if f.Store.IsPostgreSQL() {
+		assert.Zero(plan.Ready)
+		assert.Equal(int64(1), plan.Failed)
+	} else {
+		assert.Equal(int64(1), plan.Ready)
+		assert.Zero(plan.Failed)
+	}
+
+	updated, err := f.Store.ApplyRFC822IDBackfill(
+		t.Context(), []int64{f.Source.ID}, plan, nil)
+	require.NoError(err)
+	if f.Store.IsPostgreSQL() {
+		assert.Zero(updated)
+		assert.Empty(storedRFC822ID(t, f.Store, messageID))
+	} else {
+		assert.Equal(int64(1), updated)
+		assert.Equal(derivedID, storedRFC822ID(t, f.Store, messageID))
+	}
+}
+
 func TestStore_ApplyRFC822IDBackfillCommitsSanitizedInvalidUTF8ID(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
