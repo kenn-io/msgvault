@@ -927,7 +927,13 @@ func TestIMAPQresyncEndToEndMoveAndFinalExpunge(t *testing.T) {
 			queryScriptedRFC7162Memberships(t, st, source.ID))
 		_, deleted, _ := queryScriptedRFC7162MessageState(t, st, source.ID, "move@example.test")
 		assertions.False(deleted)
-		assertions.NotContains(server.commandsFor(2), "UID SEARCH")
+		// The message left INBOX mid-run, so no FETCH returns UID 1 and the run
+		// confirms that with a UID SEARCH naming it. What QRESYNC must not do
+		// is enumerate the mailbox, which is an open-ended range search.
+		assertions.NotRegexp(`UID SEARCH UID \d+:\*`, server.commandsFor(2),
+			"valid QRESYNC must not fall back to enumerating a mailbox")
+		assertions.Contains(server.commandsFor(2), "UID SEARCH UID 1",
+			"a UID no FETCH returned is confirmed before it counts as gone")
 	})
 
 	t.Run("final expunge tombstones the archived message", func(t *testing.T) {
