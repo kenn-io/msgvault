@@ -446,6 +446,7 @@ jobs:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: testpw
           POSTGRES_DB: msgvault_test
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
         ports:
           - 5432:5432
         options: >-
@@ -469,8 +470,11 @@ jobs:
             psql -U msgvault_test -d msgvault_test \
             -c "CREATE EXTENSION IF NOT EXISTS vector"
 
+      # -p 4 mirrors PG_TEST_PARALLEL in the Makefile: it caps how many test
+      # binaries open connections to the one service container at once. See
+      # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   nix-build:
     runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}

@@ -17,6 +17,17 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
+
+# Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
+# to the host CPU count, and every PostgreSQL-backed test binary opens its own
+# connections: two for the admin handle, one per schema a warm-pool refill
+# builds (internal/testutil/pg_warm_pool.go), plus the store under test.
+# Nothing budgets across binaries, so on a wide runner `go test ./...` starts
+# every PostgreSQL package together and the sum exceeds a stock server's 100
+# connections ("sorry, too many clients already") and its lock table ("out of
+# shared memory"). Four is the GitHub-hosted profile these lanes were tuned on.
+# The pgvector lane in .github/workflows/ci.yml carries the same value inline.
+PG_TEST_PARALLEL ?= 4
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.7.0
 GO_INSTALL_BIN := $(shell go env GOBIN)
@@ -114,7 +125,7 @@ test-v:
 # test-postgres (stock image, test-pg-shipped below).
 # See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg: require-test-db
-	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -126,7 +137,7 @@ test-pg: require-test-db
 # never reads MSGVAULT_TEST_DB — the SQLite-only ones — is served from `make
 # test`'s cache instead of being re-run here.
 test-pg-shipped: require-test-db
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" ./...
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -142,8 +153,8 @@ test-pg-shipped: require-test-db
 # equivalence argument depends on the full pgvector lane having run on the same
 # tree. pg-shipped-only-check re-derives the package set and fails if it drifts.
 test-pg-both: require-test-db pg-shipped-only-check
-	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
 
 # Fail if the set of packages whose test binary changes when the pgvector tag is
 # dropped no longer matches PG_SHIPPED_ONLY_PKGS. This is the assumption
