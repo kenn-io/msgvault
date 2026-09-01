@@ -85,7 +85,7 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 	revisionBefore, err := f.Store.DerivedDataRevision()
 	require.NoError(err, "DerivedDataRevision before repair")
 	require.NoError(f.Store.ApplySenderRepairContext(
-		t.Context(), repairable, candidates[0].RawMIMEFingerprint, parsed.From[0],
+		t.Context(), repairable, candidates[0].RawMIMEFingerprint, parsed.From,
 	), "ApplySenderRepairContext")
 	revisionAfter, err := f.Store.DerivedDataRevision()
 	require.NoError(err, "DerivedDataRevision after repair")
@@ -136,9 +136,9 @@ func TestApplySenderRepairRejectsChangedCandidate(t *testing.T) {
 	require.NoError(err, "DerivedDataRevision before stale repair")
 
 	err = f.Store.ApplySenderRepairContext(
-		t.Context(), messageID, candidate.RawMIMEFingerprint, mime.Address{
+		t.Context(), messageID, candidate.RawMIMEFingerprint, []mime.Address{{
 			Email: "stale@example.test", Domain: "example.test",
-		})
+		}})
 	require.ErrorContains(err, "changed after sender repair planning")
 	revisionAfter, revisionErr := f.Store.DerivedDataRevision()
 	require.NoError(revisionErr, "DerivedDataRevision after stale repair")
@@ -173,7 +173,7 @@ func TestApplySenderRepairRejectsChangedRawMIME(t *testing.T) {
 		[]byte("From: changed@example.test\r\n\r\nBody\r\n")),
 		"replace raw MIME after planning")
 	err = f.Store.ApplySenderRepairContext(
-		t.Context(), messageID, candidates[0].RawMIMEFingerprint, planned.From[0],
+		t.Context(), messageID, candidates[0].RawMIMEFingerprint, planned.From,
 	)
 	require.ErrorContains(err, "changed after sender repair planning")
 	var senderID sql.NullInt64
@@ -221,9 +221,9 @@ func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
 	repairDone := make(chan error, 1)
 	go func() {
 		repairDone <- repairStore.ApplySenderRepairContext(
-			t.Context(), messageID, candidate.RawMIMEFingerprint, mime.Address{
+			t.Context(), messageID, candidate.RawMIMEFingerprint, []mime.Address{{
 				Email: "repaired@example.test", Domain: "example.test",
-			},
+			}},
 		)
 	}()
 	<-locked
@@ -278,9 +278,9 @@ func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
 	candidate := senderRepairCandidateForMessage(t, f.Store, messageID)
 
 	require.NoError(f.Store.ApplySenderRepairContext(
-		t.Context(), messageID, candidate.RawMIMEFingerprint, mime.Address{
+		t.Context(), messageID, candidate.RawMIMEFingerprint, []mime.Address{{
 			Email: "repairftsneedle@example.test", Domain: "example.test",
-		}), "ApplySenderRepairContext")
+		}}), "ApplySenderRepairContext")
 
 	for term, want := range map[string]int{
 		"repairftsneedle":     1,
@@ -292,6 +292,55 @@ func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
 		).Scan(&got), "search refreshed FTS for %s", term)
 		assert.Equal(t, want, got, "FTS match count for %s", term)
 	}
+}
+
+func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := f.NewMessage().
+		WithSourceMessageID("sender-repair-multi-from").
+		Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageRaw(messageID,
+		[]byte("From: First <first@example.test>, second@example.test\r\n"+
+			"Subject: Two senders\r\n\r\nBody\r\n")),
+		"UpsertMessageRaw multi-From candidate")
+	candidate := senderRepairCandidateForMessage(t, f.Store, messageID)
+	parsed, err := mime.ParseWithRecovery(candidate.RawMIME, "")
+	require.NoError(err, "parse multi-From header")
+	require.Len(parsed.From, 2, "both From addresses recovered")
+
+	require.NoError(f.Store.ApplySenderRepairContext(
+		t.Context(), messageID, candidate.RawMIMEFingerprint, parsed.From,
+	), "ApplySenderRepairContext")
+
+	var senderEmail string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT p.email_address
+		FROM messages m JOIN participants p ON p.id = m.sender_id
+		WHERE m.id = ?
+	`), messageID).Scan(&senderEmail), "read repaired sender")
+	assert.Equal("first@example.test", senderEmail,
+		"sender_id must point at the first recovered address")
+
+	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+		SELECT p.email_address
+		FROM message_recipients mr
+		JOIN participants p ON p.id = mr.participant_id
+		WHERE mr.message_id = ? AND mr.recipient_type = 'from'
+		ORDER BY p.email_address
+	`), messageID)
+	require.NoError(err, "list repaired From rows")
+	defer func() { _ = rows.Close() }()
+	var fromEmails []string
+	for rows.Next() {
+		var email string
+		require.NoError(rows.Scan(&email), "scan From row")
+		fromEmails = append(fromEmails, email)
+	}
+	require.NoError(rows.Err(), "iterate From rows")
+	assert.Equal([]string{"first@example.test", "second@example.test"}, fromEmails,
+		"the envelope snapshot must keep every recovered From address")
 }
 
 func TestMissingMIMESenderScanIncludesLegacyNullMessageType(t *testing.T) {
@@ -332,9 +381,9 @@ func TestApplySenderRepairAcceptsLegacyNullMessageType(t *testing.T) {
 	candidate := senderRepairCandidateForMessage(t, st, messageID)
 
 	require.NoError(st.ApplySenderRepairContext(
-		t.Context(), messageID, candidate.RawMIMEFingerprint, mime.Address{
+		t.Context(), messageID, candidate.RawMIMEFingerprint, []mime.Address{{
 			Email: "nullapply@example.test", Domain: "example.test",
-		}), "ApplySenderRepairContext")
+		}}), "ApplySenderRepairContext")
 	var senderID sql.NullInt64
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
@@ -473,9 +522,9 @@ func TestApplySenderRepairRollsBackSenderWhenRecipientWriteFails(t *testing.T) {
 	require.NoError(err, "DerivedDataRevision before rolled-back repair")
 
 	err = f.Store.ApplySenderRepairContext(
-		t.Context(), messageID, candidate.RawMIMEFingerprint, mime.Address{
+		t.Context(), messageID, candidate.RawMIMEFingerprint, []mime.Address{{
 			Email: "rollback@example.test", Domain: "example.test",
-		})
+		}})
 	require.ErrorContains(err, "synthetic sender recipient failure")
 	revisionAfter, revisionErr := f.Store.DerivedDataRevision()
 	require.NoError(revisionErr, "DerivedDataRevision after rolled-back repair")

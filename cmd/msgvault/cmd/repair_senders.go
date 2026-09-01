@@ -37,7 +37,7 @@ never overwrites sender evidence that already exists.`,
 type plannedSenderRepair struct {
 	messageID          int64
 	rawMIMEFingerprint [sha256.Size]byte
-	sender             mime.Address
+	recoveredFrom      []mime.Address
 }
 
 type senderRepairPlan struct {
@@ -91,7 +91,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 			break
 		}
 		if err := st.ApplySenderRepairContext(
-			ctx, repair.messageID, repair.rawMIMEFingerprint, repair.sender,
+			ctx, repair.messageID, repair.rawMIMEFingerprint, repair.recoveredFrom,
 		); err != nil {
 			failures = append(failures, err)
 			continue
@@ -150,7 +150,7 @@ func scanAndPlanSenderRepairs(
 			plan.repairs = append(plan.repairs, plannedSenderRepair{
 				messageID:          candidate.MessageID,
 				rawMIMEFingerprint: candidate.RawMIMEFingerprint,
-				sender:             parsed.From[0],
+				recoveredFrom:      parsed.From,
 			})
 		}
 		afterMessageID = candidates[len(candidates)-1].MessageID

@@ -156,10 +156,19 @@ func ImportEMLDir(
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 
+	// A fatal return must not leave the run stuck as 'running'; intentional
+	// cancellation keeps 'running' so the checkpoint stays resumable.
+	failSync := func(msg string) {
+		if fsErr := st.FailSync(syncID, msg); fsErr != nil {
+			log.Warn("failed to record sync failure", "error", fsErr)
+		}
+	}
+
 	lastBox := startBox
 	lastPath := mailboxes[startBox].Path
 	lastFile := ""
 	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+		failSync(err.Error())
 		return nil, fmt.Errorf("save initial EML checkpoint: %w", err)
 	}
 
@@ -169,6 +178,7 @@ func ImportEMLDir(
 		mailbox := mailboxes[boxIndex]
 		labelID, err := st.EnsureLabel(source.ID, mailbox.Label, mailbox.Label, "user")
 		if err != nil {
+			failSync(err.Error())
 			return nil, fmt.Errorf("ensure EML label %q: %w", mailbox.Label, err)
 		}
 
@@ -193,16 +203,19 @@ func ImportEMLDir(
 			sourceMessageID := "eml-" + rawHash
 			existing, err := st.MessageExistsWithRawBatch(source.ID, []string{sourceMessageID})
 			if err != nil {
+				failSync(err.Error())
 				return nil, fmt.Errorf("check existing EML message: %w", err)
 			}
 			if messageID, ok := existing[sourceMessageID]; ok {
 				if err := st.AddMessageLabels(messageID, []int64{labelID}); err != nil {
+					failSync(err.Error())
 					return nil, fmt.Errorf("add EML label to existing message: %w", err)
 				}
 				summary.MessagesSkipped++
 			} else {
 				existingAny, err := st.MessageExistsBatch(source.ID, []string{sourceMessageID})
 				if err != nil {
+					failSync(err.Error())
 					return nil, fmt.Errorf("check EML message metadata: %w", err)
 				}
 				_, updating := existingAny[sourceMessageID]
@@ -232,6 +245,7 @@ func ImportEMLDir(
 				lastFile = filename
 				if checkpoint.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
 					if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+						failSync(err.Error())
 						return nil, fmt.Errorf("save EML checkpoint: %w", err)
 					}
 				}
@@ -246,6 +260,7 @@ func ImportEMLDir(
 	summary.Duration = time.Since(started)
 	summary.HardErrors = hardErrors
 	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+		failSync(err.Error())
 		return nil, fmt.Errorf("save final EML checkpoint: %w", err)
 	}
 	if err := ctx.Err(); err != nil {

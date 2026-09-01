@@ -192,32 +192,51 @@ func normalizeRepairSender(sender mime.Address) (repairSender, error) {
 	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, email) {
 		return repairSender{}, fmt.Errorf("invalid email address %q", sender.Email)
 	}
-	domain := strings.ToLower(strings.TrimSpace(sender.Domain))
+	return lenientRepairAddress(sender), nil
+}
+
+// lenientRepairAddress canonicalizes a recovered address without the strict
+// addr-spec rule, matching what the ingest path accepts for envelope rows.
+func lenientRepairAddress(addr mime.Address) repairSender {
+	email := strings.ToLower(strings.TrimSpace(addr.Email))
+	domain := strings.ToLower(strings.TrimSpace(addr.Domain))
 	if at := strings.LastIndex(email, "@"); at >= 0 {
 		domain = email[at+1:]
 	}
 	return repairSender{
 		email:       email,
 		domain:      domain,
-		displayName: strings.TrimSpace(sender.Name),
-	}, nil
+		displayName: strings.TrimSpace(addr.Name),
+	}
 }
 
-// ApplySenderRepairContext atomically installs one recovered From address as
-// both the message sender and its immutable envelope snapshot. The conditional
-// update is an optimistic guard: any sender evidence written after planning
-// aborts the repair instead of being overwritten.
+// ApplySenderRepairContext atomically installs the recovered From addresses as
+// the message's envelope snapshot, with the first address as the message
+// sender — the same shape the ingest path writes. The conditional update is an
+// optimistic guard: any sender evidence written after planning aborts the
+// repair instead of being overwritten.
 func (s *Store) ApplySenderRepairContext(
 	ctx context.Context,
 	messageID int64,
 	expectedRawMIMEFingerprint [sha256.Size]byte,
-	sender mime.Address,
+	recoveredFrom []mime.Address,
 ) error {
-	normalized, err := normalizeRepairSender(sender)
+	if len(recoveredFrom) == 0 {
+		return fmt.Errorf("repair message %d sender: no recovered From address", messageID)
+	}
+	normalized, err := normalizeRepairSender(recoveredFrom[0])
 	if err != nil {
 		return fmt.Errorf("repair message %d sender: %w", messageID, err)
 	}
-	email, domain, displayName := normalized.email, normalized.domain, normalized.displayName
+	// The sender must satisfy the strict rule; the remaining envelope rows
+	// follow the ingest path's leniency so a repaired multi-From message
+	// matches one that was ingested with its sender intact.
+	envelope := []repairSender{normalized}
+	for _, addr := range recoveredFrom[1:] {
+		if extra := lenientRepairAddress(addr); extra.email != "" {
+			envelope = append(envelope, extra)
+		}
+	}
 
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
@@ -250,20 +269,24 @@ func (s *Store) ApplySenderRepairContext(
 			return fmt.Errorf("recheck message %d raw MIME for sender repair: %w", messageID, err)
 		}
 		participantInserted := false
-		participantID, err := ensureParticipantWith(
-			q,
-			s.dialect,
-			email,
-			displayName,
-			domain,
-			func() error {
-				participantInserted = true
-				return nil
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("ensure repaired sender participant: %w", err)
+		participantIDs := make([]int64, len(envelope))
+		for i, addr := range envelope {
+			participantIDs[i], err = ensureParticipantWith(
+				q,
+				s.dialect,
+				addr.email,
+				addr.displayName,
+				addr.domain,
+				func() error {
+					participantInserted = true
+					return nil
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("ensure repaired sender participant: %w", err)
+			}
 		}
+		participantID := participantIDs[0]
 		if participantInserted {
 			if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
 				return err
@@ -297,12 +320,17 @@ func (s *Store) ApplySenderRepairContext(
 			return fmt.Errorf("message %d changed after sender repair planning", messageID)
 		}
 
-		if err := replaceMessageRecipientsTx(q, messageID, RecipientSet{
+		recipientSet := RecipientSet{
 			Type:           "from",
-			ParticipantIDs: []int64{participantID},
-			DisplayNames:   []string{displayName},
-			EmailAddresses: []string{email},
-		}); err != nil {
+			ParticipantIDs: participantIDs,
+			DisplayNames:   make([]string, len(envelope)),
+			EmailAddresses: make([]string, len(envelope)),
+		}
+		for i, addr := range envelope {
+			recipientSet.DisplayNames[i] = addr.displayName
+			recipientSet.EmailAddresses[i] = addr.email
+		}
+		if err := replaceMessageRecipientsTx(q, messageID, recipientSet); err != nil {
 			return fmt.Errorf("replace message %d From recipient: %w", messageID, err)
 		}
 		if err := refreshMessageAttributionWith(q, messageID); err != nil {
