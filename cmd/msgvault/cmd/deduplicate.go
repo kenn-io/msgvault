@@ -292,8 +292,7 @@ func runDeduplicateInteractiveHTTP(cmd *cobra.Command) error {
 }
 
 func printDeduplicateBackfillPromptNote(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
-	pending := pendingRFC822IDBackfill(item.BackfilledCount)
-	printDeduplicateBackfillPromptNoteTo(cmd.OutOrStdout(), pending)
+	printDeduplicateBackfillPromptNoteTo(cmd.OutOrStdout(), item.PendingBackfillCount)
 }
 
 func printDeduplicateBackfillPromptNoteTo(out io.Writer, pending int64) {
@@ -307,13 +306,6 @@ func printDeduplicateBackfillPromptNoteTo(out io.Writer, pending int64) {
 			"rerun deduplicate to review it.\n",
 		pending,
 	)
-}
-
-func pendingRFC822IDBackfill(backfilledCount int64) int64 {
-	if backfilledCount >= 0 {
-		return 0
-	}
-	return -backfilledCount
 }
 
 func printDeduplicatePrompt(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
@@ -586,14 +578,14 @@ func planCLIDeduplicateItem(
 		return api.CLIDeduplicatePlanItem{}, err
 	}
 	return api.CLIDeduplicatePlanItem{
-		SourceID:          sourceID,
-		ScopeLabel:        scopeLabel,
-		ScopeIsCollection: scopeIsCollection,
-		Stdout:            out.String(),
-		DuplicateMessages: report.DuplicateMessages,
-		BackfilledCount:   report.BackfilledCount,
-		PlanFingerprint:   fingerprint,
-		NeedsConfirmation: report.DuplicateGroups > 0 || report.PendingRFC822IDBackfill() > 0,
+		SourceID:             sourceID,
+		ScopeLabel:           scopeLabel,
+		ScopeIsCollection:    scopeIsCollection,
+		Stdout:               out.String(),
+		DuplicateMessages:    report.DuplicateMessages,
+		PendingBackfillCount: report.PendingRFC822IDBackfill(),
+		PlanFingerprint:      fingerprint,
+		NeedsConfirmation:    report.DuplicateGroups > 0 || report.PendingRFC822IDBackfill() > 0,
 	}, nil
 }
 

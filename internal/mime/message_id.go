@@ -2,34 +2,28 @@ package mime
 
 import (
 	"strings"
-	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // NormalizeMessageID returns the canonical form used for RFC822 Message-ID
 // comparison and storage. It unwraps one structurally valid angle-bracket pair,
-// preserves malformed bracket structure, and makes invalid bytes safe for SQL
-// TEXT.
+// rejects malformed bracket structure, and makes invalid bytes safe for SQL
+// TEXT. It intentionally validates only bracket structure: historical archives
+// contain useful bare IDs that do not satisfy the full RFC grammar.
 func NormalizeMessageID(id string) string {
 	id = strings.TrimSpace(id)
-	if len(id) > 2 && id[0] == '<' && id[len(id)-1] == '>' &&
-		!isMessageIDBracketEdge(id[1]) && !isMessageIDBracketEdge(id[len(id)-2]) {
-		id = id[1 : len(id)-1]
+	if id == "" {
+		return ""
 	}
-	var normalized strings.Builder
-	normalized.Grow(len(id))
-	for len(id) > 0 {
-		r, size := utf8.DecodeRuneInString(id)
-		if r == utf8.RuneError && size == 1 {
-			normalized.WriteRune(utf8.RuneError)
-			id = id[1:]
-			continue
+	if strings.ContainsAny(id, "<>") {
+		if len(id) <= 2 || id[0] != '<' || id[len(id)-1] != '>' {
+			return ""
 		}
-		normalized.WriteRune(r)
-		id = id[size:]
+		id = id[1 : len(id)-1]
+		if strings.TrimSpace(id) != id || strings.ContainsAny(id, "<>") {
+			return ""
+		}
 	}
-	return normalized.String()
-}
-
-func isMessageIDBracketEdge(b byte) bool {
-	return b == '<' || b == '>' || b == ' '
+	return textutil.SanitizeUTF8(id)
 }

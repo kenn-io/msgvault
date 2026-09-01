@@ -573,6 +573,7 @@ type CLIDeletionManifestResponse struct {
 }
 
 type CLIDeduplicatePlanRequest struct {
+	PlanProtocol               string `json:"plan_protocol" enum:"explicit-backfill-v1"`
 	Account                    string `json:"account,omitempty"`
 	Collection                 string `json:"collection,omitempty"`
 	Prefer                     string `json:"prefer,omitempty"`
@@ -587,14 +588,14 @@ type CLIDeduplicatePlanResponse struct {
 }
 
 type CLIDeduplicatePlanItem struct {
-	SourceID          int64  `json:"source_id,omitempty"`
-	ScopeLabel        string `json:"scope_label,omitempty"`
-	ScopeIsCollection bool   `json:"scope_is_collection,omitempty"`
-	Stdout            string `json:"stdout,omitempty"`
-	DuplicateMessages int    `json:"duplicate_messages,omitempty"`
-	BackfilledCount   int64  `json:"backfilled_count,omitempty"`
-	PlanFingerprint   string `json:"plan_fingerprint,omitempty"`
-	NeedsConfirmation bool   `json:"needs_confirmation"`
+	SourceID             int64  `json:"source_id,omitempty"`
+	ScopeLabel           string `json:"scope_label,omitempty"`
+	ScopeIsCollection    bool   `json:"scope_is_collection,omitempty"`
+	Stdout               string `json:"stdout,omitempty"`
+	DuplicateMessages    int    `json:"duplicate_messages,omitempty"`
+	PendingBackfillCount int64  `json:"pending_backfill_count,omitempty"`
+	PlanFingerprint      string `json:"plan_fingerprint,omitempty"`
+	NeedsConfirmation    bool   `json:"needs_confirmation"`
 }
 
 type CLIRunEvent struct {

@@ -41,7 +41,7 @@ func TestPlanCLIDeduplicateRequiresConfirmationForDerivableBackfill(t *testing.T
 	require.Len(plan.Items, 1)
 	item := plan.Items[0]
 	assert.True(item.NeedsConfirmation, "derivable metadata is executable work")
-	assert.Equal(int64(-1), item.BackfilledCount, "signed compatibility field")
+	assert.Equal(int64(1), item.PendingBackfillCount)
 	assert.Contains(item.Stdout, "2 messages with missing RFC822 Message-ID were inspected.")
 	assert.Contains(item.Stdout, "1 RFC822 Message-ID value is ready to be derived from stored MIME after confirmation.")
 	assert.Contains(item.Stdout, "1 message could not provide a usable Message-ID and will be skipped.")
@@ -65,7 +65,7 @@ func TestPlanCLIDeduplicateMalformedOnlyBackfillDoesNotRequireConfirmation(t *te
 	require.Len(plan.Items, 1)
 	item := plan.Items[0]
 	assert.False(item.NeedsConfirmation, "malformed-only metadata is not executable work")
-	assert.Equal(int64(0), item.BackfilledCount, "signed compatibility field")
+	assert.Zero(item.PendingBackfillCount)
 	assert.Contains(item.Stdout, "1 message with missing RFC822 Message-ID was inspected.")
 	assert.NotContains(item.Stdout, "ready to be derived")
 	assert.Contains(item.Stdout, "1 message could not provide a usable Message-ID and will be skipped.")

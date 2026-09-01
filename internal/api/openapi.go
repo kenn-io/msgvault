@@ -240,7 +240,9 @@ import (
 // 2.12.0 adds deletion_scope=active|deleted|any to GET /api/v1/cli/search.
 // Omission preserves the active-only default. Additive (minor bump): existing
 // clients continue to receive the same result population.
-const APISchemaVersion = "2.12.0"
+// 2.13.0 makes deduplicate planning use an explicit, version-gated backfill
+// confirmation protocol.
+const APISchemaVersion = "2.13.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/importer"
+	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
@@ -130,47 +131,59 @@ func setRFC822MessageID(
 	require.NoError(t, err, "set rfc822_message_id")
 }
 
-func TestEngine_ScanKeepsMalformedRFC822DiscoveryGroupIsolated(t *testing.T) {
+func TestEngine_ScanRejectsMalformedRFC822DiscoveryGroupWithoutRawMIME(t *testing.T) {
+	for _, malformedID := range []string{
+		"<>",
+		"<<nested@example.test>>",
+		"< spaced@example.test>",
+	} {
+		t.Run(malformedID, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			firstID := addMessage(t, f.Store, f.Source, "first", malformedID, false)
+			secondID := addMessage(t, f.Store, f.Source, "second", malformedID, false)
+			engine := dedup.NewEngine(f.Store, dedup.Config{
+				AccountSourceIDs: []int64{f.Source.ID},
+				Account:          f.Source.Identifier,
+			}, nil)
+
+			report, err := engine.Scan(t.Context())
+			require.NoError(err)
+			assert.Empty(report.Groups)
+
+			summary, err := engine.Execute(t.Context(), report, "malformed-group")
+			require.NoError(err)
+			assert.Zero(summary.GroupsMerged)
+			assertSoftDeleted(t, f.Store, firstID, false)
+			assertSoftDeleted(t, f.Store, secondID, false)
+		})
+	}
+}
+
+func TestEngine_ScanRejectsRecoveredMalformedRFC822Group(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	const bracketedID = "< isolated@example.test>"
-	firstID := addMessage(t, f.Store, f.Source, "bracketed-first", bracketedID, false)
-	secondID := addMessage(t, f.Store, f.Source, "bracketed-second", bracketedID, false)
-	bareID := addMessage(t, f.Store, f.Source, "bare-singleton", " isolated@example.test", false)
-
+	raw := []byte("Message-ID: <<recovered@example.test>>\r\n" +
+		"Content-Type: multipart mixed; boundary=outer\r\n\r\n--outer--\r\n")
+	parsed, parseErr := msgmime.ParseWithRecovery(raw, "fallback")
+	require.Error(parseErr)
+	require.Equal("<<recovered@example.test>>", parsed.MessageID)
+	firstID := addMessage(t, f.Store, f.Source, "first", parsed.MessageID, false)
+	secondID := addMessage(t, f.Store, f.Source, "second", parsed.MessageID, false)
+	require.NoError(f.Store.UpsertMessageRaw(firstID, raw))
+	require.NoError(f.Store.UpsertMessageRaw(secondID, raw))
 	engine := dedup.NewEngine(f.Store, dedup.Config{
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          f.Source.Identifier,
 	}, nil)
+
 	report, err := engine.Scan(t.Context())
 	require.NoError(err)
-	require.Len(report.Groups, 1)
-	group := report.Groups[0]
-	assert.Equal(bracketedID, group.Key)
-	require.Len(group.Messages, 2)
-	assert.ElementsMatch(
-		[]int64{firstID, secondID},
-		[]int64{group.Messages[0].ID, group.Messages[1].ID},
-	)
-
-	summary, err := engine.Execute(t.Context(), report, "malformed-group-isolation")
-	require.NoError(err)
-	assert.Equal(1, summary.GroupsMerged)
-	assertSoftDeleted(t, f.Store, bareID, false)
-
-	var hiddenBracketed int
-	for _, messageID := range []int64{firstID, secondID} {
-		var deletedAt sql.NullTime
-		err := f.Store.DB().QueryRow(
-			f.Store.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), messageID,
-		).Scan(&deletedAt)
-		require.NoError(err)
-		if deletedAt.Valid {
-			hiddenBracketed++
-		}
-	}
-	assert.Equal(1, hiddenBracketed)
+	assert.Empty(report.Groups)
+	assertSoftDeleted(t, f.Store, firstID, false)
+	assertSoftDeleted(t, f.Store, secondID, false)
 }
 
 func TestEngine_ScanMergesEmbeddedNULMessageIDForms(t *testing.T) {
@@ -1068,148 +1081,146 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 	require.Equal(0, survivor.AttachmentCount, "higher-priority source can be less complete")
 }
 
-func TestEngine_SurvivorTiebreakers(t *testing.T) {
-	t.Run("has attachments wins when attachment counts tie", func(t *testing.T) {
-		require := require.New(t)
-		f := storetest.New(t)
-		st := f.Store
+func TestEngine_SurvivorTiebreakerHasAttachments(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
 
-		idWithoutFlag := addMessage(
-			t, st, f.Source, "without-attachment-flag", "rfc-attachment-flag", false,
-		)
-		idWithFlag := addMessage(
-			t, st, f.Source, "with-attachment-flag", "rfc-attachment-flag", false,
-		)
-		raw := []byte("Message-ID: <rfc-attachment-flag>\r\nSubject: Same\r\n\r\nBody")
-		require.NoError(st.UpsertMessageRaw(idWithoutFlag, raw), "store first raw MIME")
-		require.NoError(st.UpsertMessageRaw(idWithFlag, raw), "store second raw MIME")
+	idWithoutFlag := addMessage(
+		t, st, f.Source, "without-attachment-flag", "rfc-attachment-flag", false,
+	)
+	idWithFlag := addMessage(
+		t, st, f.Source, "with-attachment-flag", "rfc-attachment-flag", false,
+	)
+	raw := []byte("Message-ID: <rfc-attachment-flag>\r\nSubject: Same\r\n\r\nBody")
+	require.NoError(st.UpsertMessageRaw(idWithoutFlag, raw), "store first raw MIME")
+	require.NoError(st.UpsertMessageRaw(idWithFlag, raw), "store second raw MIME")
 
-		_, err := st.DB().Exec(
-			st.Rebind(`UPDATE messages
+	_, err := st.DB().Exec(
+		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 				WHERE id = ?`),
-			int64(len(raw)), false, 0, idWithoutFlag,
-		)
-		require.NoError(err, "clear attachment flag")
-		_, err = st.DB().Exec(
-			st.Rebind(`UPDATE messages
+		int64(len(raw)), false, 0, idWithoutFlag,
+	)
+	require.NoError(err, "clear attachment flag")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 				WHERE id = ?`),
-			int64(len(raw)), true, 0, idWithFlag,
-		)
-		require.NoError(err, "set attachment flag")
+		int64(len(raw)), true, 0, idWithFlag,
+	)
+	require.NoError(err, "set attachment flag")
 
-		eng := dedup.NewEngine(st, dedup.Config{
-			AccountSourceIDs: []int64{f.Source.ID},
-			Account:          "test",
-		}, nil)
-		report, err := eng.Scan(context.Background())
-		require.NoError(err, "Scan")
-		require.Len(report.Groups, 1, "duplicate groups")
-		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assert.Equal(t, idWithFlag, survivor.ID, "survivor (has attachments flag)")
-	})
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, idWithFlag, survivor.ID, "survivor (has attachments flag)")
+}
 
-	t.Run("larger payload wins when attachment count is equal", func(t *testing.T) {
-		require := require.New(t)
-		f := storetest.New(t)
-		st := f.Store
+func TestEngine_SurvivorTiebreakerLargerPayload(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
 
-		idSmaller := addMessage(t, st, f.Source, "smaller", "rfc-payload-tie", false)
-		idLarger := addMessage(t, st, f.Source, "larger", "rfc-payload-tie", false)
-		raw := []byte("Message-ID: <rfc-payload-tie>\r\nSubject: Same\r\n\r\nBody")
-		require.NoError(st.UpsertMessageRaw(idSmaller, raw), "store smaller raw MIME")
-		require.NoError(st.UpsertMessageRaw(idLarger, raw), "store larger raw MIME")
-		_, err := st.DB().Exec(
-			st.Rebind(`UPDATE messages
+	idSmaller := addMessage(t, st, f.Source, "smaller", "rfc-payload-tie", false)
+	idLarger := addMessage(t, st, f.Source, "larger", "rfc-payload-tie", false)
+	raw := []byte("Message-ID: <rfc-payload-tie>\r\nSubject: Same\r\n\r\nBody")
+	require.NoError(st.UpsertMessageRaw(idSmaller, raw), "store smaller raw MIME")
+	require.NoError(st.UpsertMessageRaw(idLarger, raw), "store larger raw MIME")
+	_, err := st.DB().Exec(
+		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
-			int64(1000), 1, idSmaller,
-		)
-		require.NoError(err, "set smaller payload completeness")
-		_, err = st.DB().Exec(
-			st.Rebind(`UPDATE messages
+		int64(1000), 1, idSmaller,
+	)
+	require.NoError(err, "set smaller payload completeness")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
-			int64(2000), 1, idLarger,
-		)
-		require.NoError(err, "set larger payload completeness")
+		int64(2000), 1, idLarger,
+	)
+	require.NoError(err, "set larger payload completeness")
 
-		eng := dedup.NewEngine(st, dedup.Config{
-			AccountSourceIDs: []int64{f.Source.ID},
-			Account:          "test",
-		}, nil)
-		report, err := eng.Scan(context.Background())
-		require.NoError(err, "Scan")
-		require.Equal(1, report.DuplicateGroups, "groups")
-		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assert.Equal(t, idLarger, survivor.ID, "survivor (larger payload)")
-	})
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, idLarger, survivor.ID, "survivor (larger payload)")
+}
 
-	t.Run("raw MIME wins over no raw MIME", func(t *testing.T) {
-		require := require.New(t)
-		f := storetest.New(t)
-		st := f.Store
+func TestEngine_SurvivorTiebreakerRawMIME(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
 
-		idNoRaw := addMessage(t, st, f.Source, "no-raw", "rfc-raw-tie", false)
-		idHasRaw := addMessage(t, st, f.Source, "has-raw", "rfc-raw-tie", false)
-		require.NoError(st.UpsertMessageRaw(idHasRaw, []byte("Subject: test\r\n\r\nBody")),
-			"UpsertMessageRaw",
-		)
+	idNoRaw := addMessage(t, st, f.Source, "no-raw", "rfc-raw-tie", false)
+	idHasRaw := addMessage(t, st, f.Source, "has-raw", "rfc-raw-tie", false)
+	require.NoError(st.UpsertMessageRaw(idHasRaw, []byte("Subject: test\r\n\r\nBody")),
+		"UpsertMessageRaw",
+	)
 
-		eng := dedup.NewEngine(st, dedup.Config{
-			AccountSourceIDs: []int64{f.Source.ID},
-			Account:          "test",
-		}, nil)
-		report, err := eng.Scan(context.Background())
-		require.NoError(err, "Scan")
-		require.Equal(1, report.DuplicateGroups, "groups")
-		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assert.Equal(t, idHasRaw, survivor.ID, "survivor (has raw)")
-		_ = idNoRaw
-	})
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, idHasRaw, survivor.ID, "survivor (has raw)")
+	_ = idNoRaw
+}
 
-	t.Run("more labels wins when raw MIME is equal", func(t *testing.T) {
-		f := storetest.New(t)
-		st := f.Store
+func TestEngine_SurvivorTiebreakerMoreLabels(t *testing.T) {
+	f := storetest.New(t)
+	st := f.Store
 
-		idFew := addMessage(t, st, f.Source, "few", "rfc-label-tie", false)
-		idMany := addMessage(t, st, f.Source, "many", "rfc-label-tie", false)
+	idFew := addMessage(t, st, f.Source, "few", "rfc-label-tie", false)
+	idMany := addMessage(t, st, f.Source, "many", "rfc-label-tie", false)
 
-		lid1, _ := st.EnsureLabel(f.Source.ID, "L1", "Label1", "user")
-		lid2, _ := st.EnsureLabel(f.Source.ID, "L2", "Label2", "user")
-		lid3, _ := st.EnsureLabel(f.Source.ID, "L3", "Label3", "user")
-		_ = st.LinkMessageLabel(idFew, lid1)
-		_ = st.LinkMessageLabel(idMany, lid1)
-		_ = st.LinkMessageLabel(idMany, lid2)
-		_ = st.LinkMessageLabel(idMany, lid3)
+	lid1, _ := st.EnsureLabel(f.Source.ID, "L1", "Label1", "user")
+	lid2, _ := st.EnsureLabel(f.Source.ID, "L2", "Label2", "user")
+	lid3, _ := st.EnsureLabel(f.Source.ID, "L3", "Label3", "user")
+	_ = st.LinkMessageLabel(idFew, lid1)
+	_ = st.LinkMessageLabel(idMany, lid1)
+	_ = st.LinkMessageLabel(idMany, lid2)
+	_ = st.LinkMessageLabel(idMany, lid3)
 
-		eng := dedup.NewEngine(st, dedup.Config{
-			AccountSourceIDs: []int64{f.Source.ID},
-			Account:          "test",
-		}, nil)
-		report, err := eng.Scan(context.Background())
-		require.NoError(t, err, "Scan")
-		require.Equal(t, 1, report.DuplicateGroups, "groups")
-		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assert.Equal(t, idMany, survivor.ID, "survivor (more labels)")
-	})
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(t, err, "Scan")
+	require.Equal(t, 1, report.DuplicateGroups, "groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, idMany, survivor.ID, "survivor (more labels)")
+}
 
-	t.Run("lower ID wins as final tiebreaker", func(t *testing.T) {
-		f := storetest.New(t)
-		st := f.Store
+func TestEngine_SurvivorTiebreakerLowerID(t *testing.T) {
+	f := storetest.New(t)
+	st := f.Store
 
-		idFirst := addMessage(t, st, f.Source, "first", "rfc-id-tie", false)
-		_ = addMessage(t, st, f.Source, "second", "rfc-id-tie", false)
+	idFirst := addMessage(t, st, f.Source, "first", "rfc-id-tie", false)
+	_ = addMessage(t, st, f.Source, "second", "rfc-id-tie", false)
 
-		eng := dedup.NewEngine(st, dedup.Config{
-			AccountSourceIDs: []int64{f.Source.ID},
-			Account:          "test",
-		}, nil)
-		report, err := eng.Scan(context.Background())
-		require.NoError(t, err, "Scan")
-		require.Equal(t, 1, report.DuplicateGroups, "groups")
-		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assert.Equal(t, idFirst, survivor.ID, "survivor (lower ID)")
-	})
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(t, err, "Scan")
+	require.Equal(t, 1, report.DuplicateGroups, "groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, idFirst, survivor.ID, "survivor (lower ID)")
 }
 
 // addMessageWithFrom is like addMessage but also sets FromEmail via the
@@ -1387,7 +1398,7 @@ func TestEngine_ScanPlansRFC822BackfillWithoutWriting(t *testing.T) {
 
 	assert.Equal(int64(1), report.BackfillCandidates)
 	assert.Equal(int64(0), report.BackfillFailed)
-	assert.Equal(int64(-1), report.BackfilledCount)
+	assert.Equal(int64(1), report.RFC822IDsReady)
 	assert.Equal(int64(1), report.PendingRFC822IDBackfill())
 	assert.NotEmpty(report.BackfillPlanDigest)
 	assert.Equal(0, report.DuplicateGroups)
@@ -1418,9 +1429,32 @@ func TestEngine_ScanMalformedOnlyBackfillDoesNotExposePendingWork(t *testing.T) 
 
 	assert.Equal(int64(1), report.BackfillCandidates)
 	assert.Equal(int64(1), report.BackfillFailed)
-	assert.Equal(int64(0), report.BackfilledCount)
+	assert.Equal(int64(0), report.RFC822IDsReady)
 	assert.Equal(int64(0), report.PendingRFC822IDBackfill())
 	assert.Equal(0, report.DuplicateGroups)
+}
+
+func TestEngine_ScanRejectsLegacyNormalizedMalformedMessageID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	const storedID = "legacy-normalized@example.test"
+	validID := addMessage(t, f.Store, f.Source, "valid-header", storedID, false)
+	legacyID := addMessage(t, f.Store, f.Source, "legacy-header", storedID, false)
+	require.NoError(f.Store.UpsertMessageRaw(validID,
+		[]byte("Message-ID: <"+storedID+">\r\n\r\nValid")))
+	require.NoError(f.Store.UpsertMessageRaw(legacyID,
+		[]byte("Message-ID: <<"+storedID+">>\r\n\r\nMalformed")))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+
+	assert.Zero(report.DuplicateGroups)
+	assert.Zero(report.DuplicateMessages)
 }
 
 func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testing.T) {
@@ -1456,6 +1490,37 @@ func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testi
 	).Scan(&storedID)
 	require.NoError(err)
 	assert.Equal(sql.NullString{String: "unrelated@example.test", Valid: true}, storedID)
+}
+
+func TestEngine_ExecuteStopsWhenRFC822BackfillPlanChanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	winnerID := addMessage(t, f.Store, f.Source, "winner-stale", "stable-stale@example.test", false)
+	loserID := addMessage(t, f.Store, f.Source, "loser-stale", "stable-stale@example.test", false)
+	derivedID := addMessage(t, f.Store, f.Source, "derived-stale", "", false)
+	require.NoError(f.Store.UpsertMessageRaw(derivedID,
+		[]byte("Message-ID: <derived-stale@example.test>\r\n\r\nBody")))
+
+	engine := dedup.NewEngine(f.Store, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          f.Source.Identifier,
+	}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Equal(int64(1), report.PendingRFC822IDBackfill())
+	require.Len(report.Groups, 1)
+
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`),
+		"claimed@example.test", derivedID)
+	require.NoError(err)
+
+	summary, err := engine.Execute(t.Context(), report, "stale-backfill-plan")
+	require.ErrorIs(err, store.ErrRFC822IDBackfillPlanChanged)
+	assert.Zero(summary.GroupsMerged)
+	assertSoftDeleted(t, f.Store, winnerID, false)
+	assertSoftDeleted(t, f.Store, loserID, false)
 }
 
 func TestEngine_ExecuteAllowsGroupProvenanceChangeWhenDestructivePlanIsUnchanged(t *testing.T) {
@@ -1642,7 +1707,7 @@ func TestEngine_FormatReportShowsBackfillCandidatesReadyAndFailures(t *testing.T
 	}, nil)
 
 	report := &dedup.Report{
-		BackfilledCount:    -2,
+		RFC822IDsReady:     2,
 		BackfillCandidates: 3,
 		BackfillFailed:     1,
 	}

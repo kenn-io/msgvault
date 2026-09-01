@@ -217,7 +217,9 @@ func IngestRawMessage(
 }
 
 func normalizeMessageID(id string) string {
-	return mime.NormalizeMessageID(id)
+	id = strings.TrimSpace(id)
+	id = strings.Trim(id, "<>")
+	return textutil.SanitizeUTF8(id)
 }
 
 func threadKey(parsed *mime.Message, rawHash string) string {

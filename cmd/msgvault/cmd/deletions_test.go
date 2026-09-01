@@ -46,19 +46,19 @@ func TestRemoteDeleteEnabledUsesConfigOrEnvironment(t *testing.T) {
 			cfg.Deletion.RemoteEnabled = tt.configEnabled
 			t.Cleanup(func() { cfg = savedCfg })
 
-			assert.Equal(t, tt.want, remoteDeleteEnabled())
+			assert.Equal(t, tt.want, remoteDeleteEnabled(false))
 		})
 	}
 
-	t.Run("daemon subprocess ignores config", func(t *testing.T) {
+	t.Run("captured daemon subprocess ignores config after parent marker changes", func(t *testing.T) {
 		t.Setenv(remoteDeleteEnvVar, "")
-		t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+		t.Setenv(daemonCLISubprocessEnv, "")
 		savedCfg := cfg
 		cfg = config.NewDefaultConfig()
 		cfg.Deletion.RemoteEnabled = true
 		t.Cleanup(func() { cfg = savedCfg })
 
-		assert.False(t, remoteDeleteEnabled())
+		assert.False(t, remoteDeleteEnabled(true))
 	})
 }
 

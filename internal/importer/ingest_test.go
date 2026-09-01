@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -46,6 +47,12 @@ func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
 
 func TestNormalizeMessageID_PreservesValidContent(t *testing.T) {
 	assert.Equal(t, "valid@example.com", normalizeMessageID("<valid@example.com>"))
+}
+
+func TestThreadKeyPreservesLegacyMalformedMessageIDBehavior(t *testing.T) {
+	assert.Equal(t, "raw-empty", threadKey(&mime.Message{MessageID: "<>"}, "raw-empty"))
+	assert.Equal(t, "legacy@example.test",
+		threadKey(&mime.Message{MessageID: "<<legacy@example.test>>"}, "raw-nested"))
 }
 
 func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-30
+last_edited: 2026-09-01
 title: Changelog
 description: Release history for msgvault
 ---
@@ -12,7 +12,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.4.0. The
+  current unreleased API schema is 2.13.0. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -69,7 +69,12 @@ All notable changes to msgvault, grouped by release.
 
 - Deduplication now derives missing RFC822 Message-ID metadata only after the
   user confirms the reviewed plan, applies the exact derivation plan atomically,
-  rescans, and refuses duplicate hiding when the actionable plan changes.
+  rescans, and refuses duplicate hiding when the actionable plan changes. Its
+  CLI/daemon plan contract reports pending derivations explicitly and rejects
+  incompatible peers instead of showing misleading consent text.
+- Deduplication no longer derives metadata from malformed bracketed Message-IDs
+  and checks legacy-normalized stored IDs against raw MIME before merging. It
+  preserves the established threading behavior for imported conversations.
 - Remote deletion forwarding strips daemon-host opt-in state and accepts only
   authenticated invoking-client consent, preventing a server's configuration
   or environment from authorizing an unrelated client command.

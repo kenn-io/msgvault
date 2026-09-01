@@ -111,28 +111,22 @@ func TestStore_DuplicateGroupsPreserveMalformedRFC822IDs(t *testing.T) {
 	)
 }
 
-func TestStore_BackfillRFC822IDsPreservesMalformedIDForDuplicateDiscovery(t *testing.T) {
+func TestStore_PlanRFC822IDBackfillRejectsMalformedID(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
 	const malformedID = "<<malformed-backfill@example.test>>"
 
-	_ = newRFC822Message(t, f, "malformed-stored", malformedID)
 	backfillID := newRFC822Message(t, f, "malformed-missing", "")
 	require.NoError(f.Store.UpsertMessageRaw(backfillID, []byte(
 		"Message-ID: "+malformedID+"\r\n\r\nBody")))
 
-	updated, failed, err := f.Store.BackfillRFC822IDs([]int64{f.Source.ID}, nil)
+	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
 	require.NoError(err)
-	assert.Equal(int64(1), updated)
-	assert.Equal(int64(0), failed)
-	assert.Equal(malformedID, storedRFC822ID(t, f.Store, backfillID))
-
-	groups, err := f.Store.FindDuplicatesByRFC822ID(f.Source.ID)
-	require.NoError(err)
-	require.Len(groups, 1)
-	assert.Equal(malformedID, groups[0].RFC822MessageID)
-	assert.Equal(2, groups[0].Count)
+	assert.Equal(int64(1), plan.Candidates)
+	assert.Zero(plan.Ready)
+	assert.Equal(int64(1), plan.Failed)
+	assert.Empty(storedRFC822ID(t, f.Store, backfillID))
 }
 
 func TestStore_DuplicateGroupFetchMatchesWhitespaceDiscoveryGroups(t *testing.T) {
@@ -465,16 +459,17 @@ func assertDedupDeleted(
 	}
 }
 
-func TestStore_BackfillRFC822IDs_EmptyTable(t *testing.T) {
+func TestStore_ApplyRFC822IDBackfillEmptyTable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	count, err := f.Store.CountMessagesWithoutRFC822ID()
-	require.NoError(err, "CountMessagesWithoutRFC822ID")
-	assert.Equal(int64(0), count, "empty-table count")
+	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
+	require.NoError(err, "PlanRFC822IDBackfill")
+	assert.Zero(plan.Candidates)
+	assert.Zero(plan.Ready)
 
-	updated, _, err := f.Store.BackfillRFC822IDs(nil, nil)
-	require.NoError(err, "BackfillRFC822IDs")
+	updated, err := f.Store.ApplyRFC822IDBackfill(t.Context(), nil, plan, nil)
+	require.NoError(err, "ApplyRFC822IDBackfill")
 	assert.Equal(int64(0), updated, "updated")
 }
 
@@ -727,7 +722,7 @@ func TestStore_ApplyRFC822IDBackfillRollsBackWhenLaterMessageIsStale(t *testing.
 	require.NoError(err)
 
 	updated, err := f.Store.ApplyRFC822IDBackfill(t.Context(), []int64{f.Source.ID}, plan, nil)
-	require.NoError(err)
+	require.ErrorIs(err, store.ErrRFC822IDBackfillPlanChanged)
 	assert.Equal(int64(0), updated)
 	assert.Empty(storedRFC822ID(t, f.Store, firstID))
 	assert.Equal("claimed@example.com", storedRFC822ID(t, f.Store, secondID))
@@ -743,7 +738,7 @@ func TestStore_ApplyRFC822IDBackfillRollsBackWhenRawMIMEChanged(t *testing.T) {
 		"Message-ID: <raw-drift-second@example.com>\r\n\r\nChanged after planning")))
 
 	updated, err := f.Store.ApplyRFC822IDBackfill(t.Context(), []int64{f.Source.ID}, plan, nil)
-	require.NoError(err)
+	require.ErrorIs(err, store.ErrRFC822IDBackfillPlanChanged)
 	assert.Equal(int64(0), updated)
 	assert.Empty(storedRFC822ID(t, f.Store, firstID))
 	assert.Empty(storedRFC822ID(t, f.Store, secondID))
@@ -764,7 +759,7 @@ func TestStore_ApplyRFC822IDBackfillProgressOnlyAfterCommit(t *testing.T) {
 		t.Context(), []int64{f.Source.ID}, plan,
 		func(_, _ int64) { progressCalls++ },
 	)
-	require.NoError(err)
+	require.ErrorIs(err, store.ErrRFC822IDBackfillPlanChanged)
 	assert.Equal(int64(0), updated)
 	assert.Equal(0, progressCalls)
 	assert.Empty(storedRFC822ID(t, f.Store, firstID))
@@ -818,7 +813,7 @@ func TestStore_CountActiveMessages(t *testing.T) {
 	assert.Equal(int64(2), total, "active after merge")
 }
 
-func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
+func TestStore_ApplyRFC822IDBackfillParsesFromRawMIME(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -830,12 +825,13 @@ func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
 		"UpsertMessageRaw",
 	)
 
-	count, err := f.Store.CountMessagesWithoutRFC822ID()
-	require.NoError(err, "CountMessagesWithoutRFC822ID")
-	require.Equal(int64(1), count, "count without rfc822")
+	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
+	require.NoError(err, "PlanRFC822IDBackfill")
+	require.Equal(int64(1), plan.Candidates)
+	require.Equal(int64(1), plan.Ready)
 
-	updated, _, err := f.Store.BackfillRFC822IDs(nil, nil)
-	require.NoError(err, "BackfillRFC822IDs")
+	updated, err := f.Store.ApplyRFC822IDBackfill(t.Context(), nil, plan, nil)
+	require.NoError(err, "ApplyRFC822IDBackfill")
 	require.Equal(int64(1), updated, "updated")
 
 	var rfc822ID string
@@ -845,12 +841,12 @@ func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
 	require.NoError(err, "scan rfc822_message_id")
 	assert.Equal("unique-123@example.com", rfc822ID, "rfc822_message_id")
 
-	count, err = f.Store.CountMessagesWithoutRFC822ID()
-	require.NoError(err, "CountMessagesWithoutRFC822ID after backfill")
-	assert.Equal(int64(0), count, "count after backfill")
+	remaining, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
+	require.NoError(err, "PlanRFC822IDBackfill after apply")
+	assert.Zero(remaining.Candidates)
 }
 
-func TestStore_BackfillRFC822IDs_DoesNotOvercountRolledBackBatch(t *testing.T) {
+func TestStore_ApplyRFC822IDBackfillDoesNotOvercountRolledBackBatch(t *testing.T) {
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses SQLite-specific CREATE TRIGGER ... NEW.* / RAISE(FAIL,...) syntax to force a mid-batch rollback")
 	f := storetest.New(t)
@@ -873,10 +869,11 @@ func TestStore_BackfillRFC822IDs_DoesNotOvercountRolledBackBatch(t *testing.T) {
 	`, idB))
 	require.NoError(err, "create trigger")
 
-	updated, failed, err := f.Store.BackfillRFC822IDs(nil, nil)
+	plan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
+	require.NoError(err, "PlanRFC822IDBackfill")
+	updated, err := f.Store.ApplyRFC822IDBackfill(t.Context(), nil, plan, nil)
 	require.Error(err, "expected backfill error")
 	require.Equal(int64(0), updated, "updated after rollback")
-	require.Equal(int64(0), failed, "failed")
 
 	var count int64
 	err = f.Store.DB().QueryRow(`

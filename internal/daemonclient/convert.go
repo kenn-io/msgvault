@@ -207,14 +207,14 @@ func cliDeduplicatePlanFromGenerated(resp *generated.PlanCLIDeduplicateResponse)
 	items := make([]CLIDeduplicatePlanItem, len(resp.Items))
 	for i, item := range resp.Items {
 		items[i] = CLIDeduplicatePlanItem{
-			SourceID:          int64Value(item.SourceID),
-			ScopeLabel:        stringValue(item.ScopeLabel),
-			ScopeIsCollection: boolValue(item.ScopeIsCollection),
-			Stdout:            stringValue(item.Stdout),
-			DuplicateMessages: int(int64Value(item.DuplicateMessages)),
-			BackfilledCount:   int64Value(item.BackfilledCount),
-			PlanFingerprint:   stringValue(item.PlanFingerprint),
-			NeedsConfirmation: item.NeedsConfirmation,
+			SourceID:             int64Value(item.SourceID),
+			ScopeLabel:           stringValue(item.ScopeLabel),
+			ScopeIsCollection:    boolValue(item.ScopeIsCollection),
+			Stdout:               stringValue(item.Stdout),
+			DuplicateMessages:    int(int64Value(item.DuplicateMessages)),
+			PendingBackfillCount: int64Value(item.PendingBackfillCount),
+			PlanFingerprint:      stringValue(item.PlanFingerprint),
+			NeedsConfirmation:    item.NeedsConfirmation,
 		}
 	}
 	return &CLIDeduplicatePlan{

@@ -3447,10 +3447,10 @@ export interface components {
         };
         CLIDeduplicatePlanItem: {
             /** Format: int64 */
-            backfilled_count?: number;
-            /** Format: int64 */
             duplicate_messages?: number;
             needs_confirmation: boolean;
+            /** Format: int64 */
+            pending_backfill_count?: number;
             plan_fingerprint?: string;
             scope_is_collection?: boolean;
             scope_label?: string;
@@ -3465,6 +3465,8 @@ export interface components {
             collection?: string;
             content_hash?: boolean;
             delete_dups_from_source_server?: boolean;
+            /** @enum {string} */
+            plan_protocol: "explicit-backfill-v1";
             prefer?: string;
         };
         CLIDeduplicatePlanResponse: {

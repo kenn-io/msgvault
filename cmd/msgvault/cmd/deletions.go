@@ -308,9 +308,9 @@ const (
 // unconditionally; only the destructive source-server call is gated.
 const remoteDeleteEnvVar = "MSGVAULT_ENABLE_REMOTE_DELETE"
 
-func remoteDeleteEnabled() bool {
+func remoteDeleteEnabled(daemonSubprocess bool) bool {
 	return os.Getenv(remoteDeleteEnvVar) == "1" ||
-		(!isDaemonCLISubprocess() && cfg != nil && cfg.Deletion.RemoteEnabled)
+		(!daemonSubprocess && cfg != nil && cfg.Deletion.RemoteEnabled)
 }
 
 type deleteStagedPlanOptions struct {
@@ -878,7 +878,8 @@ Examples:
   msgvault delete-staged --permanent     # With durable config consent
   MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes  # One command`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !isDaemonCLISubprocess() {
+		daemonSubprocess := isDaemonCLISubprocess()
+		if !daemonSubprocess {
 			return runDeleteStagedHTTP(cmd, args)
 		}
 
@@ -912,7 +913,7 @@ Examples:
 			Account:             deleteAccount,
 			SourceID:            deleteSourceID,
 			SourceIDSet:         cmd.Flags().Changed("source-id"),
-			RemoteDeleteEnabled: remoteDeleteEnabled(),
+			RemoteDeleteEnabled: remoteDeleteEnabled(daemonSubprocess),
 		})
 		if err != nil {
 			return err
@@ -1162,7 +1163,7 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		batchID = args[0]
 	}
-	remoteDeleteAllowed := remoteDeleteEnabled()
+	remoteDeleteAllowed := remoteDeleteEnabled(false)
 	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err

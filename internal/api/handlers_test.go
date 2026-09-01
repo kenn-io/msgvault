@@ -1584,13 +1584,13 @@ func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
 				PrefixStdout: "No --account specified; deduping each source independently.\n\n",
 				Items: []CLIDeduplicatePlanItem{
 					{
-						SourceID:          42,
-						ScopeLabel:        "alice@example.com",
-						Stdout:            "Duplicate groups found: 1\n",
-						DuplicateMessages: 2,
-						BackfilledCount:   3,
-						PlanFingerprint:   "fp-dedup",
-						NeedsConfirmation: true,
+						SourceID:             42,
+						ScopeLabel:           "alice@example.com",
+						Stdout:               "Duplicate groups found: 1\n",
+						DuplicateMessages:    2,
+						PendingBackfillCount: 3,
+						PlanFingerprint:      "fp-dedup",
+						NeedsConfirmation:    true,
 					},
 				},
 			}, nil
@@ -1598,7 +1598,7 @@ func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
 	}
 	srv := newCLIHandlerTestServer(st)
 
-	body := strings.NewReader(`{"account":"alice@example.com","prefer":"gmail,mbox","content_hash":true,"delete_dups_from_source_server":true}`)
+	body := strings.NewReader(`{"plan_protocol":"explicit-backfill-v1","account":"alice@example.com","prefer":"gmail,mbox","content_hash":true,"delete_dups_from_source_server":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/deduplicate/plan", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -1606,6 +1606,7 @@ func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
 
 	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 	assert.Equal(CLIDeduplicatePlanRequest{
+		PlanProtocol:               "explicit-backfill-v1",
 		Account:                    "alice@example.com",
 		Prefer:                     "gmail,mbox",
 		ContentHash:                true,
@@ -1618,7 +1619,28 @@ func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
 	require.Len(got.Items, 1, "items")
 	assert.Equal(int64(42), got.Items[0].SourceID, "source id")
 	assert.Equal("fp-dedup", got.Items[0].PlanFingerprint, "fingerprint")
+	assert.Equal(int64(3), got.Items[0].PendingBackfillCount, "pending backfill count")
 	assert.True(got.Items[0].NeedsConfirmation, "needs confirmation")
+}
+
+func TestHandleCLIDeduplicatePlanRejectsMissingProtocol(t *testing.T) {
+	called := false
+	st := &mockStore{
+		planDedupFunc: func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error) {
+			called = true
+			return CLIDeduplicatePlanResponse{}, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/deduplicate/plan",
+		strings.NewReader(`{"account":"alice@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.False(t, called, "missing protocol must fail before planning")
 }
 
 func TestHandleCLIDeduplicatePlanRequestErrorUsesAPIEnvelope(t *testing.T) {
@@ -1635,7 +1657,7 @@ func TestHandleCLIDeduplicatePlanRequestErrorUsesAPIEnvelope(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/cli/deduplicate/plan",
-		strings.NewReader(`{"account":"missing@example.com"}`),
+		strings.NewReader(`{"plan_protocol":"explicit-backfill-v1","account":"missing@example.com"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -1666,7 +1688,7 @@ func TestHandleCLIDeduplicatePlanInvalidCollectionUsesAPIEnvelope(t *testing.T) 
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/cli/deduplicate/plan",
-		strings.NewReader(`{"collection":"calendars"}`),
+		strings.NewReader(`{"plan_protocol":"explicit-backfill-v1","collection":"calendars"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()

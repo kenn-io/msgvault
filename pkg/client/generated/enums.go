@@ -47,6 +47,22 @@ func (a AppendPersonNoteRequestSource) Validate() error {
 	}
 }
 
+type CLIDeduplicatePlanRequestPlanProtocol string
+
+const (
+	ExplicitBackfillV1 CLIDeduplicatePlanRequestPlanProtocol = "explicit-backfill-v1"
+)
+
+// Validate checks if the CLIDeduplicatePlanRequestPlanProtocol value is valid
+func (c CLIDeduplicatePlanRequestPlanProtocol) Validate() error {
+	switch c {
+	case ExplicitBackfillV1:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CLIDeduplicatePlanRequestPlanProtocol value, got: %v", c))
+	}
+}
+
 type CandidateClassification string
 
 const (

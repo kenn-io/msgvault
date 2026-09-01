@@ -602,14 +602,14 @@ components:
       type: object
     CLIDeduplicatePlanItem:
       properties:
-        backfilled_count:
-          format: int64
-          type: integer
         duplicate_messages:
           format: int64
           type: integer
         needs_confirmation:
           type: boolean
+        pending_backfill_count:
+          format: int64
+          type: integer
         plan_fingerprint:
           type: string
         scope_is_collection:
@@ -635,8 +635,14 @@ components:
           type: boolean
         delete_dups_from_source_server:
           type: boolean
+        plan_protocol:
+          enum:
+            - explicit-backfill-v1
+          type: string
         prefer:
           type: string
+      required:
+        - plan_protocol
       type: object
     CLIDeduplicatePlanResponse:
       properties:
@@ -10652,7 +10658,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.12.0
+  version: 2.13.0
 openapi: 3.0.3
 paths:
   /api/ping:

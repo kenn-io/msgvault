@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/deletion"
+	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -214,7 +215,7 @@ type Report struct {
 	BySourcePair               map[string]int // "gmail+mbox" -> groups
 	SampleGroups               []DuplicateGroup
 	Groups                     []DuplicateGroup
-	BackfilledCount            int64 // compatibility: -N means N ready; never positive in Scan
+	RFC822IDsReady             int64
 	BackfillCandidates         int64
 	BackfillFailed             int64
 	BackfillPlanDigest         string
@@ -226,10 +227,10 @@ type Report struct {
 // PendingRFC822IDBackfill reports how many planned RFC822 Message-ID values
 // are ready to be derived after confirmation.
 func (r *Report) PendingRFC822IDBackfill() int64 {
-	if r == nil || r.BackfilledCount >= 0 {
+	if r == nil {
 		return 0
 	}
-	return -r.BackfilledCount
+	return r.RFC822IDsReady
 }
 
 // ExecutionSummary summarises the results of dedup execution.
@@ -293,207 +294,215 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		"dry_run", e.config.DryRun,
 	)
 
-	backfillPlan, err := e.store.PlanRFC822IDBackfill(
-		ctx, e.config.AccountSourceIDs,
-	)
+	data, err := e.loadScanData(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("plan RFC822 ID backfill: %w", err)
+		return nil, err
 	}
 
-	totalMessages, err := e.store.CountActiveMessages(
-		e.config.AccountSourceIDs...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("count active messages: %w", err)
+	report := &Report{
+		TotalMessages:      data.totalMessages,
+		BySourcePair:       make(map[string]int),
+		RFC822IDsReady:     data.backfillPlan.Ready,
+		BackfillCandidates: data.backfillPlan.Candidates,
+		BackfillFailed:     data.backfillPlan.Failed,
+		BackfillPlanDigest: data.backfillPlan.Digest(),
+		rfc822Backfill:     data.backfillPlan,
 	}
 
-	storeGroups, err := e.store.FindDuplicatesByRFC822ID(
-		e.config.AccountSourceIDs...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("find duplicates: %w", err)
+	if err := e.appendMessageIDGroups(ctx, report, data); err != nil {
+		return nil, err
+	}
+	data.groups = nil
+	data.messages = nil
+	data.rawMIME = nil
+
+	if e.config.ContentHashFallback {
+		if err := e.appendContentHashGroups(report); err != nil {
+			return nil, err
+		}
 	}
 
-	rfc822IDs := make([]string, len(storeGroups))
-	for i, sg := range storeGroups {
-		rfc822IDs[i] = sg.RFC822MessageID
+	e.finalizeScanReport(report, started)
+	return report, nil
+}
+
+type scanData struct {
+	backfillPlan  store.RFC822IDBackfillPlan
+	totalMessages int64
+	groups        []store.DuplicateGroupKey
+	messages      map[string][]store.DuplicateMessageRow
+	rawMIME       map[int64]duplicateRawMIMEInfo
+}
+
+func (e *Engine) loadScanData(ctx context.Context) (scanData, error) {
+	data := scanData{}
+	var err error
+	data.backfillPlan, err = e.store.PlanRFC822IDBackfill(ctx, e.config.AccountSourceIDs)
+	if err != nil {
+		return scanData{}, fmt.Errorf("plan RFC822 ID backfill: %w", err)
 	}
-	msgsByGroup, err := e.store.GetDuplicateGroupMessagesBatchContext(
+	data.totalMessages, err = e.store.CountActiveMessages(e.config.AccountSourceIDs...)
+	if err != nil {
+		return scanData{}, fmt.Errorf("count active messages: %w", err)
+	}
+	data.groups, err = e.store.FindDuplicatesByRFC822ID(e.config.AccountSourceIDs...)
+	if err != nil {
+		return scanData{}, fmt.Errorf("find duplicates: %w", err)
+	}
+	data.messages, err = e.loadDuplicateGroupMessages(ctx, data.groups)
+	if err != nil {
+		return scanData{}, err
+	}
+	data.rawMIME, err = e.inspectDuplicateRawMIME(rawMessageIDs(data.messages))
+	if err != nil {
+		return scanData{}, fmt.Errorf("fingerprint duplicate raw MIME: %w", err)
+	}
+	return data, nil
+}
+
+func (e *Engine) loadDuplicateGroupMessages(
+	ctx context.Context, groups []store.DuplicateGroupKey,
+) (map[string][]store.DuplicateMessageRow, error) {
+	rfc822IDs := make([]string, len(groups))
+	for i, group := range groups {
+		rfc822IDs[i] = group.RFC822MessageID
+	}
+	messages, err := e.store.GetDuplicateGroupMessagesBatchContext(
 		ctx, rfc822IDs, e.config.AccountSourceIDs...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get duplicate group messages: %w", err)
 	}
+	return messages, nil
+}
 
-	var rawMessageIDs []int64
-	for _, msgs := range msgsByGroup {
-		for _, message := range msgs {
+func rawMessageIDs(messagesByGroup map[string][]store.DuplicateMessageRow) []int64 {
+	var ids []int64
+	for _, messages := range messagesByGroup {
+		for _, message := range messages {
 			if message.HasRawMIME {
-				rawMessageIDs = append(rawMessageIDs, message.ID)
+				ids = append(ids, message.ID)
 			}
 		}
 	}
-	slices.Sort(rawMessageIDs)
-	normalizedHashes, err := e.normalizedRawMIMEHashes(rawMessageIDs)
-	if err != nil {
-		return nil, fmt.Errorf("fingerprint duplicate raw MIME: %w", err)
-	}
+	slices.Sort(ids)
+	return ids
+}
 
-	report := &Report{
-		TotalMessages:      totalMessages,
-		BySourcePair:       make(map[string]int),
-		BackfilledCount:    -backfillPlan.Ready,
-		BackfillCandidates: backfillPlan.Candidates,
-		BackfillFailed:     backfillPlan.Failed,
-		BackfillPlanDigest: backfillPlan.Digest(),
-		rfc822Backfill:     backfillPlan,
-	}
-
-	for _, sg := range storeGroups {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+func (e *Engine) appendMessageIDGroups(
+	ctx context.Context, report *Report, data scanData,
+) error {
+	for _, storeGroup := range data.groups {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		msgs := msgsByGroup[sg.RFC822MessageID]
-		if len(msgs) < 2 {
+		if msgmime.NormalizeMessageID(storeGroup.RFC822MessageID) !=
+			storeGroup.RFC822MessageID {
 			continue
 		}
-
-		group := DuplicateGroup{
-			Key:     sg.RFC822MessageID,
-			KeyType: "message-id",
+		rows := data.messages[storeGroup.RFC822MessageID]
+		if len(rows) < 2 {
+			continue
 		}
-		for _, m := range msgs {
-			matched := false
-			if m.FromEmail != "" {
-				if addrs := e.config.IdentityAddressesBySource[m.SourceID]; addrs != nil {
-					_, matched = addrs[store.NormalizeIdentifierForCompare(m.FromEmail)]
-				}
+		group := DuplicateGroup{Key: storeGroup.RFC822MessageID, KeyType: "message-id"}
+		for _, row := range rows {
+			rawInfo := data.rawMIME[row.ID]
+			if rawInfo.messageIDChecked && rawInfo.rfc822MessageID != storeGroup.RFC822MessageID {
+				continue
 			}
-			group.Messages = append(group.Messages, DuplicateMessage{
-				ID:               m.ID,
-				SourceID:         m.SourceID,
-				SourceType:       m.SourceType,
-				SourceIdentifier: m.SourceIdentifier,
-				SourceMessageID:  m.SourceMessageID,
-				Subject:          m.Subject,
-				SentAt:           m.SentAt,
-				HasRawMIME:       m.HasRawMIME,
-				PayloadBytes:     m.PayloadBytes,
-				AttachmentCount:  m.AttachmentCount,
-				HasAttachments:   m.HasAttachments,
-				LabelCount:       m.LabelCount,
-				ArchivedAt:       m.ArchivedAt,
-				IsFromMe:         m.IsFromMe,
-				HasSentLabel:     m.HasSentLabel,
-				FromEmail:        m.FromEmail,
-				MatchedIdentity:  matched,
-				normalizedHash:   normalizedHashes[m.ID],
-			})
+			group.Messages = append(group.Messages, e.duplicateMessage(row, rawInfo))
 		}
-
+		if len(group.Messages) < 2 {
+			continue
+		}
 		e.selectSurvivor(&group)
 		report.Groups = append(report.Groups, group)
 		report.BySourcePair[sourcePairKey(group.Messages)]++
 	}
-	// Release the batch result map now that every group has been copied
-	// into report.Groups: on a large archive it can hold tens of
-	// thousands of rows, and the content-hash pass below can run long.
-	//nolint:ineffassign,wastedassign // deliberately drops the reference so the GC can reclaim it before the content-hash pass, not a leftover assignment
-	msgsByGroup = nil
+	return nil
+}
 
-	if e.config.ContentHashFallback {
-		// Exclude only losers (messages already selected for pruning) from
-		// the content-hash pass, not survivors. A message missing
-		// Message-ID can legitimately match the content of a survivor that
-		// anchored a Message-ID group; survivors stay eligible so the
-		// second pass can link orphan rows back to that anchor.
-		//
-		// Survivors are tracked separately so we can guarantee a survivor
-		// of a Message-ID group cannot be demoted to a loser by the
-		// content-hash pass (which would silently prune it after labels
-		// from the Message-ID group's losers were already merged in).
-		excludeIDs := make(map[int64]bool, len(report.Groups)*2)
-		messageIDSurvivors := make(map[int64]bool, len(report.Groups))
-		for _, g := range report.Groups {
-			for j, m := range g.Messages {
-				if j == g.Survivor {
-					messageIDSurvivors[m.ID] = true
-					continue
-				}
-				excludeIDs[m.ID] = true
-			}
-		}
-
-		contentHashGroups, skipped, err := e.scanNormalizedHashGroups(excludeIDs)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"scan normalized content hashes: %w", err,
-			)
-		}
-		report.SkippedDecompressionErrors = skipped
-		for _, g := range contentHashGroups {
-			// Spec § Detection: "A content-hash group with two Message-ID
-			// survivors keeps both as winners (one per Message-ID group)."
-			// Count how many Message-ID-pass survivors landed in this group;
-			// if more than one, neither should be demoted — skip entirely.
-			//
-			// Spec § Survivor selection: "When any message in a duplicate
-			// group looks like a sent copy, only sent copies are eligible to
-			// survive." A separate skip handles the case where an MID
-			// survivor and a sent-copy orphan share a content hash — forcing
-			// the (non-sent) MID survivor in over the sent orphan would
-			// silently violate the eligibility filter. Sent-copy detection
-			// excludes the MID survivor itself; if the MID survivor is
-			// already a sent copy, the override only confirms selectSurvivor's
-			// choice, which is harmless.
-			midSurvivorCount := 0
-			hasSentOrphan := false
-			for _, m := range g.Messages {
-				if messageIDSurvivors[m.ID] {
-					midSurvivorCount++
-					continue
-				}
-				if m.IsSentCopy() {
-					hasSentOrphan = true
-				}
-			}
-			if midSurvivorCount > 1 {
-				continue
-			}
-			if midSurvivorCount >= 1 && hasSentOrphan {
-				continue
-			}
-
-			// If this content-hash group contains exactly one Message-ID
-			// survivor that did not win the content-hash survivor selection,
-			// force that survivor to win. Demoting a survivor that has already
-			// absorbed labels from its Message-ID losers would silently destroy
-			// that union when MergeDuplicates soft-deletes the demoted survivor.
-			for j, m := range g.Messages {
-				if j == g.Survivor {
-					continue
-				}
-				if messageIDSurvivors[m.ID] {
-					g.Survivor = j
-					break
-				}
-			}
-			report.Groups = append(report.Groups, g)
-			report.ContentHashGroups++
-			report.BySourcePair[sourcePairKey(g.Messages)]++
+func (e *Engine) duplicateMessage(
+	row store.DuplicateMessageRow, rawInfo duplicateRawMIMEInfo,
+) DuplicateMessage {
+	matched := false
+	if row.FromEmail != "" {
+		if addrs := e.config.IdentityAddressesBySource[row.SourceID]; addrs != nil {
+			_, matched = addrs[store.NormalizeIdentifierForCompare(row.FromEmail)]
 		}
 	}
+	return DuplicateMessage{
+		ID: row.ID, SourceID: row.SourceID, SourceType: row.SourceType,
+		SourceIdentifier: row.SourceIdentifier, SourceMessageID: row.SourceMessageID,
+		Subject: row.Subject, SentAt: row.SentAt, HasRawMIME: row.HasRawMIME,
+		PayloadBytes: row.PayloadBytes, AttachmentCount: row.AttachmentCount,
+		HasAttachments: row.HasAttachments, LabelCount: row.LabelCount,
+		ArchivedAt: row.ArchivedAt, IsFromMe: row.IsFromMe,
+		HasSentLabel: row.HasSentLabel, FromEmail: row.FromEmail,
+		MatchedIdentity: matched, normalizedHash: rawInfo.normalizedHash,
+	}
+}
 
+func (e *Engine) appendContentHashGroups(report *Report) error {
+	excludeIDs := make(map[int64]bool, len(report.Groups)*2)
+	messageIDSurvivors := make(map[int64]bool, len(report.Groups))
+	for _, group := range report.Groups {
+		for i, message := range group.Messages {
+			if i == group.Survivor {
+				messageIDSurvivors[message.ID] = true
+				continue
+			}
+			excludeIDs[message.ID] = true
+		}
+	}
+	groups, skipped, err := e.scanNormalizedHashGroups(excludeIDs)
+	if err != nil {
+		return fmt.Errorf("scan normalized content hashes: %w", err)
+	}
+	report.SkippedDecompressionErrors = skipped
+	for _, group := range groups {
+		if contentHashConflictsWithMessageIDGroup(group, messageIDSurvivors) {
+			continue
+		}
+		preserveMessageIDSurvivor(&group, messageIDSurvivors)
+		report.Groups = append(report.Groups, group)
+		report.ContentHashGroups++
+		report.BySourcePair[sourcePairKey(group.Messages)]++
+	}
+	return nil
+}
+
+func contentHashConflictsWithMessageIDGroup(
+	group DuplicateGroup, messageIDSurvivors map[int64]bool,
+) bool {
+	midSurvivors := 0
+	hasSentOrphan := false
+	for _, message := range group.Messages {
+		if messageIDSurvivors[message.ID] {
+			midSurvivors++
+			continue
+		}
+		hasSentOrphan = hasSentOrphan || message.IsSentCopy()
+	}
+	return midSurvivors > 1 || midSurvivors == 1 && hasSentOrphan
+}
+
+func preserveMessageIDSurvivor(group *DuplicateGroup, messageIDSurvivors map[int64]bool) {
+	for i, message := range group.Messages {
+		if i != group.Survivor && messageIDSurvivors[message.ID] {
+			group.Survivor = i
+			return
+		}
+	}
+}
+
+func (e *Engine) finalizeScanReport(report *Report, started time.Time) {
 	report.DuplicateGroups = len(report.Groups)
-	for _, g := range report.Groups {
-		report.DuplicateMessages += len(g.Messages) - 1
+	for _, group := range report.Groups {
+		report.DuplicateMessages += len(group.Messages) - 1
 	}
-
 	maxSamples := min(10, len(report.Groups))
-	report.SampleGroups = append(
-		[]DuplicateGroup(nil), report.Groups[:maxSamples]...,
-	)
-
+	report.SampleGroups = append([]DuplicateGroup(nil), report.Groups[:maxSamples]...)
 	e.logger.Info("dedup scan done",
 		"groups", report.DuplicateGroups,
 		"messages_to_prune", report.DuplicateMessages,
@@ -504,7 +513,6 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		"skipped_decompression_errors", report.SkippedDecompressionErrors,
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
-	return report, nil
 }
 
 // rawWorkItem carries one compressed raw-MIME blob to a worker.
@@ -760,44 +768,64 @@ func sha256Hex(data []byte) string {
 }
 
 func normalizedRawMIMEHash(raw []byte, compression string) (string, error) {
-	if compression == "zlib" {
-		r, err := zlib.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			return "", fmt.Errorf("open zlib raw MIME: %w", err)
-		}
-		decompressed, readErr := io.ReadAll(r)
-		closeErr := r.Close()
-		if readErr != nil {
-			return "", fmt.Errorf("decompress raw MIME: %w", readErr)
-		}
-		if closeErr != nil {
-			return "", fmt.Errorf("close zlib raw MIME: %w", closeErr)
-		}
-		raw = decompressed
+	raw, err := decodeRawMIME(raw, compression)
+	if err != nil {
+		return "", err
 	}
 	return sha256Hex(normalizeRawMIME(raw)), nil
 }
 
-func (e *Engine) normalizedRawMIMEHashes(
+func decodeRawMIME(raw []byte, compression string) ([]byte, error) {
+	if compression == "zlib" {
+		r, err := zlib.NewReader(bytes.NewReader(raw))
+		if err != nil {
+			return nil, fmt.Errorf("open zlib raw MIME: %w", err)
+		}
+		decompressed, readErr := io.ReadAll(r)
+		closeErr := r.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("decompress raw MIME: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close zlib raw MIME: %w", closeErr)
+		}
+		raw = decompressed
+	}
+	return raw, nil
+}
+
+type duplicateRawMIMEInfo struct {
+	normalizedHash   string
+	rfc822MessageID  string
+	messageIDChecked bool
+}
+
+func (e *Engine) inspectDuplicateRawMIME(
 	messageIDs []int64,
-) (map[int64]string, error) {
-	hashes := make(map[int64]string, len(messageIDs))
+) (map[int64]duplicateRawMIMEInfo, error) {
+	infoByID := make(map[int64]duplicateRawMIMEInfo, len(messageIDs))
 	err := e.store.StreamMessageRaw(
 		messageIDs,
 		func(messageID int64, rawData []byte, compression string) {
-			hash, hashErr := normalizedRawMIMEHash(rawData, compression)
-			if hashErr != nil {
+			raw, decodeErr := decodeRawMIME(rawData, compression)
+			if decodeErr != nil {
 				e.logger.Warn("dedup: raw MIME fingerprint failed",
-					"message_id", messageID, "err", hashErr)
+					"message_id", messageID, "err", decodeErr)
 				return
 			}
-			hashes[messageID] = hash
+			info := duplicateRawMIMEInfo{normalizedHash: sha256Hex(normalizeRawMIME(raw))}
+			parsed, parseErr := msgmime.Parse(raw)
+			if parseErr == nil && parsed.MessageID != "" {
+				info.messageIDChecked = true
+				info.rfc822MessageID = msgmime.NormalizeMessageID(parsed.MessageID)
+			}
+			infoByID[messageID] = info
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
-	return hashes, nil
+	return infoByID, nil
 }
 
 // selectSurvivor picks the best message to keep in a duplicate group.
@@ -871,23 +899,38 @@ func (e *Engine) isBetter(
 		return candidate.HasRawMIME
 	}
 	if usePayloadCompleteness {
-		if candidate.AttachmentCount != current.AttachmentCount {
-			return candidate.AttachmentCount > current.AttachmentCount
-		}
-		if candidate.HasAttachments != current.HasAttachments {
-			return candidate.HasAttachments
-		}
-		if candidate.PayloadBytes != current.PayloadBytes {
-			return candidate.PayloadBytes > current.PayloadBytes
+		if better, decided := payloadCompletenessPreference(candidate, current); decided {
+			return better
 		}
 	}
 	if candidate.LabelCount != current.LabelCount {
 		return candidate.LabelCount > current.LabelCount
 	}
-	if !candidate.ArchivedAt.IsZero() && !current.ArchivedAt.IsZero() {
-		return candidate.ArchivedAt.Before(current.ArchivedAt)
+	if better, decided := archivedAtPreference(candidate, current); decided {
+		return better
 	}
 	return candidate.ID < current.ID
+}
+
+func payloadCompletenessPreference(candidate, current DuplicateMessage) (bool, bool) {
+	if candidate.AttachmentCount != current.AttachmentCount {
+		return candidate.AttachmentCount > current.AttachmentCount, true
+	}
+	if candidate.HasAttachments != current.HasAttachments {
+		return candidate.HasAttachments, true
+	}
+	if candidate.PayloadBytes != current.PayloadBytes {
+		return candidate.PayloadBytes > current.PayloadBytes, true
+	}
+	return false, false
+}
+
+func archivedAtPreference(candidate, current DuplicateMessage) (bool, bool) {
+	if candidate.ArchivedAt.IsZero() || current.ArchivedAt.IsZero() ||
+		candidate.ArchivedAt.Equal(current.ArchivedAt) {
+		return false, false
+	}
+	return candidate.ArchivedAt.Before(current.ArchivedAt), true
 }
 
 func hasEquivalentContent(left, right DuplicateMessage) bool {
@@ -1062,58 +1105,9 @@ func (e *Engine) Execute(
 		"stage_remote_deletion", e.config.DeleteDupsFromSourceServer,
 	)
 
-	backfilled, err := e.store.ApplyRFC822IDBackfill(
-		ctx,
-		e.config.AccountSourceIDs,
-		report.rfc822Backfill,
-		func(done, total int64) {
-			e.logger.Info("RFC822 Message-ID derivation progress",
-				"done", done, "total", total)
-		},
-	)
+	report, err := e.applyConfirmedRFC822Backfill(ctx, report, summary)
 	if err != nil {
-		return summary, fmt.Errorf("apply RFC822 ID backfill plan: %w", err)
-	}
-	summary.RFC822IDsBackfilled = backfilled
-
-	// The rescan and the stale-plan check it feeds exist to re-derive the
-	// actionable plan after ApplyRFC822IDBackfill committed new
-	// rfc822_message_id values. That only happens when the confirmed plan
-	// carried derivation work: with no ready derivations the backfill committed
-	// nothing, the confirmed report still describes the database exactly,
-	// and a second full Scan is pure overhead. Keep the check whenever the
-	// plan had ready work — including when it all failed validation and
-	// committed nothing, so a plan that no longer matches the database still
-	// stops the merge.
-	if report.rfc822Backfill.Ready > 0 {
-		refreshed, err := e.Scan(ctx)
-		if err != nil {
-			return summary, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)
-		}
-		confirmedPlan, err := e.canonicalActionablePlan(ctx, report)
-		if err != nil {
-			return summary, fmt.Errorf("canonicalize confirmed deduplication plan: %w", err)
-		}
-		refreshedPlan, err := e.canonicalActionablePlan(ctx, refreshed)
-		if err != nil {
-			return summary, fmt.Errorf("canonicalize refreshed deduplication plan: %w", err)
-		}
-		if !actionablePlansEqual(confirmedPlan, refreshedPlan) {
-			derivationNoun, derivationVerb := "derivations", "were"
-			if backfilled == 1 {
-				derivationNoun, derivationVerb = "derivation", "was"
-			}
-			return summary, fmt.Errorf(
-				"%w: %d RFC822 Message-ID %s %s committed; "+
-					"no duplicate messages were hidden and no dedup batch was created; "+
-					"rerun deduplicate to review the updated plan",
-				ErrPlanChangedAfterRFC822Backfill,
-				backfilled,
-				derivationNoun,
-				derivationVerb,
-			)
-		}
-		report = refreshed
+		return summary, err
 	}
 
 	remoteByKey := make(map[remoteKey][]string)
@@ -1124,34 +1118,8 @@ func (e *Engine) Execute(
 		}
 	}
 
-	for i, group := range report.Groups {
-		if ctx.Err() != nil {
-			return summary, ctx.Err()
-		}
-
-		survivor := group.Messages[group.Survivor]
-		survivorID := survivor.ID
-		var dupIDs []int64
-		for j, m := range group.Messages {
-			if j == group.Survivor {
-				continue
-			}
-			dupIDs = append(dupIDs, m.ID)
-		}
-
-		mergeResult, err := e.store.MergeDuplicates(
-			survivorID, dupIDs, batchID,
-		)
-		if err != nil {
-			return summary, fmt.Errorf(
-				"merge group %d (%s): %w", i, group.Key, err,
-			)
-		}
-
-		summary.GroupsMerged++
-		summary.MessagesRemoved += len(dupIDs)
-		summary.LabelsTransferred += mergeResult.LabelsTransferred
-		summary.RawMIMEBackfilled += mergeResult.RawMIMEBackfilled
+	if err := e.mergeGroups(ctx, report, batchID, summary); err != nil {
+		return summary, err
 	}
 
 	if e.config.DeleteDupsFromSourceServer && len(remoteByKey) > 0 {
@@ -1172,6 +1140,86 @@ func (e *Engine) Execute(
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 	return summary, nil
+}
+
+func (e *Engine) applyConfirmedRFC822Backfill(
+	ctx context.Context, report *Report, summary *ExecutionSummary,
+) (*Report, error) {
+	backfilled, err := e.store.ApplyRFC822IDBackfill(
+		ctx,
+		e.config.AccountSourceIDs,
+		report.rfc822Backfill,
+		func(done, total int64) {
+			e.logger.Info("RFC822 Message-ID derivation progress",
+				"done", done, "total", total)
+		},
+	)
+	if err != nil {
+		return report, fmt.Errorf("apply RFC822 ID backfill plan: %w", err)
+	}
+	summary.RFC822IDsBackfilled = backfilled
+	if report.rfc822Backfill.Ready == 0 {
+		return report, nil
+	}
+
+	refreshed, err := e.Scan(ctx)
+	if err != nil {
+		return report, fmt.Errorf("rescan after RFC822 ID backfill: %w", err)
+	}
+	confirmedPlan, err := e.canonicalActionablePlan(ctx, report)
+	if err != nil {
+		return report, fmt.Errorf("canonicalize confirmed deduplication plan: %w", err)
+	}
+	refreshedPlan, err := e.canonicalActionablePlan(ctx, refreshed)
+	if err != nil {
+		return report, fmt.Errorf("canonicalize refreshed deduplication plan: %w", err)
+	}
+	if !actionablePlansEqual(confirmedPlan, refreshedPlan) {
+		return report, planChangedAfterBackfillError(backfilled)
+	}
+	return refreshed, nil
+}
+
+func planChangedAfterBackfillError(backfilled int64) error {
+	derivationNoun, derivationVerb := "derivations", "were"
+	if backfilled == 1 {
+		derivationNoun, derivationVerb = "derivation", "was"
+	}
+	return fmt.Errorf(
+		"%w: %d RFC822 Message-ID %s %s committed; "+
+			"no duplicate messages were hidden and no dedup batch was created; "+
+			"rerun deduplicate to review the updated plan",
+		ErrPlanChangedAfterRFC822Backfill,
+		backfilled,
+		derivationNoun,
+		derivationVerb,
+	)
+}
+
+func (e *Engine) mergeGroups(
+	ctx context.Context, report *Report, batchID string, summary *ExecutionSummary,
+) error {
+	for i, group := range report.Groups {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		survivorID := group.Messages[group.Survivor].ID
+		duplicateIDs := make([]int64, 0, len(group.Messages)-1)
+		for j, message := range group.Messages {
+			if j != group.Survivor {
+				duplicateIDs = append(duplicateIDs, message.ID)
+			}
+		}
+		result, err := e.store.MergeDuplicates(survivorID, duplicateIDs, batchID)
+		if err != nil {
+			return fmt.Errorf("merge group %d (%s): %w", i, group.Key, err)
+		}
+		summary.GroupsMerged++
+		summary.MessagesRemoved += len(duplicateIDs)
+		summary.LabelsTransferred += result.LabelsTransferred
+		summary.RawMIMEBackfilled += result.RawMIMEBackfilled
+	}
+	return nil
 }
 
 func (e *Engine) stageDeletionManifests(
@@ -1382,112 +1430,124 @@ func (e *Engine) Undo(batchID string) (int64, []string, error) {
 func (e *Engine) FormatReport(r *Report) string {
 	var sb strings.Builder
 	sb.WriteString("\n=== Deduplication Report ===\n\n")
-
-	wroteBackfillStatus := false
-	if r.BackfillCandidates > 0 {
-		verb := "were"
-		if r.BackfillCandidates == 1 {
-			verb = "was"
-		}
-		fmt.Fprintf(&sb,
-			"%d message%s with missing RFC822 Message-ID %s inspected.\n",
-			r.BackfillCandidates, pluralSuffix(r.BackfillCandidates), verb)
-		wroteBackfillStatus = true
-	}
-	if pending := r.PendingRFC822IDBackfill(); pending > 0 {
-		verb := "are"
-		if pending == 1 {
-			verb = "is"
-		}
-		fmt.Fprintf(&sb,
-			"%d RFC822 Message-ID value%s %s ready to be derived from stored MIME after confirmation.\n",
-			pending, pluralSuffix(pending), verb)
-		wroteBackfillStatus = true
-	}
-	if r.BackfillFailed > 0 {
-		fmt.Fprintf(&sb,
-			"%d message%s could not provide a usable Message-ID and will be skipped.\n",
-			r.BackfillFailed, pluralSuffix(r.BackfillFailed))
-		wroteBackfillStatus = true
-	}
-	if wroteBackfillStatus {
-		sb.WriteString("\n")
-	}
-
+	formatBackfillStatus(&sb, r)
 	if r.DuplicateGroups == 0 {
 		sb.WriteString("No duplicates found.\n")
 		return sb.String()
 	}
-
-	fmt.Fprintf(&sb, "Duplicate groups found: %d\n", r.DuplicateGroups)
-	fmt.Fprintf(&sb, "Messages to prune:      %d\n", r.DuplicateMessages)
-	if r.ContentHashGroups > 0 {
-		fmt.Fprintf(&sb, "Content-hash groups:   %d\n", r.ContentHashGroups)
-	}
-	if r.SkippedDecompressionErrors > 0 {
-		fmt.Fprintf(&sb,
-			"Skipped (decompression error): %d "+
-				"(see log for per-message details)\n",
-			r.SkippedDecompressionErrors)
-	}
-
-	if len(r.BySourcePair) > 0 {
-		sb.WriteString("\nBreakdown by source pair:\n")
-		pairs := make([]string, 0, len(r.BySourcePair))
-		for k := range r.BySourcePair {
-			pairs = append(pairs, k)
-		}
-		sort.Strings(pairs)
-		for _, pair := range pairs {
-			fmt.Fprintf(&sb, "  %-20s %d groups\n",
-				pair, r.BySourcePair[pair])
-		}
-	}
-
-	sentGroups := 0
-	for _, g := range r.Groups {
-		for _, m := range g.Messages {
-			if m.IsSentCopy() {
-				sentGroups++
-				break
-			}
-		}
-	}
-	if sentGroups > 0 {
+	formatDuplicateSummary(&sb, r)
+	formatSourcePairBreakdown(&sb, r.BySourcePair)
+	if sentGroups := countSentGroups(r.Groups); sentGroups > 0 {
 		fmt.Fprintf(&sb,
 			"\nSent-copy groups detected: %d "+
 				"(survivor forced to a sent copy)\n",
 			sentGroups)
 	}
+	formatSampleGroups(&sb, r.SampleGroups)
+	return sb.String()
+}
 
-	if len(r.SampleGroups) > 0 {
-		sb.WriteString("\nSample duplicate groups:\n")
-		for i, g := range r.SampleGroups {
-			label := g.Key
-			if g.KeyType != "" && g.KeyType != "message-id" {
-				label = fmt.Sprintf("%s (%s)", g.Key, g.KeyType)
-			}
-			fmt.Fprintf(&sb, "\n  Group %d: %s\n", i+1, label)
-			for j, m := range g.Messages {
-				marker := "  "
-				if j == g.Survivor {
-					marker = "* "
-				}
-				sent := ""
-				if m.IsSentCopy() {
-					sent = " [sent]"
-				}
-				fmt.Fprintf(&sb,
-					"    %s[%s:%s]%s %s "+
-						"(labels: %d, raw: %v)\n",
-					marker, m.SourceType, m.SourceIdentifier,
-					sent, m.Subject, m.LabelCount, m.HasRawMIME,
-				)
+func formatBackfillStatus(sb *strings.Builder, report *Report) {
+	wroteStatus := false
+	if report.BackfillCandidates > 0 {
+		verb := "were"
+		if report.BackfillCandidates == 1 {
+			verb = "was"
+		}
+		fmt.Fprintf(sb,
+			"%d message%s with missing RFC822 Message-ID %s inspected.\n",
+			report.BackfillCandidates, pluralSuffix(report.BackfillCandidates), verb)
+		wroteStatus = true
+	}
+	if pending := report.PendingRFC822IDBackfill(); pending > 0 {
+		verb := "are"
+		if pending == 1 {
+			verb = "is"
+		}
+		fmt.Fprintf(sb,
+			"%d RFC822 Message-ID value%s %s ready to be derived from stored MIME after confirmation.\n",
+			pending, pluralSuffix(pending), verb)
+		wroteStatus = true
+	}
+	if report.BackfillFailed > 0 {
+		fmt.Fprintf(sb,
+			"%d message%s could not provide a usable Message-ID and will be skipped.\n",
+			report.BackfillFailed, pluralSuffix(report.BackfillFailed))
+		wroteStatus = true
+	}
+	if wroteStatus {
+		fmt.Fprintln(sb)
+	}
+}
+
+func formatDuplicateSummary(sb *strings.Builder, report *Report) {
+	fmt.Fprintf(sb, "Duplicate groups found: %d\n", report.DuplicateGroups)
+	fmt.Fprintf(sb, "Messages to prune:      %d\n", report.DuplicateMessages)
+	if report.ContentHashGroups > 0 {
+		fmt.Fprintf(sb, "Content-hash groups:   %d\n", report.ContentHashGroups)
+	}
+	if report.SkippedDecompressionErrors > 0 {
+		fmt.Fprintf(sb,
+			"Skipped (decompression error): %d "+
+				"(see log for per-message details)\n",
+			report.SkippedDecompressionErrors)
+	}
+}
+
+func formatSourcePairBreakdown(sb *strings.Builder, bySourcePair map[string]int) {
+	if len(bySourcePair) == 0 {
+		return
+	}
+	sb.WriteString("\nBreakdown by source pair:\n")
+	pairs := make([]string, 0, len(bySourcePair))
+	for pair := range bySourcePair {
+		pairs = append(pairs, pair)
+	}
+	sort.Strings(pairs)
+	for _, pair := range pairs {
+		fmt.Fprintf(sb, "  %-20s %d groups\n", pair, bySourcePair[pair])
+	}
+}
+
+func countSentGroups(groups []DuplicateGroup) int {
+	count := 0
+	for _, group := range groups {
+		for _, message := range group.Messages {
+			if message.IsSentCopy() {
+				count++
+				break
 			}
 		}
 	}
+	return count
+}
 
-	return sb.String()
+func formatSampleGroups(sb *strings.Builder, groups []DuplicateGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	sb.WriteString("\nSample duplicate groups:\n")
+	for i, group := range groups {
+		label := group.Key
+		if group.KeyType != "" && group.KeyType != "message-id" {
+			label = fmt.Sprintf("%s (%s)", group.Key, group.KeyType)
+		}
+		fmt.Fprintf(sb, "\n  Group %d: %s\n", i+1, label)
+		for j, message := range group.Messages {
+			marker := "  "
+			if j == group.Survivor {
+				marker = "* "
+			}
+			sent := ""
+			if message.IsSentCopy() {
+				sent = " [sent]"
+			}
+			fmt.Fprintf(sb,
+				"    %s[%s:%s]%s %s (labels: %d, raw: %v)\n",
+				marker, message.SourceType, message.SourceIdentifier,
+				sent, message.Subject, message.LabelCount, message.HasRawMIME)
+		}
+	}
 }
 
 func pluralSuffix(count int64) string {
@@ -1502,123 +1562,113 @@ func (e *Engine) FormatMethodology() string {
 	var sb strings.Builder
 	sb.WriteString("\n=== Deduplication Methodology ===\n\n")
 
+	e.formatScopeMethodology(&sb)
+
+	e.formatDetectionMethodology(&sb)
+	e.formatSurvivorMethodology(&sb)
+
+	e.formatSentMethodology(&sb)
+	formatMergeMethodology(&sb)
+
+	return sb.String()
+}
+
+func (e *Engine) formatScopeMethodology(sb *strings.Builder) {
 	sb.WriteString("Scope:\n")
 	switch {
 	case e.config.ScopeIsCollection && len(e.config.AccountSourceIDs) > 1:
-		fmt.Fprintf(&sb,
+		fmt.Fprintf(sb,
 			"  Scoped to collection: %s (%d account(s)). "+
 				"Cross-account dedup\n"+
 				"  is enabled within this collection.\n",
 			e.config.Account, len(e.config.AccountSourceIDs))
 	case e.config.ScopeIsCollection:
-		// Single-member collection — wording matches the
-		// account-scope branch since no cross-account merging can
-		// happen with one source.
-		fmt.Fprintf(&sb,
+		fmt.Fprintf(sb,
 			"  Scoped to collection: %s (1 account). Source "+
 				"boundaries are\n  never crossed (collection has "+
 				"only one member).\n",
 			e.config.Account)
 	case e.config.Account != "":
-		fmt.Fprintf(&sb,
+		fmt.Fprintf(sb,
 			"  Scoped to account: %s. Source boundaries are "+
 				"never crossed.\n",
 			e.config.Account)
 	case len(e.config.AccountSourceIDs) > 0:
-		fmt.Fprintf(&sb,
+		fmt.Fprintf(sb,
 			"  Scoped to %d source(s). Source boundaries are "+
 				"never crossed.\n",
 			len(e.config.AccountSourceIDs))
 	default:
 		sb.WriteString(
-			"  No scope specified — only messages that appear " +
-				"twice in the\n" +
-				"  SAME account are eligible. To compare across " +
-				"accounts, group\n" +
-				"  them in a collection and rerun with " +
-				"--collection <name>.\n",
+			"  No scope specified — only messages that appear twice in the\n" +
+				"  SAME account are eligible. To compare across accounts, group\n" +
+				"  them in a collection and rerun with --collection <name>.\n",
 		)
 	}
 	sb.WriteString("\n")
+}
 
+func (e *Engine) formatDetectionMethodology(sb *strings.Builder) {
 	sb.WriteString("Detection:\n")
-	sb.WriteString("  Message-ID is primary; content-hash is a " +
-		"supplementary fallback.\n")
-	sb.WriteString("  Messages are grouped by the RFC822 Message-ID " +
-		"header.\n")
-	sb.WriteString("  Derivable Message-IDs missing from stored metadata are planned " +
-		"during the scan\n")
-	sb.WriteString("  and applied only after confirmation; dedup rescans and stops if " +
-		"the plan changes.")
-	if e.config.ContentHashFallback {
-		sb.WriteString(" Every remaining message with stored MIME is then compared via\n")
-		sb.WriteString("  a normalized raw-MIME hash that strips transport " +
-			"headers such as\n")
-		sb.WriteString("  Received, Delivered-To, X-Gmail-Labels, and " +
-			"DKIM/ARC traces.\n")
-		sb.WriteString("  The hash is byte-sensitive below the header " +
-			"boundary, so two\n")
-		sb.WriteString("  messages whose bodies differ only in line-ending " +
-			"style (CRLF vs LF)\n")
-		sb.WriteString("  will not match via content-hash.\n\n")
-	} else {
+	sb.WriteString("  Message-ID is primary; content-hash is a supplementary fallback.\n")
+	sb.WriteString("  Messages are grouped by the RFC822 Message-ID header.\n")
+	sb.WriteString("  Derivable Message-IDs missing from stored metadata are planned during the scan\n")
+	sb.WriteString("  and applied only after confirmation; dedup rescans and stops if the plan changes.")
+	if !e.config.ContentHashFallback {
 		sb.WriteString(" Messages still without an ID are ignored.\n\n")
+		return
 	}
+	sb.WriteString(" Every remaining message with stored MIME is then compared via\n")
+	sb.WriteString("  a normalized raw-MIME hash that strips transport headers such as\n")
+	sb.WriteString("  Received, Delivered-To, X-Gmail-Labels, and DKIM/ARC traces.\n")
+	sb.WriteString("  The hash is byte-sensitive below the header boundary, so two\n")
+	sb.WriteString("  messages whose bodies differ only in line-ending style (CRLF vs LF)\n")
+	sb.WriteString("  will not match via content-hash.\n\n")
+}
 
+func (e *Engine) formatSurvivorMethodology(sb *strings.Builder) {
 	sb.WriteString("Survivor selection:\n")
-	for i, st := range e.config.SourcePreference {
-		fmt.Fprintf(&sb, "  %d. %s\n", i+1, st)
+	for i, sourceType := range e.config.SourcePreference {
+		fmt.Fprintf(sb, "  %d. %s\n", i+1, sourceType)
 	}
 	sb.WriteString("  Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, " +
 		"more attachments > attachment signal > larger payload > more labels > " +
 		"earlier archived_at > lower id.\n\n")
+}
 
+func (e *Engine) formatSentMethodology(sb *strings.Builder) {
 	sb.WriteString("Sent messages:\n")
 	if e.config.ScopeIsCollection && len(e.config.AccountSourceIDs) > 1 {
 		sb.WriteString(
-			"  Collection mode INTENTIONALLY merges messages " +
-				"across the accounts in this\n" +
-				"  collection. A message alice sent to bob will " +
-				"have one copy in alice's\n" +
-				"  Sent folder and one in bob's Inbox; if both " +
-				"accounts are members of\n" +
-				"  this collection, the loser will be hidden " +
-				"locally (reversible via\n" +
+			"  Collection mode INTENTIONALLY merges messages across the accounts in this\n" +
+				"  collection. A message alice sent to bob will have one copy in alice's\n" +
+				"  Sent folder and one in bob's Inbox; if both accounts are members of\n" +
+				"  this collection, the loser will be hidden locally (reversible via\n" +
 				"  --undo). Remote deletion requires matching normalized MIME " +
 				"in the same source and will not\n" +
-				"  touch a different account's mailbox. Only " +
-				"add accounts to a collection\n" +
+				"  touch a different account's mailbox. Only add accounts to a collection\n" +
 				"  when you actually want their copies merged.\n\n",
 		)
-	} else {
-		sb.WriteString(
-			"  Dedup NEVER merges messages across different " +
-				"accounts. A message that\n" +
-				"  alice sent to bob is two distinct mailbox " +
-				"copies — one in alice's\n" +
-				"  Sent folder and one in bob's Inbox. Both are " +
-				"preserved independently\n" +
-				"  because deleting either would alter the other " +
-				"user's archive.\n\n",
-		)
+		return
 	}
+	sb.WriteString(
+		"  Dedup NEVER merges messages across different accounts. A message that\n" +
+			"  alice sent to bob is two distinct mailbox copies — one in alice's\n" +
+			"  Sent folder and one in bob's Inbox. Both are preserved independently\n" +
+			"  because deleting either would alter the other user's archive.\n\n",
+	)
+}
 
+func formatMergeMethodology(sb *strings.Builder) {
 	sb.WriteString("Merge behaviour:\n")
-	sb.WriteString("  - Labels from every copy are unioned onto " +
-		"the survivor.\n")
-	sb.WriteString("  - Raw MIME is backfilled onto the survivor " +
-		"if it lacks it.\n")
-	sb.WriteString("  - Only raw MIME is backfilled; parsed " +
-		"message_bodies are not.\n")
+	sb.WriteString("  - Labels from every copy are unioned onto the survivor.\n")
+	sb.WriteString("  - Raw MIME is backfilled onto the survivor if it lacks it.\n")
+	sb.WriteString("  - Only raw MIME is backfilled; parsed message_bodies are not.\n")
 	sb.WriteString("    If a survivor is missing text for display, run\n")
-	sb.WriteString("    'msgvault repair-encoding' or " +
-		"'msgvault build-cache --full-rebuild'.\n")
+	sb.WriteString("    'msgvault repair-encoding' or 'msgvault build-cache --full-rebuild'.\n")
 	sb.WriteString("  - Pruned duplicates are hidden in the msgvault " +
 		"database (reversible via --undo).\n")
-	sb.WriteString("  - Remote mailboxes (Gmail, IMAP) are NEVER " +
-		"modified by default.\n")
-
-	return sb.String()
+	sb.WriteString("  - Remote mailboxes (Gmail, IMAP) are NEVER modified by default.\n")
 }
 
 func sourcePairKey(msgs []DuplicateMessage) string {

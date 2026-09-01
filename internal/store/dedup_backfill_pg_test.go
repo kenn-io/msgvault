@@ -319,7 +319,7 @@ func TestStore_ApplyRFC822IDBackfillSQLiteReservesWriterBeforeValidation(t *test
 
 	select {
 	case result := <-resultCh:
-		require.NoError(result.err)
+		require.ErrorIs(result.err, ErrRFC822IDBackfillPlanChanged)
 		assert.Equal(int64(0), result.updated)
 	case <-applyCtx.Done():
 		require.NoError(applyCtx.Err(), "Apply did not finish after connection A committed")
@@ -395,7 +395,7 @@ func TestStore_ApplyRFC822IDBackfillPostgresLocksAscendingAndRollsBackDrift(t *t
 
 	select {
 	case result := <-resultCh:
-		require.NoError(result.err)
+		require.ErrorIs(result.err, ErrRFC822IDBackfillPlanChanged)
 		assert.Equal(int64(0), result.updated)
 	case <-applyCtx.Done():
 		require.NoError(applyCtx.Err(), "Apply did not finish after connection A committed")
