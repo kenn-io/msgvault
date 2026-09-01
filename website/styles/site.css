@@ -227,7 +227,7 @@ kbd {
   text-decoration: none;
 }
 
-.wordmark svg {
+.wordmark img {
   flex: 0 0 auto;
 }
 
@@ -269,7 +269,7 @@ main {
   line-height: 1;
 }
 
-.hero-brand svg {
+.hero-brand img {
   width: clamp(2.6rem, 6vw, 4.25rem);
   height: auto;
   flex: 0 0 auto;
