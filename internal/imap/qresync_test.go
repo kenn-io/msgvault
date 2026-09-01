@@ -137,9 +137,13 @@ func serveQresyncTestConn(
 			if selectModSeq == 0 {
 				selectModSeq = cfg.highestModSeq
 			}
+			exists := uint32(len(cfg.searchUIDs))
+			if cfg.selectExists != nil {
+				exists = *cfg.selectExists
+			}
 			_, _ = fmt.Fprintf(conn,
 				"* FLAGS (\\Seen)\r\n* %d EXISTS\r\n* OK [UIDVALIDITY %d]\r\n* OK [UIDNEXT %d]\r\n* OK [HIGHESTMODSEQ %d]\r\n",
-				len(cfg.searchUIDs), cfg.uidValidity, cfg.uidNext, selectModSeq)
+				exists, cfg.uidValidity, cfg.uidNext, selectModSeq)
 			_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID FETCH"):
 			// Only a CHANGEDSINCE fetch is entitled to answer with a subset:
@@ -277,12 +281,16 @@ func joinedCommands(commands []string) string {
 
 func TestListMessagesQresyncUsesHighestModSeqAndCollectsDelta(t *testing.T) {
 	assert := assert.New(t)
+	// Two of the three messages are expunged by this run, so the mailbox holds
+	// one. A server cannot report a message gone and still count it.
+	postExpungeExists := uint32(1)
 	addr, server := startQresyncTestServer(t, qresyncServerConfig{
 		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
 		uidValidity:   77,
 		uidNext:       4,
 		highestModSeq: 20,
 		searchUIDs:    []imapv2.UID{1, 2, 3},
+		selectExists:  &postExpungeExists,
 		fetchChanged:  []imapv2.UID{2},
 		fetchVanished: []imapv2.UID{1, 3},
 	})
@@ -833,4 +841,138 @@ func TestLabelMapOmittedUIDSuppressesAuthoritativeSnapshot(t *testing.T) {
 		"an incomplete label map must not publish a mailbox topology")
 	assert.Empty(client.ObservedFolderStates(),
 		"nor the folder states derived from it")
+}
+
+// TestQresyncOmittedNewUIDFallsBackToFullEnumeration covers the QRESYNC half
+// of reading a server's silence as fact.
+//
+// A message that arrived since the last run has a UID at or above the previous
+// UIDNEXT, so its mod-sequence is above the one this fetch asks about and the
+// server is obliged to report it. When it does not, nothing downstream can
+// tell: the UID never reaches KnownUIDs, it is never listed or fetched, no
+// error is recorded, and HIGHESTMODSEQ still advances past it, so no later run
+// has a reason to ask about it again.
+//
+// A UID SEARCH is independent of the FETCH that misbehaved. Here the mailbox
+// reports three messages while the response accounts for two, so the search
+// runs, finds UID 3 above the high water mark and unaccounted for, and the run
+// abandons QRESYNC for a full enumeration rather than saving a cursor past a
+// message it never saw.
+func TestQresyncOmittedNewUIDFallsBackToFullEnumeration(t *testing.T) {
+	assert := assert.New(t)
+	mailboxExists := uint32(3)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       4,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3},
+		selectExists:  &mailboxExists,
+		// UID 3 arrived since the last run and the server leaves it out.
+		fetchChanged: []imapv2.UID{},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity:   77,
+			UIDNext:       3,
+			HighestModSeq: 10,
+			KnownUIDs:     []uint32{1, 2},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	commands := joinedCommands(server.commandsFor(1))
+	assert.Contains(commands, "CHANGEDSINCE 10 VANISHED",
+		"the run must try QRESYNC first")
+	assert.Contains(commands, "UID SEARCH UID 3:*",
+		"a mailbox short of its message count must be checked independently")
+
+	// The fallback enumerates the mailbox, so the message the CHANGEDSINCE
+	// response omitted is listed after all. The cursor does advance here, and
+	// that is correct: this run really did read the whole mailbox.
+	assert.Contains(listed, "INBOX|3",
+		"the message the response omitted must be recovered by the fallback")
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(t, deltas, 1)
+	assert.Contains(deltas[0].State.KnownUIDs, uint32(3),
+		"and must reach the saved baseline")
+}
+
+// TestQresyncOmittedNewUIDAfterExpungeFallsBack pins that a mailbox losing
+// messages and gaining one in the same cycle is still checked. The vanished
+// UIDs are already out of knownUIDs by the time coverage is verified, so an
+// expunge cannot offset an addition and hide it.
+func TestQresyncOmittedNewUIDAfterExpungeFallsBack(t *testing.T) {
+	assert := assert.New(t)
+	// Started with 1 and 2. UID 1 is expunged, UID 3 arrives -> 2 messages.
+	mailboxExists := uint32(2)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       4,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{2, 3},
+		selectExists:  &mailboxExists,
+		fetchVanished: []imapv2.UID{1},
+		// UID 3 arrived since the last run and the server leaves it out.
+		fetchChanged: []imapv2.UID{},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 3, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	commands := joinedCommands(server.commandsFor(1))
+	assert.Contains(commands, "UID SEARCH UID 3:*",
+		"an expunge in the same cycle must not excuse the check")
+	assert.Contains(listed, "INBOX|3",
+		"the omitted message must be recovered by the fallback")
+}
+
+// TestQresyncStaleBaselineDoesNotMaskOmittedNewUID is why the check looks at
+// UIDNEXT and not at the message count.
+//
+// KnownUIDs is read back from stored memberships, so it drifts from the server
+// in both directions. Here it drifts long: three messages left the mailbox
+// without the server reporting VANISHED, so the baseline holds four UIDs while
+// the mailbox reports two. A count comparison reads that as "we already know
+// about more than exist" and asks nothing further, which is precisely when a
+// newly arrived UID the server omitted would be lost.
+//
+// UIDNEXT does not drift. It is the server's own statement that something was
+// appended, and it is what decides whether to look.
+func TestQresyncStaleBaselineDoesNotMaskOmittedNewUID(t *testing.T) {
+	assert := assert.New(t)
+	// UIDs 1-3 are gone but the server never said VANISHED. UID 5 is new and
+	// is left out of the response. The mailbox reports 2 messages.
+	mailboxExists := uint32(2)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       6,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{4, 5},
+		selectExists:  &mailboxExists,
+		fetchVanished: []imapv2.UID{},
+		fetchChanged:  []imapv2.UID{},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3, 4},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	commands := joinedCommands(server.commandsFor(1))
+	assert.Contains(commands, "UID SEARCH UID 5:*",
+		"a baseline larger than the mailbox must not skip the check")
+	assert.Contains(listed, "INBOX|5",
+		"the omitted message must be recovered by the fallback")
 }
