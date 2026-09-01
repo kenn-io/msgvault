@@ -237,10 +237,10 @@ func ImportEMLDir(
 				}
 			}
 		}
-		summary.MailboxesImported++
 		if ctx.Err() != nil {
 			break
 		}
+		summary.MailboxesImported++
 	}
 
 	summary.Duration = time.Since(started)

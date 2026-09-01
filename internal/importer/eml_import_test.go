@@ -107,6 +107,8 @@ func TestImportEMLDirReturnsCancellation(t *testing.T) {
 
 	assert.NotNil(t, summary, "cancellation should retain progress for reporting")
 	require.ErrorIs(err, context.Canceled)
+	assert.Zero(t, summary.MailboxesImported,
+		"an interrupted mailbox must not count as imported")
 }
 
 func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {

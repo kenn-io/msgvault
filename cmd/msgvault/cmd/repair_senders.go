@@ -130,8 +130,20 @@ func scanAndPlanSenderRepairs(
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+			if candidate.DecodeError != nil {
+				logger.Warn("cannot decode archived MIME for sender repair",
+					"error", candidate.DecodeError)
+				plan.unresolved++
+				continue
+			}
 			parsed, _ := mime.ParseWithRecovery(candidate.RawMIME, "")
 			if parsed == nil || len(parsed.From) == 0 || parsed.From[0].Email == "" {
+				plan.unresolved++
+				continue
+			}
+			if err := store.ValidateRepairSender(parsed.From[0]); err != nil {
+				logger.Warn("recovered sender is not an installable address",
+					"message_id", candidate.MessageID, "error", err)
 				plan.unresolved++
 				continue
 			}

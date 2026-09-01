@@ -68,10 +68,13 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 		return messageID
 	}
 	repairable := insert("repairable", store.MessageTypeEmail,
-		[]byte("From: Electrolux <noreply@electrolux.com >\r\n"+
+		[]byte("From: Fridgeco <noreply@fridgeco.example >\r\n"+
 			"Subject: Repair me\r\n\r\nBody\r\n"))
 	headerless := insert("headerless", store.MessageTypeEmail,
 		[]byte("Subject: No sender\r\n\r\nBody\r\n"))
+	uninstallable := insert("uninstallable", store.MessageTypeEmail,
+		[]byte("From: Weird <x..y@example.test >\r\n"+
+			"Subject: Recovered but invalid\r\n\r\nBody\r\n"))
 	chat := insert("chat", store.MessageTypeGoogleChat,
 		[]byte("From: chat@example.test\r\n\r\nBody\r\n"))
 	require.NoError(st.Close(), "close seed store")
@@ -81,9 +84,9 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	dryRunCmd.SetContext(t.Context())
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairSendersLocal(dryRunCmd, false))
-	assert.Contains(dryRunOut.String(), "Candidates: 2")
+	assert.Contains(dryRunOut.String(), "Candidates: 3")
 	assert.Contains(dryRunOut.String(), "Repairable: 1")
-	assert.Contains(dryRunOut.String(), "Unresolved: 1")
+	assert.Contains(dryRunOut.String(), "Unresolved: 2")
 	assert.Contains(dryRunOut.String(), "Dry run: no rows were modified")
 	assert.False(readRepairSenderID(t, repairable).Valid,
 		"dry run must not set sender_id")
@@ -93,14 +96,16 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	applyCmd.SetContext(t.Context())
 	applyCmd.SetOut(&applyOut)
 	require.NoError(runRepairSendersLocal(applyCmd, true))
-	assert.Contains(applyOut.String(), "Candidates: 2")
+	assert.Contains(applyOut.String(), "Candidates: 3")
 	assert.Contains(applyOut.String(), "Repairable: 1")
-	assert.Contains(applyOut.String(), "Unresolved: 1")
+	assert.Contains(applyOut.String(), "Unresolved: 2")
 	assert.Contains(applyOut.String(), "Repaired: 1")
 	require.True(readRepairSenderID(t, repairable).Valid,
 		"apply must set sender_id")
 	assert.False(readRepairSenderID(t, headerless).Valid,
 		"headerless MIME must remain unresolved")
+	assert.False(readRepairSenderID(t, uninstallable).Valid,
+		"a recovered but invalid address must stay unresolved instead of failing apply")
 	assert.False(readRepairSenderID(t, chat).Valid,
 		"non-email messages must remain untouched")
 
@@ -113,7 +118,7 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = 'from'
-		  AND p.email_address = 'noreply@electrolux.com'
+		  AND p.email_address = 'noreply@fridgeco.example'
 	`), repairable).Scan(&fromCount), "count repaired From row")
 	assert.Equal(1, fromCount)
 }

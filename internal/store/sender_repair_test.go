@@ -21,7 +21,7 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	malformedRaw := []byte("From: Electrolux <noreply@electrolux.com >\r\n" +
+	malformedRaw := []byte("From: Fridgeco <noreply@fridgeco.example >\r\n" +
 		"Subject: Repair me\r\n\r\nBody\r\n")
 	repairable := f.NewMessage().
 		WithSourceMessageID("missing-sender-repairable").
@@ -103,7 +103,7 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = 'from'
 	`), repairable).Scan(&email, &displayName), "read repaired from recipient")
-	assert.Equal("noreply@electrolux.com", email)
+	assert.Equal("noreply@fridgeco.example", email)
 	assert.Equal(senderID, f.GetSingleRecipientID(repairable, "from"))
 	assert.Empty(displayName,
 		"fallback parser must not invent a display name from malformed syntax")

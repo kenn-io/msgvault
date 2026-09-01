@@ -169,6 +169,40 @@ func mimeHeaderEnd(raw []byte) int {
 	return 0
 }
 
+// ValidateRepairSender reports whether a recovered From address can be
+// installed by ApplySenderRepairContext, so planning can classify candidates
+// with the same rule the apply path enforces.
+func ValidateRepairSender(sender mime.Address) error {
+	_, err := normalizeRepairSender(sender)
+	return err
+}
+
+type repairSender struct {
+	email       string
+	domain      string
+	displayName string
+}
+
+// normalizeRepairSender validates and canonicalizes one recovered From
+// address: a single bare addr-spec, lowercased, with the domain derived from
+// the address itself when present.
+func normalizeRepairSender(sender mime.Address) (repairSender, error) {
+	email := strings.ToLower(strings.TrimSpace(sender.Email))
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, email) {
+		return repairSender{}, fmt.Errorf("invalid email address %q", sender.Email)
+	}
+	domain := strings.ToLower(strings.TrimSpace(sender.Domain))
+	if at := strings.LastIndex(email, "@"); at >= 0 {
+		domain = email[at+1:]
+	}
+	return repairSender{
+		email:       email,
+		domain:      domain,
+		displayName: strings.TrimSpace(sender.Name),
+	}, nil
+}
+
 // ApplySenderRepairContext atomically installs one recovered From address as
 // both the message sender and its immutable envelope snapshot. The conditional
 // update is an optimistic guard: any sender evidence written after planning
@@ -179,16 +213,11 @@ func (s *Store) ApplySenderRepairContext(
 	expectedRawMIMEFingerprint [sha256.Size]byte,
 	sender mime.Address,
 ) error {
-	email := strings.ToLower(strings.TrimSpace(sender.Email))
-	parsed, err := mail.ParseAddress(email)
-	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, email) {
-		return fmt.Errorf("repair message %d sender: invalid email address %q", messageID, sender.Email)
+	normalized, err := normalizeRepairSender(sender)
+	if err != nil {
+		return fmt.Errorf("repair message %d sender: %w", messageID, err)
 	}
-	domain := strings.ToLower(strings.TrimSpace(sender.Domain))
-	if at := strings.LastIndex(email, "@"); at >= 0 {
-		domain = email[at+1:]
-	}
-	displayName := strings.TrimSpace(sender.Name)
+	email, domain, displayName := normalized.email, normalized.domain, normalized.displayName
 
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
