@@ -30,6 +30,13 @@ var errIMAPFetchResultMissing = fmt.Errorf(
 var errIMAPLabelBodyMissing = errors.New("IMAP fetch result did not include message headers")
 var errIMAPSkippedAfterChunkFailed = errors.New("IMAP fetch skipped after earlier chunk failure")
 
+// errIMAPOmittedButPresent marks a UID that no FETCH response returned and
+// that a UID SEARCH then reported as still in the mailbox. The message is
+// there, so this is a fetch failure, and it must not reach
+// gmailapi.ErrMessageGone: acknowledging it would drop a live message.
+var errIMAPOmittedButPresent = errors.New(
+	"IMAP fetch returned no result for a UID the mailbox still reports")
+
 type batchFetchItem struct {
 	idx int
 	uid imap.UID
@@ -336,10 +343,8 @@ func (c *Client) fetchMailboxBatch(
 				return fatalErr
 			}
 		}
-		for _, item := range omitted {
-			results[item.idx].Err = errIMAPFetchResultMissing
-			c.forgetMembershipLocked(mailbox, item.uid)
-		}
+		c.markOmittedOutcome(mailbox, omitted,
+			func(item batchFetchItem, err error) { results[item.idx].Err = err })
 	}
 	return nil
 }
@@ -384,6 +389,77 @@ func (c *Client) recheckOmittedRaw(
 		return nil, nil
 	}
 	return c.applyFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
+}
+
+// confirmOmittedPresent asks the server which of the UIDs it left out of both
+// FETCH attempts it still holds.
+//
+// Two omissions are still two answers to the same question: both attempts are
+// the same command against the same mailbox, so a server that drops a UID for
+// a structural reason drops it from the retry as well. UID SEARCH is different
+// evidence, and it costs one command for the whole set. A UID it reports is a
+// live message, and calling that gone lets the run acknowledge it, forget its
+// membership and advance the mailbox cursor past it.
+//
+// The search names the omitted UIDs exactly and carries none of the
+// since/before filters enumerateMailbox applies: a date filter here would hide
+// a live message behind the same silence this exists to distrust.
+//
+// An error means nothing was learned. Callers must then record a fetch error
+// rather than an absence, which holds the commit back instead of acting on a
+// guess.
+func (c *Client) confirmOmittedPresent(
+	mailbox string, omitted []imap.UID,
+) (map[imap.UID]bool, error) {
+	present := make(map[imap.UID]bool, len(omitted))
+	if len(omitted) == 0 {
+		return present, nil
+	}
+
+	var uidSet imap.UIDSet
+	for _, uid := range omitted {
+		uidSet.AddNum(uid)
+	}
+	searchData, err := c.conn.UIDSearch(
+		&imap.SearchCriteria{UID: []imap.UIDSet{uidSet}}, nil).Wait()
+	if err != nil {
+		c.logger.Warn("could not confirm UIDs missing from a FETCH response",
+			"mailbox", mailbox, "uids", len(omitted), "error", err)
+		return nil, fmt.Errorf(
+			"UID SEARCH confirming UIDs missing from a FETCH in mailbox %q: %w",
+			mailbox, err)
+	}
+
+	for _, uid := range searchData.AllUIDs() {
+		present[uid] = true
+	}
+	return present, nil
+}
+
+// markOmittedOutcome records what confirmOmittedPresent established about the
+// UIDs no FETCH response returned, and forgets the membership observed during
+// enumeration for the ones the mailbox no longer reports.
+func (c *Client) markOmittedOutcome(
+	mailbox string,
+	omitted []batchFetchItem,
+	setErr func(item batchFetchItem, err error),
+) {
+	uids := make([]imap.UID, len(omitted))
+	for i, item := range omitted {
+		uids[i] = item.uid
+	}
+	present, searchErr := c.confirmOmittedPresent(mailbox, uids)
+	for _, item := range omitted {
+		switch {
+		case searchErr != nil:
+			setErr(item, searchErr)
+		case present[item.uid]:
+			setErr(item, errIMAPOmittedButPresent)
+		default:
+			setErr(item, errIMAPFetchResultMissing)
+			c.forgetMembershipLocked(mailbox, item.uid)
+		}
+	}
 }
 
 // GetMessagesRawBatchWithErrors fetches multiple messages, grouping by mailbox for efficiency.
@@ -559,10 +635,8 @@ func (c *Client) fetchMailboxLabelBatch(
 				return fatalErr
 			}
 		}
-		for _, item := range omitted {
-			results[item.idx].Err = errIMAPFetchResultMissing
-			c.forgetMembershipLocked(mailbox, item.uid)
-		}
+		c.markOmittedOutcome(mailbox, omitted,
+			func(item batchFetchItem, err error) { results[item.idx].Err = err })
 	}
 	return nil
 }

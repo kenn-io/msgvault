@@ -763,9 +763,10 @@ func startMalformedEnvelopeIMAPServer(t *testing.T, raw []byte) (string, <-chan 
 	return listener.Addr().String(), fetchCommand
 }
 
-// markConfirmedGone is what the chunk loops do once a second FETCH has also
-// left a UID out. It is inlined here so these tests cover the same end state
-// they covered before the recheck moved the decision out of the apply step.
+// markConfirmedGone is what the chunk loops do once a second FETCH and the
+// confirming UID SEARCH have both left a UID out. It is inlined here so these
+// tests cover the same end state they covered before the recheck moved the
+// decision out of the apply step.
 func markConfirmedGone(
 	c *Client,
 	raw []gmailapi.RawMessageBatchResult,
@@ -988,4 +989,63 @@ func TestRecheckReconnectFailureEndsTheBatch(t *testing.T) {
 		t.Context(), []string{"INBOX|1", "INBOX|2"})
 
 	require.Error(err, "a failed reconnect during the recheck must end the batch")
+}
+
+// TestUIDTheMailboxStillReportsIsNotGone covers the evidence the recheck
+// cannot supply. Both fetch attempts are the same command against the same
+// mailbox, so a server that drops a UID for a structural reason drops it
+// twice, and the run would call a live message gone on the strength of two
+// identical silences.
+//
+// UID SEARCH is a different question. When it reports the UID, the message is
+// in the mailbox and the omission was the server's, so the run must record a
+// fetch error and keep the membership rather than acknowledge the message and
+// advance past it.
+func TestUIDTheMailboxStillReportsIsNotGone(t *testing.T) {
+	t.Run("label fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDFromEveryFetch(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+		// The observation enumeration records for a UID it listed. A run that
+		// believed the omission would drop it here.
+		client.observedMemberships = []MembershipObservation{
+			{Mailbox: "INBOX", UID: 2, SourceMessageID: "INBOX|2"},
+		}
+
+		results, err := client.GetMessageLabelsBatch(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.ErrorIs(results[1].Err, errIMAPOmittedButPresent)
+		require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone,
+			"a UID the mailbox still reports has not left it")
+		assert.Contains(observedUIDs(client), uint32(2),
+			"a live message keeps the membership the commit publishes")
+	})
+
+	t.Run("raw fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := testutil.StartIMAPMemServerOmittingUIDFromEveryFetch(
+			t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
+		client := newTestClient(t, addr)
+		client.observedMemberships = []MembershipObservation{
+			{Mailbox: "INBOX", UID: 2, SourceMessageID: "INBOX|2"},
+		}
+
+		results, err := client.GetMessagesRawBatchWithErrors(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.ErrorIs(results[1].Err, errIMAPOmittedButPresent)
+		require.NotErrorIs(results[1].Err, gmailapi.ErrMessageGone,
+			"a UID the mailbox still reports has not left it")
+		assert.Contains(observedUIDs(client), uint32(2))
+	})
 }
