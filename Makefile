@@ -20,13 +20,14 @@ TEST_TIMEOUT := 60m
 
 # Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
 # to the host CPU count, and every PostgreSQL-backed test binary opens its own
-# connections: two for the admin handle, one per schema a warm-pool refill
-# builds (internal/testutil/pg_warm_pool.go), plus the store under test.
-# Nothing budgets across binaries, so on a wide runner `go test ./...` starts
-# every PostgreSQL package together and the sum exceeds a stock server's 100
-# connections ("sorry, too many clients already") and its lock table ("out of
-# shared memory"). Four is the GitHub-hosted profile these lanes were tuned on.
-# The pgvector lane in .github/workflows/ci.yml carries the same value inline.
+# connections: an admin handle of three (one pinned for the life of the binary
+# to hold its template database's ownership lock, see
+# internal/testutil/pg_template.go) plus the store under test. Nothing budgets
+# across binaries, so on a wide runner `go test ./...` starts every PostgreSQL
+# package together and the sum exceeds a stock server's 100 connections
+# ("sorry, too many clients already") and its lock table ("out of shared
+# memory"). Four is the GitHub-hosted profile these lanes were tuned on. The
+# pgvector lane in .github/workflows/ci.yml carries the same value inline.
 PG_TEST_PARALLEL ?= 4
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.7.0
