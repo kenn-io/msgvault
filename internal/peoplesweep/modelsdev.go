@@ -23,7 +23,7 @@ import (
 
 const (
 	modelsDevURL              = "https://models.dev/api.json"
-	modelsDevCatalogUserAgent = "OpenAI File Downloader, XaiImageApiFetch/1.0"
+	modelsDevCatalogUserAgent = "msgvault-person-provider-setup/1"
 	modelsDevMaxBodyBytes     = 8 << 20
 	modelsDevTotalTimeout     = 15 * time.Second
 	maxModelsDevIDBytes       = 256
@@ -77,11 +77,10 @@ type modelsDevHooks struct {
 
 type modelsDevDialContext func(context.Context, string, string) (net.Conn, error)
 
-// NewModelsDevClient constructs a fresh transport. The argument is retained
-// for source compatibility but intentionally ignored so caller credentials,
-// proxies, cookies, TLS identities, and later mutations cannot cross into the
+// NewModelsDevClient constructs a fresh, isolated transport so caller
+// credentials, proxies, cookies, and TLS identities cannot cross into the
 // fixed public-catalog request.
-func NewModelsDevClient(_ *http.Client) *ModelsDevClient {
+func NewModelsDevClient() *ModelsDevClient {
 	return newModelsDevClient(nil, nil, "")
 }
 

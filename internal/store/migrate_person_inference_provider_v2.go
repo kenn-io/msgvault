@@ -5,26 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
-type personInferenceProfileV2Backfill struct {
-	fingerprint           string
-	auth                  peoplesweep.AuthScheme
-	credential            peoplesweep.CredentialSource
-	credentialRef         string
-	outputMode            peoplesweep.OutputMode
-	tokenLimitParameter   string
-	reasoningEffort       string
-	reasoningMode         string
-	driverVersion         string
-	executionBoundary     string
-	packetRendererPolicy  string
-	programFingerprint    string
-	disclosedPacketFields []string
-}
-
+// migratePersonInferenceProviderV2 brings person_inference_profiles up to the
+// named-profile schema and records synthetic checks in a separate table.
+//
+// Profile rows written before named profiles existed carry a policy without a
+// protocol. That policy shape never shipped in a release, its fingerprint can
+// no longer match any configured profile, and consent to it does not carry
+// over to the reworked disclosure. Those rows and their consents are removed
+// so every remaining profile decodes as a canonical ProviderProfile.
 func (s *Store) migratePersonInferenceProviderV2(ctx context.Context) error {
 	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		columns := []ColumnMigration{
@@ -53,33 +43,6 @@ func (s *Store) migratePersonInferenceProviderV2(ctx context.Context) error {
 			}
 		}
 
-		backfills, err := readPersonInferenceProviderV2Backfills(ctx, tx)
-		if err != nil {
-			return err
-		}
-		for _, backfill := range backfills {
-			disclosed, err := json.Marshal(backfill.disclosedPacketFields)
-			if err != nil {
-				return fmt.Errorf("encode people inference disclosed fields: %w", err)
-			}
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE person_inference_profiles
-				SET auth_scheme = ?, credential_source = ?, credential_ref = ?,
-				    output_mode = ?, token_limit_parameter = ?, reasoning_effort = ?,
-				    reasoning_mode = ?, driver_version = ?, execution_boundary = ?,
-				    packet_renderer_policy = ?, program_fingerprint = ?,
-				    disclosed_packet_fields = `+s.dialect.JSONBindExpr()+`
-				WHERE fingerprint = ?`,
-				backfill.auth, backfill.credential, backfill.credentialRef,
-				backfill.outputMode, backfill.tokenLimitParameter, backfill.reasoningEffort,
-				backfill.reasoningMode, backfill.driverVersion, backfill.executionBoundary,
-				backfill.packetRendererPolicy, backfill.programFingerprint, string(disclosed),
-				backfill.fingerprint,
-			); err != nil {
-				return fmt.Errorf("backfill people inference profile %s: %w", backfill.fingerprint, err)
-			}
-		}
-
 		checkedAtType := "TEXT"
 		if s.IsPostgreSQL() {
 			checkedAtType = "TIMESTAMPTZ"
@@ -95,6 +58,22 @@ func (s *Store) migratePersonInferenceProviderV2(ctx context.Context) error {
 			)`); err != nil {
 			return fmt.Errorf("create person_inference_checks: %w", err)
 		}
+
+		stale, err := preProfilePersonInferenceFingerprints(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, fingerprint := range stale {
+			for _, statement := range []string{
+				`DELETE FROM person_inference_consents WHERE profile_fingerprint = ?`,
+				`DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`,
+				`DELETE FROM person_inference_profiles WHERE fingerprint = ?`,
+			} {
+				if _, err := tx.ExecContext(ctx, statement, fingerprint); err != nil {
+					return fmt.Errorf("remove pre-profile people inference row %s: %w", fingerprint, err)
+				}
+			}
+		}
 		return nil
 	})
 }
@@ -103,83 +82,32 @@ func postgresPersonInferenceAddColumn(statement string) string {
 	return strings.Replace(statement, " ADD COLUMN ", " ADD COLUMN IF NOT EXISTS ", 1)
 }
 
-func readPersonInferenceProviderV2Backfills(
-	ctx context.Context,
-	tx *loggedTx,
-) ([]personInferenceProfileV2Backfill, error) {
+// preProfilePersonInferenceFingerprints lists profile rows whose stored
+// policy predates named protocol profiles.
+func preProfilePersonInferenceFingerprints(ctx context.Context, tx *loggedTx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT fingerprint, provider_kind, api_key_env, allow_anonymous,
-		       CAST(policy_json AS TEXT)
+		SELECT fingerprint, CAST(policy_json AS TEXT)
 		FROM person_inference_profiles`)
 	if err != nil {
 		return nil, fmt.Errorf("list people inference profiles for v2 migration: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var backfills []personInferenceProfileV2Backfill
+	var stale []string
 	for rows.Next() {
-		var fingerprint, kind, apiKeyEnv, policyJSON string
-		var allowAnonymous bool
-		if err := rows.Scan(&fingerprint, &kind, &apiKeyEnv, &allowAnonymous, &policyJSON); err != nil {
+		var fingerprint, policyJSON string
+		if err := rows.Scan(&fingerprint, &policyJSON); err != nil {
 			return nil, fmt.Errorf("scan people inference profile for v2 migration: %w", err)
 		}
-		backfills = append(backfills, personInferenceProviderV2Backfill(
-			fingerprint, kind, apiKeyEnv, allowAnonymous, policyJSON,
-		))
+		var policy struct {
+			Protocol string `json:"protocol"`
+		}
+		if json.Unmarshal([]byte(policyJSON), &policy) != nil || policy.Protocol == "" {
+			stale = append(stale, fingerprint)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate people inference profiles for v2 migration: %w", err)
 	}
-	return backfills, nil
-}
-
-func personInferenceProviderV2Backfill(
-	fingerprint, kind, apiKeyEnv string,
-	allowAnonymous bool,
-	policyJSON string,
-) personInferenceProfileV2Backfill {
-	backfill := personInferenceProfileV2Backfill{
-		fingerprint: fingerprint, auth: peoplesweep.AuthBearer,
-		credential: peoplesweep.CredentialEnv, credentialRef: apiKeyEnv,
-		outputMode: peoplesweep.OutputModeNativeJSONSchema, disclosedPacketFields: []string{},
-	}
-	if allowAnonymous {
-		backfill.auth = peoplesweep.AuthNone
-		backfill.credential = peoplesweep.CredentialNone
-		backfill.credentialRef = ""
-	}
-
-	var profile peoplesweep.ProviderProfile
-	if json.Unmarshal([]byte(policyJSON), &profile) == nil && profile.Protocol != "" {
-		backfill.auth = profile.Auth
-		backfill.credential = profile.Credential
-		backfill.credentialRef = profile.CredentialRef
-		backfill.outputMode = profile.OutputMode
-		backfill.tokenLimitParameter = profile.TokenLimitParameter
-		backfill.reasoningEffort = profile.ReasoningEffort
-		backfill.reasoningMode = profile.ReasoningMode
-		backfill.driverVersion = profile.DriverVersion
-		backfill.executionBoundary = profile.ExecutionBoundary
-		backfill.packetRendererPolicy = profile.PacketRendererPolicy
-		backfill.programFingerprint = profile.ProgramFingerprint
-		backfill.disclosedPacketFields = profile.DisclosedPacketFields
-		return backfill
-	}
-
-	var legacy legacyPersonInferencePolicy
-	if json.Unmarshal([]byte(policyJSON), &legacy) == nil {
-		backfill.reasoningEffort = legacy.ReasoningEffort
-		backfill.executionBoundary = legacy.ExecutionBoundary
-		backfill.packetRendererPolicy = legacy.PacketRendererPolicy
-		backfill.programFingerprint = legacy.ProgramFingerprint
-		backfill.disclosedPacketFields = legacy.DisclosedPacketFields
-	}
-	switch kind {
-	case peoplesweep.ProviderOpenAICompatible:
-		backfill.tokenLimitParameter = "max_completion_tokens"
-		backfill.driverVersion = peoplesweep.OpenAICompatibleProviderVersion
-	case peoplesweep.ProviderCodexAppServer:
-		backfill.driverVersion = peoplesweep.CodexAppServerProviderVersion
-	}
-	return backfill
+	return stale, nil
 }

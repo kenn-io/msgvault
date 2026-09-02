@@ -15,8 +15,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/BurntSushi/toml"
 )
 
 const (
@@ -50,13 +48,6 @@ const (
 	SourceDocumentText      SourceClass = "document_text"
 )
 
-// Deprecated provider-kind aliases keep callers source-compatible while the
-// runtime registry migrates to protocol identifiers.
-const (
-	ProviderOpenAICompatible = "openai_compatible"
-	ProviderCodexAppServer   = "codex_app_server"
-)
-
 var disclosedPacketFieldsV1 = []string{
 	"person_id",
 	"program_identity",
@@ -78,30 +69,19 @@ type CredentialSource string
 // future evidence pack. It never identifies raw attachment or media bytes.
 type SourceClass string
 
-// ProviderSelection names the active profile. A legacy table is retained only
-// until ApplyDefaults translates it into the named default profile.
+// ProviderSelection names the active profile. It decodes from and encodes to
+// a scalar profile-name string.
 type ProviderSelection struct {
-	Name   string `toml:"-"` // MarshalTOML emits the selection as a scalar profile name.
-	legacy *ProviderConfig
+	Name string `toml:"-"`
 }
 
 func (s *ProviderSelection) UnmarshalTOML(value any) error {
-	switch typed := value.(type) {
-	case string:
-		s.Name = typed
-		s.legacy = nil
-		return nil
-	case map[string]any:
-		legacy, err := decodeLegacyProvider(typed)
-		if err != nil {
-			return err
-		}
-		s.Name = ""
-		s.legacy = &legacy
-		return nil
-	default:
-		return fmt.Errorf("[people.sweep] provider must be a profile name or legacy table, got %T", value)
+	name, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("[people.sweep] provider must be a profile name, got %T", value)
 	}
+	s.Name = name
+	return nil
 }
 
 func (s *ProviderSelection) MarshalTOML() ([]byte, error) {
@@ -225,74 +205,6 @@ type providerPolicy struct {
 	DisclosedPacketFields []string         `json:"disclosed_packet_fields"`
 }
 
-type legacyProviderConfig struct {
-	Kind              string        `toml:"kind"`
-	Endpoint          string        `toml:"endpoint"`
-	Model             string        `toml:"model"`
-	APIKeyEnv         string        `toml:"api_key_env"`
-	AllowAnonymous    bool          `toml:"allow_anonymous"`
-	RetentionPosture  string        `toml:"retention_posture"`
-	TrainingPosture   string        `toml:"training_posture"`
-	AllowedSources    []SourceClass `toml:"allowed_sources"`
-	SourceSince       string        `toml:"source_since"`
-	SourceUntil       string        `toml:"source_until"`
-	AllowSensitive    bool          `toml:"allow_sensitive"`
-	ReasoningEffort   string        `toml:"reasoning_effort"`
-	Executable        string        `toml:"executable"`
-	ExecutionBoundary string        `toml:"execution_boundary"`
-	RequestTimeout    time.Duration `toml:"request_timeout"`
-}
-
-func decodeLegacyProvider(table map[string]any) (ProviderConfig, error) {
-	var encoded bytes.Buffer
-	if err := toml.NewEncoder(&encoded).Encode(table); err != nil {
-		return ProviderConfig{}, fmt.Errorf("encode legacy [people.sweep.provider]: %w", err)
-	}
-	var legacy legacyProviderConfig
-	if _, err := toml.Decode(encoded.String(), &legacy); err != nil {
-		return ProviderConfig{}, fmt.Errorf("decode legacy [people.sweep.provider]: %w", err)
-	}
-	provider := ProviderConfig{
-		Endpoint: legacy.Endpoint, Model: legacy.Model, CredentialEnv: legacy.APIKeyEnv,
-		RetentionPosture: legacy.RetentionPosture, TrainingPosture: legacy.TrainingPosture,
-		AllowedSources: slices.Clone(legacy.AllowedSources), SourceSince: legacy.SourceSince,
-		SourceUntil: legacy.SourceUntil, AllowSensitive: legacy.AllowSensitive,
-		ReasoningEffort: legacy.ReasoningEffort, Executable: legacy.Executable,
-		ExecutionBoundary: legacy.ExecutionBoundary, RequestTimeout: legacy.RequestTimeout,
-		OutputMode: OutputModeNativeJSONSchema,
-	}
-	switch legacy.Kind {
-	case "", "openai_compatible":
-		provider.Protocol = ProtocolOpenAIChat
-		provider.TokenLimitParameter = "max_completion_tokens"
-		if _, configured := table["endpoint"]; !configured {
-			provider.Endpoint = "https://api.openai.com/v1"
-		}
-		if legacy.AllowAnonymous {
-			if _, configured := table["api_key_env"]; configured && legacy.APIKeyEnv != "" {
-				return ProviderConfig{}, errors.New("[people.sweep.provider] anonymous mode cannot also configure api_key_env")
-			}
-			provider.Auth = AuthNone
-			provider.Credential = CredentialNone
-			provider.CredentialEnv = ""
-		} else {
-			provider.Auth = AuthBearer
-			provider.Credential = CredentialEnv
-			if _, configured := table["api_key_env"]; !configured {
-				provider.CredentialEnv = "OPENAI_API_KEY"
-			}
-		}
-	case "codex_app_server":
-		provider.Protocol = ProtocolCodexAppServer
-		provider.Auth = AuthNone
-		provider.Credential = CredentialNone
-		provider.CredentialEnv = ""
-	default:
-		provider.Protocol = Protocol(legacy.Kind)
-	}
-	return provider, nil
-}
-
 // ApplyDefaults fills operational defaults without enabling inference.
 func (c *Config) ApplyDefaults() {
 	setDefaultString(&c.Schedule, "15 2 * * *")
@@ -316,11 +228,7 @@ func (c *Config) ApplyDefaults() {
 	setDefaultInt64(&c.Budgets.MaxInputTokensPerDay, 5_000_000)
 	setDefaultInt64(&c.Budgets.MaxOutputTokensPerDay, 800_000)
 
-	if c.Provider.legacy != nil && len(c.Providers) == 0 {
-		c.Provider.Name = "default"
-		c.Providers = map[string]ProviderConfig{"default": *c.Provider.legacy}
-		c.Provider.legacy = nil
-	} else if c.Provider.legacy == nil && c.Provider.Name == "" && len(c.Providers) == 0 {
+	if c.Provider.Name == "" && len(c.Providers) == 0 {
 		c.Provider.Name = "default"
 		c.Providers = map[string]ProviderConfig{"default": defaultProviderConfig()}
 	}
@@ -354,7 +262,7 @@ func applyProviderDefaults(provider *ProviderConfig) {
 func defaultDriverVersion(protocol Protocol) string {
 	switch protocol {
 	case ProtocolOpenAIChat:
-		return OpenAICompatibleProviderVersion
+		return OpenAIChatProviderVersion
 	case ProtocolOpenAIResponses:
 		return "openai-responses-v1"
 	case ProtocolAnthropicMessages:
@@ -371,12 +279,6 @@ func defaultDriverVersion(protocol Protocol) string {
 // ActiveProviderConfig resolves the active profile by value so callers cannot
 // retain a mutable map entry by pointer.
 func (c Config) ActiveProviderConfig() (string, ProviderConfig, error) {
-	if c.Provider.legacy != nil {
-		if len(c.Providers) > 0 {
-			return "", ProviderConfig{}, errors.New("legacy [people.sweep.provider] cannot be mixed with named [people.sweep.providers]")
-		}
-		return "", ProviderConfig{}, errors.New("legacy [people.sweep.provider] must be normalized with ApplyDefaults")
-	}
 	name := c.Provider.Name
 	if name == "" {
 		return "", ProviderConfig{}, errors.New("[people.sweep] provider profile name is required")
@@ -392,24 +294,26 @@ func (c Config) ActiveProviderConfig() (string, ProviderConfig, error) {
 	return name, provider, nil
 }
 
-// Validate rejects unsafe or ambiguous runtime configuration. An incomplete
-// disabled policy is permitted, but any configured structural value must be
-// well formed.
+// Validate rejects unsafe or ambiguous runtime configuration. The selected
+// profile must be well formed; an incomplete disabled policy is permitted. A
+// selection is required only once the sweep is enabled, so profiles can be
+// published before one is chosen.
 func (c Config) Validate() error {
-	if c.Provider.legacy == nil {
-		if c.Provider.Name != "" {
-			if err := ValidateProviderProfileName(c.Provider.Name); err != nil {
-				return err
-			}
+	if c.Provider.Name != "" {
+		if err := ValidateProviderProfileName(c.Provider.Name); err != nil {
+			return err
 		}
-		for name := range c.Providers {
-			if err := ValidateProviderProfileName(name); err != nil {
-				return err
-			}
+	}
+	for name := range c.Providers {
+		if err := ValidateProviderProfileName(name); err != nil {
+			return err
 		}
 	}
 	if err := c.validateOperationalConfig(); err != nil {
 		return err
+	}
+	if !c.Enabled && c.Provider.Name == "" {
+		return nil
 	}
 	_, provider, err := c.ActiveProviderConfig()
 	if err != nil {

@@ -185,7 +185,7 @@ func TestDriverVersionMatchesAcceptsAttestedCodexFamily(t *testing.T) {
 	assert.True(t, peoplesweep.DriverVersionMatches(family, family+":"+digest))
 	// HTTP drivers report the configured version verbatim.
 	assert.True(t, peoplesweep.DriverVersionMatches(
-		peoplesweep.OpenAICompatibleProviderVersion, peoplesweep.OpenAICompatibleProviderVersion))
+		peoplesweep.OpenAIChatProviderVersion, peoplesweep.OpenAIChatProviderVersion))
 	// A different but well-formed attestation digest stays eligible: the
 	// digest binds the executable attestation, not one fixed build.
 	assert.True(t, peoplesweep.DriverVersionMatches(family, family+":"+
@@ -208,8 +208,8 @@ func TestDriverVersionMatchesRejectsUnsafeAttestedIdentity(t *testing.T) {
 		{"extra digest segment", family, family + ":" + digest + ":" + digest},
 		{
 			"non-codex family with digest suffix",
-			peoplesweep.OpenAICompatibleProviderVersion,
-			peoplesweep.OpenAICompatibleProviderVersion + ":" + digest,
+			peoplesweep.OpenAIChatProviderVersion,
+			peoplesweep.OpenAIChatProviderVersion + ":" + digest,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

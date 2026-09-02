@@ -494,7 +494,7 @@ func TestPersonProviderCheckOmitsProviderOutput(t *testing.T) {
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
 		Output:            json.RawMessage(`{"ok":true,"secret":"provider-output"}`),
 		ProviderRequestID: "req-safe",
-		ProviderVersion:   peoplesweep.OpenAICompatibleProviderVersion,
+		ProviderVersion:   peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion:      "test-model-v1",
 		Usage:             peoplesweep.TokenUsage{InputTokens: 12, OutputTokens: 3},
 	}}

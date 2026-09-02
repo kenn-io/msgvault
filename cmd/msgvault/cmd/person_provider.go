@@ -544,11 +544,7 @@ func runPersonProviderUse(
 	if err != nil {
 		return err
 	}
-	edits, err := planPersonProviderUseEdits(before, configured, name)
-	if err != nil {
-		return err
-	}
-	if _, err := deps.editConfigTables(before.ETag, edits); err != nil {
+	if _, err := deps.editConfigTables(before.ETag, planPersonProviderUseEdits(name)); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Selected people provider profile %q.\n", name)
@@ -559,28 +555,11 @@ func runPersonProviderUse(
 }
 
 // planPersonProviderUseEdits records the selection edit for `person provider
-// use`: enable the people sweep and select the exact checked profile. A
-// legacy [people.sweep.provider] table cannot coexist with that string
-// selector, so it is migrated into the named default profile in the same
-// publication. The migrated table keeps the legacy table's normalized
-// values, so the profile fingerprint — and with it the required recorded
-// successful check — survives the migration.
-func planPersonProviderUseEdits(
-	before config.ConfigFile,
-	configured peoplesweep.Config,
-	name string,
-) ([]config.TableEdit, error) {
-	selector := map[string]any{"enabled": true, "provider": name}
-	legacy, headerTable := config.PeopleSweepLegacyProviderTable(before)
-	if !legacy {
-		return []config.TableEdit{{Path: []string{"people", "sweep"}, Values: selector}}, nil
-	}
-	legacyProvider, ok := configured.Providers[personProviderLegacyProfileName]
-	if !ok {
-		return nil, errors.New(
-			"legacy [people.sweep.provider] table did not normalize into the default people provider profile")
-	}
-	return personProviderLegacyMigrationEdits(headerTable, legacyProvider, selector), nil
+// use`: enable the people sweep and select the exact checked profile.
+func planPersonProviderUseEdits(name string) []config.TableEdit {
+	return []config.TableEdit{{
+		Path: []string{"people", "sweep"}, Values: map[string]any{"enabled": true, "provider": name},
+	}}
 }
 
 func runPersonProviderRemove(

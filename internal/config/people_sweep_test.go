@@ -31,13 +31,17 @@ func TestLoadPeopleSweepProviderConfig(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "primary"
 
-[people.sweep.provider]
-kind = "openai_compatible"
+[people.sweep.providers.primary]
+protocol = "openai_chat"
 endpoint = "https://api.example.test/v1/"
 model = "gpt-test"
-api_key_env = "TEST_KEY"
-allow_anonymous = false
+auth = "bearer"
+credential = "env"
+credential_env = "TEST_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
 retention_posture = "zero_retention"
 training_posture = "no_training"
 allowed_sources = ["meeting_text", "conversation_text"]
@@ -52,7 +56,7 @@ request_timeout = "45s"
 	name, provider, err := loaded.People.Sweep.ActiveProviderConfig()
 	require.NoError(t, err)
 	assert.True(loaded.People.Sweep.Enabled)
-	assert.Equal("default", name)
+	assert.Equal("primary", name)
 	assert.Equal(peoplesweep.ProtocolOpenAIChat, provider.Protocol)
 	assert.Equal("https://api.example.test/v1/", provider.Endpoint)
 	assert.Equal("gpt-test", provider.Model)
@@ -75,9 +79,17 @@ func TestLoadRejectsInvalidEnabledPeopleSweepProvider(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "primary"
 
-[people.sweep.provider]
+[people.sweep.providers.primary]
+protocol = "openai_chat"
+endpoint = "https://api.example.test/v1"
 model = "gpt-test"
+auth = "bearer"
+credential = "env"
+credential_env = "TEST_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
 retention_posture = "zero_retention"
 training_posture = "no_training"
 allowed_sources = ["raw_image"]
@@ -88,15 +100,22 @@ source_since = "2025-01-01"
 	require.ErrorContains(t, err, "allowed_sources")
 }
 
-func TestLoadDoesNotReplaceExplicitEmptyPeopleProviderKeyEnv(t *testing.T) {
+func TestLoadRejectsEmptyPeopleProviderCredentialEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "primary"
 
-[people.sweep.provider]
+[people.sweep.providers.primary]
+protocol = "openai_chat"
+endpoint = "https://api.example.test/v1"
 model = "gpt-test"
-api_key_env = ""
+auth = "bearer"
+credential = "env"
+credential_env = ""
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
 retention_posture = "zero_retention"
 training_posture = "no_training"
 allowed_sources = ["conversation_text"]
@@ -107,18 +126,23 @@ source_since = "2025-01-01"
 	require.ErrorContains(t, err, "credential_env")
 }
 
-func TestLoadAllowsAnonymousLoopbackPeopleProviderWithoutKeyEnv(t *testing.T) {
+func TestLoadAllowsUnauthenticatedLoopbackPeopleProvider(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "local"
 
-[people.sweep.provider]
+[people.sweep.providers.local]
+protocol = "openai_chat"
 endpoint = "http://127.0.0.1:11434/v1"
 model = "local-model"
-allow_anonymous = true
+auth = "none"
+credential = "none"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
 retention_posture = "local_only"
 training_posture = "local_only"
 allowed_sources = ["conversation_text"]
@@ -140,10 +164,13 @@ func TestLoadCodexPeopleProviderUsesCodexOnlyDefaults(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "codex"
 
-[people.sweep.provider]
-kind = "codex_app_server"
+[people.sweep.providers.codex]
+protocol = "codex_app_server"
 model = "gpt-test"
+auth = "none"
+credential = "none"
 reasoning_effort = "high"
 retention_posture = "zero_retention"
 training_posture = "no_training"
@@ -162,19 +189,22 @@ source_since = "2025-01-01"
 	checks.Equal(peoplesweep.CodexExecutionBoundaryV1, provider.ExecutionBoundary)
 }
 
-func TestLoadRejectsAnonymousPeopleProviderWithExplicitKeyEnv(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestLoadRejectsUnauthenticatedPeopleProviderWithCredentialEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`
+	require.NoError(t, os.WriteFile(path, []byte(`
 [people.sweep]
 enabled = true
+provider = "local"
 
-[people.sweep.provider]
+[people.sweep.providers.local]
+protocol = "openai_chat"
 endpoint = "http://127.0.0.1:11434/v1"
 model = "local-model"
-api_key_env = "LOCAL_KEY"
-allow_anonymous = true
+auth = "none"
+credential = "none"
+credential_env = "LOCAL_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
 retention_posture = "local_only"
 training_posture = "local_only"
 allowed_sources = ["conversation_text"]
@@ -182,7 +212,7 @@ source_since = "2025-01-01"
 `), 0o600))
 
 	_, err := Load(path, "")
-	assert.ErrorContains(err, "anonymous mode cannot also configure api_key_env")
+	require.ErrorContains(t, err, "credential_env requires credential=env")
 }
 
 func TestConfigLoadsNamedProviderProfiles(t *testing.T) {
@@ -263,52 +293,49 @@ source_since = "2026-01-01"
 	assert.Equal("glm", reloaded.People.Sweep.Provider.Name)
 }
 
-func TestConfigMigratesLegacyProviderTable(t *testing.T) {
+// TestConfigAllowsPublishedProfilesWithoutSelectionWhileDisabled covers the
+// onboarding order: `person provider add` publishes a profile before anyone
+// selects it, and the file must stay loadable in between.
+func TestConfigAllowsPublishedProfilesWithoutSelectionWhileDisabled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(os.WriteFile(path, []byte(`
-[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-kind = "openai_compatible"
-endpoint = "https://api.example.test/v1"
-model = "gpt-test"
-api_key_env = "TEST_KEY"
-retention_posture = "zero_retention"
-training_posture = "no_training"
+[people.sweep.providers.glm]
+protocol = "openai_chat"
+endpoint = "https://api.z.ai/api/paas/v4"
+model = "glm-5.3"
+auth = "bearer"
+credential = "env"
+credential_env = "ZAI_API_KEY"
+output_mode = "json_object"
+token_limit_parameter = "max_tokens"
+retention_posture = "provider-declared"
+training_posture = "provider-declared"
 allowed_sources = ["conversation_text"]
-source_since = "2025-01-01"
+source_since = "2026-01-01"
 `), 0o600))
 
 	loaded, err := Load(path, "")
 	require.NoError(err)
-	name, provider, err := loaded.People.Sweep.ActiveProviderConfig()
-	require.NoError(err)
-	assert.Equal("default", name)
-	assert.Equal("default", loaded.People.Sweep.Provider.Name)
-	assert.Len(loaded.People.Sweep.Providers, 1)
-	assert.Equal(peoplesweep.ProtocolOpenAIChat, provider.Protocol)
-	assert.Equal(peoplesweep.AuthBearer, provider.Auth)
-	assert.Equal(peoplesweep.CredentialEnv, provider.Credential)
-	assert.Equal("TEST_KEY", provider.CredentialEnv)
-	assert.Equal(peoplesweep.OutputModeNativeJSONSchema, provider.OutputMode)
-	assert.Equal("max_completion_tokens", provider.TokenLimitParameter)
+	assert.False(loaded.People.Sweep.Enabled)
+	assert.Empty(loaded.People.Sweep.Provider.Name)
+	assert.Contains(loaded.People.Sweep.Providers, "glm")
+
+	enabled := loaded.People.Sweep
+	enabled.Enabled = true
+	require.ErrorContains(enabled.Validate(), "provider profile name is required")
 }
 
-func TestConfigRejectsMixedProviderShapes(t *testing.T) {
+func TestConfigRejectsProviderTableAsSelector(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`
 [people.sweep.provider]
-kind = "openai_compatible"
-
-[people.sweep.providers.glm]
 protocol = "openai_chat"
 `), 0o600))
 
 	_, err := Load(path, "")
-	require.ErrorContains(t, err, "legacy")
+	require.ErrorContains(t, err, "provider must be a profile name")
 }
 
 func TestConfigRejectsMissingActiveProvider(t *testing.T) {
@@ -364,55 +391,4 @@ max_requests_per_day = 100
 	checks.Equal(30*time.Second, provider.PollInterval)
 	checks.Equal(15*time.Minute, provider.MaxJobAge)
 	checks.Equal(5, provider.MaxRetries)
-}
-
-func TestPeopleSweepExistingTOMLRemainsCompatibleBesideEnrichment(t *testing.T) {
-	checks := assert.New(t)
-	requirements := require.New(t)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	existing := []byte(`[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-kind = "openai_compatible"
-endpoint = "https://api.example.test/v1/"
-model = "gpt-test"
-api_key_env = "TEST_KEY"
-retention_posture = "zero_retention"
-training_posture = "no_training"
-allowed_sources = ["meeting_text", "conversation_text"]
-source_since = "2025-01-01"
-source_until = "2025-12-31"
-allow_sensitive = true
-request_timeout = "45s"
-`)
-	requirements.NoError(os.WriteFile(path, existing, 0o600))
-
-	loaded, err := Load(path, "")
-	requirements.NoError(err)
-	checks.True(loaded.People.Sweep.Enabled)
-	// The legacy table migrates into the named "default" profile while the
-	// enrichment sibling stays independently disabled.
-	name, provider, err := loaded.People.Sweep.ActiveProviderConfig()
-	requirements.NoError(err)
-	checks.Equal("default", name)
-	checks.Equal("default", loaded.People.Sweep.Provider.Name)
-	checks.Equal("gpt-test", provider.Model)
-	checks.Equal(45*time.Second, provider.RequestTimeout)
-	checks.False(loaded.People.Enrichment.Enabled)
-	checks.Equal("*/15 * * * *", loaded.People.Enrichment.Schedule)
-
-	invalid := []byte(`[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-model = "gpt-test"
-retention_posture = "zero_retention"
-training_posture = "no_training"
-allowed_sources = ["raw_image"]
-source_since = "2025-01-01"
-`)
-	requirements.NoError(os.WriteFile(path, invalid, 0o600))
-	_, err = Load(path, "")
-	requirements.ErrorContains(err, "allowed_sources")
 }

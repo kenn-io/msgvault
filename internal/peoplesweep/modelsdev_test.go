@@ -3,16 +3,12 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -24,7 +20,7 @@ import (
 )
 
 const (
-	modelsDevUserAgent     = "OpenAI File Downloader, XaiImageApiFetch/1.0"
+	modelsDevUserAgent     = "msgvault-person-provider-setup/1"
 	modelsDevRequestCanary = "catalog-request-canary-never-send"
 	modelsDevBodyCanary    = "catalog-body-canary-never-report"
 )
@@ -126,36 +122,16 @@ func TestModelsDevFetchHonorsCallerTimeoutWithSafeError(t *testing.T) {
 	assert.NotContains(t, err.Error(), modelsDevBodyCanary)
 }
 
-func TestNewModelsDevClientDoesNotInheritCallerHTTPConfiguration(t *testing.T) {
+func TestNewModelsDevClientUsesIsolatedTransport(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	called := &atomic.Bool{}
-	callerTransport := &http.Transport{
-		Proxy:           func(*http.Request) (*url.URL, error) { return url.Parse("https://user:secret@proxy.invalid") },
-		TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{[]byte(modelsDevRequestCanary)}}}},
-	}
-	caller := &http.Client{
-		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			called.Store(true)
-			return nil, errors.New(modelsDevBodyCanary)
-		}),
-		Jar:           cookieJarWithCanary(t),
-		CheckRedirect: func(*http.Request, []*http.Request) error { return nil },
-	}
-	client := NewModelsDevClient(caller)
+	client := NewModelsDevClient()
 	transport, ok := client.client.Transport.(*http.Transport)
 	require.True(ok)
 	assert.Nil(transport.Proxy)
 	assert.Empty(transport.TLSClientConfig.Certificates)
 	assert.Nil(client.client.Jar)
 	assert.Equal(modelsDevTotalTimeout, client.client.Timeout)
-
-	caller.Transport = callerTransport
-	caller.Jar = cookieJarWithCanary(t)
-	callerTransport.TLSClientConfig.Certificates = append(callerTransport.TLSClientConfig.Certificates, tls.Certificate{})
-	assert.NotEqual(callerTransport, transport)
-	assert.Empty(transport.TLSClientConfig.Certificates)
-	assert.False(called.Load())
 }
 
 func TestModelsDevFetchRejectsSizeOverflowByOneAndClosesBody(t *testing.T) {
@@ -282,18 +258,6 @@ func modelsDevTLSFixture(t *testing.T, handler http.Handler) (*ModelsDevClient, 
 		return (&net.Dialer{}).DialContext(ctx, network, target)
 	}
 	return newModelsDevClientForTest(dial, pool, certificate.DNSNames[0]), server
-}
-
-func cookieJarWithCanary(t *testing.T) http.CookieJar {
-	t.Helper()
-	jar, err := cookiejar.New(nil)
-	require.NoError(t, err)
-	catalogURL, err := url.Parse(modelsDevURL)
-	require.NoError(t, err)
-	jar.SetCookies(catalogURL, []*http.Cookie{{
-		Name: "session", Value: modelsDevRequestCanary, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
-	}})
-	return jar
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

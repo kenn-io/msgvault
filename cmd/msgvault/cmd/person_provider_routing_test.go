@@ -566,7 +566,7 @@ func TestPersonProviderAnonymousCheckForwardsNoCredential(t *testing.T) {
 func TestPersonProviderFrontendCheckUsesDirectStoreWithoutDaemon(t *testing.T) {
 	configured := personProviderTestConfig()
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "direct-model-v1",
 	}}
 	st := testutil.NewSQLiteTestStore(t)

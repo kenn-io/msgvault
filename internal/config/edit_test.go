@@ -569,10 +569,9 @@ answer = 42
 	checks.ErrorIs(err, ErrConfigConflict)
 }
 
-// TestConfigEditTablesRejectsAmbiguousAndMixedProviderShapes catches a named
-// profile edit guessing between duplicate table spellings or being added next
-// to the legacy provider shape.
-func TestConfigEditTablesRejectsAmbiguousAndMixedProviderShapes(t *testing.T) {
+// TestConfigEditTablesRejectsAmbiguousProviderShapes catches a named profile
+// edit guessing between duplicate table spellings.
+func TestConfigEditTablesRejectsAmbiguousProviderShapes(t *testing.T) {
 	tests := []struct {
 		name   string
 		before string
@@ -586,13 +585,6 @@ model = "one"
 model = "two"
 `,
 			want: ErrAmbiguousConfigTarget,
-		},
-		{
-			name: "legacy and named shapes",
-			before: `[people.sweep.provider]
-kind = "openai_compatible"
-`,
-			want: ErrInvalidConfigCandidate,
 		},
 	}
 	for _, test := range tests {
@@ -616,94 +608,6 @@ kind = "openai_compatible"
 			}})
 			require.ErrorIs(err, test.want)
 			assert.Equal(test.before, string(mustReadFile(t, path)))
-		})
-	}
-}
-
-// TestPeopleSweepLegacyProviderTableDetection pins the raw-layout probe that
-// people provider mutations use to decide whether a snapshot must migrate the
-// legacy [people.sweep.provider] table before publishing named profiles or a
-// string selector. The probe must not confuse the profile-name string
-// selector with the legacy table in either of its encodings.
-func TestPeopleSweepLegacyProviderTableDetection(t *testing.T) {
-	tests := []struct {
-		name       string
-		before     string
-		wantLegacy bool
-		wantHeader bool
-	}{
-		{
-			name: "header table",
-			before: `[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-kind = "openai_compatible"
-model = "legacy-model"
-`,
-			wantLegacy: true, wantHeader: true,
-		},
-		{
-			name: "header table beside named profiles",
-			before: `[people.sweep.provider]
-kind = "openai_compatible"
-
-[people.sweep.providers.alpha]
-protocol = "openai_chat"
-`,
-			wantLegacy: true, wantHeader: true,
-		},
-		{
-			name: "inline table",
-			before: `[people.sweep]
-enabled = false
-provider = { kind = "openai_compatible", model = "legacy-model" }
-`,
-			wantLegacy: true, wantHeader: false,
-		},
-		{
-			name:       "string selector",
-			before:     "[people.sweep]\nprovider = \"alpha\"\n",
-			wantLegacy: false,
-		},
-		{
-			name: "root dotted table",
-			before: `people.sweep.enabled = false
-people.sweep.provider = { kind = "openai_compatible", model = "legacy-model" }
-
-[data]
-data_dir = "x"
-`,
-			wantLegacy: true, wantHeader: false,
-		},
-		{
-			name:       "no provider selection",
-			before:     "[people.sweep]\nenabled = false\n",
-			wantLegacy: false,
-		},
-		{
-			name:       "unrelated provider keys",
-			before:     "[people.sweep]\nprovider_x = \"alpha\"\n\n[people.enrichment]\nenabled = false\n",
-			wantLegacy: false,
-		},
-		{
-			name:       "empty snapshot",
-			before:     "",
-			wantLegacy: false,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path := filepath.Join(t.TempDir(), "config.toml")
-			require.NoError(os.WriteFile(path, []byte(test.before), 0o600))
-			snapshot, err := ReadConfigFile(path)
-			require.NoError(err)
-
-			legacy, headerTable := PeopleSweepLegacyProviderTable(snapshot)
-			assert.Equal(test.wantLegacy, legacy)
-			assert.Equal(test.wantHeader, headerTable)
 		})
 	}
 }

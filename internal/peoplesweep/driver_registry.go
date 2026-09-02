@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	OpenAIChatProviderVersion       = "openai-chat-completions-json-schema-v1"
-	OpenAICompatibleProviderVersion = OpenAIChatProviderVersion
-	CodexAppServerProviderVersion   = "codex-app-server-v2"
+	OpenAIChatProviderVersion     = "openai-chat-completions-json-schema-v1"
+	CodexAppServerProviderVersion = "codex-app-server-v2"
 )
 
 // ErrCodexIsolationUnreleased keeps the app-server provider unavailable until

@@ -58,10 +58,22 @@ type personProviderAddOptions struct {
 	confirmed           bool
 }
 
+// explicitTransport reports whether the operator supplied every transport
+// field the catalog could otherwise fill.
+func (o personProviderAddOptions) explicitTransport() bool {
+	return o.protocol != "" && o.endpoint != "" && o.model != "" && o.auth != ""
+}
+
+// needsCatalog reports whether add must fetch the models.dev catalog: only
+// when a transport field is missing or a catalog price hint was requested.
+func (o personProviderAddOptions) needsCatalog() bool {
+	return !o.custom && (!o.explicitTransport() || o.acceptCatalogPrices)
+}
+
 func defaultPersonProviderSetupDeps() personProviderSetupDeps {
 	return personProviderSetupDeps{
 		catalog: func(ctx context.Context) ([]peoplesweep.ProviderSuggestion, error) {
-			return peoplesweep.NewModelsDevClient(http.DefaultClient).Fetch(ctx)
+			return peoplesweep.NewModelsDevClient().Fetch(ctx)
 		},
 		negotiate: func(
 			ctx context.Context,
@@ -162,7 +174,7 @@ func runPersonProviderAdd(
 	}
 
 	var suggestions []peoplesweep.ProviderSuggestion
-	if !options.custom {
+	if options.needsCatalog() {
 		if deps.setup.catalog == nil {
 			return errors.New("models.dev suggestions are unavailable; use --custom with explicit transport fields")
 		}
@@ -210,7 +222,7 @@ func runPersonProviderAdd(
 	if err := validatePersonProviderProposal(configured, name, candidate, catalogPrices); err != nil {
 		return err
 	}
-	_, err = planPersonProviderAddEdits(before, configured, name, candidate, catalogPrices)
+	_, err = planPersonProviderAddEdits(before, name, candidate, catalogPrices)
 	if err != nil {
 		return err
 	}
@@ -241,7 +253,7 @@ func runPersonProviderAdd(
 	if err := validatePersonProviderProposal(configured, name, candidate, catalogPrices); err != nil {
 		return err
 	}
-	plannedEdits, err := planPersonProviderAddEdits(before, configured, name, candidate, catalogPrices)
+	plannedEdits, err := planPersonProviderAddEdits(before, name, candidate, catalogPrices)
 	if err != nil {
 		return err
 	}
@@ -359,15 +371,14 @@ func resolvePersonProviderAddCandidate(
 	options personProviderAddOptions,
 	suggestions []peoplesweep.ProviderSuggestion,
 ) (peoplesweep.ProviderConfig, error) {
-	explicitEndpoint := options.endpoint != ""
-	if options.custom || (options.protocol != "" && explicitEndpoint &&
-		options.model != "" && options.auth != "") {
+	if options.custom || options.explicitTransport() {
 		return personProviderCandidate(options)
 	}
 	selection, err := selectPersonProviderCatalogSuggestion(options, suggestions)
 	if err != nil {
 		return peoplesweep.ProviderConfig{}, err
 	}
+	explicitEndpoint := options.endpoint != ""
 	if options.protocol == "" {
 		options.protocol = string(selection.protocol)
 	}
@@ -698,104 +709,21 @@ func validatePersonProviderProposal(
 // the operator's active provider selection or enabled state: selection and
 // enablement belong to `person provider use`, which requires an exact
 // successful check, and an enabled scheduled sweep must never be switched
-// to a newly added profile before anyone consents to it. An unselected
-// config, however, cannot stay valid once a named profile exists —
-// people.sweep.provider must name a defined profile even while the sweep is
-// disabled — so when preserving the file's selection cannot produce a valid
-// config, the plan falls back to publishing an inert selector for the new
-// profile. The sweep stays disabled; only `person provider use` enables it.
-// A legacy [people.sweep.provider] table cannot coexist with named profiles
-// or a string selector at all, so such a file is migrated in the same
-// publication: the legacy table's normalized values become the named default
-// profile, the operator's effective selection (the legacy table) is recorded
-// as the explicit default selector, and the new profile is still not
-// selected.
+// to a newly added profile before anyone consents to it.
 func planPersonProviderAddEdits(
 	before config.ConfigFile,
-	configured peoplesweep.Config,
 	name string,
 	candidate peoplesweep.ProviderConfig,
 	prices *peoplesweep.BudgetConfig,
 ) ([]config.TableEdit, error) {
-	if legacy, headerTable := config.PeopleSweepLegacyProviderTable(before); legacy {
-		legacyProvider, ok := configured.Providers[personProviderLegacyProfileName]
-		if !ok {
-			return nil, errors.New(
-				"legacy [people.sweep.provider] table did not normalize into the default people provider profile")
-		}
-		edits := personProviderLegacyMigrationEdits(headerTable, legacyProvider, map[string]any{
-			"provider": personProviderLegacyProfileName,
-		})
-		edits = append(edits, personProviderProfileEdit(name, candidate))
-		if prices != nil {
-			edits = append(edits, personProviderBudgetEdit(prices))
-		}
-		if err := config.ValidateConfigTableEdits(before, edits); err != nil {
-			return nil, fmt.Errorf("migrate legacy [people.sweep.provider] table: %w", err)
-		}
-		return edits, nil
+	edits := []config.TableEdit{personProviderProfileEdit(name, candidate)}
+	if prices != nil {
+		edits = append(edits, personProviderBudgetEdit(prices))
 	}
-	edits := personProviderAddEdits(name, candidate, prices, false)
-	if err := config.ValidateConfigTableEdits(before, edits); err == nil {
-		return edits, nil
-	}
-	edits = personProviderAddEdits(name, candidate, prices, true)
 	if err := config.ValidateConfigTableEdits(before, edits); err != nil {
 		return nil, err
 	}
 	return edits, nil
-}
-
-// personProviderLegacyProfileName is the profile name ApplyDefaults assigns
-// to a normalized legacy [people.sweep.provider] table.
-const personProviderLegacyProfileName = "default"
-
-// personProviderLegacyMigrationEdits retires the legacy [people.sweep.provider]
-// table by republishing its normalized values as the named default profile.
-// selector records the operator's selection in the migration: add preserves
-// it as an inert default selector, use points it at the checked profile and
-// enables the sweep. Editing order matters: the legacy header must be removed
-// before the selector edit, because people.sweep.provider may not be defined
-// twice. The selector edit then adopts whichever representation the file
-// already uses — replacing a root dotted `people.sweep.provider = { ... }`
-// assignment in place, or appending the [people.sweep] header when only
-// sub-table headers such as [people.sweep.budgets] define the parent
-// implicitly. An inline legacy assignment needs no removal edit: the selector
-// edit overwrites it in place.
-func personProviderLegacyMigrationEdits(
-	headerTable bool,
-	legacyProvider peoplesweep.ProviderConfig,
-	selector map[string]any,
-) []config.TableEdit {
-	var edits []config.TableEdit
-	if headerTable {
-		edits = append(edits, config.TableEdit{
-			Path: []string{"people", "sweep", "provider"}, Remove: true,
-		})
-	}
-	edits = append(edits, config.TableEdit{
-		Path: []string{"people", "sweep"}, Values: selector,
-	})
-	return append(edits, personProviderProfileEdit(personProviderLegacyProfileName, legacyProvider))
-}
-
-func personProviderAddEdits(
-	name string,
-	candidate peoplesweep.ProviderConfig,
-	prices *peoplesweep.BudgetConfig,
-	selectNew bool,
-) []config.TableEdit {
-	var edits []config.TableEdit
-	if selectNew {
-		edits = append(edits, config.TableEdit{
-			Path: []string{"people", "sweep"}, Values: map[string]any{"provider": name},
-		})
-	}
-	edits = append(edits, personProviderProfileEdit(name, candidate))
-	if prices != nil {
-		edits = append(edits, personProviderBudgetEdit(prices))
-	}
-	return edits
 }
 
 func personProviderProfileEdit(name string, provider peoplesweep.ProviderConfig) config.TableEdit {
@@ -829,10 +757,9 @@ func personProviderTableValues(provider peoplesweep.ProviderConfig) map[string]a
 		"allow_sensitive": provider.AllowSensitive, "request_timeout": provider.RequestTimeout,
 	}
 	// Protocol-optional fields stay absent when unconfigured: endpoint and the
-	// Codex isolation fields keep migrated codex_app_server profiles in their
-	// documented endpoint-free shape (while custom Codex executables survive
-	// the legacy migration), and token_limit_parameter belongs to openai_chat
-	// profiles only.
+	// Codex isolation fields keep codex_app_server profiles in their
+	// documented endpoint-free shape, and token_limit_parameter belongs to
+	// openai_chat profiles only.
 	if provider.Endpoint != "" {
 		values["endpoint"] = provider.Endpoint
 	}

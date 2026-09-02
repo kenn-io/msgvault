@@ -242,42 +242,6 @@ func ValidateConfigTableEdits(snapshot ConfigFile, edits []TableEdit) error {
 	return nil
 }
 
-// PeopleSweepLegacyProviderTable reports whether the snapshot encodes the
-// [people.sweep] provider selection as a legacy provider table instead of a
-// profile-name string, and whether that table is an explicit
-// [people.sweep.provider] header (headerTable) rather than an inline
-// provider = { ... } assignment. A config may not mix the legacy table with
-// named [people.sweep.providers.<name>] profiles, so callers that publish
-// named profiles or selector edits must migrate the legacy table first.
-func PeopleSweepLegacyProviderTable(snapshot ConfigFile) (legacy, headerTable bool) {
-	lines := splitTOMLLines(string(snapshot.Content))
-	legacyPath := []string{"people", "sweep", "provider"}
-	if len(exactTOMLTableHeaders(lines, legacyPath)) > 0 {
-		return true, true
-	}
-	structural := tomlStructuralLines(lines)
-	var table []string
-	for index, line := range lines {
-		if !structural[index] {
-			continue
-		}
-		if parsed, _, ok := parseTOMLTable(line.body); ok {
-			table = parsed
-			continue
-		}
-		assignment, ok := assignmentKey(line.body)
-		if !ok || !equalPath(appendPath(table, assignment), legacyPath) {
-			continue
-		}
-		equal := indexOutsideTOMLEquals(line.body)
-		value := strings.TrimLeft(line.body[equal+1:], " \t")
-		if strings.HasPrefix(value, "{") {
-			return true, false
-		}
-	}
-	return false, false
-}
-
 // RestoreConfigFile restores before only while the live target is the exact
 // filesystem object published by the transaction. The post-write snapshot is
 // an identity guard, not merely an ETag: byte-identical concurrent replacement
@@ -1236,7 +1200,7 @@ func encodeTOMLPathSuffix(segments []string) string {
 // the file already defines the table:
 //
 //   - an exact dotted assignment, such as a root-level
-//     `people.sweep.provider = { ... }`, is replaced in place, so a legacy
+//     `people.sweep.provider = { ... }`, is replaced in place, so an existing
 //     inline value becomes the new scalar without touching other lines;
 //   - remaining keys join the dotted-key family that defines the table
 //     (adjacent lines, same table context), because a table defined through

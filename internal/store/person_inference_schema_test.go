@@ -32,7 +32,11 @@ func TestPersonInferenceProviderV2Schema(t *testing.T) {
 	}, liveTableColumns(t, st, "person_inference_checks"))
 }
 
-func TestPersonInferenceProviderV2MigratesLegacySchemaWithoutAuthority(t *testing.T) {
+// TestPersonInferenceProviderV2RemovesPreProfileRows covers an archive created
+// by a development build before named protocol profiles existed: the new
+// columns and check table appear, and the pre-profile row, which no current
+// configuration can fingerprint, is removed rather than carried forward.
+func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newUninitializedPersonInferenceMigrationStore(t)
@@ -71,55 +75,9 @@ func TestPersonInferenceProviderV2MigratesLegacySchemaWithoutAuthority(t *testin
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_profiles`).Scan(&profiles))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_checks`).Scan(&checks))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_consents`).Scan(&consents))
-	assert.Equal(1, profiles)
+	assert.Zero(profiles)
 	assert.Zero(checks)
 	assert.Zero(consents)
-}
-
-func TestPersonInferenceProviderV2BackfillsExistingCanonicalProfile(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	profile := inferenceTestProfile(t)
-	st := newUninitializedPersonInferenceMigrationStore(t)
-	createdAtType := "DATETIME"
-	if st.IsPostgreSQL() {
-		createdAtType = "TIMESTAMPTZ"
-	}
-
-	_, err := st.DB().Exec(`
-		CREATE TABLE person_inference_profiles (
-			fingerprint TEXT PRIMARY KEY, provider_kind TEXT NOT NULL,
-			endpoint TEXT NOT NULL, model TEXT NOT NULL, api_key_env TEXT NOT NULL,
-			allow_anonymous BOOLEAN NOT NULL DEFAULT FALSE,
-			retention_posture TEXT NOT NULL, training_posture TEXT NOT NULL,
-			allowed_sources JSON NOT NULL, source_since TEXT NOT NULL, source_until TEXT,
-			allow_sensitive BOOLEAN NOT NULL DEFAULT FALSE, policy_json JSON NOT NULL,
-			created_at ` + createdAtType + ` NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`)
-	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_profiles
-			(fingerprint, provider_kind, endpoint, model, api_key_env, allow_anonymous,
-			 retention_posture, training_posture, allowed_sources, source_since,
-			 source_until, allow_sensitive, policy_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`),
-		profile.Fingerprint, profile.Protocol, profile.Endpoint, profile.Model,
-		profile.CredentialRef, false, profile.RetentionPosture, profile.TrainingPosture,
-		`["conversation_text"]`, profile.SourceSince, profile.AllowSensitive,
-		string(profile.PolicyJSON))
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-
-	profiles, err := st.ListPersonInferenceProfiles(t.Context())
-	require.NoError(err)
-	require.Len(profiles, 1)
-	assert.Equal(profile, profiles[0])
-	verified, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), profile.Fingerprint)
-	require.NoError(err)
-	assert.False(verified)
-	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
-	require.NoError(err)
-	assert.False(active)
 }
 
 func newUninitializedPersonInferenceMigrationStore(t *testing.T) *store.Store {

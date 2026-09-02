@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -20,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -383,7 +381,7 @@ func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrS
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "catalog-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -414,7 +412,7 @@ func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrS
 		assert.Equal(peoplesweep.AuthBearer, credential.Scheme)
 		return peoplesweep.NegotiatedCapabilities{
 			OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-			DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+			DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 		}, nil
 	}
 	nativeEdit := deps.editConfigTables
@@ -521,7 +519,7 @@ func TestPersonProviderAddExplicitEndpointMayReceiveCredential(t *testing.T) {
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "catalog-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -546,7 +544,7 @@ func TestPersonProviderAddExplicitEndpointMayReceiveCredential(t *testing.T) {
 		assert.Equal(providerSetupSecretCanary, credential.Value())
 		return peoplesweep.NegotiatedCapabilities{
 			OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-			DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+			DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 		}, nil
 	}
 
@@ -623,7 +621,7 @@ func TestPersonProviderAcceptedCatalogPricesValidateProposedBudgetBeforeSecretOr
 			loaded, err := config.LoadConfigFile(withCap, "")
 			require.NoError(err)
 			checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-				Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+				Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 				ModelVersion: "prices-model-v1",
 			}}
 			deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -672,21 +670,20 @@ func TestPersonProviderAcceptedCatalogPricesValidateProposedBudgetBeforeSecretOr
 }
 
 func TestPersonProviderAddRejectsInvalidSnapshotCapsBeforeSecretOrProvider(t *testing.T) {
-	newRequire := require.New
 	assert := assert.New(t)
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
 	deps := providerSetupCommandDeps(t, path, loaded, &fixedPersonProviderChecker{})
+	// The file changes underneath the command after startup config loaded.
+	content, err := os.ReadFile(path)
+	require.NoError(err)
+	content = bytes.Replace(content,
+		[]byte("output_cost_microusd_per_million_tokens = 222\n"),
+		[]byte("output_cost_microusd_per_million_tokens = 222\nmax_input_tokens_per_run = -1\n"), 1)
+	require.NoError(os.WriteFile(path, content, 0o640))
 	catalogCalls, credentialReads, negotiations, writes := 0, 0, 0, 0
 	deps.setup.catalog = func(context.Context) ([]peoplesweep.ProviderSuggestion, error) {
-		require := newRequire(t)
 		catalogCalls++
-		content, err := os.ReadFile(path)
-		require.NoError(err)
-		content = bytes.Replace(content,
-			[]byte("output_cost_microusd_per_million_tokens = 222\n"),
-			[]byte("output_cost_microusd_per_million_tokens = 222\nmax_input_tokens_per_run = -1\n"), 1)
-		require.NoError(os.WriteFile(path, content, 0o640))
 		return nil, nil
 	}
 	deps.setup.lookupEnv = func(string) (string, bool) {
@@ -705,14 +702,14 @@ func TestPersonProviderAddRejectsInvalidSnapshotCapsBeforeSecretOrProvider(t *te
 		return nativeEdit(etag, edits)
 	}
 
-	_, err := executePersonProviderCommand(t, deps,
+	_, err = executePersonProviderCommand(t, deps,
 		"add", "invalid-caps", "--protocol", "openai_chat",
 		"--endpoint", "https://prices.example.test/v1", "--model", "prices-model",
 		"--auth", "bearer", "--credential-env", "EXACT_PRICES_KEY",
 		"--retention-posture", "zero_retention", "--training-posture", "no_training",
 		"--source", "conversation_text", "--source-since", "2025-01-01", "--yes")
 	require.ErrorContains(err, "max_input_tokens_per_run")
-	assert.Equal(1, catalogCalls)
+	assert.Zero(catalogCalls, "explicit transport fields need no catalog fetch")
 	assert.Zero(credentialReads)
 	assert.Zero(negotiations)
 	assert.Zero(writes)
@@ -811,7 +808,7 @@ func addPersonProviderSelectionArgs(name string) []string {
 
 func newCheckedPersonProviderChecker() *fixedPersonProviderChecker {
 	return &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "checked-model-v1",
 	}}
 }
@@ -843,7 +840,7 @@ func providerSetupCommandDeps(
 			}
 			return peoplesweep.NegotiatedCapabilities{
 				OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-				DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+				DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 			}, nil
 		},
 		credentials: peoplesweep.NewFileCredentialStore(loaded.TokensDir()),
@@ -886,7 +883,7 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 
 	st := testutil.NewSQLiteTestStore(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "live-model-v1",
 	}}
 	deps.openStore = func() (personProviderStore, func(), error) { return st, func() {}, nil }
@@ -905,7 +902,7 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 		assert.Equal(providerSetupSecretCanary, credential.Value())
 		return peoplesweep.NegotiatedCapabilities{
 			OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-			DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+			DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 		}, nil
 	}
 
@@ -970,7 +967,7 @@ func TestPersonProviderAddCustomStdinKeepsSecretLocal(t *testing.T) {
 	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "new-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -1060,9 +1057,8 @@ func TestPersonProviderAddKeepsConsentedActiveProviderSelected(t *testing.T) {
 
 // TestPersonProviderAddLeavesDisabledConfigDisabled covers add into configs
 // whose sweep is disabled: an existing provider selection stays untouched,
-// and a config without any selection gains only the inert
-// people.sweep.provider selector that config validity requires once a named
-// profile exists. The sweep itself stays disabled either way.
+// and a config without any selection stays unselected. The sweep itself
+// stays disabled either way.
 func TestPersonProviderAddLeavesDisabledConfigDisabled(t *testing.T) {
 	t.Run("existing selection preserved", func(t *testing.T) {
 		assert := assert.New(t)
@@ -1088,7 +1084,7 @@ func TestPersonProviderAddLeavesDisabledConfigDisabled(t *testing.T) {
 		assert.Contains(reloaded.People.Sweep.Providers, "new-provider")
 	})
 
-	t.Run("first profile publishes only an inert selector", func(t *testing.T) {
+	t.Run("first profile publishes no selector", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		path, loaded := personProviderAddSelectionConfigFile(t, false, false)
@@ -1101,346 +1097,15 @@ func TestPersonProviderAddLeavesDisabledConfigDisabled(t *testing.T) {
 
 		content, err := os.ReadFile(path)
 		require.NoError(err)
-		assert.Contains(string(content), `provider = "first-provider"`)
+		assert.NotContains(string(content), `provider = "first-provider"`)
 		assert.NotContains(string(content), "enabled")
 
 		reloaded, err := config.Load(path, "")
 		require.NoError(err)
-		assert.Equal("first-provider", reloaded.People.Sweep.Provider.Name)
+		assert.Empty(reloaded.People.Sweep.Provider.Name)
 		assert.False(reloaded.People.Sweep.Enabled)
 		assert.Contains(reloaded.People.Sweep.Providers, "first-provider")
 	})
-}
-
-// legacyPersonProviderConfigFile writes an operator-owned config whose people
-// sweep selection is the legacy [people.sweep.provider] table. layout selects
-// the encoding: an explicit header table with its parent [people.sweep]
-// header, a parentless header table with or without a sibling
-// [people.sweep.budgets] table, an inline provider = { ... } assignment inside
-// [people.sweep], or a root dotted `people.sweep.provider = { ... }`
-// assignment. Only the first layout enables the sweep; the parentless layouts
-// have nowhere to record enabled and the remaining two record it explicitly
-// as disabled.
-func legacyPersonProviderConfigFile(t *testing.T, layout string) (string, *config.Config) {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	dataDir := filepath.ToSlash(filepath.Join(dir, "data"))
-	legacyTable := `# legacy operator comment
-kind = "openai_compatible"
-endpoint = "https://legacy.example.test/v1"
-model = "legacy-model"
-api_key_env = "LEGACY_KEY"
-retention_posture = "zero_retention"
-training_posture = "no_training"
-allowed_sources = ["conversation_text"]
-source_since = "2025-01-01"
-request_timeout = "45s"`
-	var content string
-	switch layout {
-	case "header table":
-		content = `# retained operator comment
-[data]
-data_dir = "` + dataDir + `"
-
-[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-` + legacyTable + `
-
-[people.sweep.budgets]
-input_cost_microusd_per_million_tokens = 111
-output_cost_microusd_per_million_tokens = 222
-
-[future.operator_extension]
-answer = 42
-`
-	case "header table without people.sweep header":
-		content = `# retained operator comment
-[data]
-data_dir = "` + dataDir + `"
-
-[people.sweep.provider]
-` + legacyTable + `
-`
-	case "header table without people.sweep header, with budgets":
-		content = `# retained operator comment
-[data]
-data_dir = "` + dataDir + `"
-
-[people.sweep.provider]
-` + legacyTable + `
-
-[people.sweep.budgets]
-input_cost_microusd_per_million_tokens = 111
-output_cost_microusd_per_million_tokens = 222
-`
-	case "root dotted table":
-		content = `# retained operator comment
-people.sweep.enabled = false
-people.sweep.provider = { kind = "openai_compatible", endpoint = "https://legacy.example.test/v1", model = "legacy-model", api_key_env = "LEGACY_KEY", retention_posture = "zero_retention", training_posture = "no_training", allowed_sources = ["conversation_text"], source_since = "2025-01-01", request_timeout = "45s" }
-
-[data]
-data_dir = "` + dataDir + `"
-`
-	case "inline table":
-		content = `# retained operator comment
-[data]
-data_dir = "` + dataDir + `"
-
-[people.sweep]
-enabled = false
-provider = { kind = "openai_compatible", endpoint = "https://legacy.example.test/v1", model = "legacy-model", api_key_env = "LEGACY_KEY", retention_posture = "zero_retention", training_posture = "no_training", allowed_sources = ["conversation_text"], source_since = "2025-01-01", request_timeout = "45s" }
-`
-	default:
-		require.Failf(t, "unknown legacy layout", "%q", layout)
-		return "", nil
-	}
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o640))
-	loaded, err := config.Load(path, "")
-	require.NoError(t, err)
-	require.Equal(t, "default", loaded.People.Sweep.Provider.Name)
-	return path, loaded
-}
-
-// TestPersonProviderAddMigratesLegacyProviderTable reproduces the legacy
-// preflight failure: add used to publish the new named profile beside the
-// supported [people.sweep.provider] table, and a config may never mix the
-// two shapes, so add failed before writing anything. Add now migrates the
-// legacy table into the named default profile in the same publication: the
-// legacy policy stays the active selection with its fingerprint intact,
-// enabled state is untouched, and the new profile is not selected — only
-// `person provider use` may switch selection. Every legacy encoding is
-// covered, including the parentless header table beside [people.sweep.budgets]
-// (the selector joins the implicitly defined parent table) and the root
-// dotted `people.sweep.provider = { ... }` assignment (the selector replaces
-// the dotted value in place).
-func TestPersonProviderAddMigratesLegacyProviderTable(t *testing.T) {
-	for _, layout := range []string{
-		"header table",
-		"header table without people.sweep header",
-		"header table without people.sweep header, with budgets",
-		"root dotted table",
-		"inline table",
-	} {
-		t.Run(layout, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path, loaded := legacyPersonProviderConfigFile(t, layout)
-			legacy := loaded.People.Sweep
-			legacy.Enabled = true
-			legacyProfile, err := legacy.Profile()
-			require.NoError(err)
-			deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
-			t.Setenv("EXACT_PROVIDER_KEY", providerSetupSecretCanary)
-
-			_, err = executePersonProviderCommand(t, deps,
-				addPersonProviderSelectionArgs("new-provider")...)
-			require.NoError(err)
-
-			content, err := os.ReadFile(path)
-			require.NoError(err)
-			assert.NotContains(string(content), `[people.sweep.provider]`)
-			assert.NotContains(string(content), "kind = ")
-			assert.NotContains(string(content), "api_key_env")
-			assert.Contains(string(content), "[people.sweep.providers.default]")
-			assert.Contains(string(content), "[people.sweep.providers.new-provider]")
-			assert.Contains(string(content), `provider = "default"`)
-			assert.Contains(string(content), `credential_env = "LEGACY_KEY"`)
-			assert.Contains(string(content), `protocol = "openai_chat"`)
-			assert.Contains(string(content), "# retained operator comment")
-			assert.NotContains(string(content), `provider = "new-provider"`)
-
-			reloaded, err := config.Load(path, "")
-			require.NoError(err)
-			sweep := reloaded.People.Sweep
-			assert.Equal("default", sweep.Provider.Name)
-			assert.Contains(sweep.Providers, "default")
-			assert.Contains(sweep.Providers, "new-provider")
-			assert.Equal(45*time.Second, sweep.Providers["default"].RequestTimeout)
-			if layout == "header table" {
-				assert.True(sweep.Enabled)
-				assert.Contains(string(content), "enabled = true")
-				assert.Contains(string(content), "[future.operator_extension]")
-			} else {
-				assert.False(sweep.Enabled)
-				assert.NotContains(string(content), "enabled = true")
-			}
-			if layout == "header table" ||
-				layout == "header table without people.sweep header, with budgets" {
-				assert.Contains(string(content), "input_cost_microusd_per_million_tokens = 111")
-				assert.Contains(string(content), "output_cost_microusd_per_million_tokens = 222")
-			}
-			if layout == "root dotted table" {
-				assert.Contains(string(content), `people.sweep.provider = "default"`)
-				assert.Contains(string(content), "people.sweep.enabled = false")
-				assert.NotContains(string(content), "\n[people.sweep]\n")
-			}
-			migrated := sweep
-			migrated.Enabled = true
-			migratedProfile, err := migrated.Profile()
-			require.NoError(err)
-			assert.Equal(legacyProfile.Fingerprint, migratedProfile.Fingerprint,
-				"the migrated default profile must keep the legacy policy fingerprint")
-		})
-	}
-}
-
-// TestPersonProviderAddMigratesLegacyCodexProviderTable covers the
-// codex_app_server legacy table: the migration must keep its endpoint-free
-// shape and its isolation fields, including a custom executable.
-func TestPersonProviderAddMigratesLegacyCodexProviderTable(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[data]
-data_dir = "`+
-		filepath.ToSlash(filepath.Join(dir, "data"))+`"
-
-[people.sweep]
-enabled = true
-
-[people.sweep.provider]
-kind = "codex_app_server"
-model = "legacy-codex-model"
-reasoning_effort = "medium"
-executable = "codex-custom"
-retention_posture = "zero_retention"
-training_posture = "no_training"
-allowed_sources = ["conversation_text"]
-source_since = "2025-01-01"
-`), 0o640))
-	loaded, err := config.Load(path, "")
-	require.NoError(err)
-	legacyProfile, err := loaded.People.Sweep.Profile()
-	require.NoError(err)
-	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
-	t.Setenv("EXACT_PROVIDER_KEY", providerSetupSecretCanary)
-
-	_, err = executePersonProviderCommand(t, deps,
-		addPersonProviderSelectionArgs("new-provider")...)
-	require.NoError(err)
-
-	content, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.NotContains(string(content), `[people.sweep.provider]`)
-	assert.Contains(string(content), "[people.sweep.providers.default]")
-	assert.Contains(string(content), `protocol = "codex_app_server"`)
-	assert.Contains(string(content), `executable = "codex-custom"`)
-	assert.Contains(string(content),
-		`execution_boundary = "`+peoplesweep.CodexExecutionBoundaryV1+`"`)
-	assert.NotContains(string(content), `endpoint = ""`)
-	assert.NotContains(string(content), `token_limit_parameter = ""`)
-
-	reloaded, err := config.Load(path, "")
-	require.NoError(err)
-	sweep := reloaded.People.Sweep
-	assert.Equal("default", sweep.Provider.Name)
-	assert.True(sweep.Enabled)
-	assert.Equal("codex-custom", sweep.Providers["default"].Executable)
-	migratedProfile, err := sweep.Profile()
-	require.NoError(err)
-	assert.Equal(legacyProfile.Fingerprint, migratedProfile.Fingerprint)
-}
-
-// TestPersonProviderUseMigratesLegacyProviderTable pins that use publishes
-// its selector on legacy installations across every encoding: the legacy
-// table is retired into the named default profile in the same publication,
-// and because the migrated profile keeps the legacy fingerprint, the check
-// recorded for the legacy policy still authorizes the selection.
-func TestPersonProviderUseMigratesLegacyProviderTable(t *testing.T) {
-	for _, layout := range []string{
-		"header table",
-		"header table without people.sweep header",
-		"header table without people.sweep header, with budgets",
-		"root dotted table",
-	} {
-		t.Run(layout, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path, loaded := legacyPersonProviderConfigFile(t, layout)
-			legacy := loaded.People.Sweep
-			legacy.Enabled = true
-			legacyProfile, err := legacy.Profile()
-			require.NoError(err)
-			st := testutil.NewSQLiteTestStore(t)
-			_, err = st.EnsurePersonInferenceProfile(t.Context(), legacyProfile)
-			require.NoError(err)
-			require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
-				ProfileFingerprint: legacyProfile.Fingerprint, CheckedAt: time.Now().UTC(),
-				DriverVersion: legacyProfile.DriverVersion, OutputMode: legacyProfile.OutputMode,
-				ModelVersion: "legacy-model-v1",
-			}))
-			deps := localPersonProviderDeps(loaded.People.Sweep, st, nil)
-			deps.readConfigFile = func() (config.ConfigFile, error) { return config.ReadConfigFile(path) }
-			deps.editConfigTables = func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
-				return config.EditConfigTables(path, etag, edits)
-			}
-			deps.restoreConfigFile = func(published, before config.ConfigFile) (config.ConfigFile, error) {
-				return config.RestoreConfigFile(path, published, before)
-			}
-			deps.setup.credentials = peoplesweep.NewFileCredentialStore(loaded.TokensDir())
-
-			output, err := executePersonProviderCommand(t, deps, "use", "default")
-			require.NoError(err)
-			assert.Contains(output, `Selected people provider profile "default"`)
-
-			content, err := os.ReadFile(path)
-			require.NoError(err)
-			assert.NotContains(string(content), `[people.sweep.provider]`)
-			assert.NotContains(string(content), "kind = ")
-			assert.Contains(string(content), "[people.sweep.providers.default]")
-			assert.Contains(string(content), `provider = "default"`)
-			assert.Contains(string(content), "enabled = true")
-			if layout == "header table without people.sweep header, with budgets" {
-				assert.Contains(string(content), "input_cost_microusd_per_million_tokens = 111")
-			}
-			if layout == "root dotted table" {
-				assert.Contains(string(content), `people.sweep.provider = "default"`)
-				assert.Contains(string(content), "people.sweep.enabled = true")
-				assert.NotContains(string(content), "\n[people.sweep]\n")
-			}
-
-			reloaded, err := config.Load(path, "")
-			require.NoError(err)
-			assert.Equal("default", reloaded.People.Sweep.Provider.Name)
-			assert.True(reloaded.People.Sweep.Enabled)
-			active, err := reloaded.People.Sweep.Profile()
-			require.NoError(err)
-			assert.Equal(legacyProfile.Fingerprint, active.Fingerprint)
-		})
-	}
-}
-
-// TestPersonProviderRemoveWorksAfterLegacyMigration proves the migrated file
-// is a first-class named-profile config: remove deletes the added profile
-// while the migrated default profile stays selected.
-func TestPersonProviderRemoveWorksAfterLegacyMigration(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	path, loaded := legacyPersonProviderConfigFile(t, "header table")
-	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
-	t.Setenv("EXACT_PROVIDER_KEY", providerSetupSecretCanary)
-	_, err := executePersonProviderCommand(t, deps,
-		addPersonProviderSelectionArgs("new-provider")...)
-	require.NoError(err)
-
-	_, err = executePersonProviderCommand(t, deps, "remove", "new-provider")
-	require.NoError(err)
-
-	content, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.NotContains(string(content), "[people.sweep.providers.new-provider]")
-	assert.Contains(string(content), "[people.sweep.providers.default]")
-	assert.Contains(string(content), `provider = "default"`)
-
-	reloaded, err := config.Load(path, "")
-	require.NoError(err)
-	_, exists := reloaded.People.Sweep.Providers["new-provider"]
-	assert.False(exists)
-	assert.Equal("default", reloaded.People.Sweep.Provider.Name)
 }
 
 // TestPersonProviderUseStillSelectsAndEnablesAfterAdd pins the consent
@@ -1501,7 +1166,7 @@ func TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal(t *testing.T
 		require := require.New(t)
 		path, loaded := providerSetupConfigFile(t)
 		checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-			Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+			Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 			ModelVersion: "env-model-v1",
 		}}
 		deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -1536,7 +1201,7 @@ func TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal(t *testing.T
 		require := require.New(t)
 		path, loaded := providerSetupConfigFile(t)
 		checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-			Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+			Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 			ModelVersion: "masked-model-v1",
 		}}
 		deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -1583,7 +1248,7 @@ func TestPersonProviderCatalogPricesRequireExplicitAcceptance(t *testing.T) {
 			require := require.New(t)
 			path, loaded := providerSetupConfigFile(t)
 			checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-				Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+				Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 				ModelVersion: "catalog-model-v1",
 			}}
 			deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -2048,7 +1713,7 @@ func TestPersonProviderAddConfigConflictKeepsConcurrentEditAndDeletesOnlyNewCred
 	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "conflict-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -2093,7 +1758,7 @@ func TestPersonProviderAddRollsBackExactUncertainPublication(t *testing.T) {
 	beforeBytes, err := os.ReadFile(path)
 	require.NoError(err)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "uncertain-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -2144,7 +1809,7 @@ func TestPersonProviderAddFailedCheckRestoresOriginallyMissingConfig(t *testing.
 		negotiate: func(context.Context, peoplesweep.ProviderConfig, peoplesweep.Credential) (peoplesweep.NegotiatedCapabilities, error) {
 			return peoplesweep.NegotiatedCapabilities{
 				OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-				DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+				DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 			}, nil
 		},
 		credentials: peoplesweep.NewFileCredentialStore(filepath.Join(dir, "tokens")),
@@ -2225,7 +1890,7 @@ func TestPersonProviderConcurrentExactAddNeverReadsSecretOrOverwrites(t *testing
 				negotiations++
 				return peoplesweep.NegotiatedCapabilities{
 					OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
-					DriverVersion: peoplesweep.OpenAICompatibleProviderVersion,
+					DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 				}, nil
 			}
 			input := &countingProviderReader{data: bytes.NewReader([]byte(providerSetupSecretCanary + "\n"))}
@@ -2257,7 +1922,7 @@ func TestPersonProviderAddRefusesToOverwriteExactCredential(t *testing.T) {
 	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
-		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAICompatibleProviderVersion,
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "occupied-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
