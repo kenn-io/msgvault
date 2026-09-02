@@ -171,6 +171,27 @@ func TestStoreAttachmentFileDurableStoresEmptyContent(t *testing.T) {
 	assert.Empty(skipped, "ordinary ingest must keep its empty-content skip semantics")
 }
 
+func TestStoreAttachmentFileIncludingEmptyStoresPresentEmptyContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dir := t.TempDir()
+	const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	att := &mime.Attachment{Content: []byte{}}
+
+	storagePath, err := StoreAttachmentFileIncludingEmpty(dir, att)
+	require.NoError(err)
+	assert.Equal(path.Join(emptySHA256[:2], emptySHA256), storagePath)
+	assert.Equal(emptySHA256, att.ContentHash)
+	info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(storagePath)))
+	require.NoError(err)
+	assert.True(info.Mode().IsRegular())
+	assert.Zero(info.Size())
+
+	skipped, err := StoreAttachmentFile(t.TempDir(), &mime.Attachment{Content: []byte{}})
+	require.NoError(err)
+	assert.Empty(skipped, "ordinary ingest must keep its empty-content skip semantics")
+}
+
 func TestStoreAttachmentFileDurableSurfacesParentSyncFailure(t *testing.T) {
 	require := require.New(t)
 	dir := t.TempDir()

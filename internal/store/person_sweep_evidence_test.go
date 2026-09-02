@@ -333,15 +333,19 @@ func TestSearchPersonSweepMessagesPreservesNewestFirstCandidateRanking(t *testin
 }
 
 func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
-	f := newPersonSweepJournalFixture(t, true, false)
-	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-		`UPDATE sources SET source_type = 'slack' WHERE id = ?`), f.sourceID)
-	require.NoError(t, err)
-	id := f.insertMessage(t, "authored chat", "chat", f.aliceID, time.Now().UTC())
-	addSweepBody(t, f, id, "I work in product.")
-	item := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
-	require.NotNil(t, item.SubjectPersonID)
-	assert.Equal(t, personfacts.DirectSelf, item.Directness)
+	for _, sourceType := range []string{"slack", "slackdump"} {
+		t.Run(sourceType, func(t *testing.T) {
+			f := newPersonSweepJournalFixture(t, true, false)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+				`UPDATE sources SET source_type = ? WHERE id = ?`), sourceType, f.sourceID)
+			require.NoError(t, err)
+			id := f.insertMessage(t, "authored chat", "chat", f.aliceID, time.Now().UTC())
+			addSweepBody(t, f, id, "I work in product.")
+			item := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
+			require.NotNil(t, item.SubjectPersonID)
+			assert.Equal(t, personfacts.DirectSelf, item.Directness)
+		})
+	}
 }
 
 func TestPersonSweepEvidenceStatusChangesCoalesceToTerminalEffect(t *testing.T) {

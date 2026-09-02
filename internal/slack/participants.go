@@ -55,6 +55,13 @@ func (r *participantResolver) loadUsers(ctx context.Context, c *Client) error {
 	})
 }
 
+// loadUserSnapshot seeds identity resolution from an offline Slack export.
+func (r *participantResolver) loadUserSnapshot(users []User) {
+	for _, user := range users {
+		r.users[user.ID] = user
+	}
+}
+
 // tzLocation returns the cached user's timezone as a *time.Location: the
 // IANA zone when its name loads (search date modifiers follow the zone's
 // historical DST rules — probed live), falling back to a fixed zone at the

@@ -1035,7 +1035,7 @@ func personSweepAuthorship(
 func personSweepSourceAuthenticatesSender(sourceType string) bool {
 	switch strings.ToLower(strings.TrimSpace(sourceType)) {
 	case "apple_messages", "beeper", "discord", "facebook_messenger", "google_messages",
-		"imessage", "slack", "synctech-sms", "synctech_sms", "teams", "whatsapp":
+		"imessage", "slack", "slackdump", "synctech-sms", "synctech_sms", "teams", "whatsapp":
 		return true
 	default:
 		return false

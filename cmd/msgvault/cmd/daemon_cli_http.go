@@ -113,7 +113,7 @@ var errCLISubprocessProxied = errors.New("cli subprocess failed")
 func daemonCLIRunCwd(info HTTPStoreInfo, requiresLocalFiles bool) (string, error) {
 	if info.Kind != HTTPStoreLocalDaemon {
 		if requiresLocalFiles {
-			return "", errors.New("this command uses a local capability manifest and cannot run through a configured remote daemon; run it on the daemon host with --local")
+			return "", errors.New("this command uses local files and cannot run through a configured remote daemon; run it on the daemon host with --local")
 		}
 		return "", nil
 	}

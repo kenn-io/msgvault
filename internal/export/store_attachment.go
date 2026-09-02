@@ -57,10 +57,21 @@ func prepareStorageDir(attachmentsDir string) (string, error) {
 // content-addressed storage (hash[:2]/hash). It validates existing files when
 // de-duping. If attachmentsDir is a symlink, it is resolved before writing.
 //
-// Returns the storage path relative to attachmentsDir (e.g. "ab/<hash>"), or
-// empty string if nothing was stored.
+// Empty content is skipped. Returns the storage path relative to attachmentsDir
+// (e.g. "ab/<hash>"), or empty string if nothing was stored.
 func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, error) {
-	if attachmentsDir == "" || len(att.Content) == 0 {
+	return storeAttachmentFile(attachmentsDir, att, false)
+}
+
+// StoreAttachmentFileIncludingEmpty stores loaded attachment content even
+// when it is a present zero-length slice. A nil Content slice still means the
+// bytes were not loaded and is skipped.
+func StoreAttachmentFileIncludingEmpty(attachmentsDir string, att *mime.Attachment) (string, error) {
+	return storeAttachmentFile(attachmentsDir, att, true)
+}
+
+func storeAttachmentFile(attachmentsDir string, att *mime.Attachment, includeEmpty bool) (string, error) {
+	if attachmentsDir == "" || att.Content == nil || (!includeEmpty && len(att.Content) == 0) {
 		return "", nil
 	}
 

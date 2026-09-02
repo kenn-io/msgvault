@@ -191,7 +191,7 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 	switch sourceType {
 	case sourceTypeBeeper:
 		return cfg.Beeper.MediaPolicy(identifier), true
-	case sourceTypeSlack:
+	case sourceTypeSlack, sourceTypeSlackdump:
 		teamID, _, ok := splitSlackIdentifier(identifier)
 		if !ok {
 			return attachmentpolicy.Policy{}, false
