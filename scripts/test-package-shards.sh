@@ -30,7 +30,18 @@ if [ ! -x "$test_binary" ]; then
 	exit 0
 fi
 
-mapfile -t test_names < <("$test_binary" '-test.list=^(Test|Example|Fuzz)')
+# Listing runs the package's init and TestMain, so a failure there is a real
+# failure, not an empty package. Kept out of a process substitution and read
+# with a loop so both the exit status and macOS's Bash 3.2 are honored.
+names_file="$work/names"
+if ! "$test_binary" '-test.list=^(Test|Example|Fuzz)' >"$names_file"; then
+	echo "Listing tests in $package failed" >&2
+	exit 1
+fi
+test_names=()
+while IFS= read -r name; do
+	test_names+=("$name")
+done <"$names_file"
 if [ "${#test_names[@]}" -eq 0 ]; then
 	echo "No tests found in $package"
 	exit 0
