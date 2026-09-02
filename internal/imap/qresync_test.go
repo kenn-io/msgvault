@@ -48,6 +48,11 @@ type qresyncServerConfig struct {
 	// answering its first UID SEARCH, which is how a coverage search meets a
 	// connection the server has given up on.
 	dropOnSearchConnection int
+	// uidValidityAfterConnection is the UIDVALIDITY reported to every
+	// connection after that ID, which is how a mailbox recreated between two
+	// connections presents itself.
+	uidValidityAfterConnection int
+	laterUIDValidity           uint32
 }
 
 type qresyncTestServer struct {
@@ -131,7 +136,8 @@ func serveQresyncTestConn(
 			}
 			_, _ = fmt.Fprintf(conn,
 				"* STATUS %q (%sUIDNEXT %d UIDVALIDITY %d HIGHESTMODSEQ %d)\r\n%s OK STATUS completed\r\n",
-				mailbox, messages, cfg.uidNext, cfg.uidValidity, cfg.highestModSeq, tag)
+				mailbox, messages, cfg.uidNext, connectionUIDValidity(cfg, connID),
+				cfg.highestModSeq, tag)
 		case strings.HasPrefix(upper, "ENABLE"):
 			_, _ = fmt.Fprintf(conn, "* ENABLED QRESYNC\r\n%s OK ENABLE completed\r\n", tag)
 		case strings.HasPrefix(upper, "SELECT"):
@@ -150,7 +156,7 @@ func serveQresyncTestConn(
 			}
 			_, _ = fmt.Fprintf(conn,
 				"* FLAGS (\\Seen)\r\n* %d EXISTS\r\n* OK [UIDVALIDITY %d]\r\n* OK [UIDNEXT %d]\r\n* OK [HIGHESTMODSEQ %d]\r\n",
-				exists, cfg.uidValidity, cfg.uidNext, selectModSeq)
+				exists, connectionUIDValidity(cfg, connID), cfg.uidNext, selectModSeq)
 			_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID FETCH"):
 			// Only a CHANGEDSINCE fetch is entitled to answer with a subset:
@@ -183,6 +189,16 @@ func serveQresyncTestConn(
 			_, _ = fmt.Fprintf(conn, "%s BAD unsupported synthetic command\r\n", tag)
 		}
 	}
+}
+
+// connectionUIDValidity reports the UIDVALIDITY this connection sees. A
+// mailbox recreated between two connections reports the new value from every
+// command, so STATUS and SELECT must agree.
+func connectionUIDValidity(cfg qresyncServerConfig, connID int) uint32 {
+	if cfg.uidValidityAfterConnection != 0 && connID > cfg.uidValidityAfterConnection {
+		return cfg.laterUIDValidity
+	}
+	return cfg.uidValidity
 }
 
 func qresyncVanishedForFetch(command string, cfg qresyncServerConfig) []imapv2.UID {
@@ -1207,4 +1223,39 @@ func TestQresyncOverlappingReportCannotCoverAnOmission(t *testing.T) {
 		"one UID reported twice must not account for two assigned UIDs")
 	assert.Contains(listed, "INBOX|7",
 		"the omitted message must be recovered by the fallback")
+}
+
+// TestQresyncCoverageSearchRejectsChangedEpoch covers the other thing the
+// coverage search can bring back from a reconnect. The reconnect reselects the
+// mailbox, and the mailbox that answers may be a different one wearing the
+// same name. Every UID in the delta was collected under the old UIDVALIDITY,
+// so the mailbox has to be enumerated in full rather than saved.
+func TestQresyncCoverageSearchRejectsChangedEpoch(t *testing.T) {
+	assert := assert.New(t)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:               []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:                77,
+		uidNext:                    7,
+		highestModSeq:              20,
+		searchUIDs:                 []imapv2.UID{1, 2, 3, 4, 5},
+		fetchChanged:               []imapv2.UID{5},
+		dropOnSearchConnection:     1,
+		uidValidityAfterConnection: 1,
+		laterUIDValidity:           88,
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3, 4},
+		},
+	})
+
+	listQresyncMessages(t, client)
+
+	// A QRESYNC failure reconnects once more and enumerates the account, so
+	// the run reaches a third connection.
+	assert.NotEmpty(server.commandsFor(3),
+		"a mailbox that changed epoch mid-run must fall back to full enumeration")
+	assert.NotContains(joinedCommands(server.commandsFor(3)), "CHANGEDSINCE",
+		"the fallback enumerates rather than trusting the delta")
 }

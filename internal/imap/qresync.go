@@ -477,6 +477,7 @@ func (c *Client) verifyQresyncCoverage(
 	currentUIDNext uint32,
 	changedSet, vanishedSet map[imap.UID]struct{},
 ) error {
+	priorUIDValidity := c.selectedUIDValidity
 	if currentUIDNext <= prior.UIDNext {
 		return nil
 	}
@@ -524,6 +525,15 @@ func (c *Client) verifyQresyncCoverage(
 	if !c.enableQresync() {
 		return fmt.Errorf(
 			"QRESYNC unavailable after the coverage search in %q", mailbox)
+	}
+	// The reconnect also reselects the mailbox, and the mailbox it selects may
+	// be a different one wearing the same name. A delta built under the old
+	// epoch describes UIDs that no longer mean what they meant, so the mailbox
+	// has to be enumerated in full instead.
+	if c.selectedUIDValidity != priorUIDValidity {
+		return fmt.Errorf(
+			"QRESYNC %q changed UIDVALIDITY from %d to %d during the coverage search",
+			mailbox, priorUIDValidity, c.selectedUIDValidity)
 	}
 	for _, uid := range present {
 		// "UID SEARCH UID n:*" returns the last message even when n is past
