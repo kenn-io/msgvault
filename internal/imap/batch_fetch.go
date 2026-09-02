@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -117,6 +118,15 @@ func (c *Client) applyFetchResults(
 	msgs []*imapclient.FetchMessageBuffer,
 ) []batchFetchItem {
 	seenReturnedUIDs := make(map[imap.UID]bool, len(msgs))
+	// Only a message with no Message-ID header needs a durable alias, so the
+	// chunk's aliases are read once, and only if one turns up.
+	loadAliases := sync.OnceFunc(func() {
+		uids := make([]imap.UID, len(chunk))
+		for i, item := range chunk {
+			uids[i] = item.uid
+		}
+		c.loadSourceMessageAliases(mailbox, uids)
+	})
 	for _, msgBuf := range msgs {
 		idx, ok := uidToIdx[msgBuf.UID]
 		if !ok {
@@ -158,6 +168,7 @@ func (c *Client) applyFetchResults(
 			} else {
 				priorState, sameMailboxEpoch := c.priorFolderStates[mailbox]
 				if sameMailboxEpoch && priorState.UIDValidity == c.selectedUIDValidity {
+					loadAliases()
 					canonicalSourceMessageID = c.sourceMessageAliases[msgID]
 				}
 				if canonicalSourceMessageID == "" {

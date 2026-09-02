@@ -77,37 +77,73 @@ func (s *Store) GetIMAPKnownUIDs(sourceID int64) (map[string][]uint32, error) {
 	return known, nil
 }
 
+// aliasUIDChunkSize bounds one alias query's bound parameters, well under
+// SQLite's per-statement limit.
+const aliasUIDChunkSize = 900
+
 // GetIMAPSourceMessageAliases returns the canonical archived source identity
-// for every mailbox UID in the current saved epoch.
-func (s *Store) GetIMAPSourceMessageAliases(sourceID int64) (map[string]string, error) {
+// for the named mailbox UIDs that are in the current saved epoch. Callers ask
+// for the UIDs one run actually fetches: resolving the whole source instead
+// reads every stored membership to use a handful of them.
+func (s *Store) GetIMAPSourceMessageAliases(
+	sourceID int64,
+	mailbox string,
+	uids []uint32,
+) (map[string]string, error) {
+	aliases := make(map[string]string, len(uids))
+	for chunk := range slices.Chunk(uids, aliasUIDChunkSize) {
+		if err := s.readIMAPMessageAliases(sourceID, mailbox, chunk, aliases); err != nil {
+			return nil, err
+		}
+	}
+	return aliases, nil
+}
+
+// readIMAPMessageAliases adds one chunk of UIDs to aliases. It is a separate
+// function so each chunk closes its rows before the next query runs.
+func (s *Store) readIMAPMessageAliases(
+	sourceID int64,
+	mailbox string,
+	uids []uint32,
+	aliases map[string]string,
+) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(uids)+2)
+	args = append(args, sourceID, mailbox)
+	for _, uid := range uids {
+		args = append(args, uid)
+	}
 	rows, err := s.db.Query(`
-		SELECT membership.mailbox, membership.uid, messages.source_message_id
+		SELECT membership.uid, messages.source_message_id
 		FROM imap_message_memberships membership
 		JOIN imap_folder_state state
 		  ON state.source_id = membership.source_id
 		 AND state.mailbox = membership.mailbox
 		 AND state.uidvalidity = membership.uidvalidity
 		JOIN messages ON messages.id = membership.message_id
-		WHERE membership.source_id = ? AND messages.source_message_id IS NOT NULL
-	`, sourceID)
+		WHERE membership.source_id = ? AND membership.mailbox = ?
+		  AND messages.source_message_id IS NOT NULL
+		  AND membership.uid IN (?`+strings.Repeat(",?", len(uids)-1)+`)
+	`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query IMAP source message aliases: %w", err)
+		return fmt.Errorf("query IMAP source message aliases: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	aliases := make(map[string]string)
 	for rows.Next() {
-		var mailbox, canonicalSourceMessageID string
+		var canonicalSourceMessageID string
 		var uid uint32
-		if err := rows.Scan(&mailbox, &uid, &canonicalSourceMessageID); err != nil {
-			return nil, fmt.Errorf("scan IMAP source message alias: %w", err)
+		if err := rows.Scan(&uid, &canonicalSourceMessageID); err != nil {
+			return fmt.Errorf("scan IMAP source message alias: %w", err)
 		}
 		aliases[fmt.Sprintf("%s|%d", mailbox, uid)] = canonicalSourceMessageID
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate IMAP source message aliases: %w", err)
+		return fmt.Errorf("iterate IMAP source message aliases: %w", err)
 	}
-	return aliases, nil
+	return nil
 }
 
 // ApplyIMAPMailboxDeltas atomically replaces the source's authoritative IMAP

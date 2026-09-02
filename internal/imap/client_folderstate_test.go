@@ -1249,3 +1249,41 @@ func TestAllMailSnapshotSavesUIDNextAboveKnownUIDs(t *testing.T) {
 	assert.Greater(saved["All Mail"].UIDNext, uint32(4),
 		"the snapshot must not save a UIDNEXT its own baseline exceeds")
 }
+
+type aliasLoadCall struct {
+	mailbox string
+	uids    []uint32
+}
+
+func TestSourceMessageAliasLoaderRequestsOnlyListedUIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
+
+	first := newTestClient(t, addr)
+	require.Len(listAllMessages(t, first), 5)
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+
+	testutil.AppendIMAPMessage(t, user, "INBOX")
+
+	var calls []aliasLoadCall
+	second := newTestClient(t, addr,
+		WithFolderStates(saved),
+		WithSourceMessageAliasLoader(
+			func(mailbox string, uids []uint32) (map[string]string, error) {
+				calls = append(calls, aliasLoadCall{mailbox: mailbox, uids: uids})
+				return map[string]string{"INBOX|3": "[Gmail]/All Mail|9"}, nil
+			}))
+	require.Equal([]string{"INBOX|3"}, listAllMessages(t, second))
+
+	// The run listed one UID, so it must ask for that UID alone. Loading every
+	// stored alias of the source reads the whole membership table to use one.
+	require.Len(calls, 1)
+	assert.Equal("INBOX", calls[0].mailbox)
+	assert.Equal([]uint32{3}, calls[0].uids)
+
+	canonical, ok := second.CanonicalSourceMessageID("INBOX|3")
+	assert.True(ok)
+	assert.Equal("[Gmail]/All Mail|9", canonical)
+}

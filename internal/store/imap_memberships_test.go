@@ -806,3 +806,69 @@ func TestApplyIMAPMailboxDeltas_ConflictingDeltaIdentityRollsBackEverything(t *t
 		})
 	}
 }
+
+func TestGetIMAPSourceMessageAliases_ReturnsOnlyRequestedUIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	f.createMessage(t, "[Gmail]/All Mail|1", "")
+	f.createMessage(t, "INBOX|1", "")
+	f.createMessage(t, "INBOX|2", "")
+	f.createMessage(t, "INBOX|3", "")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State: store.IMAPFolderState{
+			Mailbox: "INBOX", UIDValidity: 17, UIDNext: 4, HighestModSeq: 100,
+		},
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: 1, SourceMessageID: "INBOX|1",
+				CanonicalSourceMessageID: "[Gmail]/All Mail|1"},
+			{UID: 2, SourceMessageID: "INBOX|2"},
+			{UID: 3, SourceMessageID: "INBOX|3"},
+		},
+	}}))
+
+	aliases, err := f.store.GetIMAPSourceMessageAliases(f.source.ID, "INBOX", []uint32{1, 3})
+	require.NoError(err)
+	assert.Equal(map[string]string{
+		"INBOX|1": "[Gmail]/All Mail|1",
+		"INBOX|3": "INBOX|3",
+	}, aliases, "UID 2 was not asked for, so it must not be read")
+
+	empty, err := f.store.GetIMAPSourceMessageAliases(f.source.ID, "INBOX", nil)
+	require.NoError(err)
+	assert.Empty(empty, "a run that lists nothing must not query at all")
+}
+
+func TestGetIMAPSourceMessageAliases_AccumulatesEveryUIDChunk(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	f.createMessage(t, "INBOX|1", "")
+	f.createMessage(t, "INBOX|950", "")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State: store.IMAPFolderState{
+			Mailbox: "INBOX", UIDValidity: 17, UIDNext: 951, HighestModSeq: 100,
+		},
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: 1, SourceMessageID: "INBOX|1"},
+			{UID: 950, SourceMessageID: "INBOX|950"},
+		},
+	}}))
+
+	// A full mailbox listing asks for every UID it enumerated, which crosses
+	// the bound-parameter chunk size. Both chunks must reach the same map.
+	uids := make([]uint32, 1000)
+	for i := range uids {
+		uids[i] = uint32(i + 1)
+	}
+	aliases, err := f.store.GetIMAPSourceMessageAliases(f.source.ID, "INBOX", uids)
+	require.NoError(err)
+	assert.Equal(map[string]string{
+		"INBOX|1":   "INBOX|1",
+		"INBOX|950": "INBOX|950",
+	}, aliases)
+}
