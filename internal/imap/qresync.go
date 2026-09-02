@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -256,7 +257,7 @@ func (c *Client) collectQresyncMailbox(
 		Mailbox: mailbox,
 		State: FolderState{
 			UIDValidity:   selected.UIDValidity,
-			UIDNext:       uint32(selected.UIDNext),
+			UIDNext:       baselineUIDNext(uint32(selected.UIDNext), uidsToUint32(knownUIDs)),
 			HighestModSeq: selected.HighestModSeq,
 			KnownUIDs:     uidsToUint32(knownUIDs),
 		},
@@ -273,6 +274,28 @@ func (c *Client) collectQresyncMailbox(
 // baseline UID must be returned, and its mod-sequence says whether it belongs
 // in the delta. The normal delta fetch then reads and persists that UID's
 // current flags.
+// baselineUIDNext is the UIDNEXT to save beside a baseline. UIDNEXT is
+// guaranteed larger than every UID in the mailbox (RFC 3501 2.3.1.1), so a
+// baseline that holds a UID at or above the reported UIDNEXT says the real one
+// is higher.
+//
+// A full enumeration reads UIDNEXT from STATUS and the UIDs from a later
+// SEARCH, so a message delivered between the two lands in the baseline with a
+// UID the saved UIDNEXT does not cover. Saving the reported value verbatim
+// stores a baseline that contradicts itself, and the next QRESYNC run reads
+// that as a corrupt baseline: refreshExistingQresyncChanges fails the mailbox,
+// and a QRESYNC failure discards every delta and enumerates the whole account.
+func baselineUIDNext(reportedUIDNext uint32, knownUIDs []uint32) uint32 {
+	highest := uint32(0)
+	for _, uid := range knownUIDs {
+		highest = max(highest, uid)
+	}
+	if highest < reportedUIDNext || highest == math.MaxUint32 {
+		return reportedUIDNext
+	}
+	return highest + 1
+}
+
 func (c *Client) refreshExistingQresyncChanges(
 	ctx context.Context,
 	mailbox string,

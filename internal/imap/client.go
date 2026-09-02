@@ -1076,10 +1076,12 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 		if observed != nil {
 			observed.KnownUIDs = knownUIDs
+			observed.UIDNext = baselineUIDNext(observed.UIDNext, knownUIDs)
 			c.observedFolderStates[mailbox] = *observed
 		}
 		if canTrackFolder {
 			trackState.KnownUIDs = knownUIDs
+			trackState.UIDNext = baselineUIDNext(trackState.UIDNext, knownUIDs)
 			c.trackFolderMessages(mailbox, trackState, uids)
 		}
 		for _, uid := range uids {

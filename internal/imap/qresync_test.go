@@ -1119,3 +1119,57 @@ func TestQresyncCoverageSearchReconnectKeepsQresyncEnabled(t *testing.T) {
 		strings.Index(reconnected, "CHANGEDSINCE"),
 		"QRESYNC must be enabled before the next mailbox asks for VANISHED")
 }
+
+// TestFullEnumerationSavesUIDNextAboveKnownUIDs covers the one race that can
+// save a baseline holding a UID its own UIDNEXT does not cover. A full
+// enumeration reads UIDNEXT from STATUS and the UIDs from a later SEARCH, so a
+// message delivered between the two is enumerated while the saved UIDNEXT
+// still sits at or below its UID.
+//
+// The next QRESYNC run reads that as a corrupt baseline, and a QRESYNC failure
+// is not local to one mailbox: the caller discards every delta and enumerates
+// the whole account in full.
+func TestFullEnumerationSavesUIDNextAboveKnownUIDs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	// STATUS reports UIDNEXT 4. The SEARCH that follows reports UID 4, which
+	// arrived in between.
+	firstAddr, _ := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1"},
+		uidValidity:   77,
+		uidNext:       4,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3, 4},
+	})
+	first := newQresyncTestClient(t, firstAddr, map[string]FolderState{})
+
+	listQresyncMessages(t, first)
+
+	saved := first.ObservedFolderStates()
+	require.Contains(saved, "INBOX")
+	require.Contains(saved["INBOX"].KnownUIDs, uint32(4))
+	assert.Greater(saved["INBOX"].UIDNext, uint32(4),
+		"a saved UIDNEXT must cover every UID in the baseline saved with it")
+
+	// The next run meets a server that offers QRESYNC and reports the UIDNEXT
+	// the first enumeration implied.
+	secondAddr, secondServer := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       5,
+		highestModSeq: 25,
+		searchUIDs:    []imapv2.UID{1, 2, 3, 4},
+		fetchChanged:  []imapv2.UID{4},
+	})
+	second := newQresyncTestClient(t, secondAddr, saved)
+
+	listQresyncMessages(t, second)
+
+	assert.Contains(joinedCommands(secondServer.commandsFor(1)), "CHANGEDSINCE",
+		"the second run must still be able to use QRESYNC")
+	// A QRESYNC failure discards every delta, reconnects, and enumerates the
+	// whole account, so a second connection is the signal that the baseline
+	// was rejected.
+	assert.Empty(secondServer.commandsFor(2),
+		"a self-consistent baseline must not force a full enumeration")
+}
