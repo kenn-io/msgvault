@@ -17,6 +17,26 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
+
+# Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
+# to the host CPU count, and every PostgreSQL-backed test binary opens its own
+# connections: an admin handle of three (one pinned for the life of the binary
+# to hold its template database's ownership lock, see
+# internal/testutil/pg_template.go) plus the store under test. Nothing budgets
+# across binaries, so on a wide runner `go test ./...` starts every PostgreSQL
+# package together and the sum exceeds a stock server's 100 connections
+# ("sorry, too many clients already") and its lock table ("out of shared
+# memory"). Four is the GitHub-hosted profile these lanes were tuned on. The
+# pgvector lane in .github/workflows/ci.yml carries the same value inline.
+PG_TEST_PARALLEL ?= 4
+
+# Packages whose tests CI runs as shards in their own jobs
+# (scripts/test-package-shards.sh): each is a few thousand tests that run one
+# at a time inside one binary, so left whole it sets the wall clock of the
+# whole lane. The *-unsharded targets run everything else and exist for CI;
+# `make test` and `make test-pg-shipped` still run every package.
+SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api
+TEST_SHARDS ?= 4
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.7.0
 GO_INSTALL_BIN := $(shell go env GOBIN)
@@ -62,7 +82,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint-tools lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -95,11 +115,25 @@ clean:
 	rm -f msgvault msgvault.exe mimeshootout
 	rm -rf bin/
 
-# Run tests. The CLI package has nearly 1,000 tests, including heavy DuckDB
-# coverage, and its per-package wall clock can exceed 40m on contended CI
-# runners even when no individual test is stalled.
+# Run the full SQLite suite. The three largest packages run as shards after the
+# unsharded remainder so one test binary cannot set the full wall clock. CI runs
+# the same two parts as separate jobs.
 test:
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
+	$(MAKE) test-unsharded
+	$(MAKE) test-shards
+
+# Everything except SHARDED_TEST_PKGS. CI's test lane runs this alongside the
+# sharded jobs; together they cover exactly what `make test` covers.
+test-unsharded:
+	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
+	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+
+# SHARDED_TEST_PKGS, each as TEST_SHARDS concurrent processes. Same binary,
+# same tests, same per-package timeout; only the process boundary is new.
+test-shards:
+	@for pkg in $(SHARDED_TEST_PKGS); do \
+		scripts/test-package-shards.sh $$pkg $(TEST_SHARDS) "$(BUILD_TAGS)" $(TEST_TIMEOUT) || exit 1; \
+	done
 
 # Run tests with verbose output
 test-v:
@@ -114,19 +148,25 @@ test-v:
 # test-postgres (stock image, test-pg-shipped below).
 # See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg: require-test-db
-	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
 # has to be exercised against a PostgreSQL archive too. This is the lane
 # .github/workflows/ci.yml's test-postgres job runs.
 #
-# It is a named target rather than an inline `go test` so its flags match the
-# `test` target exactly. Go's test cache keys on the flags, so any package that
-# never reads MSGVAULT_TEST_DB — the SQLite-only ones — is served from `make
-# test`'s cache instead of being re-run here.
+# Run the unsharded remainder first, then the large packages as shards. The
+# steps stay sequential here so at most TEST_SHARDS test processes share the
+# configured PostgreSQL server; CI gives each package its own job and server.
 test-pg-shipped: require-test-db
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
+	$(MAKE) test-pg-shipped-unsharded
+	$(MAKE) test-shards
+
+# test-pg-shipped minus SHARDED_TEST_PKGS, for CI's test-postgres lane; the
+# test-postgres-sharded jobs cover the rest against their own servers.
+test-pg-shipped-unsharded: require-test-db
+	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -142,8 +182,8 @@ test-pg-shipped: require-test-db
 # equivalence argument depends on the full pgvector lane having run on the same
 # tree. pg-shipped-only-check re-derives the package set and fails if it drifts.
 test-pg-both: require-test-db pg-shipped-only-check
-	go test -timeout $(TEST_TIMEOUT) -tags "$(PG_TEST_TAGS)" ./...
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
 
 # Fail if the set of packages whose test binary changes when the pgvector tag is
 # dropped no longer matches PG_SHIPPED_ONLY_PKGS. This is the assumption
@@ -418,6 +458,8 @@ help:
 	@echo ""
 	@echo "  test           - Run tests"
 	@echo "  test-v         - Run tests (verbose)"
+	@echo "  test-shards    - Run SHARDED_TEST_PKGS as TEST_SHARDS concurrent processes each"
+	@echo "  test-unsharded - Run every package except SHARDED_TEST_PKGS (CI's test lane)"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
