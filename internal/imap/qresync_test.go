@@ -41,6 +41,10 @@ type qresyncServerConfig struct {
 	fetchChanged             []imapv2.UID
 	fetchVanished            []imapv2.UID
 	filterVanishedByFetchSet bool
+	// dropOnSearchConnection closes the connection with that ID instead of
+	// answering its first UID SEARCH, which is how a coverage search meets a
+	// connection the server has given up on.
+	dropOnSearchConnection int
 }
 
 type qresyncTestServer struct {
@@ -159,6 +163,9 @@ func serveQresyncTestConn(
 			}
 			_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID SEARCH"):
+			if connID == cfg.dropOnSearchConnection {
+				return
+			}
 			_, _ = fmt.Fprintf(conn, "* SEARCH%s\r\n%s OK UID SEARCH completed\r\n",
 				formatSearchUIDs(cfg.searchUIDs), tag)
 		case strings.HasPrefix(upper, "LOGOUT"):
@@ -975,4 +982,85 @@ func TestQresyncStaleBaselineDoesNotMaskOmittedNewUID(t *testing.T) {
 		"a baseline larger than the mailbox must not skip the check")
 	assert.Contains(listed, "INBOX|5",
 		"the omitted message must be recovered by the fallback")
+}
+
+// TestQresyncOutOfRangeReportCannotCoverAnOmission pins what the coverage
+// arithmetic counts. The span it checks is the UIDs assigned since the last
+// run, so only a report about a UID inside that span is evidence about it. A
+// report naming a UID at or above the current UIDNEXT names a message the
+// server has not assigned yet, and counting it would let one such report stand
+// in for a real message the response left out.
+func TestQresyncOutOfRangeReportCannotCoverAnOmission(t *testing.T) {
+	assert := assert.New(t)
+	// UIDs 5 and 6 were assigned since the last run. The response reports 5 as
+	// changed, omits 6 entirely, and reports a VANISHED UID the mailbox cannot
+	// have assigned yet.
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       7,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3, 4, 5, 6},
+		fetchChanged:  []imapv2.UID{5},
+		fetchVanished: []imapv2.UID{99},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3, 4},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	assert.Contains(joinedCommands(server.commandsFor(1)), "UID SEARCH UID 5:*",
+		"a report from outside the assigned span must not satisfy the count")
+	assert.Contains(listed, "INBOX|6",
+		"the omitted message must be recovered by the fallback")
+}
+
+// TestQresyncCoverageSearchReconnectKeepsQresyncEnabled covers what the
+// coverage search costs the rest of the run. It is the only command in the
+// QRESYNC loop that reconnects on a network error, and a reconnect clears the
+// ENABLE. Every mailbox after this one asks for VANISHED, which a connection
+// that never enabled QRESYNC does not answer, so the run would read an
+// expunged message as still present.
+func TestQresyncCoverageSearchReconnectKeepsQresyncEnabled(t *testing.T) {
+	assert := assert.New(t)
+	// UIDs 5 and 6 were assigned since the last run, but the server skipped 6
+	// rather than using it, so one changed UID accounts for the span and the
+	// search confirms it. The first connection dies answering that search.
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:           []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		mailboxes:              []string{"First", "Second"},
+		uidValidity:            77,
+		uidNext:                7,
+		highestModSeq:          20,
+		searchUIDs:             []imapv2.UID{1, 2, 3, 4, 5},
+		fetchChanged:           []imapv2.UID{5},
+		dropOnSearchConnection: 1,
+	})
+	states := map[string]FolderState{
+		"First": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3, 4},
+		},
+		"Second": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3, 4},
+		},
+	}
+	client := newQresyncTestClient(t, addr, states)
+
+	listQresyncMessages(t, client)
+
+	reconnected := joinedCommands(server.commandsFor(2))
+	assert.Contains(reconnected, "ENABLE QRESYNC",
+		"the connection the search left behind must enable QRESYNC again")
+	assert.Contains(reconnected, "CHANGEDSINCE",
+		"the run continues on the new connection, so the ENABLE has to hold")
+	assert.Less(
+		strings.Index(reconnected, "ENABLE QRESYNC"),
+		strings.Index(reconnected, "CHANGEDSINCE"),
+		"QRESYNC must be enabled before the next mailbox asks for VANISHED")
 }
