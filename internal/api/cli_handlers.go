@@ -1274,9 +1274,15 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
 		providerCall := args[1] == "provider" && args[2] == "check"
 		sweepCall := args[1] == "sweep" && args[2] == "run"
-		if providerCall || sweepCall {
+		if sweepCall {
 			keyEnv := s.configuredPeopleProviderKeyEnv()
 			return keyEnv != "" && keyEnv == name
+		}
+		if providerCall {
+			// Provider checks always resolve credentials from the daemon
+			// process's own environment and credential store; request-carried
+			// values are rejected.
+			return false
 		}
 		enrichmentRun := args[1] == "enrichment" && args[2] == "run"
 		if enrichmentRun {
@@ -1513,10 +1519,7 @@ func cliRunCommandAllowed(args []string) bool {
 		}
 		switch args[1] {
 		case "provider":
-			switch args[2] {
-			case "status", "consent", "revoke", "check", "login", "models":
-				return true
-			}
+			return cliRunPersonProviderArgsAllowed(args[2], args[3:])
 		case "sweep":
 			switch args[2] {
 			case "run", "status", "history":
@@ -1585,6 +1588,111 @@ func cliRunCommandAllowed(args []string) bool {
 	default:
 		return false
 	}
+}
+
+func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
+	boolFlags := map[string]bool{}
+	valueFlags := map[string]bool{}
+	maxPositionals := 0
+	switch operation {
+	case "list":
+		boolFlags["json"] = true
+	case "status":
+		maxPositionals = 1
+		for _, name := range []string{"all", "json", "semantic-embeddings"} {
+			boolFlags[name] = true
+		}
+	case "consent":
+		maxPositionals = 1
+		for _, name := range []string{"yes", "json", "semantic-embeddings"} {
+			boolFlags[name] = true
+		}
+	case "revoke":
+		maxPositionals = 1
+		for _, name := range []string{"all", "json", "semantic-embeddings"} {
+			boolFlags[name] = true
+		}
+		valueFlags["if-fingerprint"] = true
+	case "history":
+		maxPositionals = 1
+		boolFlags["json"] = true
+		valueFlags["limit"] = true
+		valueFlags["person"] = true
+	case "check":
+		maxPositionals = 1
+		boolFlags["json"] = true
+	default:
+		return false
+	}
+
+	positionals := 0
+	guardedRevoke := false
+	pendingValueFlag := ""
+	consumeValue := func(name, value string) bool {
+		if value == "" || strings.HasPrefix(value, "-") {
+			return false
+		}
+		if name == "if-fingerprint" && !validPersonProviderFingerprint(value) {
+			return false
+		}
+		guardedRevoke = guardedRevoke || name == "if-fingerprint"
+		return true
+	}
+	for _, argument := range args {
+		if pendingValueFlag != "" {
+			if !consumeValue(pendingValueFlag, argument) {
+				return false
+			}
+			pendingValueFlag = ""
+			continue
+		}
+		if !strings.HasPrefix(argument, "--") {
+			positionals++
+			if positionals > maxPositionals || peoplesweep.ValidateProviderProfileName(argument) != nil {
+				return false
+			}
+			continue
+		}
+		nameValue := strings.TrimPrefix(argument, "--")
+		name, value, hasValue := strings.Cut(nameValue, "=")
+		if boolFlags[name] {
+			if hasValue {
+				if _, err := strconv.ParseBool(value); err != nil {
+					return false
+				}
+			}
+			continue
+		}
+		if !valueFlags[name] {
+			return false
+		}
+		if !hasValue {
+			pendingValueFlag = name
+			continue
+		}
+		if !consumeValue(name, value) {
+			return false
+		}
+	}
+	if pendingValueFlag != "" {
+		return false
+	}
+	if guardedRevoke && positionals != 1 {
+		return false
+	}
+	return true
+}
+
+func validPersonProviderFingerprint(fingerprint string) bool {
+	if len(fingerprint) != 64 {
+		return false
+	}
+	for _, value := range fingerprint {
+		if !strings.ContainsRune("0123456789abcdef", value) {
+			return false
+		}
+	}
+	return true
 }
 
 func cliRunPersonEnrichmentAllowed(args []string) bool {
@@ -1730,9 +1838,9 @@ func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	}
 }
 
-// cliRunEnvAllowed permits the static forwarding allowlist plus config-named
-// provider API key variables, which the frontend CLI forwards so a key
-// exported in the caller's shell reaches the daemon subprocess.
+// cliRunEnvAllowed permits the static forwarding allowlist plus configured
+// provider variables used by non-check commands. Provider checks always use
+// the daemon process's own environment and reject request-carried values.
 func (s *Server) cliRunEnvAllowed(name string) bool {
 	if clirun.EnvAllowed(name) {
 		return true
@@ -1759,11 +1867,33 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 }
 
 func (s *Server) configuredPeopleProviderKeyEnv() string {
-	if s.cfg == nil ||
-		s.cfg.People.Sweep.Provider.Kind != peoplesweep.ProviderOpenAICompatible {
+	sweep, ok := s.currentPeopleSweepConfig()
+	if !ok {
 		return ""
 	}
-	return s.cfg.People.Sweep.Provider.APIKeyEnv
+	_, provider, err := sweep.ActiveProviderConfig()
+	if err != nil || provider.Credential != peoplesweep.CredentialEnv {
+		return ""
+	}
+	return provider.CredentialEnv
+}
+
+func (s *Server) currentPeopleSweepConfig() (peoplesweep.Config, bool) {
+	if s.cfg == nil {
+		return peoplesweep.Config{}, false
+	}
+	snapshot, err := config.ReadConfigFile(s.cfg.ConfigFilePath())
+	if err != nil {
+		return peoplesweep.Config{}, false
+	}
+	if !snapshot.Exists {
+		return s.cfg.People.Sweep, true
+	}
+	loaded, err := config.LoadConfigFile(snapshot, s.cfg.HomeDir)
+	if err != nil {
+		return peoplesweep.Config{}, false
+	}
+	return loaded.People.Sweep, true
 }
 
 func (s *Server) cliDedupDeleteStore() (CLIDedupDeleteStore, *apiHTTPError) {

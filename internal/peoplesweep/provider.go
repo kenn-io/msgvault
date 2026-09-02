@@ -31,6 +31,7 @@ type StructuredRequest struct {
 	SchemaName        string             `json:"schema_name"`
 	JSONSchema        json.RawMessage    `json:"json_schema"`
 	MaxOutputTokens   int                `json:"max_output_tokens"`
+	repair            bool
 }
 
 // TokenUsage is provider-reported accounting. It is not trusted as a privacy
@@ -40,36 +41,95 @@ type TokenUsage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
-// StructuredResponse contains only parsed JSON and safe provider metadata.
+// DriverResponse contains one candidate JSON value and normalized safe
+// metadata. UsageKnown distinguishes an omitted usage object from reported
+// zero usage.
+type DriverResponse struct {
+	CandidateJSON     json.RawMessage
+	ProviderRequestID string
+	ProviderVersion   string
+	ModelVersion      string
+	Usage             TokenUsage
+	UsageKnown        bool
+}
+
+// StructuredResponse contains only locally validated JSON and safe provider metadata.
 type StructuredResponse struct {
 	Output            json.RawMessage `json:"output"`
 	ProviderRequestID string          `json:"provider_request_id,omitempty"`
 	ProviderVersion   string          `json:"provider_version"`
 	ModelVersion      string          `json:"model_version"`
 	Usage             TokenUsage      `json:"usage"`
+	UsageKnown        bool            `json:"usage_known"`
+	execution         *runnerExecutionSession
 }
 
-// StructuredTransport is the network-only adapter boundary. Callers must use
-// Runner rather than invoke a transport directly outside this package.
-type StructuredTransport interface {
-	PrepareJSON(profile ProviderProfile, request StructuredRequest) (PreparedStructuredRequest, error)
-	GeneratePreparedJSON(ctx context.Context, profile ProviderProfile, credential string, prepared PreparedStructuredRequest) (StructuredResponse, error)
+// ValidationFailure retains only the bounded candidate and bounded local
+// diagnostics needed to prepare one repair. Error never exposes those bytes.
+type ValidationFailure struct { //nolint:errname // Public error type retained for compatibility with existing consumers.
+	Candidate json.RawMessage
+	Errors    []string
+	repair    bool
+	summary   string
+	execution *runnerExecutionSession
+}
+
+func (f ValidationFailure) Error() string {
+	if f.summary == "" {
+		return ErrInvalidStructuredOutput.Error() + ": local validation failed"
+	}
+	return ErrInvalidStructuredOutput.Error() + ": " + f.summary
+}
+
+func (f ValidationFailure) Unwrap() error { return ErrInvalidStructuredOutput }
+
+// StructuredDriver is the one-attempt provider boundary. Callers must use
+// Runner rather than invoke a driver directly outside this package.
+type StructuredDriver interface {
+	Prepare(profile ProviderProfile, request StructuredRequest) (PreparedStructuredRequest, error)
+	GeneratePrepared(ctx context.Context, profile ProviderProfile, credential Credential, prepared PreparedStructuredRequest) (DriverResponse, error)
+}
+
+// PreparedStructuredCall is an opaque, one-shot provider call whose complete
+// non-I/O policy and credential checks succeed before its marker callback.
+// Once that callback succeeds, Execute crosses directly into provider I/O.
+type PreparedStructuredCall interface {
+	Execute(ctx context.Context, markStarted func(context.Context) error) (StructuredResponse, error)
+}
+
+// StructuredExecutionSession pins one active profile, driver, and resolved
+// credential for a primary call and its optional same-profile repair.
+type StructuredExecutionSession interface {
+	PrimaryCall(prepared PreparedStructuredRequest) (PreparedStructuredCall, error)
+	SemanticValidationFailure(response StructuredResponse) (ValidationFailure, error)
+	PrepareRepair(failure ValidationFailure) (PreparedStructuredRequest, error)
+	RepairCall(prepared PreparedStructuredRequest) (PreparedStructuredCall, error)
 }
 
 // StructuredRunner is the consent-gated entry point later people-sweep
 // programs consume.
 type StructuredRunner interface {
 	PrepareStructured(ctx context.Context, request StructuredRequest) (PreparedStructuredRequest, error)
+	PrepareRepair(request StructuredRequest, failure ValidationFailure) (PreparedStructuredRequest, error)
+	BeginStructuredExecution(ctx context.Context, primary PreparedStructuredRequest) (StructuredExecutionSession, error)
 	RunPreparedStructured(ctx context.Context, prepared PreparedStructuredRequest) (StructuredResponse, error)
 	RunStructured(ctx context.Context, request StructuredRequest) (StructuredResponse, error)
 }
 
-// ProviderError exposes only response status and a safe provider request ID.
-// Provider response bodies are intentionally discarded.
+// ProviderCapabilityError is a bounded classification derived only from a
+// protocol's structured error envelope. It never contains provider text.
+type ProviderCapabilityError string
+
+const ProviderCapabilityUnsupportedRepresentation ProviderCapabilityError = "unsupported_representation"
+
+// ProviderError exposes only response status, safe request metadata, and an
+// optional bounded capability classification. Provider response bodies are
+// intentionally discarded.
 type ProviderError struct {
 	StatusCode int
 	RequestID  string
 	RetryAfter time.Duration
+	Capability ProviderCapabilityError
 }
 
 func (e *ProviderError) Error() string {
@@ -87,8 +147,13 @@ type PreparedStructuredRequest struct {
 	wireRequest []byte
 	wireSHA256  string
 	synthetic   bool
+	repair      bool
 	preparedBy  *Runner
+	identity    *preparedRequestIdentity
+	execution   *runnerExecutionSession
 }
+
+type preparedRequestIdentity struct{}
 
 // NewPreparedStructuredRequest creates an immutable-by-copy request packet.
 func NewPreparedStructuredRequest(request StructuredRequest, wireRequest []byte) (PreparedStructuredRequest, error) {
@@ -102,7 +167,7 @@ func NewPreparedStructuredRequest(request StructuredRequest, wireRequest []byte)
 	digest := sha256.Sum256(wire)
 	return PreparedStructuredRequest{
 		request: cloneStructuredRequest(request), wireRequest: wire,
-		wireSHA256: hex.EncodeToString(digest[:]),
+		wireSHA256: hex.EncodeToString(digest[:]), repair: request.repair,
 	}, nil
 }
 

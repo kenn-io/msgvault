@@ -108,7 +108,7 @@ func (s *Server) taskMessage(r *http.Request) (tasklinks.MessageIdentity, *apiHT
 }
 
 func (s *Server) handleCreateOrLinkMessageTask(w http.ResponseWriter, r *http.Request) {
-	browserRequestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	browserRequestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if browserRequestID == "" {
 		writeError(w, http.StatusBadRequest, "request_id_required", "X-Request-Id is required")
 		return

@@ -28,7 +28,7 @@ func TestDefaultPersonInputBudgetCoversMaximumStructuredWireRequest(t *testing.T
 		JSONSchema:      peoplesweep.ExtractionJSONSchema(),
 		MaxOutputTokens: 4096,
 	}
-	prepared, err := peoplesweep.NewOpenAICompatibleTransport(http.DefaultClient).PrepareJSON(profile, request)
+	prepared, err := peoplesweep.NewOpenAIChatDriver(http.DefaultClient).Prepare(profile, request)
 	requirements.NoError(err)
 	usage, err := peoplesweep.EstimateWireTokenReservation(prepared.WireRequest(), request.MaxOutputTokens)
 	requirements.NoError(err)

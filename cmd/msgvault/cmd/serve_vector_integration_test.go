@@ -23,6 +23,8 @@ import (
 // seam is overridden to block until daemon shutdown, so a passing test
 // proves the API listener comes up independently of vector maintenance.
 func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	oldCfg := cfg
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
@@ -63,7 +65,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"vector"`
 	}
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		resp, err := http.Get(healthURL) //nolint:gosec // local test server
 		if err != nil {
 			return false
@@ -74,8 +76,8 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 		}
 		return json.NewDecoder(resp.Body).Decode(&health) == nil
 	}, 10*time.Second, 25*time.Millisecond, "health must answer while vector init is blocked")
-	require.NotNil(t, health.Vector)
-	assert.Equal(t, "initializing", health.Vector.Status)
+	require.NotNil(health.Vector)
+	assert.Equal("initializing", health.Vector.Status)
 
 	// Shut down via context cancellation (which also unblocks the seam)
 	// and confirm a clean exit.
@@ -83,13 +85,15 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		require.NoError(t, err, "runServe")
+		require.NoError(err, "runServe")
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "runServe did not stop after context cancellation")
+		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
 
 func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	oldCfg := cfg
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
@@ -128,12 +132,12 @@ func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T
 	select {
 	case <-analyticsStarted:
 	case err := <-errCh:
-		require.NoError(t, err, "runServe exited before analytics initialization")
+		require.NoError(err, "runServe exited before analytics initialization")
 	case <-time.After(serveLifecycleTestTimeout):
-		require.FailNow(t, "analytics initialization did not start")
+		require.FailNow("analytics initialization did not start")
 	}
 	waitForServeHealth(t, c.Server.APIPort, errCh)
-	assert.Never(t, func() bool {
+	assert.Never(func() bool {
 		select {
 		case <-vectorStarted:
 			return true
@@ -147,15 +151,15 @@ func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T
 	select {
 	case <-vectorStarted:
 	case err := <-errCh:
-		require.NoError(t, err, "runServe exited before vector initialization")
+		require.NoError(err, "runServe exited before vector initialization")
 	case <-time.After(serveLifecycleTestTimeout):
-		require.FailNow(t, "vector initialization did not start after analytics released the gate")
+		require.FailNow("vector initialization did not start after analytics released the gate")
 	}
 	cancel()
 	select {
 	case err := <-errCh:
-		require.NoError(t, err, "runServe")
+		require.NoError(err, "runServe")
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "runServe did not stop after context cancellation")
+		require.FailNow("runServe did not stop after context cancellation")
 	}
 }

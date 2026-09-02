@@ -30,12 +30,15 @@ const personSweepCleanupTimeout = 5 * time.Second
 
 type CompletedBatch struct {
 	Ordinal            int
+	CallOrdinal        int
+	Purpose            string
 	ReservationID      string
 	InputHash          string
 	ProviderRequestID  string
 	ProviderVersion    string
 	ModelVersion       string
 	Usage              TokenUsage
+	UsageKnown         bool
 	ActualCostMicroUSD int64
 	Latency            time.Duration
 }
@@ -64,6 +67,7 @@ type ApplyRequest struct {
 	CursorEnvelope     []GenerationCursor
 	Batches            []CompletedBatch
 	Usage              Usage
+	Budget             BudgetConfig
 	CursorAdvances     []CursorAdvance
 	DeferredCursorWork bool
 	CompletedAt        time.Time
@@ -346,7 +350,7 @@ type WorkStore interface {
 	EnsurePersonSweepCursors(ctx context.Context, keys []CursorKey) ([]Cursor, error)
 	ReservePersonSweepBudget(ctx context.Context, input BudgetReservationRequest) (BudgetReservation, error)
 	ReleasePersonSweepBudget(ctx context.Context, reservation BudgetReservation) error
-	MarkPersonSweepBudgetStarted(ctx context.Context, reservation BudgetReservation) error
+	MarkPersonSweepBudgetStarted(ctx context.Context, reservation BudgetReservation, lease Lease) error
 	FailPersonSweepWork(ctx context.Context, failure WorkFailure) error
 	FinalizePersonSweepFailure(ctx context.Context, input FailureFinalization) error
 }
@@ -455,7 +459,7 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			break
 		}
 		result.PeopleAttempted++
-		person, personErr := w.RunPerson(ctx, runID, *lease, request.Mode)
+		person, personErr := w.runPerson(ctx, runID, *lease, request.Mode, profile, catalog, now)
 		if personErr != nil {
 			if firstErr == nil {
 				firstErr = personErr
@@ -491,6 +495,18 @@ func (w *Worker) RunPerson(
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
+	return w.runPerson(ctx, runID, lease, mode, profile, catalog, resolvedAt)
+}
+
+func (w *Worker) runPerson(
+	ctx context.Context,
+	runID string,
+	lease Lease,
+	mode RunMode,
+	profile ProviderProfile,
+	catalog personfacts.Catalog,
+	resolvedAt time.Time,
+) (PersonRunResult, error) {
 	keys := make([]CursorKey, 0, len(profile.AllowedSources))
 	for _, lane := range profile.AllowedSources {
 		keys = append(keys, CursorKey{PersonID: lease.PersonID, SourceLane: lane,
@@ -583,10 +599,12 @@ func (w *Worker) RunPerson(
 		estimate      TokenUsage
 		estimatedCost int64
 		reservation   BudgetReservation
+		callOrdinal   int
+		purpose       string
 	}
 	admitted := make([]admittedBatch, 0, len(assembly.Batches))
-	completedUsage := make([]CompletedUsage, 0, len(assembly.Batches))
-	completedBatches := make([]CompletedBatch, 0, len(assembly.Batches))
+	completedUsage := make([]CompletedUsage, 0, len(assembly.Batches)*2)
+	completedBatches := make([]CompletedBatch, 0, len(assembly.Batches)*2)
 	claims := make([]personfacts.ProposedClaim, 0)
 	totalUsage := Usage{}
 	providerVersion, modelVersion := "", ""
@@ -621,7 +639,8 @@ func (w *Worker) RunPerson(
 				completedUsage, estimateErr, resolvedAt)
 		}
 		reservation, reserveErr := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
-			RunID: runID, AttemptID: attemptID, BatchOrdinal: batch.Ordinal,
+			RunID: runID, AttemptID: attemptID, BatchOrdinal: batch.Ordinal, CallOrdinal: 0,
+			Purpose:  ProviderCallPurposePrimary,
 			PersonID: lease.PersonID, ProviderFingerprint: profile.Fingerprint,
 			UTCDate: resolvedAt.UTC().Format(time.DateOnly), InputHash: prepared.WireSHA256(),
 			ItemCount: len(batch.Packet.Seeds) + len(batch.Packet.Context), EstimatedRequests: 1,
@@ -634,92 +653,178 @@ func (w *Worker) RunPerson(
 		}
 		reservations = append(reservations, reservation)
 		admitted = append(admitted, admittedBatch{batch: batch, prepared: prepared,
-			estimate: estimate, estimatedCost: estimatedCost, reservation: reservation})
+			estimate: estimate, estimatedCost: estimatedCost, reservation: reservation,
+			callOrdinal: 0, purpose: ProviderCallPurposePrimary})
 	}
-	for _, current := range admitted {
-		batch, prepared := current.batch, current.prepared
-		estimate, estimatedCost, reservation := current.estimate, current.estimatedCost, current.reservation
-		renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
-		if renewErr != nil {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, renewErr, resolvedAt)
+	executions := make([]StructuredExecutionSession, len(admitted))
+	primaryCalls := make([]PreparedStructuredCall, len(admitted))
+	for index := range admitted {
+		execution, beginErr := w.Runner.BeginStructuredExecution(ctx, admitted[index].prepared)
+		if beginErr != nil {
+			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID,
+				reservations, completedUsage, beginErr, resolvedAt)
 		}
-		if renewed == nil {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, ErrLeaseLost, resolvedAt)
+		primaryCall, callErr := execution.PrimaryCall(admitted[index].prepared)
+		if callErr != nil {
+			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID,
+				reservations, completedUsage, callErr, resolvedAt)
 		}
-		lease = *renewed
-		if markErr := w.Store.MarkPersonSweepBudgetStarted(ctx, reservation); markErr != nil {
-			_ = w.Store.ReleasePersonSweepBudget(ctx, reservation)
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, markErr, resolvedAt)
-		}
-		started := w.now()
-		var response StructuredResponse
-		var runErr error
-		lease, response, runErr = w.runPreparedWithLeaseHeartbeat(ctx, lease, prepared)
-		latency := w.now().Sub(started)
-		latency = max(time.Duration(0), latency)
-		if runErr != nil {
-			if structuredResponseCompleted(response) {
-				requestID := response.ProviderRequestID
-				if !IsSafeProviderMetadata(requestID) {
-					requestID = ""
-				}
-				completedUsage = append(completedUsage, CompletedUsage{BatchOrdinal: batch.Ordinal,
-					ProviderRequestID: requestID, Usage: accountableTokenUsage(response.Usage), Latency: latency})
-			}
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, runErr, resolvedAt)
-		}
-		requestID := response.ProviderRequestID
-		if !IsSafeProviderMetadata(requestID) {
-			requestID = ""
-		}
-		completedUsage = append(completedUsage, CompletedUsage{BatchOrdinal: batch.Ordinal,
-			ProviderRequestID: requestID, Usage: accountableTokenUsage(response.Usage), Latency: latency})
+		executions[index] = execution
+		primaryCalls[index] = primaryCall
+	}
+	recordCompletedCall := func(call admittedBatch, response StructuredResponse, latency time.Duration) error {
+		// Validate and account before recording anything. A response rejected
+		// below is untrusted, and a completed usage record derived from it would
+		// either fail failure finalization outright (stranding the attempt and
+		// lease until expiry) or write untrusted values into durable history.
+		// Finalizing without a record lets the store conservatively charge the
+		// reservation instead.
 		if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, invalidOutputError{errors.New("provider returned negative token usage")}, resolvedAt)
+			return invalidOutputError{errors.New("provider returned negative token usage")}
 		}
 		if !canonicalProviderIdentity(response.ProviderVersion) ||
 			!canonicalProviderIdentity(response.ModelVersion) ||
 			!IsSafeProviderMetadata(response.ProviderRequestID) {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, invalidOutputError{errors.New("provider returned unsafe identity metadata")}, resolvedAt)
+			return invalidOutputError{errors.New("provider returned unsafe identity metadata")}
 		}
 		if providerVersion == "" {
 			providerVersion, modelVersion = response.ProviderVersion, response.ModelVersion
 		} else if providerVersion != response.ProviderVersion || modelVersion != response.ModelVersion {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, invalidOutputError{errors.New("provider batch identities differ")}, resolvedAt)
+			return invalidOutputError{errors.New("provider call identities differ")}
 		}
-		parsed, parseErr := ParseExtraction(response.Output, batch, profile)
-		if parseErr != nil {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, invalidOutputError{parseErr}, resolvedAt)
+		accounted, actualCost, accountErr := accountCompletedProviderCall(
+			response, call.estimate, call.estimatedCost, w.Config.Budgets)
+		if accountErr != nil {
+			return accountErr
 		}
-		claims = append(claims, parsed...)
-		actualCost, costErr := EstimateCostMicroUSD(response.Usage, w.Config.Budgets)
-		if costErr != nil {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, costErr, resolvedAt)
+		accountedTotal, accountErr := addUsage(totalUsage, accounted)
+		if accountErr != nil {
+			return accountErr
 		}
-		actual := Usage{Requests: 1, InputTokens: max(estimate.InputTokens, response.Usage.InputTokens),
-			OutputTokens:          max(estimate.OutputTokens, response.Usage.OutputTokens),
-			EstimatedCostMicroUSD: max(estimatedCost, actualCost)}
-		totalUsage, err = addUsage(totalUsage, actual)
-		if err != nil {
-			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-				completedUsage, err, resolvedAt)
-		}
-		completedBatches = append(completedBatches, CompletedBatch{Ordinal: batch.Ordinal,
-			ReservationID: reservation.ID, InputHash: prepared.WireSHA256(),
+		completedUsage = append(completedUsage, CompletedUsage{
+			BatchOrdinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
+			ProviderRequestID: response.ProviderRequestID, Usage: accountableTokenUsage(response.Usage),
+			UsageKnown: response.UsageKnown, Latency: latency,
+		})
+		completedBatches = append(completedBatches, CompletedBatch{
+			Ordinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
+			ReservationID: call.reservation.ID, InputHash: call.prepared.WireSHA256(),
 			ProviderRequestID: response.ProviderRequestID, ProviderVersion: response.ProviderVersion,
-			ModelVersion: response.ModelVersion, Usage: response.Usage,
-			ActualCostMicroUSD: actualCost, Latency: latency})
+			ModelVersion: response.ModelVersion, Usage: accountableTokenUsage(response.Usage),
+			UsageKnown: response.UsageKnown, ActualCostMicroUSD: actualCost, Latency: latency,
+		})
+		totalUsage = accountedTotal
+		return nil
 	}
-	provider, model := profile.Kind, profile.Model
+	for primaryIndex, primary := range admitted {
+		execution := executions[primaryIndex]
+		call := primary
+		preparedCall := primaryCalls[primaryIndex]
+		for {
+			renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
+			if renewErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, renewErr, resolvedAt)
+			}
+			if renewed == nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, ErrLeaseLost, resolvedAt)
+			}
+			lease = *renewed
+			started := w.now()
+			var response StructuredResponse
+			var runErr error
+			marked := false
+			lease, response, runErr = w.runPreparedWithLeaseHeartbeat(ctx, lease,
+				func(markCtx context.Context) error {
+					if markErr := w.Store.MarkPersonSweepBudgetStarted(markCtx, call.reservation, lease); markErr != nil {
+						return markErr
+					}
+					marked = true
+					return nil
+				}, preparedCall)
+			if !marked {
+				_ = w.Store.ReleasePersonSweepBudget(ctx, call.reservation)
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, runErr, resolvedAt)
+			}
+			latency := max(time.Duration(0), w.now().Sub(started))
+			if structuredResponseCompleted(response) {
+				if recordErr := recordCompletedCall(call, response, latency); recordErr != nil {
+					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+						completedUsage, recordErr, resolvedAt)
+				}
+			}
+
+			var failure *ValidationFailure
+			if runErr != nil {
+				if !errors.As(runErr, &failure) || call.callOrdinal != 0 || failure.repair {
+					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+						completedUsage, runErr, resolvedAt)
+				}
+			} else {
+				parsed, parseErr := ParseExtraction(response.Output, call.batch, profile)
+				if parseErr == nil {
+					claims = append(claims, parsed...)
+					break
+				}
+				if call.callOrdinal != 0 {
+					failure = newValidationFailure(response.Output,
+						"candidate failed extraction semantics", true)
+					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+						completedUsage, failure, resolvedAt)
+				}
+				semanticFailure, semanticErr := execution.SemanticValidationFailure(response)
+				if semanticErr != nil {
+					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+						completedUsage, semanticErr, resolvedAt)
+				}
+				failure = &semanticFailure
+			}
+
+			repair, repairErr := execution.PrepareRepair(*failure)
+			if repairErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, repairErr, resolvedAt)
+			}
+			repairCall, repairErr := execution.RepairCall(repair)
+			if repairErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, repairErr, resolvedAt)
+			}
+			repairEstimate, estimateErr := EstimateWireTokenReservation(
+				repair.WireRequest(), primary.batch.Request.MaxOutputTokens)
+			if estimateErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, estimateErr, resolvedAt)
+			}
+			repairCost, estimateErr := EstimateCostMicroUSD(repairEstimate, w.Config.Budgets)
+			if estimateErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, estimateErr, resolvedAt)
+			}
+			repairReservation, reserveErr := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
+				RunID: runID, AttemptID: attemptID, BatchOrdinal: primary.batch.Ordinal,
+				CallOrdinal: 1, Purpose: ProviderCallPurposeRepair,
+				PersonID: lease.PersonID, ProviderFingerprint: profile.Fingerprint,
+				UTCDate: resolvedAt.UTC().Format(time.DateOnly), InputHash: repair.WireSHA256(),
+				ItemCount:         len(primary.batch.Packet.Seeds) + len(primary.batch.Packet.Context),
+				EstimatedRequests: 1, EstimatedInputTokens: repairEstimate.InputTokens,
+				EstimatedOutputTokens: repairEstimate.OutputTokens,
+				EstimatedCostMicroUSD: repairCost, Budget: w.Config.Budgets,
+			})
+			if reserveErr != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+					completedUsage, reserveErr, resolvedAt)
+			}
+			reservations = append(reservations, repairReservation)
+			call = admittedBatch{batch: primary.batch, prepared: repair, estimate: repairEstimate,
+				estimatedCost: repairCost, reservation: repairReservation,
+				callOrdinal: 1, purpose: ProviderCallPurposeRepair}
+			preparedCall = repairCall
+		}
+	}
+	provider, model := string(profile.Protocol), profile.Model
 	if len(completedBatches) == 0 {
 		provider, providerVersion = StatusOnlyProvider, StatusOnlyProviderVersion
 		model, modelVersion = StatusOnlyModel, StatusOnlyModelVersion
@@ -745,7 +850,7 @@ func (w *Worker) RunPerson(
 	lease = *renewed
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
-		Batches: completedBatches, Usage: totalUsage, CursorAdvances: advances,
+		Batches: completedBatches, Usage: totalUsage, Budget: w.Config.Budgets, CursorAdvances: advances,
 		DeferredCursorWork: deferredCursorWork, CompletedAt: w.now()})
 	if applyErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
@@ -762,7 +867,10 @@ type leaseHeartbeatResult struct {
 }
 
 func (w *Worker) runPreparedWithLeaseHeartbeat(
-	ctx context.Context, lease Lease, prepared PreparedStructuredRequest,
+	ctx context.Context,
+	lease Lease,
+	markStarted func(context.Context) error,
+	call PreparedStructuredCall,
 ) (Lease, StructuredResponse, error) {
 	heartbeatCtx, cancel := context.WithCancel(ctx)
 	stop := make(chan struct{})
@@ -795,7 +903,7 @@ func (w *Worker) runPreparedWithLeaseHeartbeat(
 			}
 		}
 	}(lease)
-	response, runErr := w.Runner.RunPreparedStructured(heartbeatCtx, prepared)
+	response, runErr := call.Execute(heartbeatCtx, markStarted)
 	close(stop)
 	cancel()
 	heartbeat := <-result
@@ -970,12 +1078,38 @@ func classifyPersonSweepFailure(err error) (FailureClass, time.Duration) {
 func structuredResponseCompleted(response StructuredResponse) bool {
 	return len(response.Output) > 0 || response.ProviderRequestID != "" ||
 		response.ProviderVersion != "" || response.ModelVersion != "" ||
-		response.Usage != (TokenUsage{})
+		response.Usage != (TokenUsage{}) || response.UsageKnown
 }
 
 func accountableTokenUsage(usage TokenUsage) TokenUsage {
 	return TokenUsage{InputTokens: max(int64(0), usage.InputTokens),
 		OutputTokens: max(int64(0), usage.OutputTokens)}
+}
+
+func accountCompletedProviderCall(
+	response StructuredResponse,
+	reserved TokenUsage,
+	reservedCost int64,
+	budget BudgetConfig,
+) (Usage, int64, error) {
+	if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 {
+		return Usage{}, 0, errors.New("provider returned negative token usage")
+	}
+	if !response.UsageKnown {
+		return Usage{Requests: 1, InputTokens: reserved.InputTokens,
+			OutputTokens: reserved.OutputTokens, EstimatedCostMicroUSD: reservedCost}, reservedCost, nil
+	}
+	reconciled := TokenUsage{
+		InputTokens:  max(reserved.InputTokens, response.Usage.InputTokens),
+		OutputTokens: max(reserved.OutputTokens, response.Usage.OutputTokens),
+	}
+	reconciledCost, err := EstimateCostMicroUSD(reconciled, budget)
+	if err != nil {
+		return Usage{}, 0, err
+	}
+	return Usage{Requests: 1, InputTokens: reconciled.InputTokens,
+		OutputTokens:          reconciled.OutputTokens,
+		EstimatedCostMicroUSD: reconciledCost}, reconciledCost, nil
 }
 
 func personSweepRetryDelay(attemptID string, attempt int, retryAfter, base, maximum time.Duration) time.Duration {

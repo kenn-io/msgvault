@@ -1,0 +1,70 @@
+{
+  "alpha": {
+    "id": "alpha",
+    "name": "Alpha Models",
+    "api": "https://alpha.example.test/v1",
+    "npm": "@ai-sdk/openai",
+    "env": ["ALPHA_TOKEN", "ALPHA_API_KEY", "ALPHA_TOKEN"],
+    "models": {
+      "alpha-basic": {
+        "id": "alpha-basic",
+        "name": "Alpha Basic",
+        "reasoning": false,
+        "structured_output": true,
+        "cost": {"input": 0.000001, "output": 2.5}
+      }
+    }
+  },
+  "anthropic-label": {
+    "id": "anthropic-label",
+    "name": "Misleading Provider Label",
+    "api": "https://shape.example.test/v1",
+    "npm": "@ai-sdk/openai-compatible",
+    "env": ["SHAPE_API_KEY", "302AI_API_KEY"],
+    "models": {
+      "@cf/shape-reasoner": {
+        "id": "@cf/shape-reasoner",
+        "name": "Shape Reasoner",
+        "reasoning": true,
+        "structured_output": false,
+        "cost": {"input": 0.1320000001, "output": 1.2540000005, "cache_read": 0.01}
+      },
+      "~shape/latest": {
+        "id": "~shape/latest",
+        "name": "Shape Latest Alias ",
+        "reasoning": false,
+        "structured_output": true
+      }
+    }
+  },
+  "openai-label": {
+    "id": "openai-label",
+    "name": "Unsupported Shape",
+    "api": "https://unsupported.example.test/v1",
+    "npm": "unsupported-sdk-shape",
+    "env": [],
+    "models": {
+      "plain": {
+        "id": "plain",
+        "name": "Plain",
+        "reasoning": false,
+        "structured_output": false
+      }
+    }
+  },
+  "template": {
+    "id": "template",
+    "name": "Template Endpoint",
+    "api": "${CATALOG_BASE_URL}/v1",
+    "npm": "@ai-sdk/google",
+    "env": ["CATALOG_BASE_URL", "TEMPLATE_API_KEY"],
+    "models": {
+      "template-model": {
+        "id": "template-model",
+        "name": "Template Model",
+        "reasoning": true,
+        "structured_output": true
+      }
+    }
+  }
+}

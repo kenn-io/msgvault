@@ -332,7 +332,7 @@ func (s *Store) ClaimWork(
 		if s.personEnrichmentRunBarrier != nil {
 			s.personEnrichmentRunBarrier("claim_run_locked")
 		}
-		if runState != "running" {
+		if runState != personEnrichmentStateRunning {
 			return errors.New("person enrichment claim requires a running run")
 		}
 		lock := ""
@@ -1371,7 +1371,7 @@ func (s *Store) completePersonEnrichmentAttemptTx(
 	ctx context.Context, tx *loggedTx, token personenrichment.LeaseToken,
 	completion personEnrichmentAttemptCompletion,
 ) (bool, error) {
-	if completion.State != "succeeded" {
+	if completion.State != personEnrichmentStateSucceeded {
 		return false, errors.New("successful person enrichment completion requires succeeded state")
 	}
 	if !completion.ActualCostMissing {
@@ -1403,7 +1403,7 @@ func (s *Store) completePersonEnrichmentAttemptTx(
 			return false, err
 		}
 	}
-	state := "succeeded"
+	state := personEnrichmentStateSucceeded
 	var failureClass any
 	if costViolation {
 		state = "terminal"
@@ -1485,7 +1485,7 @@ func (s *Store) ListPersonEnrichmentAttemptsContext(
 
 func validPersonEnrichmentAttemptState(state string) bool {
 	switch state {
-	case "queued", "starting", "pending", "retry_wait", "succeeded", "terminal",
+	case "queued", "starting", "pending", "retry_wait", personEnrichmentStateSucceeded, "terminal",
 		"suppressed", "identity_rejected", "uncertain_start":
 		return true
 	default:

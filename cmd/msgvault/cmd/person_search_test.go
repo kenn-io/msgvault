@@ -466,13 +466,17 @@ func TestCompletedBuildActivatesWithoutPersonRequestsAfterLivePolicyDrift(t *tes
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			newAssert := assert.New
+			assert := assert.New(t)
+			require := require.New(t)
 			var providerRequests atomic.Int32
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert := newAssert(t)
 				providerRequests.Add(1)
 				var request struct {
 					Input []string `json:"input"`
 				}
-				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
 					http.Error(w, "invalid synthetic request", http.StatusBadRequest)
 					return
 				}
@@ -480,7 +484,7 @@ func TestCompletedBuildActivatesWithoutPersonRequestsAfterLivePolicyDrift(t *tes
 				for i := range request.Input {
 					data[i] = map[string]any{"embedding": []float32{1, 0}, "index": i}
 				}
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
 					"data": data, "model": "synthetic-drift-model",
 				}))
 			}))
@@ -502,58 +506,58 @@ func TestCompletedBuildActivatesWithoutPersonRequestsAfterLivePolicyDrift(t *tes
 				Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 			}
 			withTestConfig(t, configured)
-			require.NoError(t, configured.Save())
+			require.NoError(configured.Save())
 
 			mainStore, err := store.Open(mainPath)
-			require.NoError(t, err)
+			require.NoError(err)
 			t.Cleanup(func() { _ = mainStore.Close() })
-			require.NoError(t, mainStore.InitSchema())
+			require.NoError(mainStore.InitSchema())
 			profile, err := configured.Vector.SemanticPersonEmbeddingProfile()
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
-			require.NoError(t, err)
+			require.NoError(err)
 			_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
 				t.Context(), profile.Fingerprint, "test",
 			)
-			require.NoError(t, err)
+			require.NoError(err)
 			participantID, err := mainStore.EnsureParticipantByIdentifier(
 				"email", "drift-person@example.test", "Observed Drift Person",
 			)
-			require.NoError(t, err)
+			require.NoError(err)
 			person, _, err := mainStore.CreatePersonFromParticipantContext(t.Context(), participantID)
-			require.NoError(t, err)
+			require.NoError(err)
 			displayName := "Synthetic Drift Person"
 			_, err = mainStore.UpdatePersonDisplayNameContext(
 				t.Context(), person.ID, person.Revision, &displayName,
 			)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			features, err := setupVectorFeatures(t.Context(), mainStore, mainPath, false)
-			require.NoError(t, err)
+			require.NoError(err)
 			t.Cleanup(func() { _ = features.Close() })
 			generation, err := features.Backend.CreateGeneration(
 				t.Context(), features.Cfg.Embeddings.Model,
 				features.Cfg.Embeddings.Dimension, features.Cfg.GenerationFingerprint(),
 			)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			test.mutate(&configured.Vector)
-			require.NoError(t, configured.Save())
+			require.NoError(configured.Save())
 			var stderr bytes.Buffer
 			_, err = runEmbeddingPasses(
 				t.Context(), features.Runner, generation, false,
 				vector.APIFormatOpenAI, &stderr,
 			)
-			require.NoError(t, err, stderr.String())
+			require.NoError(err, stderr.String())
 			var stdout bytes.Buffer
 			activated, err := activateBuiltGeneration(
 				t.Context(), features.Backend, features.Convergence, generation,
 				vector.APIFormatOpenAI, &stdout, &stderr,
 			)
-			require.NoError(t, err, stderr.String())
-			assert.True(t, activated)
-			assert.Contains(t, stdout.String(), "activated")
-			assert.Zero(t, providerRequests.Load(),
+			require.NoError(err, stderr.String())
+			assert.True(activated)
+			assert.Contains(stdout.String(), "activated")
+			assert.Zero(providerRequests.Load(),
 				"authorization drift must fence every curated-person provider request")
 		})
 	}

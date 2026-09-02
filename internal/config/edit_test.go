@@ -136,6 +136,133 @@ func TestEditConfigCreatesMissingParentDirectories(t *testing.T) {
 	assert.Contains(t, string(after.Content), `theme = "dark"`)
 }
 
+func TestRestoreConfigFileRestoresOriginallyMissingSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	before, err := ReadConfigFile(path)
+	require.NoError(err)
+	require.False(before.Exists)
+	after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+	require.NoError(err)
+
+	restored, err := RestoreConfigFile(path, after, before)
+	require.NoError(err)
+	assert.False(restored.Exists)
+	_, statErr := os.Stat(path)
+	require.ErrorIs(statErr, fs.ErrNotExist)
+	recoveries, err := filepath.Glob(filepath.Join(dir, configRetiredPrefix+"*"))
+	require.NoError(err)
+	require.Len(recoveries, 1)
+	assert.Equal(after.Content, mustReadFile(t, recoveries[0]))
+}
+
+func TestRestoreMissingConfigRefusesConcurrentReplacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before, err := ReadConfigFile(path)
+	require.NoError(err)
+	after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+	require.NoError(err)
+	operator := []byte("[web]\ntheme = \"light\"\n")
+	require.NoError(os.WriteFile(path, operator, 0o600))
+
+	_, err = RestoreConfigFile(path, after, before)
+	require.ErrorIs(err, ErrConfigConflict)
+	assert.Equal(operator, mustReadFile(t, path))
+}
+
+func TestRestoreConfigPinsExpectedPublishedIdentityAtFinalBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		swap    func(t *testing.T, path string, content []byte)
+		wantErr error
+	}{
+		{
+			name: "different inode with identical bytes",
+			swap: func(t *testing.T, path string, content []byte) {
+				t.Helper()
+				replacement := filepath.Join(filepath.Dir(path), "operator-replacement.toml")
+				require.NoError(t, os.WriteFile(replacement, content, 0o600))
+				require.NoError(t, os.Rename(replacement, path))
+			},
+			wantErr: ErrConfigConflict,
+		},
+		{
+			name: "symlink to identical bytes",
+			swap: func(t *testing.T, path string, content []byte) {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(path), "operator-target.toml")
+				require.NoError(t, os.WriteFile(target, content, 0o600))
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Symlink(target, path))
+			},
+			// Windows rejects the reparse point outright instead of resolving
+			// it; see expectedFinalBoundarySymlinkSwapError.
+			wantErr: expectedFinalBoundarySymlinkSwapError(),
+		},
+		{
+			name: "hardlink to identical bytes",
+			swap: func(t *testing.T, path string, content []byte) {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(path), "operator-target.toml")
+				require.NoError(t, os.WriteFile(target, content, 0o600))
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Link(target, path))
+			},
+			wantErr: ErrConfigConflict,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			original := []byte("[web]\ntheme = \"system\"\n")
+			require.NoError(os.WriteFile(path, original, 0o600))
+			before, err := ReadConfigFile(path)
+			require.NoError(err)
+			after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+			require.NoError(err)
+
+			ops := defaultConfigFileOps()
+			ops.beforeExchange = func() error {
+				test.swap(t, path, after.Content)
+				return nil
+			}
+			_, err = restoreConfigFile(path, after, before, ops)
+			require.Error(err)
+			require.ErrorIs(err, test.wantErr)
+			assert.Equal(after.Content, mustReadFile(t, path))
+		})
+	}
+}
+
+func TestRestoreMissingConfigPinsExpectedPublishedIdentityAtFinalBoundary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before, err := ReadConfigFile(path)
+	require.NoError(err)
+	after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+	require.NoError(err)
+	operatorPath := filepath.Join(filepath.Dir(path), "operator.toml")
+	require.NoError(os.WriteFile(operatorPath, after.Content, 0o600))
+	ops := defaultConfigFileOps()
+	ops.beforeExchange = func() error {
+		return os.Rename(operatorPath, path)
+	}
+
+	_, err = restoreConfigFile(path, after, before, ops)
+	require.Error(err)
+	require.ErrorIs(err, ErrConfigConflict)
+	assert.Equal(after.Content, mustReadFile(t, path))
+	operator, err := ReadConfigFile(path)
+	require.NoError(err)
+	assert.False(SameConfigFileVersion(after, operator))
+}
+
 func TestEditConfigDoesNotCreateDirectoriesBeforeConcurrencyCheck(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
@@ -350,7 +477,569 @@ func TestEditConfigRejectsSemanticDuplicateSpellings(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "integrations.tasks.enabled", Value: true}})
-	assert.ErrorIs(t, err, ErrAmbiguousConfigTarget)
+	require.ErrorIs(t, err, ErrAmbiguousConfigTarget)
+}
+
+// TestConfigEditTablesPreservesUnrelatedBytesAndRemovesOneExactTable catches
+// provider management rewriting comments/unknown tables or deleting a sibling
+// profile while adding and removing a named provider table.
+func TestConfigEditTablesPreservesUnrelatedBytesAndRemovesOneExactTable(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := `# operator comment
+[people.sweep]
+enabled = false
+provider = "alpha" # selected profile
+
+[people.sweep.providers.alpha]
+protocol = "openai_chat"
+endpoint = "https://alpha.example.test/v1"
+model = "alpha-model"
+auth = "bearer"
+credential = "env"
+credential_env = "ALPHA_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+
+[people.sweep.providers.old]
+protocol = "openai_chat"
+endpoint = "https://old.example.test/v1"
+model = "old-model"
+auth = "none"
+credential = "none"
+output_mode = "prompt_json"
+token_limit_parameter = "max_tokens"
+retention_posture = "local_only"
+training_posture = "local_only"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+
+# comment owned by the following unknown table
+[future.operator_extension] # unknown table must survive byte-for-byte
+answer = 42
+`
+	requirements.NoError(os.WriteFile(path, []byte(before), 0o640))
+	snapshot, err := ReadConfigFile(path)
+	requirements.NoError(err)
+
+	added, err := EditConfigTables(path, snapshot.ETag, []TableEdit{{
+		Path: []string{"people", "sweep", "providers", "beta"},
+		Values: map[string]any{
+			"protocol":              "openai_chat",
+			"endpoint":              "https://beta.example.test/v1",
+			"model":                 "beta-model",
+			"auth":                  "bearer",
+			"credential":            "stored",
+			"output_mode":           "json_object",
+			"token_limit_parameter": "max_tokens",
+			"retention_posture":     "zero_retention",
+			"training_posture":      "no_training",
+			"allowed_sources":       []string{"conversation_text"},
+			"source_since":          "2026-01-01",
+		},
+	}})
+	requirements.NoError(err)
+	checks.Contains(string(added.Content), before)
+	checks.Contains(string(added.Content), "[people.sweep.providers.beta]\n")
+	checks.Contains(string(added.Content), "credential = \"stored\"\n")
+	// Windows reports only the read-only attribute (0666 for writable files)
+	// while Unix reports the exact requested mode, so the published mode is
+	// asserted through the platform-aware sameConfigModePerm convention.
+	checks.True(sameConfigModePerm(fs.FileMode(0o640), added.Mode),
+		"published config mode must stay 0640-equivalent, got %v", added.Mode)
+
+	removed, err := EditConfigTables(path, added.ETag, []TableEdit{{
+		Path:   []string{"people", "sweep", "providers", "old"},
+		Remove: true,
+	}})
+	requirements.NoError(err)
+	checks.NotContains(string(removed.Content), "[people.sweep.providers.old]")
+	checks.Contains(string(removed.Content), "[people.sweep.providers.alpha]")
+	checks.Contains(string(removed.Content), "[people.sweep.providers.beta]")
+	checks.Contains(string(removed.Content), "# comment owned by the following unknown table\n[future.operator_extension] # unknown table must survive byte-for-byte\nanswer = 42\n")
+
+	_, err = EditConfigTables(path, snapshot.ETag, []TableEdit{{
+		Path: []string{"people", "sweep", "providers", "gamma"}, Values: map[string]any{"model": "gamma"},
+	}})
+	checks.ErrorIs(err, ErrConfigConflict)
+}
+
+// TestConfigEditTablesRejectsAmbiguousAndMixedProviderShapes catches a named
+// profile edit guessing between duplicate table spellings or being added next
+// to the legacy provider shape.
+func TestConfigEditTablesRejectsAmbiguousAndMixedProviderShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		before string
+		want   error
+	}{
+		{
+			name: "duplicate semantic table",
+			before: `[people.sweep.providers.alpha]
+model = "one"
+[people.sweep.providers."alpha"]
+model = "two"
+`,
+			want: ErrAmbiguousConfigTarget,
+		},
+		{
+			name: "legacy and named shapes",
+			before: `[people.sweep.provider]
+kind = "openai_compatible"
+`,
+			want: ErrInvalidConfigCandidate,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(test.before), 0o600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+
+			_, err = EditConfigTables(path, snapshot.ETag, []TableEdit{{
+				Path: []string{"people", "sweep", "providers", "alpha"},
+				Values: map[string]any{
+					"protocol": "openai_chat", "model": "new", "auth": "none",
+					"credential": "none", "output_mode": "prompt_json",
+					"token_limit_parameter": "max_tokens", "retention_posture": "local_only",
+					"training_posture": "local_only", "allowed_sources": []string{"conversation_text"},
+					"source_since": "2025-01-01",
+				},
+			}})
+			require.ErrorIs(err, test.want)
+			assert.Equal(test.before, string(mustReadFile(t, path)))
+		})
+	}
+}
+
+// TestPeopleSweepLegacyProviderTableDetection pins the raw-layout probe that
+// people provider mutations use to decide whether a snapshot must migrate the
+// legacy [people.sweep.provider] table before publishing named profiles or a
+// string selector. The probe must not confuse the profile-name string
+// selector with the legacy table in either of its encodings.
+func TestPeopleSweepLegacyProviderTableDetection(t *testing.T) {
+	tests := []struct {
+		name       string
+		before     string
+		wantLegacy bool
+		wantHeader bool
+	}{
+		{
+			name: "header table",
+			before: `[people.sweep]
+enabled = true
+
+[people.sweep.provider]
+kind = "openai_compatible"
+model = "legacy-model"
+`,
+			wantLegacy: true, wantHeader: true,
+		},
+		{
+			name: "header table beside named profiles",
+			before: `[people.sweep.provider]
+kind = "openai_compatible"
+
+[people.sweep.providers.alpha]
+protocol = "openai_chat"
+`,
+			wantLegacy: true, wantHeader: true,
+		},
+		{
+			name: "inline table",
+			before: `[people.sweep]
+enabled = false
+provider = { kind = "openai_compatible", model = "legacy-model" }
+`,
+			wantLegacy: true, wantHeader: false,
+		},
+		{
+			name:       "string selector",
+			before:     "[people.sweep]\nprovider = \"alpha\"\n",
+			wantLegacy: false,
+		},
+		{
+			name: "root dotted table",
+			before: `people.sweep.enabled = false
+people.sweep.provider = { kind = "openai_compatible", model = "legacy-model" }
+
+[data]
+data_dir = "x"
+`,
+			wantLegacy: true, wantHeader: false,
+		},
+		{
+			name:       "no provider selection",
+			before:     "[people.sweep]\nenabled = false\n",
+			wantLegacy: false,
+		},
+		{
+			name:       "unrelated provider keys",
+			before:     "[people.sweep]\nprovider_x = \"alpha\"\n\n[people.enrichment]\nenabled = false\n",
+			wantLegacy: false,
+		},
+		{
+			name:       "empty snapshot",
+			before:     "",
+			wantLegacy: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(test.before), 0o600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+
+			legacy, headerTable := PeopleSweepLegacyProviderTable(snapshot)
+			assert.Equal(test.wantLegacy, legacy)
+			assert.Equal(test.wantHeader, headerTable)
+		})
+	}
+}
+
+// namedDefaultProviderValues and namedDefaultProviderTable describe one
+// loadable named people provider profile in the byte order the editor
+// appends, so table-edit candidates that publish the "default" selector
+// stay valid configs.
+var namedDefaultProviderValues = map[string]any{
+	"protocol": "openai_chat", "endpoint": "https://default.example.test/v1",
+	"model": "default-model", "auth": "bearer", "credential": "env",
+	"credential_env": "DEFAULT_KEY", "output_mode": "native_json_schema",
+	"token_limit_parameter": "max_completion_tokens", "retention_posture": "zero_retention",
+	"training_posture": "no_training", "allowed_sources": []string{"conversation_text"},
+	"source_since": "2025-01-01",
+}
+
+const namedDefaultProviderTable = `[people.sweep.providers.default]
+allowed_sources = ["conversation_text"]
+auth = "bearer"
+credential = "env"
+credential_env = "DEFAULT_KEY"
+endpoint = "https://default.example.test/v1"
+model = "default-model"
+output_mode = "native_json_schema"
+protocol = "openai_chat"
+retention_posture = "zero_retention"
+source_since = "2025-01-01"
+token_limit_parameter = "max_completion_tokens"
+training_posture = "no_training"
+`
+
+// TestConfigEditTablesSelectorJoinsImplicitParentTables reproduces the
+// parentless legacy migration failure: when only sub-table headers such as
+// [people.sweep.budgets] define people.sweep implicitly, the migrated
+// selector used to be refused even though appending the explicit
+// [people.sweep] header is valid TOML, because a super-table may be defined
+// after its sub-tables.
+func TestConfigEditTablesSelectorJoinsImplicitParentTables(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	before := `# retained operator comment
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+
+[people.sweep.provider]
+kind = "openai_compatible"
+endpoint = "https://legacy.example.test/v1"
+model = "legacy-model"
+api_key_env = "LEGACY_KEY"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+request_timeout = "45s"
+
+[people.sweep.budgets]
+input_cost_microusd_per_million_tokens = 111 # operator price
+output_cost_microusd_per_million_tokens = 222
+`
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	after, err := EditConfigTables(path, snapshot.ETag, []TableEdit{
+		{Path: []string{"people", "sweep", "provider"}, Remove: true},
+		{Path: []string{"people", "sweep"}, Values: map[string]any{"provider": "default"}},
+		{Path: []string{"people", "sweep", "providers", "default"},
+			Values: namedDefaultProviderValues, InsertOnly: true},
+	})
+	require.NoError(err)
+
+	want := `# retained operator comment
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+
+
+[people.sweep.budgets]
+input_cost_microusd_per_million_tokens = 111 # operator price
+output_cost_microusd_per_million_tokens = 222
+
+[people.sweep]
+provider = "default"
+
+` + namedDefaultProviderTable
+	assert.Equal(want, string(after.Content))
+
+	loaded, err := LoadConfigFile(after, "")
+	require.NoError(err)
+	assert.Equal("default", loaded.People.Sweep.Provider.Name)
+	assert.Equal(int64(111), loaded.People.Sweep.Budgets.InputCostMicroUSDPerMillionTokens)
+}
+
+// TestConfigEditTablesSelectorReplacesDottedFamilyValues reproduces the root
+// dotted legacy encoding failure: `people.sweep.provider = { ... }` defines
+// people.sweep through dotted keys, so the migrated selector may not append
+// an explicit [people.sweep] header — it must replace the legacy value in
+// place and join the dotted family for keys the file does not carry yet.
+func TestConfigEditTablesSelectorReplacesDottedFamilyValues(t *testing.T) {
+	t.Run("existing dotted keys are replaced in place", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		before := `# retained operator comment
+people.sweep.enabled = false
+people.sweep.provider = { kind = "openai_compatible", endpoint = "https://legacy.example.test/v1", model = "legacy-model", api_key_env = "LEGACY_KEY", retention_posture = "zero_retention", training_posture = "no_training", allowed_sources = ["conversation_text"], source_since = "2025-01-01", request_timeout = "45s" } # operator note
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+`
+		require.NoError(os.WriteFile(path, []byte(before), 0o600))
+		snapshot, err := ReadConfigFile(path)
+		require.NoError(err)
+
+		after, err := EditConfigTables(path, snapshot.ETag, []TableEdit{
+			{Path: []string{"people", "sweep"}, Values: map[string]any{"enabled": true, "provider": "default"}},
+			{Path: []string{"people", "sweep", "providers", "default"},
+				Values: namedDefaultProviderValues, InsertOnly: true},
+		})
+		require.NoError(err)
+
+		want := `# retained operator comment
+people.sweep.enabled = true
+people.sweep.provider = "default" # operator note
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+
+` + namedDefaultProviderTable
+		assert.Equal(want, string(after.Content))
+		loaded, err := LoadConfigFile(after, "")
+		require.NoError(err)
+		assert.True(loaded.People.Sweep.Enabled)
+		assert.Equal("default", loaded.People.Sweep.Provider.Name)
+	})
+
+	t.Run("missing dotted keys join the family adjacently", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		before := `# retained operator comment
+people.sweep.provider = { kind = "openai_compatible", endpoint = "https://legacy.example.test/v1", model = "legacy-model", api_key_env = "LEGACY_KEY", retention_posture = "zero_retention", training_posture = "no_training", allowed_sources = ["conversation_text"], source_since = "2025-01-01", request_timeout = "45s" }
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+`
+		require.NoError(os.WriteFile(path, []byte(before), 0o600))
+		snapshot, err := ReadConfigFile(path)
+		require.NoError(err)
+
+		after, err := EditConfigTables(path, snapshot.ETag, []TableEdit{
+			{Path: []string{"people", "sweep"}, Values: map[string]any{"enabled": true, "provider": "default"}},
+			{Path: []string{"people", "sweep", "providers", "default"},
+				Values: namedDefaultProviderValues, InsertOnly: true},
+		})
+		require.NoError(err)
+
+		want := `# retained operator comment
+people.sweep.provider = "default"
+people.sweep.enabled = true
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+
+` + namedDefaultProviderTable
+		assert.Equal(want, string(after.Content))
+		loaded, err := LoadConfigFile(after, "")
+		require.NoError(err)
+		assert.True(loaded.People.Sweep.Enabled)
+		assert.Equal("default", loaded.People.Sweep.Provider.Name)
+		assert.Contains(loaded.People.Sweep.Providers, "default")
+	})
+}
+
+// TestConfigEditTablesStillRefusesValueAssignedTable pins the refusal that
+// stays: a table path that is itself assigned as a value (or nested below
+// such an assignment) can never gain keys, because neither a header nor a
+// dotted key may extend an inline value.
+func TestConfigEditTablesStillRefusesValueAssignedTable(t *testing.T) {
+	tests := []struct {
+		name   string
+		before string
+	}{
+		{
+			name:   "target assigned as value",
+			before: "people.sweep = { kind = \"openai_compatible\" }\n\n[data]\ndata_dir = \"x\"\n",
+		},
+		{
+			name:   "ancestor assigned as value",
+			before: "people = { sweep = { provider = \"default\" } }\n\n[data]\ndata_dir = \"x\"\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(test.before), 0o600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+
+			_, err = EditConfigTables(path, snapshot.ETag, []TableEdit{{
+				Path: []string{"people", "sweep"}, Values: map[string]any{"provider": "default"},
+			}})
+			require.ErrorIs(err, ErrAmbiguousConfigTarget)
+			assert.Equal(test.before, string(mustReadFile(t, path)))
+		})
+	}
+}
+
+func TestConfigEditTablesInsertOnlyRefusesExistingExactTable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[web]\ntheme = \"system\" # operator value\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigTables(path, snapshot.ETag, []TableEdit{{
+		Path: []string{"web"}, Values: map[string]any{"theme": "dark"}, InsertOnly: true,
+	}})
+	require.ErrorIs(err, ErrAmbiguousConfigTarget)
+	assert.Equal(before, string(mustReadFile(t, path)))
+}
+
+// TestConfigEditTablesInsertOnlyRefusesExistingDottedFamily pins that
+// InsertOnly refuses a preexisting table encoded as a dotted assignment
+// family (for example people.sweep.providers.alpha.model = "..."), not only
+// an explicit [table] header: named records must never be overwritten by a
+// concurrent add regardless of how the file encodes them. Non-InsertOnly
+// edits keep migrating dotted families in place.
+func TestConfigEditTablesInsertOnlyRefusesExistingDottedFamily(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	before := `people.sweep.provider = "alpha"
+people.sweep.providers.alpha.protocol = "openai_chat"
+people.sweep.providers.alpha.endpoint = "https://alpha.example.test/v1"
+people.sweep.providers.alpha.model = "alpha-model" # operator value
+people.sweep.providers.alpha.auth = "none"
+people.sweep.providers.alpha.credential = "none"
+people.sweep.providers.alpha.output_mode = "prompt_json"
+people.sweep.providers.alpha.token_limit_parameter = "max_tokens"
+people.sweep.providers.alpha.retention_posture = "local_only"
+people.sweep.providers.alpha.training_posture = "local_only"
+people.sweep.providers.alpha.allowed_sources = ["conversation_text"]
+people.sweep.providers.alpha.source_since = "2025-01-01"
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+`
+	require.NoError(t, os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(t, err)
+
+	t.Run("insert only refuses the dotted family", func(t *testing.T) {
+		_, err := EditConfigTables(path, snapshot.ETag, []TableEdit{{
+			Path:   []string{"people", "sweep", "providers", "alpha"},
+			Values: namedDefaultProviderValues, InsertOnly: true,
+		}})
+		require.ErrorIs(t, err, ErrAmbiguousConfigTarget)
+		assert.Equal(t, before, string(mustReadFile(t, path)))
+	})
+
+	t.Run("default edit migrates the dotted family in place", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		after, err := EditConfigTables(path, snapshot.ETag, []TableEdit{{
+			Path:   []string{"people", "sweep", "providers", "alpha"},
+			Values: namedDefaultProviderValues,
+		}})
+		require.NoError(err)
+
+		want := `people.sweep.provider = "alpha"
+people.sweep.providers.alpha.protocol = "openai_chat"
+people.sweep.providers.alpha.endpoint = "https://default.example.test/v1"
+people.sweep.providers.alpha.model = "default-model" # operator value
+people.sweep.providers.alpha.auth = "bearer"
+people.sweep.providers.alpha.credential = "env"
+people.sweep.providers.alpha.output_mode = "native_json_schema"
+people.sweep.providers.alpha.token_limit_parameter = "max_completion_tokens"
+people.sweep.providers.alpha.retention_posture = "zero_retention"
+people.sweep.providers.alpha.training_posture = "no_training"
+people.sweep.providers.alpha.allowed_sources = ["conversation_text"]
+people.sweep.providers.alpha.source_since = "2025-01-01"
+people.sweep.providers.alpha.credential_env = "DEFAULT_KEY"
+
+[data]
+data_dir = "` + filepath.ToSlash(filepath.Join(dir, "data")) + `"
+`
+		assert.Equal(want, string(after.Content))
+		loaded, err := LoadConfigFile(after, "")
+		require.NoError(err)
+		assert.Equal("alpha", loaded.People.Sweep.Provider.Name)
+		assert.Contains(loaded.People.Sweep.Providers, "alpha")
+	})
+}
+
+func TestConfigEditTablesRemovalRejectsDescendantExtensions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := `[people.sweep]
+enabled = false
+provider = "old"
+
+[people.sweep.providers.old]
+protocol = "openai_chat"
+endpoint = "https://old.example.test/v1"
+model = "old-model"
+auth = "none"
+credential = "none"
+output_mode = "prompt_json"
+token_limit_parameter = "max_tokens"
+retention_posture = "local_only"
+training_posture = "local_only"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+
+# operator-owned provider extension
+[people.sweep.providers.old.future_extension]
+answer = 42
+`
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigTables(path, snapshot.ETag, []TableEdit{{
+		Path: []string{"people", "sweep", "providers", "old"}, Remove: true,
+	}})
+	require.ErrorIs(err, ErrAmbiguousConfigTarget)
+	assert.Equal(before, string(mustReadFile(t, path)))
 }
 
 func TestEditConfigMissingKeyPreservesNoFinalNewline(t *testing.T) {
@@ -405,7 +1094,7 @@ func TestEditConfigRejectsConcurrentAndAmbiguousWrites(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "system"}})
-		assert.ErrorIs(t, err, ErrAmbiguousConfigTarget)
+		require.ErrorIs(t, err, ErrAmbiguousConfigTarget)
 	})
 }
 
@@ -734,6 +1423,7 @@ func TestEditConfigRollsBackExistingFileWhenFirstDirectorySyncFails(t *testing.T
 }
 
 func TestEditConfigReportsChangedWhenRollbackDirectorySyncFails(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	beforeText := "[web]\ntheme = \"system\"\n"
@@ -748,11 +1438,78 @@ func TestEditConfigReportsChangedWhenRollbackDirectorySyncFails(t *testing.T) {
 	ops.openDirectory = opener.open
 	overridePinnedReplacementSync(&ops, opener.open)
 
-	_, err = editConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}}, ops)
+	after, err := editConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}}, ops)
 	require.ErrorIs(err, ErrConfigChanged)
+	assert.Equal("[web]\ntheme = \"dark\"\n", string(after.Content))
+	assert.Equal(configETag(after.Content), after.ETag)
+	assert.True(after.Exists)
+	assert.NotEmpty(after.identity)
 	got, readErr := os.ReadFile(path)
 	require.NoError(readErr)
-	assert.Equal(t, beforeText, string(got))
+	assert.Equal(beforeText, string(got))
+}
+
+func TestSameConfigModePermKeepsStrictUnixEquality(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows reports only the read-only attribute; see edit_mode_windows.go")
+	}
+	// Unix platforms observe real permission bits, so mode verification must
+	// stay exact there: a published 0666 config must never verify against a
+	// 0600 expectation. Windows reports only the read-only attribute and uses
+	// the equivalence in edit_mode_windows.go instead.
+	assert.False(t, sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o666)))
+	assert.True(t, sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o600)))
+	assert.False(t, sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o444)))
+}
+
+func TestSameConfigFileVersionRejectsByteIdenticalReplacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := []byte("[web]\ntheme = \"dark\"\n")
+	require.NoError(os.WriteFile(path, content, 0o600))
+	transaction, err := ReadConfigFile(path)
+	require.NoError(err)
+	assert.True(SameConfigFileVersion(transaction, transaction))
+
+	replacementPath := filepath.Join(filepath.Dir(path), "replacement.toml")
+	require.NoError(os.WriteFile(replacementPath, content, 0o600))
+	require.NoError(os.Rename(replacementPath, path))
+	concurrent, err := ReadConfigFile(path)
+	require.NoError(err)
+	assert.False(SameConfigFileVersion(transaction, concurrent))
+}
+
+func TestEditConfigReturnsPublishedIdentityWhenFinalReadSeesReplacement(t *testing.T) {
+	newRequire := require.New
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[web]\ntheme = \"system\"\n"), 0o600))
+	before, err := ReadConfigFile(path)
+	require.NoError(err)
+	ops := defaultConfigFileOps()
+	nativeRead := ops.read
+	readCalls := 0
+	ops.read = func(requested string) (ConfigFile, error) {
+		require := newRequire(t)
+		readCalls++
+		if readCalls == 3 {
+			content := mustReadFile(t, path)
+			replacement := filepath.Join(filepath.Dir(path), "operator-replacement.toml")
+			require.NoError(os.WriteFile(replacement, content, 0o600))
+			replaceConfigTargetForFinalReadSwap(t, replacement, path)
+		}
+		return nativeRead(requested)
+	}
+
+	published, err := editConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}}, ops)
+	require.ErrorIs(err, ErrConfigChanged)
+	current, readErr := ReadConfigFile(path)
+	require.NoError(readErr)
+	assert.Equal(current.Content, published.Content)
+	assert.False(SameConfigFileVersion(published, current))
+	assert.NotEmpty(published.identity)
 }
 
 func TestEditConfigPreservesDisplacedArtifactWhenConflictRollbackFails(t *testing.T) {
@@ -1036,7 +1793,7 @@ func TestEditConfigRollsBackMissingFileWhenFirstDirectorySyncFails(t *testing.T)
 	require.Error(err)
 	require.NotErrorIs(err, ErrConfigChanged)
 	_, statErr := os.Stat(path)
-	assert.ErrorIs(t, statErr, fs.ErrNotExist)
+	require.ErrorIs(statErr, fs.ErrNotExist)
 }
 
 func TestEditConfigReportsChangedWhenMissingRollbackDirectorySyncFails(t *testing.T) {
@@ -1055,7 +1812,7 @@ func TestEditConfigReportsChangedWhenMissingRollbackDirectorySyncFails(t *testin
 	_, err = editConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}}, ops)
 	require.ErrorIs(err, ErrConfigChanged)
 	_, statErr := os.Stat(path)
-	assert.ErrorIs(t, statErr, fs.ErrNotExist)
+	require.ErrorIs(statErr, fs.ErrNotExist)
 }
 
 func TestEditConfigReportsChangedWhenFinalDirectorySyncFails(t *testing.T) {
@@ -1386,7 +2143,7 @@ func TestReadConfigFileRejectsUnsafeTargets(t *testing.T) {
 		require.NoError(t, os.Symlink("missing.toml", link))
 		_, err := ReadConfigFile(link)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrUnsafeConfigTarget)
+		require.ErrorIs(t, err, ErrUnsafeConfigTarget)
 	})
 
 	t.Run("non regular target", func(t *testing.T) {

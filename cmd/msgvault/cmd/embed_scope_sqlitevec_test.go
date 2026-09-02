@@ -171,6 +171,8 @@ func TestRunEmbed_AccountScopedBuildActivatesScopedGeneration(t *testing.T) {
 // request must prevent every later person request without rolling back message
 // progress or stranding activation of the completed message generation.
 func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var messageRequests atomic.Int32
 	var personRequests atomic.Int32
 	var configRemoved atomic.Bool
@@ -219,19 +221,19 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	t.Cleanup(provider.Close)
 	configured.Vector.Embeddings.Endpoint = provider.URL
 	withTestConfig(t, configured)
-	require.NoError(t, configured.Save())
+	require.NoError(configured.Save())
 
 	seedTwoAccountMainDB(t, dataDir)
 	mainStore, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(t, err)
+	require.NoError(err)
 	profile, err := configured.Vector.SemanticPersonEmbeddingProfile()
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
 		t.Context(), profile.Fingerprint, "test",
 	)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, personSeed := range []struct {
 		email string
 		name  string
@@ -242,15 +244,15 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 		participantID, err := mainStore.EnsureParticipantByIdentifier(
 			"email", personSeed.email, "Observed "+personSeed.name,
 		)
-		require.NoError(t, err)
+		require.NoError(err)
 		person, _, err := mainStore.CreatePersonFromParticipantContext(t.Context(), participantID)
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = mainStore.UpdatePersonDisplayNameContext(
 			t.Context(), person.ID, person.Revision, &personSeed.name,
 		)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
-	require.NoError(t, mainStore.Close())
+	require.NoError(mainStore.Close())
 
 	oldRebuild, oldYes := embedFullRebuild, embedYes
 	oldAccounts, oldCollections := embedAccounts, embedCollections
@@ -273,35 +275,35 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 
 	err = runEmbeddingsBuildLocal(command)
 
-	require.NoError(t, err, stderr.String())
-	require.True(t, configRemoved.Load(), "precondition: first curated-person request removed config")
-	require.NoError(t, <-removeResult)
-	assert.Contains(t, stdout.String(), "Generation 1 activated.",
+	require.NoError(err, stderr.String())
+	require.True(configRemoved.Load(), "precondition: first curated-person request removed config")
+	require.NoError(<-removeResult)
+	assert.Contains(stdout.String(), "Generation 1 activated.",
 		"person authorization loss must not strand completed message activation")
 
 	// A later manual resume must still process newly arrived message work from
 	// the startup configuration while the live person policy remains absent.
 	mainStore, err = store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = mainStore.DB().Exec(`
 		INSERT INTO messages
 			(id, conversation_id, source_id, source_message_id, message_type, subject)
 		VALUES (3, 1, 1, 'post-removal-message', 'email', 'post-removal message');
 		INSERT INTO message_bodies (message_id, body_text)
 		VALUES (3, 'post-removal body');`)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.Close())
+	require.NoError(err)
+	require.NoError(mainStore.Close())
 	embedFullRebuild = false
 	resume := &cobra.Command{}
 	resume.SetContext(t.Context())
 	resumeOut, resumeErr := &bytes.Buffer{}, &bytes.Buffer{}
 	resume.SetOut(resumeOut)
 	resume.SetErr(resumeErr)
-	require.NoError(t, runEmbeddingsBuildLocal(resume), resumeErr.String())
+	require.NoError(runEmbeddingsBuildLocal(resume), resumeErr.String())
 
-	assert.Equal(t, int32(3), messageRequests.Load(),
+	assert.Equal(int32(3), messageRequests.Load(),
 		"message batches must continue through the separate ungated client after config removal")
-	assert.Equal(t, int32(1), personRequests.Load(),
+	assert.Equal(int32(1), personRequests.Load(),
 		"config deletion must fence every later curated-person batch")
 }
 

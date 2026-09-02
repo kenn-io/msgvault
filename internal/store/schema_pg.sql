@@ -334,14 +334,35 @@ CREATE TABLE IF NOT EXISTS person_inference_profiles (
     model                TEXT NOT NULL,
     api_key_env          TEXT NOT NULL,
     allow_anonymous      BOOLEAN NOT NULL DEFAULT FALSE,
+    auth_scheme          TEXT NOT NULL DEFAULT 'bearer',
+    credential_source    TEXT NOT NULL DEFAULT 'env',
+    credential_ref       TEXT NOT NULL DEFAULT '',
+    output_mode          TEXT NOT NULL DEFAULT 'native_json_schema',
+    token_limit_parameter TEXT NOT NULL DEFAULT '',
+    reasoning_effort     TEXT NOT NULL DEFAULT '',
+    reasoning_mode       TEXT NOT NULL DEFAULT '',
+    driver_version       TEXT NOT NULL DEFAULT '',
     retention_posture    TEXT NOT NULL,
     training_posture     TEXT NOT NULL,
     allowed_sources      JSONB NOT NULL,
     source_since         TEXT NOT NULL,
     source_until         TEXT,
     allow_sensitive      BOOLEAN NOT NULL DEFAULT FALSE,
+    execution_boundary   TEXT NOT NULL DEFAULT '',
+    packet_renderer_policy TEXT NOT NULL DEFAULT '',
+    program_fingerprint  TEXT NOT NULL DEFAULT '',
+    disclosed_packet_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
     policy_json          JSONB NOT NULL,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_inference_checks (
+    profile_fingerprint  TEXT PRIMARY KEY REFERENCES person_inference_profiles(fingerprint),
+    checked_at           TIMESTAMPTZ NOT NULL,
+    driver_version       TEXT NOT NULL,
+    output_mode          TEXT NOT NULL,
+    provider_request_id  TEXT NOT NULL DEFAULT '',
+    model_version        TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS person_inference_consents (
@@ -730,6 +751,8 @@ CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_generation
 CREATE TABLE IF NOT EXISTS person_sweep_batches (
     attempt_id                  TEXT NOT NULL REFERENCES person_sweep_attempts(id) ON DELETE CASCADE,
     batch_ordinal               INTEGER NOT NULL CHECK (batch_ordinal >= 0),
+    call_ordinal                INTEGER NOT NULL DEFAULT 0 CHECK (call_ordinal IN (0, 1)),
+    purpose                     TEXT NOT NULL DEFAULT 'primary',
     utc_day                     TEXT NOT NULL,
     reservation_id              TEXT NOT NULL,
     budget_fingerprint          TEXT NOT NULL,
@@ -752,7 +775,11 @@ CREATE TABLE IF NOT EXISTS person_sweep_batches (
     )),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMPTZ,
-    PRIMARY KEY (attempt_id, batch_ordinal)
+    CONSTRAINT person_sweep_batches_call_coordinate_check CHECK (
+        (call_ordinal = 0 AND purpose = 'primary') OR
+        (call_ordinal = 1 AND purpose = 'repair')
+    ),
+    PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS person_sweep_daily_usage (

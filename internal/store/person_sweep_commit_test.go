@@ -45,6 +45,16 @@ func personSweepApplyBudget() peoplesweep.BudgetConfig {
 
 func newPersonSweepApplyFixture(t *testing.T, suffix string, provider bool) personSweepApplyFixture {
 	t.Helper()
+	return newPersonSweepApplyFixtureWithBudget(t, suffix, provider, personSweepApplyBudget())
+}
+
+func newPersonSweepApplyFixtureWithBudget(
+	t *testing.T,
+	suffix string,
+	provider bool,
+	budget peoplesweep.BudgetConfig,
+) personSweepApplyFixture {
+	t.Helper()
 	st, personID, targets := newPersonFactProjectionStore(t)
 	program := strings.Repeat("a", 64)
 	profile := strings.Repeat("b", 64)
@@ -118,23 +128,49 @@ func newPersonSweepApplyFixture(t *testing.T, suffix string, provider bool) pers
 	_, err = st.db.ExecContext(t.Context(), `INSERT INTO person_inference_consents
 		(profile_fingerprint, granted_by) VALUES (?, 'test')`, profile)
 	require.NoError(t, err)
-	budget := personSweepApplyBudget()
+	reservedCost, err := peoplesweep.EstimateCostMicroUSD(
+		peoplesweep.TokenUsage{InputTokens: 3, OutputTokens: 2}, budget)
+	require.NoError(t, err)
 	reservation, err := st.ReservePersonSweepBudget(t.Context(), peoplesweep.BudgetReservationRequest{
-		RunID: runID, AttemptID: attemptID, BatchOrdinal: 0, PersonID: personID,
+		RunID: runID, AttemptID: attemptID, BatchOrdinal: 0, CallOrdinal: 0,
+		Purpose: peoplesweep.ProviderCallPurposePrimary, PersonID: personID,
 		ProviderFingerprint: profile, UTCDate: "2026-08-23", InputHash: strings.Repeat("c", 64),
 		ItemCount: 1, EstimatedRequests: 1, EstimatedInputTokens: 3,
-		EstimatedOutputTokens: 2, EstimatedCostMicroUSD: 5, Budget: budget})
+		EstimatedOutputTokens: 2, EstimatedCostMicroUSD: reservedCost, Budget: budget})
 	require.NoError(t, err)
-	require.NoError(t, st.MarkPersonSweepBudgetStarted(t.Context(), reservation))
-	request.Batches = []peoplesweep.CompletedBatch{{Ordinal: 0, ReservationID: reservation.ID,
+	require.NoError(t, st.MarkPersonSweepBudgetStarted(t.Context(), reservation, lease))
+	request.Batches = []peoplesweep.CompletedBatch{{Ordinal: 0, CallOrdinal: 0,
+		Purpose: peoplesweep.ProviderCallPurposePrimary, ReservationID: reservation.ID,
 		InputHash: reservation.Request.InputHash, ProviderRequestID: "request-1",
 		ProviderVersion: "provider-v1", ModelVersion: "model-v1",
-		Usage: peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, ActualCostMicroUSD: 3,
-		Latency: time.Second}}
+		Usage: peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, UsageKnown: true,
+		ActualCostMicroUSD: 3,
+		Latency:            time.Second}}
 	request.Usage = peoplesweep.Usage{Requests: 1, InputTokens: 3, OutputTokens: 2,
-		EstimatedCostMicroUSD: 5}
+		EstimatedCostMicroUSD: reservedCost}
+	request.Budget = budget
 	fixture.request, fixture.reservation = request, reservation
 	return fixture
+}
+
+func TestApplyPersonSweepPricesReconciledKnownUsageDimensions(t *testing.T) {
+	budget := personSweepApplyBudget()
+	budget.InputCostMicroUSDPerMillionTokens = 2_000_000
+	budget.OutputCostMicroUSDPerMillionTokens = 3_000_000
+	f := newPersonSweepApplyFixtureWithBudget(t, "reconciled-cost", true, budget)
+	f.request.Batches[0].Usage = peoplesweep.TokenUsage{InputTokens: 4, OutputTokens: 1}
+	f.request.Batches[0].ActualCostMicroUSD = 11
+	f.request.Usage = peoplesweep.Usage{Requests: 1, InputTokens: 4, OutputTokens: 2,
+		EstimatedCostMicroUSD: 14}
+
+	_, err := f.store.ApplyPersonSweep(t.Context(), f.request)
+	require.NoError(t, err)
+	var inputTokens, outputTokens, actualCost int64
+	require.NoError(t, f.store.db.QueryRow(`SELECT actual_input_tokens,
+		actual_output_tokens, actual_cost_micro_usd FROM person_sweep_batches
+		WHERE attempt_id = ? AND batch_ordinal = 0 AND call_ordinal = 0`,
+		f.attemptID).Scan(&inputTokens, &outputTokens, &actualCost))
+	assert.Equal(t, []int64{4, 2, 14}, []int64{inputTokens, outputTokens, actualCost})
 }
 
 func TestApplyPersonSweepCommitsFactsUsageAndCursorAtomically(t *testing.T) {
@@ -159,6 +195,67 @@ func TestApplyPersonSweepCommitsFactsUsageAndCursorAtomically(t *testing.T) {
 		WHERE id = ?`, f.attemptID).Scan(&attemptStatus))
 	checks.Equal("succeeded", batchStatus)
 	checks.Equal("succeeded", attemptStatus)
+}
+
+func TestApplyPersonSweepCommitsPrimaryAndRepairCallHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newPersonSweepApplyFixture(t, "repair-history", true)
+	repairRequest := f.reservation.Request
+	repairRequest.CallOrdinal = 1
+	repairRequest.Purpose = peoplesweep.ProviderCallPurposeRepair
+	repairRequest.InputHash = strings.Repeat("d", 64)
+	repairRequest.EstimatedInputTokens = 4
+	repairRequest.EstimatedOutputTokens = 2
+	repairRequest.EstimatedCostMicroUSD = 6
+	repair, err := f.store.ReservePersonSweepBudget(t.Context(), repairRequest)
+	require.NoError(err)
+	require.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), repair, f.lease))
+	f.request.Batches = append(f.request.Batches, peoplesweep.CompletedBatch{
+		Ordinal: 0, CallOrdinal: 1, Purpose: peoplesweep.ProviderCallPurposeRepair,
+		ReservationID: repair.ID, InputHash: repair.Request.InputHash,
+		ProviderRequestID: "request-repair", ProviderVersion: "provider-v1",
+		ModelVersion: "model-v1", UsageKnown: true,
+		Usage:              peoplesweep.TokenUsage{InputTokens: 6, OutputTokens: 3},
+		ActualCostMicroUSD: 9, Latency: 2 * time.Second,
+	})
+	f.request.Usage = peoplesweep.Usage{Requests: 2, InputTokens: 9,
+		OutputTokens: 5, EstimatedCostMicroUSD: 14}
+
+	result, err := f.store.ApplyPersonSweep(t.Context(), f.request)
+	require.NoError(err)
+	assert.Equal(2, result.Mutations.BatchRowsReconciled)
+	rows, err := f.store.db.QueryContext(t.Context(), `
+		SELECT batch_ordinal, call_ordinal, purpose, status
+		FROM person_sweep_batches WHERE attempt_id = ?
+		ORDER BY batch_ordinal, call_ordinal`, f.attemptID)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	type historyCall struct {
+		coordinate peoplesweep.ProviderCallCoordinate
+		status     string
+	}
+	var calls []historyCall
+	for rows.Next() {
+		var call historyCall
+		require.NoError(rows.Scan(&call.coordinate.BatchOrdinal,
+			&call.coordinate.CallOrdinal, &call.coordinate.Purpose, &call.status))
+		calls = append(calls, call)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]historyCall{
+		{coordinate: peoplesweep.ProviderCallCoordinate{BatchOrdinal: 0, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary}, status: "succeeded"},
+		{coordinate: peoplesweep.ProviderCallCoordinate{BatchOrdinal: 0, CallOrdinal: 1,
+			Purpose: peoplesweep.ProviderCallPurposeRepair}, status: "succeeded"},
+	}, calls)
+	var requestID string
+	var requests int
+	require.NoError(f.store.db.QueryRow(`
+		SELECT provider_request_id, request_count FROM person_sweep_attempts WHERE id = ?`,
+		f.attemptID).Scan(&requestID, &requests))
+	assert.Equal("request-repair", requestID)
+	assert.Equal(2, requests)
 }
 
 func TestApplyPersonSweepRequeuesExplicitlyDeferredCursorWork(t *testing.T) {
@@ -315,8 +412,10 @@ func TestApplyPersonSweepRevokedConsentChargesUsageOnly(t *testing.T) {
 	requirements.NoError(f.store.FinalizePersonSweepFailure(t.Context(), peoplesweep.FailureFinalization{
 		Lease: f.lease, AttemptID: f.attemptID, Class: peoplesweep.FailurePolicy,
 		RetryAt: personFactLedgerNow.Add(time.Hour), Reservations: []peoplesweep.BudgetReservation{f.reservation},
-		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, ProviderRequestID: "request-1",
-			Usage: peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, Latency: time.Second}},
+		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
+			ProviderRequestID: "request-1",
+			Usage:             peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, Latency: time.Second}},
 		FinalizedAt: personFactLedgerNow.Add(time.Minute),
 	}))
 	var status string

@@ -75,12 +75,14 @@ func (p *convergenceProgressPublisher) GetDocumentProgress(context.Context, vect
 }
 
 func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	mainStore, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = mainStore.Close() })
-	require.NoError(t, mainStore.InitSchema())
+	require.NoError(mainStore.InitSchema())
 	_, err = mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 12 WHERE singleton = 1`)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	publisher := &convergenceProgressPublisher{progress: vector.DocumentProgress{
 		ChangeSequence: 12, ReconcileCursor: "done:12",
@@ -95,26 +97,27 @@ func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliat
 		publisher: publisher,
 	}
 	state, err := checker.CheckConvergence(t.Context(), 3)
-	require.NoError(t, err)
-	assert.True(t, state.Complete())
+	require.NoError(err)
+	assert.True(state.Complete())
 
 	publisher.progress.ChangeSequence = 11
 	state, err = checker.CheckConvergence(t.Context(), 3)
-	require.NoError(t, err)
-	assert.False(t, state.Complete(), "unconsumed journal must block activation")
+	require.NoError(err)
+	assert.False(state.Complete(), "unconsumed journal must block activation")
 
 	publisher.progress = vector.DocumentProgress{ChangeSequence: 12, ReconcileCursor: ""}
 	state, err = checker.CheckConvergence(t.Context(), 3)
-	require.NoError(t, err)
-	assert.False(t, state.Complete(), "unfinished reconciliation must block activation")
+	require.NoError(err)
+	assert.False(state.Complete(), "unfinished reconciliation must block activation")
 
 	publisher.progress.ReconcileCursor = "done:11"
 	state, err = checker.CheckConvergence(t.Context(), 3)
-	require.NoError(t, err)
-	assert.True(t, state.Complete(), "a completed full pass remains valid while later journal entries converge")
+	require.NoError(err)
+	assert.True(state.Complete(), "a completed full pass remains valid while later journal entries converge")
 }
 
 func TestConvergenceResultRefusesEachIncompleteDimension(t *testing.T) {
+	assert := assert.New(t)
 	complete := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
 		PersonCoverageComplete:  true,
@@ -122,26 +125,28 @@ func TestConvergenceResultRefusesEachIncompleteDimension(t *testing.T) {
 		ConsumedJournalSequence: 4,
 		ReconciliationComplete:  true,
 	}
-	assert.True(t, complete.Complete())
+	assert.True(complete.Complete())
 
 	missing := complete
 	missing.MessageCoverageComplete = false
-	assert.False(t, missing.Complete())
+	assert.False(missing.Complete())
 	unconsumed := complete
 	unconsumed.ConsumedJournalSequence = 3
-	assert.False(t, unconsumed.Complete())
+	assert.False(unconsumed.Complete())
 	unreconciled := complete
 	unreconciled.ReconciliationComplete = false
-	assert.False(t, unreconciled.Complete())
+	assert.False(unreconciled.Complete())
 	peopleMissing := complete
 	peopleMissing.PersonCoverageComplete = false
-	assert.False(t, peopleMissing.Complete())
+	assert.False(peopleMissing.Complete())
 	peopleRejected := complete
 	peopleRejected.PersonCoverageRejected = 1
-	assert.False(t, peopleRejected.Complete())
+	assert.False(peopleRejected.Complete())
 }
 
 func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
 	vectorPath := filepath.Join(dir, "vectors.db")
@@ -156,21 +161,21 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	withTestConfig(t, c)
 
 	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.InitSchema())
+	require.NoError(err)
+	require.NoError(mainStore.InitSchema())
 	_, err = mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
-	require.NoError(t, err)
-	require.NoError(t, sqlitevec.RegisterExtension())
+	require.NoError(err)
+	require.NoError(sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
-	require.NoError(t, err)
-	require.NoError(t, backend.AdvanceDocumentChangeWatermark(t.Context(), gen, 1))
-	require.NoError(t, backend.SetDocumentReconcileCursor(t.Context(), gen, "done:2"))
-	require.NoError(t, backend.Close())
-	require.NoError(t, mainStore.Close())
+	require.NoError(err)
+	require.NoError(backend.AdvanceDocumentChangeWatermark(t.Context(), gen, 1))
+	require.NoError(backend.SetDocumentReconcileCursor(t.Context(), gen, "done:2"))
+	require.NoError(backend.Close())
+	require.NoError(mainStore.Close())
 
 	oldYes, oldForce := embeddingsActivateYes, embeddingsActivateForce
 	t.Cleanup(func() { embeddingsActivateYes, embeddingsActivateForce = oldYes, oldForce })
@@ -186,18 +191,20 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	genArg := strconv.FormatInt(int64(gen), 10)
 
 	err = runEmbeddingsActivate(cmd, []string{genArg})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "journal=1/2")
+	require.Error(err)
+	assert.Contains(err.Error(), "journal=1/2")
 
 	embeddingsActivateForce = true
-	require.NoError(t, runEmbeddingsActivate(cmd, []string{genArg}))
-	assert.Contains(t, output.String(), "Generation "+genArg+" activated")
+	require.NoError(runEmbeddingsActivate(cmd, []string{genArg}))
+	assert.Contains(output.String(), "Generation "+genArg+" activated")
 }
 
 // TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage catches the
 // standalone activation command bypassing exact curated-person convergence
 // for an otherwise message-complete OpenAI-format generation.
 func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
 	vectorPath := filepath.Join(dir, "vectors.db")
@@ -213,31 +220,31 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 	}
 	withTestConfig(t, c)
-	require.NoError(t, c.Save())
+	require.NoError(c.Save())
 
 	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.InitSchema())
+	require.NoError(err)
+	require.NoError(mainStore.InitSchema())
 	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
 		t.Context(), semanticProfile.Fingerprint, "test",
 	)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000002", "Synthetic Missing Person")
-	require.NoError(t, err)
-	require.NoError(t, sqlitevec.RegisterExtension())
+	require.NoError(err)
+	require.NoError(sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
-	require.NoError(t, err)
-	require.NoError(t, backend.Close())
-	require.NoError(t, mainStore.Close())
+	require.NoError(err)
+	require.NoError(backend.Close())
+	require.NoError(mainStore.Close())
 
 	oldYes, oldForce := embeddingsActivateYes, embeddingsActivateForce
 	t.Cleanup(func() { embeddingsActivateYes, embeddingsActivateForce = oldYes, oldForce })
@@ -249,13 +256,13 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 
 	err = runEmbeddingsActivate(embeddingsActivateCmd,
 		[]string{strconv.FormatInt(int64(gen), 10)})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "person_coverage_complete=false")
-	assert.NotContains(t, err.Error(), "needing embedding",
+	require.Error(err)
+	assert.Contains(err.Error(), "person_coverage_complete=false")
+	assert.NotContains(err.Error(), "needing embedding",
 		"person-only incompleteness must not suggest message recovery")
-	assert.Contains(t, err.Error(), "msgvault embeddings resume --backstop")
-	assert.Contains(t, err.Error(), "--force")
-	assert.NotContains(t, err.Error(), "activate automatically")
+	assert.Contains(err.Error(), "msgvault embeddings resume --backstop")
+	assert.Contains(err.Error(), "--force")
+	assert.NotContains(err.Error(), "activate automatically")
 	assertManualGenerationState(t, gen, vector.GenerationBuilding)
 }
 

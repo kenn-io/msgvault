@@ -16,7 +16,8 @@ import (
 func (s *Store) ListPersonSweepRuns(
 	ctx context.Context, filter peoplesweep.RunFilter,
 ) ([]peoplesweep.RunSummary, error) {
-	if filter.Limit < 1 || filter.Limit > 200 || filter.PersonID < 0 {
+	if filter.Limit < 1 || filter.Limit > 200 || filter.PersonID < 0 ||
+		(filter.ProviderFingerprint != "" && !validLowerSHA256(filter.ProviderFingerprint)) {
 		return nil, errors.New("list person sweep runs: limit must be 1-200 and person ID nonnegative")
 	}
 	query := `SELECT r.id, r.kind, r.mode, r.status, r.program_fingerprint,
@@ -25,11 +26,19 @@ func (s *Store) ListPersonSweepRuns(
 	                 r.actual_requests, r.actual_input_tokens, r.actual_output_tokens,
 	                 r.actual_cost_micro_usd, r.started_at, r.completed_at
 	          FROM person_sweep_runs r`
-	args := make([]any, 0, 2)
+	conditions := make([]string, 0, 2)
+	args := make([]any, 0, 3)
 	if filter.PersonID > 0 {
-		query += ` WHERE EXISTS (SELECT 1 FROM person_sweep_attempts a
-		                          WHERE a.run_id = r.id AND a.person_id = ?)`
+		conditions = append(conditions, `EXISTS (SELECT 1 FROM person_sweep_attempts a
+		                          WHERE a.run_id = r.id AND a.person_id = ?)`)
 		args = append(args, filter.PersonID)
+	}
+	if filter.ProviderFingerprint != "" {
+		conditions = append(conditions, "r.provider_fingerprint = ?")
+		args = append(args, filter.ProviderFingerprint)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += ` ORDER BY r.started_at DESC, r.id DESC LIMIT ?`
 	args = append(args, filter.Limit)
@@ -66,7 +75,8 @@ func (s *Store) ListPersonSweepRuns(
 func (s *Store) ListPersonSweepAttempts(
 	ctx context.Context, filter peoplesweep.AttemptFilter,
 ) ([]peoplesweep.AttemptSummary, error) {
-	if filter.Limit < 1 || filter.Limit > 200 || filter.PersonID < 0 {
+	if filter.Limit < 1 || filter.Limit > 200 || filter.PersonID < 0 ||
+		(filter.ProviderFingerprint != "" && !validLowerSHA256(filter.ProviderFingerprint)) {
 		return nil, errors.New("list person sweep attempts: limit must be 1-200 and person ID nonnegative")
 	}
 	query := `SELECT id, run_id, person_id, status, failure_class,
@@ -77,8 +87,8 @@ func (s *Store) ListPersonSweepAttempts(
 	                 request_count, input_tokens,
 	                 output_tokens, estimated_cost_micro_usd, latency_milliseconds
 	          FROM person_sweep_attempts`
-	conditions := make([]string, 0, 2)
-	args := make([]any, 0, 3)
+	conditions := make([]string, 0, 3)
+	args := make([]any, 0, 4)
 	if strings.TrimSpace(filter.RunID) != "" {
 		conditions = append(conditions, "run_id = ?")
 		args = append(args, filter.RunID)
@@ -86,6 +96,10 @@ func (s *Store) ListPersonSweepAttempts(
 	if filter.PersonID > 0 {
 		conditions = append(conditions, "person_id = ?")
 		args = append(args, filter.PersonID)
+	}
+	if filter.ProviderFingerprint != "" {
+		conditions = append(conditions, "provider_fingerprint = ?")
+		args = append(args, filter.ProviderFingerprint)
 	}
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")

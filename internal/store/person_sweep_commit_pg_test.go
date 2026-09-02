@@ -127,13 +127,15 @@ func TestPersonSweepPostgreSQLReclaimedFinalizerAndSuccessorApplyUseOneLockOrder
 	requirements.NoError(err)
 	successorReservation, err := f.store.ReservePersonSweepBudget(t.Context(),
 		peoplesweep.BudgetReservationRequest{RunID: successorRun, AttemptID: successorAttempt,
-			BatchOrdinal: 0, PersonID: f.personID,
+			BatchOrdinal: 0, CallOrdinal: 0, Purpose: peoplesweep.ProviderCallPurposePrimary,
+			PersonID:            f.personID,
 			ProviderFingerprint: f.request.Generation.Policy.ProviderPolicyFingerprint,
 			UTCDate:             "2026-08-23", InputHash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 			ItemCount: 1, EstimatedRequests: 1, EstimatedInputTokens: 3,
 			EstimatedOutputTokens: 2, EstimatedCostMicroUSD: 5, Budget: personSweepApplyBudget()})
 	requirements.NoError(err)
-	requirements.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), successorReservation))
+	requirements.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), successorReservation,
+		successorLease))
 	successorRequest := f.request
 	successorRequest.RunID = successorRun
 	successorRequest.AttemptID = successorAttempt
@@ -145,14 +147,15 @@ func TestPersonSweepPostgreSQLReclaimedFinalizerAndSuccessorApplyUseOneLockOrder
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	start := make(chan struct{})
-	errs := make(chan error, 2)
+	finalizeErrs, applyErrs := make(chan error, 1), make(chan error, 1)
 	go func() {
 		<-start
-		errs <- f.store.FinalizePersonSweepFailure(ctx, peoplesweep.FailureFinalization{
+		finalizeErrs <- f.store.FinalizePersonSweepFailure(ctx, peoplesweep.FailureFinalization{
 			Lease: f.lease, AttemptID: f.attemptID, Class: peoplesweep.FailureTimeout,
 			RetryAt:      personFactLedgerNow.Add(time.Hour),
 			Reservations: []peoplesweep.BudgetReservation{f.reservation},
-			Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
+			Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+				Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
 				ProviderRequestID: "request-old-finalizer",
 				Usage:             peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, Latency: time.Second}},
 			FinalizedAt: personFactLedgerNow.Add(time.Minute),
@@ -161,10 +164,59 @@ func TestPersonSweepPostgreSQLReclaimedFinalizerAndSuccessorApplyUseOneLockOrder
 	go func() {
 		<-start
 		_, applyErr := f.store.ApplyPersonSweep(ctx, successorRequest)
-		errs <- applyErr
+		applyErrs <- applyErr
 	}()
 	close(start)
-	for range 2 {
-		requirements.NoError(<-errs)
-	}
+	// Both calls must return inside the shared deadline: the stale finalizer
+	// and the successor apply lock daily usage, batches, and the work row in
+	// one order, so a reclaim racing apply cannot deadlock the pair.
+	applyErr := <-applyErrs
+	finalizeErr := <-finalizeErrs
+	requirements.NoError(applyErr)
+	// The reclaimed lease no longer authorizes failure finalization: the
+	// successor's reclaim owns terminalizing the stale attempt, so the stale
+	// finalizer is fenced off with the typed lease-lost error before it can
+	// terminalize batches or account usage.
+	requirements.ErrorIs(finalizeErr, peoplesweep.ErrLeaseLost)
+
+	assert := assert.New(t)
+	// Durable state converges on the successor alone: the fenced finalizer
+	// leaves the stale attempt, its batch, and its reservation untouched.
+	var staleAttemptStatus, successorAttemptStatus peoplesweep.AttemptStatus
+	requirements.NoError(f.store.db.QueryRow(`SELECT status FROM person_sweep_attempts
+		WHERE id = ?`, f.attemptID).Scan(&staleAttemptStatus))
+	requirements.NoError(f.store.db.QueryRow(`SELECT status FROM person_sweep_attempts
+		WHERE id = ?`, successorAttempt).Scan(&successorAttemptStatus))
+	assert.Equal(peoplesweep.AttemptRunning, staleAttemptStatus)
+	assert.Equal(peoplesweep.AttemptSucceeded, successorAttemptStatus)
+	var staleBatchStatus, staleBatchRequestID string
+	requirements.NoError(f.store.db.QueryRow(`SELECT status, provider_request_id
+		FROM person_sweep_batches WHERE attempt_id = ?`, f.attemptID).
+		Scan(&staleBatchStatus, &staleBatchRequestID))
+	assert.Equal(personSweepBatchStatusRunning, staleBatchStatus)
+	assert.Empty(staleBatchRequestID)
+	var successorBatchStatus string
+	requirements.NoError(f.store.db.QueryRow(`SELECT status FROM person_sweep_batches
+		WHERE attempt_id = ?`, successorAttempt).Scan(&successorBatchStatus))
+	assert.Equal("succeeded", successorBatchStatus)
+	// Daily usage holds the stale attempt's unreleased reservation plus the
+	// successor's reconciled actual usage — the fenced finalizer neither
+	// cancels its reservation nor double-accounts its completed call.
+	var reserved, actual peoplesweep.Usage
+	requirements.NoError(f.store.db.QueryRow(`SELECT reserved_requests,
+		reserved_input_tokens, reserved_output_tokens, reserved_cost_micro_usd,
+		actual_requests, actual_input_tokens, actual_output_tokens,
+		actual_cost_micro_usd FROM person_sweep_daily_usage WHERE utc_day = ?`,
+		"2026-08-23").Scan(&reserved.Requests, &reserved.InputTokens,
+		&reserved.OutputTokens, &reserved.EstimatedCostMicroUSD, &actual.Requests,
+		&actual.InputTokens, &actual.OutputTokens, &actual.EstimatedCostMicroUSD))
+	assert.Equal(peoplesweep.Usage{Requests: 1, InputTokens: 3,
+		OutputTokens: 2, EstimatedCostMicroUSD: 5}, reserved)
+	assert.Equal(peoplesweep.Usage{Requests: 1, InputTokens: 3,
+		OutputTokens: 2, EstimatedCostMicroUSD: 5}, actual)
+	// The successor apply finished the lease lifecycle: no work row survives.
+	var workRows int
+	requirements.NoError(f.store.db.QueryRow(`SELECT COUNT(*) FROM person_sweep_work
+		WHERE person_id = ?`, f.personID).Scan(&workRows))
+	assert.Zero(workRows)
 }

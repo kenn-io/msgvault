@@ -1194,6 +1194,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("create fresh-schema canonical RFC822 Message-ID index: %w", err)
 		}
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonInferenceProviderV2, false,
+		s.migratePersonInferenceProviderV2,
+	); err != nil {
+		return fmt.Errorf("migrate people inference provider profiles: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepCallsV2, false,
+		s.migratePersonSweepCallsV2,
+	); err != nil {
+		return fmt.Errorf("migrate person sweep call journal: %w", err)
+	}
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
 	// Dedupe before creating the partial unique index that enforces

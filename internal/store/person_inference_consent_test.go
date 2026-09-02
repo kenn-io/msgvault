@@ -2,7 +2,10 @@ package store_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,20 +21,25 @@ import (
 func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	t.Helper()
 	config := peoplesweep.Config{
-		Enabled: true,
-		Provider: peoplesweep.ProviderConfig{
-			Kind:             peoplesweep.ProviderOpenAICompatible,
-			Endpoint:         "https://api.example.test/v1",
-			Model:            "gpt-test",
-			APIKeyEnv:        "TEST_KEY",
-			RetentionPosture: "zero_retention",
-			TrainingPosture:  "no_training",
+		Enabled:  true,
+		Provider: peoplesweep.ProviderSelection{Name: "default"},
+		Providers: map[string]peoplesweep.ProviderConfig{"default": {
+			Protocol:            peoplesweep.ProtocolOpenAIChat,
+			Endpoint:            "https://api.example.test/v1",
+			Model:               "gpt-test",
+			Auth:                peoplesweep.AuthBearer,
+			Credential:          peoplesweep.CredentialEnv,
+			CredentialEnv:       "TEST_KEY",
+			OutputMode:          peoplesweep.OutputModeNativeJSONSchema,
+			TokenLimitParameter: "max_completion_tokens",
+			RetentionPosture:    "zero_retention",
+			TrainingPosture:     "no_training",
 			AllowedSources: []peoplesweep.SourceClass{
 				peoplesweep.SourceConversationText,
 			},
 			SourceSince:    "2025-01-01",
 			RequestTimeout: time.Minute,
-		},
+		}},
 	}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
@@ -182,13 +190,19 @@ func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
-	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test",
-		ReasoningEffort: "high", ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
-		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
-		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-		SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
-	}}
+	config := peoplesweep.Config{
+		Enabled:  true,
+		Provider: peoplesweep.ProviderSelection{Name: "codex"},
+		Providers: map[string]peoplesweep.ProviderConfig{"codex": {
+			Protocol: peoplesweep.ProtocolCodexAppServer, Model: "gpt-test",
+			Auth: peoplesweep.AuthNone, Credential: peoplesweep.CredentialNone,
+			OutputMode:      peoplesweep.OutputModeNativeJSONSchema,
+			ReasoningEffort: "high", ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+			RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+			SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
+		}},
+	}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
 	requirements.NoError(err)
@@ -199,6 +213,42 @@ func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(profiles, 1)
 	checks.Equal(profile, profiles[0])
+}
+
+func TestPersonInferenceProfilesLoadLegacyPersistedPolicy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	const legacyProgramFingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+	policyJSON := fmt.Sprintf(`{"kind":"openai_compatible","endpoint":"https://api.example.test/v1","model":"gpt-legacy","api_key_env":"LEGACY_KEY","allow_anonymous":false,"retention_posture":"zero_retention","training_posture":"no_training","allowed_sources":["conversation_text"],"source_since":"2025-01-01","source_until":"","allow_sensitive":false,"reasoning_effort":"","execution_boundary":"","packet_renderer_policy":"person-sweep-packet-v1","program_fingerprint":"%s","disclosed_packet_fields":["person_id","program_identity","catalog","current_projection","unresolved_claims","seed_evidence","retrieved_context"]}`,
+		legacyProgramFingerprint)
+	digest := sha256.Sum256([]byte(policyJSON))
+	fingerprint := hex.EncodeToString(digest[:])
+
+	_, err := st.DB().Exec(st.Rebind(`
+		INSERT INTO person_inference_profiles
+			(fingerprint, provider_kind, endpoint, model, api_key_env,
+			 allow_anonymous, retention_posture, training_posture,
+			 allowed_sources, source_since, source_until, allow_sensitive,
+			 policy_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`),
+		fingerprint, peoplesweep.ProviderOpenAICompatible,
+		"https://api.example.test/v1", "gpt-legacy", "LEGACY_KEY", false,
+		"zero_retention", "no_training", `["conversation_text"]`,
+		"2025-01-01", false, policyJSON)
+	require.NoError(err)
+
+	profiles, err := st.ListPersonInferenceProfiles(t.Context())
+	require.NoError(err)
+	require.Len(profiles, 1)
+	profile := profiles[0]
+	assert.Equal(fingerprint, profile.Fingerprint)
+	assert.Equal(peoplesweep.ProtocolOpenAIChat, profile.Protocol)
+	assert.Equal(peoplesweep.AuthBearer, profile.Auth)
+	assert.Equal(peoplesweep.CredentialEnv, profile.Credential)
+	assert.Equal("LEGACY_KEY", profile.CredentialRef)
+	assert.Equal(legacyProgramFingerprint, profile.ProgramFingerprint)
+	assert.JSONEq(policyJSON, string(profile.PolicyJSON))
 }
 
 func TestPersonInferenceConsentConcurrentGrantAndRevoke(t *testing.T) {

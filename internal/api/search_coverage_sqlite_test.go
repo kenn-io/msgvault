@@ -63,6 +63,8 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			vectorStatus := tt.vectorStatus
 			if vectorStatus == "" {
 				vectorStatus = VectorStatusReady
@@ -77,13 +79,13 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 			response := postExploreJSON(t, srv, "/api/v1/search/coverage", `{
 				"filters":[{"dimension":"source","values":["1"]}]
 			}`)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var body SearchCoverageResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-			assert.Equal(t, tt.wantStatus, body.Status)
-			assert.Equal(t, tt.wantEligible, body.EligibleCount)
-			assert.Equal(t, tt.wantEmbedded, body.EmbeddedCount)
-			assert.ElementsMatch(t, tt.wantActions, body.Actions)
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(tt.wantStatus, body.Status)
+			assert.Equal(tt.wantEligible, body.EligibleCount)
+			assert.Equal(tt.wantEmbedded, body.EmbeddedCount)
+			assert.ElementsMatch(tt.wantActions, body.Actions)
 		})
 	}
 }

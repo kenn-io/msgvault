@@ -111,6 +111,16 @@ func retryContendedWriteErr(
 	return err
 }
 
+// retryBusyWriteErr is retryBusyWrite for writers that return no value.
+func retryBusyWriteErr(
+	ctx context.Context, s *Store, operation string, attempt func() error,
+) error {
+	_, err := retryBusyWrite(ctx, s, operation, func() (*struct{}, error) {
+		return nil, attempt()
+	})
+	return err
+}
+
 // contendedWriteBackoff returns the delay before retrying the attempt after
 // the given zero-based one, growing exponentially to a cap. math/rand is fine
 // here — full jitter only has to spread competing writers apart, it is not

@@ -41,9 +41,11 @@ func newPersonSweepCommandStore(
 		require.NoError(t, err)
 	}
 	config := personProviderTestConfig()
-	config.Provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
-	config.Provider.SourceSince = "2027-01-01"
-	config.Provider.SourceUntil = ""
+	mutateConfiguredPersonProvider(&config, func(provider *peoplesweep.ProviderConfig) {
+		provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+		provider.SourceSince = "2027-01-01"
+		provider.SourceUntil = ""
+	})
 	return st, person.ID, config
 }
 
@@ -259,19 +261,26 @@ func TestPersonSweepCommandsUseDaemonWriter(t *testing.T) {
 
 func TestPersonSweepDaemonForwardsOnlyConfiguredOpenAIKey(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		kind string
-		key  string
-		want map[string]string
+		name     string
+		protocol peoplesweep.Protocol
+		key      string
+		want     map[string]string
 	}{
-		{name: "OpenAI configured key", kind: peoplesweep.ProviderOpenAICompatible,
+		{name: "OpenAI configured key", protocol: peoplesweep.ProtocolOpenAIChat,
 			key: "OPENAI_SWEEP_ONLY", want: map[string]string{"OPENAI_SWEEP_ONLY": "credential-value"}},
-		{name: "Codex forwards none", kind: peoplesweep.ProviderCodexAppServer},
+		{name: "Codex forwards none", protocol: peoplesweep.ProtocolCodexAppServer},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			checks, must := assert.New(t), require.New(t)
 			config := personProviderTestConfig()
-			config.Provider.Kind, config.Provider.APIKeyEnv = test.kind, test.key
+			mutateConfiguredPersonProvider(&config, func(provider *peoplesweep.ProviderConfig) {
+				provider.Protocol = test.protocol
+				provider.CredentialEnv = test.key
+				if test.protocol == peoplesweep.ProtocolCodexAppServer {
+					provider.Auth = peoplesweep.AuthNone
+					provider.Credential = peoplesweep.CredentialNone
+				}
+			})
 			var got map[string]string
 			deps := personSweepCommandDeps{
 				config: configCopy(config), isDaemonSubprocess: func() bool { return false },

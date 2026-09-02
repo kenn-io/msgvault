@@ -445,7 +445,7 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 				"%w: fact generation key", errPersonEnrichmentResultEnvelopeChanged)
 		}
 		switch attempt.State {
-		case "succeeded":
+		case personEnrichmentStateSucceeded:
 			if generationKey != normalKey {
 				return enrichmentCommitDisposition{}, fmt.Errorf(
 					"%w: succeeded ownership generation", errPersonEnrichmentResultEnvelopeChanged)
@@ -677,7 +677,7 @@ func (s *Store) completePersonEnrichmentClaimTx(
 	if status == personenrichment.ClaimApplied {
 		refreshAt := completionTime.Add(profile.RefreshInterval)
 		return s.completePersonEnrichmentAttemptTx(ctx, tx, token, personEnrichmentAttemptCompletion{
-			State: "succeeded", ActualCost: commit.Result().Cost,
+			State: personEnrichmentStateSucceeded, ActualCost: commit.Result().Cost,
 			ActualCostMissing: commit.Result().Cost == (personenrichment.Cost{}),
 			FactGenerationKey: generation.GenerationKey, CompletedAt: completionTime,
 			RefreshAt: &refreshAt, RefreshGeneration: "refresh:" + generation.GenerationKey,

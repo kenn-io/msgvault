@@ -28,6 +28,15 @@ func (r *noProviderSweepRunner) PrepareStructured(context.Context, peoplesweep.S
 	r.calls++
 	return peoplesweep.PreparedStructuredRequest{}, errors.New("cursor-only sweep must not prepare provider work")
 }
+func (r *noProviderSweepRunner) PrepareRepair(peoplesweep.StructuredRequest, peoplesweep.ValidationFailure) (peoplesweep.PreparedStructuredRequest, error) {
+	r.calls++
+	return peoplesweep.PreparedStructuredRequest{}, errors.New("cursor-only sweep must not prepare provider repair work")
+}
+
+func (r *noProviderSweepRunner) BeginStructuredExecution(context.Context, peoplesweep.PreparedStructuredRequest) (peoplesweep.StructuredExecutionSession, error) {
+	r.calls++
+	return nil, errors.New("cursor-only sweep must not begin provider execution")
+}
 
 func (r *noProviderSweepRunner) RunPreparedStructured(context.Context, peoplesweep.PreparedStructuredRequest) (peoplesweep.StructuredResponse, error) {
 	r.calls++
@@ -43,12 +52,16 @@ func TestPersonSweepWorkerFilteredNoTextAdvancesCursorAndClearsWork(t *testing.T
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
-	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderOpenAICompatible, Endpoint: "https://api.example.test/v1",
-		Model: "gpt-test", APIKeyEnv: "TEST_KEY", RetentionPosture: "zero_retention",
-		TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{
-			peoplesweep.SourceConversationText}, SourceSince: "2027-01-01", RequestTimeout: time.Second,
-	}}
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"},
+		Providers: map[string]peoplesweep.ProviderConfig{"default": {
+			Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1",
+			Model: "gpt-test", Auth: peoplesweep.AuthBearer,
+			Credential: peoplesweep.CredentialEnv, CredentialEnv: "TEST_KEY",
+			OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
+			RetentionPosture: "zero_retention",
+			TrainingPosture:  "no_training", AllowedSources: []peoplesweep.SourceClass{
+				peoplesweep.SourceConversationText}, SourceSince: "2027-01-01", RequestTimeout: time.Second,
+		}}}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
 	requirements.NoError(err)

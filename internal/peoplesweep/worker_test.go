@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -135,6 +137,7 @@ type workerFailureStore struct {
 	reserveErrAt int
 	released     []BudgetReservation
 	marked       []BudgetReservation
+	markedLeases []Lease
 	renewCalls   atomic.Int64
 }
 
@@ -192,8 +195,9 @@ func (s *workerFailureStore) ReleasePersonSweepBudget(_ context.Context, reserva
 	s.released = append(s.released, reservation)
 	return nil
 }
-func (s *workerFailureStore) MarkPersonSweepBudgetStarted(_ context.Context, reservation BudgetReservation) error {
+func (s *workerFailureStore) MarkPersonSweepBudgetStarted(_ context.Context, reservation BudgetReservation, lease Lease) error {
 	s.marked = append(s.marked, reservation)
+	s.markedLeases = append(s.markedLeases, lease)
 	return nil
 }
 func (s *workerFailureStore) FailPersonSweepWork(ctx context.Context, failure WorkFailure) error {
@@ -245,6 +249,12 @@ type workerFailureRunner struct{}
 func (workerFailureRunner) PrepareStructured(context.Context, StructuredRequest) (PreparedStructuredRequest, error) {
 	return PreparedStructuredRequest{}, errors.New("unexpected provider preparation")
 }
+func (workerFailureRunner) PrepareRepair(StructuredRequest, ValidationFailure) (PreparedStructuredRequest, error) {
+	return PreparedStructuredRequest{}, errors.New("unexpected provider repair preparation")
+}
+func (workerFailureRunner) BeginStructuredExecution(context.Context, PreparedStructuredRequest) (StructuredExecutionSession, error) {
+	return nil, errors.New("unexpected provider execution")
+}
 func (workerFailureRunner) RunPreparedStructured(context.Context, PreparedStructuredRequest) (StructuredResponse, error) {
 	return StructuredResponse{}, errors.New("unexpected provider call")
 }
@@ -258,15 +268,32 @@ func (s workerFailureSink) ApplyPersonSweep(context.Context, ApplyRequest) (Appl
 	return ApplyResult{}, s.err
 }
 
+func testConfigWithProvider(provider ProviderConfig) Config {
+	config := Config{
+		Enabled: true, Provider: ProviderSelection{Name: "default"},
+		Providers: map[string]ProviderConfig{"default": provider},
+	}
+	config.ApplyDefaults()
+	return config
+}
+
+func mutateTestProvider(config *Config, mutate func(*ProviderConfig)) {
+	provider := config.Providers[config.Provider.Name]
+	provider.AllowedSources = slices.Clone(provider.AllowedSources)
+	mutate(&provider)
+	config.Providers[config.Provider.Name] = provider
+}
+
 func workerTestConfig(t *testing.T) (Config, personfacts.Catalog) {
 	t.Helper()
-	config := Config{Enabled: true, Provider: ProviderConfig{
-		Kind: ProviderOpenAICompatible, Endpoint: "https://api.example.test/v1",
-		Model: "gpt-test", APIKeyEnv: "TEST_KEY", RetentionPosture: "zero_retention",
-		TrainingPosture: "no_training", AllowedSources: []SourceClass{SourceConversationText},
+	config := testConfigWithProvider(ProviderConfig{
+		Protocol: ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1",
+		Model: "gpt-test", Auth: AuthBearer, Credential: CredentialEnv, CredentialEnv: "TEST_KEY",
+		OutputMode: OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
+		RetentionPosture: "zero_retention",
+		TrainingPosture:  "no_training", AllowedSources: []SourceClass{SourceConversationText},
 		SourceSince: "2025-01-01", RequestTimeout: time.Second,
-	}}
-	config.ApplyDefaults()
+	})
 	catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
 	require.NoError(t, err)
 	return config, catalog
@@ -354,12 +381,454 @@ type workerProductionRunner struct {
 	started  chan<- struct{}
 	block    <-chan struct{}
 	prepared int
+	sessions int
 	ran      int
+}
+
+type workerProductionExecution struct {
+	runner  *workerProductionRunner
+	primary PreparedStructuredRequest
+}
+
+type workerProductionCall struct {
+	runner   *workerProductionRunner
+	prepared PreparedStructuredRequest
+}
+
+func (e workerProductionExecution) PrimaryCall(
+	prepared PreparedStructuredRequest,
+) (PreparedStructuredCall, error) {
+	return workerProductionCall{runner: e.runner, prepared: prepared}, nil
+}
+
+func (workerProductionExecution) SemanticValidationFailure(StructuredResponse) (ValidationFailure, error) {
+	return ValidationFailure{}, errors.New("unexpected semantic validation failure")
+}
+
+func (workerProductionExecution) PrepareRepair(ValidationFailure) (PreparedStructuredRequest, error) {
+	return PreparedStructuredRequest{}, errors.New("unexpected repair preparation")
+}
+
+func (workerProductionExecution) RepairCall(PreparedStructuredRequest) (PreparedStructuredCall, error) {
+	return nil, errors.New("unexpected repair call")
+}
+
+func (c workerProductionCall) Execute(
+	ctx context.Context,
+	markStarted func(context.Context) error,
+) (StructuredResponse, error) {
+	if err := markStarted(ctx); err != nil {
+		return StructuredResponse{}, err
+	}
+	return c.runner.RunPreparedStructured(ctx, c.prepared)
+}
+
+type workerRepairAuthority struct {
+	verificationErr error
+	consentErr      error
+}
+
+type workerCredentialResolverFunc func(string, ProviderProfile) (Credential, error)
+
+func (f workerCredentialResolverFunc) Resolve(
+	profileName string,
+	profile ProviderProfile,
+) (Credential, error) {
+	return f(profileName, profile)
+}
+
+func (a workerRepairAuthority) HasSuccessfulPersonInferenceCheck(context.Context, string) (bool, error) {
+	return a.verificationErr == nil, a.verificationErr
+}
+
+func (a workerRepairAuthority) HasActivePersonInferenceConsent(context.Context, string) (bool, error) {
+	return a.consentErr == nil, a.consentErr
+}
+
+type workerRepairDriver struct {
+	responses   []DriverResponse
+	requests    []StructuredRequest
+	profiles    []ProviderProfile
+	credentials []Credential
+	calls       int
+}
+
+func (d *workerRepairDriver) Prepare(
+	profile ProviderProfile,
+	request StructuredRequest,
+) (PreparedStructuredRequest, error) {
+	d.requests = append(d.requests, request)
+	d.profiles = append(d.profiles, profile)
+	wire, err := json.Marshal(request)
+	if err != nil {
+		return PreparedStructuredRequest{}, err
+	}
+	return NewPreparedStructuredRequest(request, wire)
+}
+
+func (d *workerRepairDriver) GeneratePrepared(
+	_ context.Context,
+	_ ProviderProfile,
+	credential Credential,
+	_ PreparedStructuredRequest,
+) (DriverResponse, error) {
+	d.credentials = append(d.credentials, credential)
+	if d.calls >= len(d.responses) {
+		return DriverResponse{}, errors.New("unexpected third provider call")
+	}
+	response := d.responses[d.calls]
+	d.calls++
+	return response, nil
+}
+
+func newWorkerRepairRunner(t *testing.T, config Config, driver *workerRepairDriver) *Runner {
+	t.Helper()
+	return newWorkerRepairRunnerWithDependencies(t, config, driver, workerRepairAuthority{},
+		NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
+}
+
+func newWorkerRepairRunnerWithDependencies(
+	t *testing.T,
+	config Config,
+	driver *workerRepairDriver,
+	authority ProviderAuthority,
+	resolver CredentialResolver,
+) *Runner {
+	t.Helper()
+	runner, err := NewRunner(config, authority,
+		NewTestDriverRegistry(ProtocolOpenAIChat, driver), resolver)
+	require.NoError(t, err)
+	return runner
+}
+
+func runWorkerRepairCase(
+	t *testing.T,
+	primaryCandidate string,
+	repairCandidate string,
+	reserveErrAt int,
+) (*workerFailureStore, *workerRepairDriver, *workerProductionSink, error) {
+	t.Helper()
+	return runWorkerRepairCaseWithDependencies(t, primaryCandidate, repairCandidate,
+		reserveErrAt, workerRepairAuthority{},
+		NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
+}
+
+func runWorkerRepairCaseWithDependencies(
+	t *testing.T,
+	primaryCandidate string,
+	repairCandidate string,
+	reserveErrAt int,
+	authority ProviderAuthority,
+	resolver CredentialResolver,
+) (*workerFailureStore, *workerRepairDriver, *workerProductionSink, error) {
+	t.Helper()
+	return runWorkerResponsesCaseWithDependencies(t, []DriverResponse{
+		{CandidateJSON: json.RawMessage(primaryCandidate), ProviderRequestID: "request-primary",
+			ProviderVersion: "provider-v1", ModelVersion: "model-v1",
+			Usage: TokenUsage{InputTokens: 11, OutputTokens: 3}, UsageKnown: true},
+		{CandidateJSON: json.RawMessage(repairCandidate), ProviderRequestID: "request-repair",
+			ProviderVersion: "provider-v1", ModelVersion: "model-v1",
+			Usage: TokenUsage{InputTokens: 13, OutputTokens: 2}, UsageKnown: true},
+	}, reserveErrAt, authority, resolver)
+}
+
+func runWorkerResponsesCase(
+	t *testing.T,
+	responses []DriverResponse,
+) (*workerFailureStore, *workerRepairDriver, *workerProductionSink, error) {
+	t.Helper()
+	return runWorkerResponsesCaseWithDependencies(t, responses, 0, workerRepairAuthority{},
+		NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
+}
+
+func runWorkerResponsesCaseWithDependencies(
+	t *testing.T,
+	responses []DriverResponse,
+	reserveErrAt int,
+	authority ProviderAuthority,
+	resolver CredentialResolver,
+) (*workerFailureStore, *workerRepairDriver, *workerProductionSink, error) {
+	t.Helper()
+	config, catalog := workerTestConfig(t)
+	mutateTestProvider(&config, func(provider *ProviderConfig) { provider.AllowSensitive = true })
+	config.Budgets.MaxRequestsPerPerson = 2
+	config.Budgets.MaxRequestsPerRun = 2
+	config.Budgets.MaxRequestsPerDay = 2
+	config.Budgets.MaxInputTokensPerPerson = 4_000_000
+	config.Budgets.MaxInputTokensPerRun = 4_000_000
+	config.Budgets.MaxInputTokensPerDay = 4_000_000
+	config.Budgets.MaxOutputTokensPerPerson = 2 * extractionMaxOutputTokens
+	config.Budgets.MaxOutputTokensPerRun = 2 * extractionMaxOutputTokens
+	config.Budgets.MaxOutputTokensPerDay = 2 * extractionMaxOutputTokens
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	store := &workerFailureStore{cursor: Cursor{ReconciliationComplete: true,
+		LastBackstopAt: &now}, reserveErrAt: reserveErrAt}
+	seed := packetTestEvidence(71, SourceConversationText, "repair seed")
+	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
+		GenerationCursorOptimistic: {Seeds: []EvidenceItem{seed}, Changes: []ArchiveChange{{
+			Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
+	}}
+	driver := &workerRepairDriver{responses: responses}
+	sink := &workerProductionSink{}
+	worker := Worker{Config: config, Store: store, Source: source,
+		Context: NewContextRetriever(source), Sink: sink,
+		Runner:  newWorkerRepairRunnerWithDependencies(t, config, driver, authority, resolver),
+		Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
+		NewID: func() string { return "attempt-repair" }, WorkerID: "worker-fixture"}
+	_, err := worker.RunPerson(t.Context(), "run-repair", Lease{PersonID: 7,
+		WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}, RunIncremental)
+	return store, driver, sink, err
+}
+
+func TestPersonSweepWorkerPinsOneCredentialAcrossPrimaryAndRepair(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var resolveCalls int
+	resolver := workerCredentialResolverFunc(func(string, ProviderProfile) (Credential, error) {
+		resolveCalls++
+		return NewCredential(AuthBearer, fmt.Sprintf("rotated-key-%d", resolveCalls)), nil
+	})
+	store, driver, sink, err := runWorkerRepairCaseWithDependencies(
+		t, `{"claims":"invalid"}`, `{"claims":[]}`, 0, workerRepairAuthority{}, resolver)
+	require.NoError(err)
+	assert.Equal(1, resolveCalls)
+	require.Len(driver.credentials, 2)
+	assert.Equal(driver.credentials[0].Value(), driver.credentials[1].Value())
+	assert.Len(store.marked, 2)
+	for _, markedLease := range store.markedLeases {
+		assert.Equal(int64(7), markedLease.PersonID)
+		assert.Equal("worker-fixture", markedLease.WorkerID,
+			"the pre-IO mark must carry the lease identity owned by this worker")
+		assert.Equal(int64(1), markedLease.Fence)
+	}
+	assert.Len(sink.requests, 1)
+}
+
+func TestPersonSweepWorkerPreIOGateFailuresNeverMarkStarted(t *testing.T) {
+	gateErr := errors.New("gate fixture")
+	tests := []struct {
+		name      string
+		authority ProviderAuthority
+		resolver  CredentialResolver
+	}{
+		{
+			name:      "consent lookup",
+			authority: workerRepairAuthority{consentErr: gateErr},
+			resolver:  NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }),
+		},
+		{
+			name:      "credential resolution",
+			authority: workerRepairAuthority{},
+			resolver: workerCredentialResolverFunc(func(string, ProviderProfile) (Credential, error) {
+				return Credential{}, gateErr
+			}),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			store, driver, sink, err := runWorkerRepairCaseWithDependencies(
+				t, `{"claims":[]}`, `{"claims":[]}`, 0, test.authority, test.resolver)
+			require.ErrorIs(err, gateErr)
+			assert.Empty(store.marked)
+			assert.Zero(driver.calls)
+			assert.Empty(sink.requests)
+		})
+	}
+}
+
+func TestPersonSweepWorkerRepairsSchemaAndSemanticValidationOnce(t *testing.T) {
+	semanticCandidate := `{"claims":[{"target_key":"unknown-target","relation":"support",` +
+		`"value":"x","evidence_ids":["evidence"],"valid_from":null,"valid_until":null,` +
+		`"confidence_basis_points":500}]}`
+	for _, test := range []struct {
+		name      string
+		candidate string
+		message   string
+	}{
+		{name: "JSON Schema", candidate: `{"claims":"invalid"}`,
+			message: "output does not match requested schema"},
+		{name: "ParseExtraction semantics", candidate: semanticCandidate,
+			message: "candidate failed extraction semantics"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			store, driver, sink, err := runWorkerRepairCase(t, test.candidate, `{"claims":[]}`, 0)
+			require.NoError(err)
+			assert.Equal(2, driver.calls)
+			require.Len(store.reserved, 2)
+			assert.Equal([]ProviderCallCoordinate{
+				{BatchOrdinal: 0, CallOrdinal: 0, Purpose: ProviderCallPurposePrimary},
+				{BatchOrdinal: 0, CallOrdinal: 1, Purpose: ProviderCallPurposeRepair},
+			}, []ProviderCallCoordinate{
+				{BatchOrdinal: store.reserved[0].BatchOrdinal, CallOrdinal: store.reserved[0].CallOrdinal,
+					Purpose: store.reserved[0].Purpose},
+				{BatchOrdinal: store.reserved[1].BatchOrdinal, CallOrdinal: store.reserved[1].CallOrdinal,
+					Purpose: store.reserved[1].Purpose},
+			})
+			assert.NotEqual(store.reserved[0].InputHash, store.reserved[1].InputHash)
+			require.Len(store.marked, 2)
+			require.NotEmpty(driver.profiles)
+			for _, got := range driver.profiles[1:] {
+				assert.Equal(driver.profiles[0], got)
+			}
+			require.Len(driver.credentials, 2)
+			assert.Equal(driver.credentials[0].Scheme, driver.credentials[1].Scheme)
+			assert.Equal(driver.credentials[0].Value(), driver.credentials[1].Value(),
+				"repair credential differs from primary")
+			require.Len(sink.requests, 1)
+			assert.Equal(2, sink.requests[0].Usage.Requests)
+			require.Len(sink.requests[0].Batches, 2)
+			foundValidationMessage := false
+			for _, request := range driver.requests {
+				if strings.Contains(request.InputText, test.message) {
+					foundValidationMessage = true
+					break
+				}
+			}
+			assert.True(foundValidationMessage,
+				"repair instruction did not contain bounded validation message %q", test.message)
+		})
+	}
+}
+
+func TestPersonSweepWorkerRepairBudgetDenialPreventsRepairIO(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	store, driver, sink, err := runWorkerRepairCase(
+		t, `{"claims":"invalid"}`, `{"claims":[]}`, 2)
+	require.ErrorIs(err, ErrBudgetExceeded)
+	assert.Equal(1, driver.calls)
+	assert.Len(store.reserved, 2)
+	assert.Len(store.marked, 1)
+	assert.Empty(sink.requests)
+	require.Len(store.finalized, 1)
+	assert.Equal(FailureBudget, store.finalized[0].Class)
+	require.Len(store.finalized[0].Completed, 1)
+	assert.Equal(ProviderCallPurposePrimary, store.finalized[0].Completed[0].Purpose)
+}
+
+func TestPersonSweepWorkerSecondInvalidOutputNeverMakesThirdCall(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	store, driver, sink, err := runWorkerRepairCase(
+		t, `{"claims":"invalid"}`, `{"claims":"still-invalid"}`, 0)
+	require.ErrorIs(err, ErrInvalidStructuredOutput)
+	assert.Equal(2, driver.calls)
+	assert.Len(store.reserved, 2)
+	assert.Len(store.marked, 2)
+	assert.Empty(sink.requests)
+	require.Len(store.finalized, 1)
+	assert.Equal(FailureInvalidOutput, store.finalized[0].Class)
+	assert.Len(store.finalized[0].Completed, 2)
+}
+
+// An untrustworthy provider response must never contribute a completed usage
+// record: failure finalization would replay the untrusted values into durable
+// history or reject the record outright, stranding the attempt and lease until
+// expiry. Finalizing without a record lets the store conservatively charge the
+// reservation instead.
+func TestPersonSweepWorkerRejectsUntrustworthyResponsesWithoutCompletedUsage(t *testing.T) {
+	valid := `{"claims":[]}`
+	tests := []struct {
+		name            string
+		responses       []DriverResponse
+		message         string
+		wantCalls       int
+		wantRetainedUse int
+	}{
+		{
+			name: "unsafe provider request ID",
+			responses: []DriverResponse{{CandidateJSON: json.RawMessage(valid),
+				ProviderRequestID: "request\nwith\u0000control", ProviderVersion: "provider-v1",
+				ModelVersion: "model-v1", Usage: TokenUsage{InputTokens: 11, OutputTokens: 3},
+				UsageKnown: true}},
+			message:   "provider returned unsafe identity metadata",
+			wantCalls: 1,
+		},
+		{
+			name: "negative token usage",
+			responses: []DriverResponse{{CandidateJSON: json.RawMessage(valid),
+				ProviderRequestID: "request-primary", ProviderVersion: "provider-v1",
+				ModelVersion: "model-v1", Usage: TokenUsage{InputTokens: -5, OutputTokens: 3},
+				UsageKnown: true}},
+			message:   "provider returned negative token usage",
+			wantCalls: 1,
+		},
+		{
+			name: "diverged call identities",
+			responses: []DriverResponse{
+				{CandidateJSON: json.RawMessage(`{"claims":"invalid"}`),
+					ProviderRequestID: "request-primary", ProviderVersion: "provider-v1",
+					ModelVersion: "model-v1", Usage: TokenUsage{InputTokens: 11, OutputTokens: 3},
+					UsageKnown: true},
+				{CandidateJSON: json.RawMessage(valid), ProviderRequestID: "request-repair",
+					ProviderVersion: "provider-v2", ModelVersion: "model-v1",
+					Usage: TokenUsage{InputTokens: 13, OutputTokens: 2}, UsageKnown: true},
+			},
+			message:         "provider call identities differ",
+			wantCalls:       2,
+			wantRetainedUse: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			store, driver, sink, err := runWorkerResponsesCase(t, test.responses)
+			require.ErrorContains(err, test.message)
+			assert.Equal(test.wantCalls, driver.calls)
+			assert.Empty(sink.requests)
+			require.Len(store.finalized, 1)
+			finalization := store.finalized[0]
+			assert.Equal(FailureInvalidOutput, finalization.Class)
+			assert.Len(finalization.Reservations, test.wantCalls,
+				"failure finalization must still carry every reservation for conservative accounting")
+			require.Len(finalization.Completed, test.wantRetainedUse,
+				"an untrusted response must not contribute a completed usage record")
+			for _, completed := range finalization.Completed {
+				assert.Equal(ProviderCallPurposePrimary, completed.Purpose)
+				assert.Equal("request-primary", completed.ProviderRequestID)
+			}
+		})
+	}
+}
+
+func TestAccountCompletedProviderCallPricesReconciledTokenDimensions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	budget := BudgetConfig{
+		InputCostMicroUSDPerMillionTokens:  2_000_000,
+		OutputCostMicroUSDPerMillionTokens: 3_000_000,
+	}
+	reserved := TokenUsage{InputTokens: 100, OutputTokens: 100}
+	reservedCost, err := EstimateCostMicroUSD(reserved, budget)
+	require.NoError(err)
+
+	usage, actualCost, err := accountCompletedProviderCall(StructuredResponse{
+		Usage: TokenUsage{InputTokens: 200, OutputTokens: 1}, UsageKnown: true,
+	}, reserved, reservedCost, budget)
+	require.NoError(err)
+	assert.Equal(Usage{Requests: 1, InputTokens: 200, OutputTokens: 100,
+		EstimatedCostMicroUSD: 700}, usage)
+	assert.Equal(int64(700), actualCost)
 }
 
 func (r *workerProductionRunner) PrepareStructured(_ context.Context, request StructuredRequest) (PreparedStructuredRequest, error) {
 	r.prepared++
 	return NewPreparedStructuredRequest(request, []byte(`{"wire":"prepared"}`))
+}
+func (r *workerProductionRunner) PrepareRepair(StructuredRequest, ValidationFailure) (PreparedStructuredRequest, error) {
+	return PreparedStructuredRequest{}, errors.New("unexpected provider repair preparation")
+}
+func (r *workerProductionRunner) BeginStructuredExecution(
+	_ context.Context,
+	primary PreparedStructuredRequest,
+) (StructuredExecutionSession, error) {
+	r.sessions++
+	return workerProductionExecution{runner: r, primary: primary}, nil
 }
 func (r *workerProductionRunner) RunPreparedStructured(context.Context, PreparedStructuredRequest) (StructuredResponse, error) {
 	r.ran++
@@ -405,9 +874,20 @@ func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
+		primary := PreparedStructuredRequest{}
+		execution, beginErr := runner.BeginStructuredExecution(t.Context(), primary)
+		if beginErr != nil {
+			done <- result{err: beginErr}
+			return
+		}
+		call, prepareErr := execution.PrimaryCall(primary)
+		if prepareErr != nil {
+			done <- result{err: prepareErr}
+			return
+		}
 		lease, _, err := worker.runPreparedWithLeaseHeartbeat(t.Context(), Lease{
 			PersonID: 7, WorkerID: "worker-fixture", Fence: 1,
-		}, PreparedStructuredRequest{})
+		}, func(context.Context) error { return nil }, call)
 		done <- result{lease: lease, err: err}
 	}()
 	<-started
@@ -561,7 +1041,9 @@ func TestPersonSweepWorkerSharesRequestBudgetAcrossSourceLanes(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	config, catalog := workerTestConfig(t)
-	config.Provider.AllowedSources = []SourceClass{SourceConversationText, SourceMeetingText}
+	mutateTestProvider(&config, func(provider *ProviderConfig) {
+		provider.AllowedSources = []SourceClass{SourceConversationText, SourceMeetingText}
+	})
 	config.Budgets.MaxRequestsPerPerson = 1
 	config.Budgets.MaxOutputTokensPerPerson = extractionMaxOutputTokens
 	config.EvidenceMaxItems = 1
@@ -605,7 +1087,9 @@ func TestPersonSweepWorkerRequeuesUnprocessedForcedBackstopLane(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
 	config, catalog := workerTestConfig(t)
-	config.Provider.AllowedSources = []SourceClass{SourceConversationText, SourceMeetingText}
+	mutateTestProvider(&config, func(provider *ProviderConfig) {
+		provider.AllowedSources = []SourceClass{SourceConversationText, SourceMeetingText}
+	})
 	config.Budgets.MaxRequestsPerPerson = 1
 	config.Budgets.MaxOutputTokensPerPerson = extractionMaxOutputTokens
 	config.EvidenceMaxItems = 1
@@ -671,6 +1155,42 @@ func TestPersonSweepWorkerReservesEveryBatchBeforeProviderCall(t *testing.T) {
 	checks.Zero(runner.ran, "no paid provider call may precede full-batch budget admission")
 	requirements.Len(store.released, 1)
 	checks.Equal("reservation-fixture-1", store.released[0].ID)
+}
+
+func TestPersonSweepWorkerUsesOneExecutionSessionPerPreparedPrimary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	config, catalog := workerTestConfig(t)
+	config.Budgets.MaxRequestsPerPerson = 2
+	config.Budgets.MaxOutputTokensPerPerson = 2 * extractionMaxOutputTokens
+	config.EvidenceMaxItems = 1
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	store := &workerFailureStore{cursor: Cursor{
+		ReconciliationComplete: true, LastBackstopAt: &now,
+	}}
+	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
+		GenerationCursorOptimistic: {
+			Seeds: []EvidenceItem{
+				packetTestEvidence(33, SourceConversationText, "first session seed"),
+				packetTestEvidence(34, SourceConversationText, "second session seed"),
+			},
+			Changes:      []ArchiveChange{{Sequence: 2, PersonID: 7, SourceLane: SourceConversationText}},
+			NextSequence: 2,
+		},
+	}}
+	runner := &workerProductionRunner{}
+	worker := Worker{Config: config, Store: store, Source: source,
+		Context: NewContextRetriever(source), Sink: &workerProductionSink{}, Runner: runner,
+		Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
+		NewID: func() string { return "attempt-primary-sessions" }, WorkerID: "worker-fixture"}
+
+	_, err := worker.RunPerson(t.Context(), "run-primary-sessions", Lease{PersonID: 7,
+		WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}, RunIncremental)
+	require.NoError(err)
+	assert.Equal(2, runner.prepared)
+	assert.Equal(2, runner.sessions)
+	assert.Equal(2, runner.ran)
+	assert.Len(store.marked, 2)
 }
 
 func TestPersonSweepWorkerNoChangedSeedAdvancesCursorWithoutProvider(t *testing.T) {
