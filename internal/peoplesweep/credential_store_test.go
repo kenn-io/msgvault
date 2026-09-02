@@ -228,7 +228,7 @@ func TestCredentialStoreDeleteRetiresOnlyExactPinnedTargetAsBoundedTombstone(t *
 	assert.Zero(targetAfter.Size())
 	var targetStat unix.Stat_t
 	require.NoError(unix.Lstat(targetPath, &targetStat))
-	assert.Equal(uint64(1), targetStat.Nlink)
+	assert.EqualValues(1, targetStat.Nlink)
 	tombstone, err := os.ReadFile(targetPath)
 	require.NoError(err)
 	assert.Empty(tombstone, "credential tombstone retained bytes")
