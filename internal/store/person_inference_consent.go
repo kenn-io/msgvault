@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,6 +36,15 @@ type PersonInferenceConsentStatus struct {
 const personInferenceConsentColumns = `
 	id, profile_fingerprint, granted_by, granted_at, revoked_by, revoked_at`
 
+const personInferenceProfileColumns = `
+	fingerprint, provider_kind, endpoint, model, api_key_env, allow_anonymous,
+	auth_scheme, credential_source, credential_ref, output_mode,
+	token_limit_parameter, reasoning_effort, reasoning_mode, driver_version,
+	retention_posture, training_posture, CAST(allowed_sources AS TEXT),
+	source_since, source_until, allow_sensitive, execution_boundary,
+	packet_renderer_policy, program_fingerprint,
+	CAST(disclosed_packet_fields AS TEXT), CAST(policy_json AS TEXT)`
+
 // EnsurePersonInferenceProfile persists one immutable canonical policy or
 // verifies the already-stored row has the same content.
 func (s *Store) EnsurePersonInferenceProfile(
@@ -48,6 +58,10 @@ func (s *Store) EnsurePersonInferenceProfile(
 	if err != nil {
 		return false, fmt.Errorf("encode people inference allowed sources: %w", err)
 	}
+	disclosedPacketFields, err := json.Marshal(profile.DisclosedPacketFields)
+	if err != nil {
+		return false, fmt.Errorf("encode people inference disclosed packet fields: %w", err)
+	}
 	var sourceUntil any
 	if profile.SourceUntil != "" {
 		sourceUntil = profile.SourceUntil
@@ -55,15 +69,23 @@ func (s *Store) EnsurePersonInferenceProfile(
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO person_inference_profiles
 			(fingerprint, provider_kind, endpoint, model, api_key_env,
-			 allow_anonymous, retention_posture, training_posture,
-			 allowed_sources, source_since, source_until, allow_sensitive,
+			 allow_anonymous, auth_scheme, credential_source, credential_ref,
+			 output_mode, token_limit_parameter, reasoning_effort, reasoning_mode,
+			 driver_version, retention_posture, training_posture, allowed_sources,
+			 source_since, source_until, allow_sensitive, execution_boundary,
+			 packet_renderer_policy, program_fingerprint, disclosed_packet_fields,
 			 policy_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, ?, ?, `+s.dialect.JSONBindExpr()+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`,
+		        ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, `+s.dialect.JSONBindExpr()+`)
 		ON CONFLICT (fingerprint) DO NOTHING`,
-		profile.Fingerprint, profile.Kind, profile.Endpoint, profile.Model,
-		profile.APIKeyEnv, profile.AllowAnonymous, profile.RetentionPosture,
-		profile.TrainingPosture, string(allowedSources), profile.SourceSince,
-		sourceUntil, profile.AllowSensitive, string(profile.PolicyJSON),
+		profile.Fingerprint, profile.Protocol, profile.Endpoint, profile.Model,
+		profile.CredentialRef, profile.Auth == peoplesweep.AuthNone, profile.Auth,
+		profile.Credential, profile.CredentialRef, profile.OutputMode,
+		profile.TokenLimitParameter, profile.ReasoningEffort, profile.ReasoningMode,
+		profile.DriverVersion, profile.RetentionPosture, profile.TrainingPosture,
+		string(allowedSources), profile.SourceSince, sourceUntil, profile.AllowSensitive,
+		profile.ExecutionBoundary, profile.PacketRendererPolicy, profile.ProgramFingerprint,
+		string(disclosedPacketFields), string(profile.PolicyJSON),
 	)
 	if err != nil {
 		return false, fmt.Errorf("insert people inference profile: %w", err)
@@ -72,7 +94,9 @@ func (s *Store) EnsurePersonInferenceProfile(
 	if err != nil {
 		return false, fmt.Errorf("read people inference profile insert result: %w", err)
 	}
-	if err := s.verifyPersonInferenceProfile(ctx, profile, allowedSources); err != nil {
+	if err := s.verifyPersonInferenceProfile(
+		ctx, profile, allowedSources, disclosedPacketFields,
+	); err != nil {
 		return false, err
 	}
 	return rows == 1, nil
@@ -82,23 +106,28 @@ func (s *Store) verifyPersonInferenceProfile(
 	ctx context.Context,
 	profile peoplesweep.ProviderProfile,
 	allowedSources []byte,
+	disclosedPacketFields []byte,
 ) error {
 	var (
-		fingerprint, kind, endpoint, model, apiKeyEnv string
-		retention, training, storedSources, since     string
-		storedPolicy                                  string
-		anonymous, sensitive                          bool
-		until                                         sql.NullString
+		fingerprint, protocol, endpoint, model, apiKeyEnv string
+		auth, credential, credentialRef                   string
+		outputMode, tokenLimit, reasoningEffort           string
+		reasoningMode, driverVersion                      string
+		retention, training, storedSources, since         string
+		executionBoundary, packetRendererPolicy           string
+		programFingerprint, storedDisclosed, storedPolicy string
+		anonymous, sensitive                              bool
+		until                                             sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT fingerprint, provider_kind, endpoint, model, api_key_env,
-		       allow_anonymous, retention_posture, training_posture,
-		       CAST(allowed_sources AS TEXT), source_since, source_until,
-		       allow_sensitive, CAST(policy_json AS TEXT)
+		SELECT `+personInferenceProfileColumns+`
 		FROM person_inference_profiles WHERE fingerprint = ?`, profile.Fingerprint).Scan(
-		&fingerprint, &kind, &endpoint, &model, &apiKeyEnv, &anonymous,
+		&fingerprint, &protocol, &endpoint, &model, &apiKeyEnv, &anonymous,
+		&auth, &credential, &credentialRef, &outputMode, &tokenLimit,
+		&reasoningEffort, &reasoningMode, &driverVersion,
 		&retention, &training, &storedSources, &since, &until, &sensitive,
-		&storedPolicy,
+		&executionBoundary, &packetRendererPolicy, &programFingerprint,
+		&storedDisclosed, &storedPolicy,
 	)
 	if err != nil {
 		return fmt.Errorf("read people inference profile: %w", err)
@@ -107,13 +136,20 @@ func (s *Store) verifyPersonInferenceProfile(
 	if until.Valid {
 		storedUntil = until.String
 	}
-	if fingerprint != profile.Fingerprint || kind != profile.Kind ||
+	if fingerprint != profile.Fingerprint || protocol != string(profile.Protocol) ||
 		endpoint != profile.Endpoint || model != profile.Model ||
-		apiKeyEnv != profile.APIKeyEnv || anonymous != profile.AllowAnonymous ||
+		apiKeyEnv != profile.CredentialRef || anonymous != (profile.Auth == peoplesweep.AuthNone) ||
+		auth != string(profile.Auth) || credential != string(profile.Credential) ||
+		credentialRef != profile.CredentialRef || outputMode != string(profile.OutputMode) ||
+		tokenLimit != profile.TokenLimitParameter || reasoningEffort != profile.ReasoningEffort ||
+		reasoningMode != profile.ReasoningMode || driverVersion != profile.DriverVersion ||
 		retention != profile.RetentionPosture || training != profile.TrainingPosture ||
 		since != profile.SourceSince || storedUntil != profile.SourceUntil ||
-		sensitive != profile.AllowSensitive ||
+		sensitive != profile.AllowSensitive || executionBoundary != profile.ExecutionBoundary ||
+		packetRendererPolicy != profile.PacketRendererPolicy ||
+		programFingerprint != profile.ProgramFingerprint ||
 		!equalJSON([]byte(storedSources), allowedSources) ||
+		!equalJSON([]byte(storedDisclosed), disclosedPacketFields) ||
 		!equalJSON([]byte(storedPolicy), profile.PolicyJSON) {
 		return errors.New("people inference profile fingerprint already has different immutable policy")
 	}
@@ -127,10 +163,7 @@ func (s *Store) ListPersonInferenceProfiles(
 	ctx context.Context,
 ) ([]peoplesweep.ProviderProfile, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT fingerprint, provider_kind, endpoint, model, api_key_env,
-		       allow_anonymous, retention_posture, training_posture,
-		       CAST(allowed_sources AS TEXT), source_since, source_until,
-		       allow_sensitive, CAST(policy_json AS TEXT)
+		SELECT `+personInferenceProfileColumns+`
 		FROM person_inference_profiles
 		ORDER BY fingerprint`)
 	if err != nil {
@@ -363,55 +396,104 @@ func scanPersonInferenceConsent(row scanner) (*PersonInferenceConsent, error) {
 
 func scanPersonInferenceProfile(row scanner) (peoplesweep.ProviderProfile, error) {
 	var (
-		profile                    peoplesweep.ProviderProfile
-		allowedSources, policyJSON string
-		sourceUntil                sql.NullString
+		fingerprint, protocol                 string
+		endpoint, model                       string
+		apiKeyEnv, auth, credential           string
+		credentialRef, outputMode, tokenLimit string
+		reasoningEffort, reasoningMode        string
+		driverVersion, retention, training    string
+		sourceSince, executionBoundary        string
+		packetRendererPolicy                  string
+		programFingerprint                    string
+		allowAnonymous, sensitive             bool
+		allowedSources, disclosedFields       string
+		policyJSON                            string
+		sourceUntil                           sql.NullString
 	)
 	if err := row.Scan(
-		&profile.Fingerprint, &profile.Kind, &profile.Endpoint, &profile.Model,
-		&profile.APIKeyEnv, &profile.AllowAnonymous, &profile.RetentionPosture,
-		&profile.TrainingPosture, &allowedSources, &profile.SourceSince,
-		&sourceUntil, &profile.AllowSensitive, &policyJSON,
+		&fingerprint, &protocol, &endpoint, &model, &apiKeyEnv, &allowAnonymous,
+		&auth, &credential, &credentialRef, &outputMode, &tokenLimit,
+		&reasoningEffort, &reasoningMode, &driverVersion,
+		&retention, &training, &allowedSources, &sourceSince, &sourceUntil, &sensitive,
+		&executionBoundary, &packetRendererPolicy, &programFingerprint,
+		&disclosedFields, &policyJSON,
 	); err != nil {
 		return peoplesweep.ProviderProfile{}, err
 	}
-	if sourceUntil.Valid {
-		profile.SourceUntil = sourceUntil.String
-	}
-	if err := json.Unmarshal([]byte(allowedSources), &profile.AllowedSources); err != nil {
+	var storedSources []peoplesweep.SourceClass
+	if err := json.Unmarshal([]byte(allowedSources), &storedSources); err != nil {
 		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode allowed sources: %w", err)
 	}
-	var codexPolicy struct {
-		ReasoningEffort   string `json:"reasoning_effort"`
-		ExecutionBoundary string `json:"execution_boundary"`
+	storedUntil := ""
+	if sourceUntil.Valid {
+		storedUntil = sourceUntil.String
 	}
-	if err := json.Unmarshal([]byte(policyJSON), &codexPolicy); err != nil {
+	var profile peoplesweep.ProviderProfile
+	if err := json.Unmarshal([]byte(policyJSON), &profile); err != nil {
 		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode people inference policy: %w", err)
 	}
-	profileConfig := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: profile.Kind, Endpoint: profile.Endpoint, Model: profile.Model,
-		APIKeyEnv: profile.APIKeyEnv, AllowAnonymous: profile.AllowAnonymous,
+	if profile.Protocol == "" {
+		return peoplesweep.ProviderProfile{}, errors.New(
+			"stored people inference profile policy has no protocol")
+	}
+	profile.Fingerprint = fingerprint
+	profile.PolicyJSON = json.RawMessage(policyJSON)
+	storedDisclosedFields := []string(nil)
+	if err := json.Unmarshal([]byte(disclosedFields), &storedDisclosedFields); err != nil {
+		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode disclosed packet fields: %w", err)
+	}
+	if string(profile.Protocol) != protocol || profile.Endpoint != endpoint || profile.Model != model ||
+		profile.CredentialRef != apiKeyEnv || (profile.Auth == peoplesweep.AuthNone) != allowAnonymous ||
+		string(profile.Auth) != auth || string(profile.Credential) != credential ||
+		profile.CredentialRef != credentialRef || string(profile.OutputMode) != outputMode ||
+		profile.TokenLimitParameter != tokenLimit || profile.ReasoningEffort != reasoningEffort ||
+		profile.ReasoningMode != reasoningMode || profile.DriverVersion != driverVersion ||
+		profile.RetentionPosture != retention || profile.TrainingPosture != training ||
+		!slices.Equal(profile.AllowedSources, storedSources) || profile.SourceSince != sourceSince ||
+		profile.SourceUntil != storedUntil || profile.AllowSensitive != sensitive ||
+		profile.ExecutionBoundary != executionBoundary ||
+		profile.PacketRendererPolicy != packetRendererPolicy ||
+		profile.ProgramFingerprint != programFingerprint ||
+		!slices.Equal(profile.DisclosedPacketFields, storedDisclosedFields) {
+		return peoplesweep.ProviderProfile{}, errors.New(
+			"stored people inference profile does not match its immutable policy")
+	}
+	profileName := "stored"
+	provider := peoplesweep.ProviderConfig{
+		Protocol: profile.Protocol, Endpoint: profile.Endpoint, Model: profile.Model,
+		Auth: profile.Auth, Credential: profile.Credential, OutputMode: profile.OutputMode,
+		TokenLimitParameter: profile.TokenLimitParameter, ReasoningEffort: profile.ReasoningEffort,
+		ReasoningMode: profile.ReasoningMode, DriverVersion: profile.DriverVersion,
 		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-		AllowedSources: profile.AllowedSources, SourceSince: profile.SourceSince,
+		AllowedSources: slices.Clone(profile.AllowedSources), SourceSince: profile.SourceSince,
 		SourceUntil: profile.SourceUntil, AllowSensitive: profile.AllowSensitive,
-		ReasoningEffort: codexPolicy.ReasoningEffort, ExecutionBoundary: codexPolicy.ExecutionBoundary,
-		RequestTimeout: time.Second,
-	}}
+		ExecutionBoundary: profile.ExecutionBoundary, RequestTimeout: time.Second,
+	}
+	switch profile.Credential {
+	case peoplesweep.CredentialEnv:
+		provider.CredentialEnv = profile.CredentialRef
+	case peoplesweep.CredentialStored:
+		profileName = profile.CredentialRef
+	case peoplesweep.CredentialNone:
+		provider.CredentialEnv = ""
+	}
+	profileConfig := peoplesweep.Config{
+		Enabled: true, Provider: peoplesweep.ProviderSelection{Name: profileName},
+		Providers: map[string]peoplesweep.ProviderConfig{profileName: provider},
+	}
 	profileConfig.ApplyDefaults()
 	canonical, err := profileConfig.Profile()
 	if err != nil {
 		return peoplesweep.ProviderProfile{}, err
 	}
-	if profile.Fingerprint != canonical.Fingerprint ||
-		!equalJSON([]byte(policyJSON), canonical.PolicyJSON) {
+	if fingerprint != canonical.Fingerprint || !equalJSON([]byte(policyJSON), canonical.PolicyJSON) {
 		return peoplesweep.ProviderProfile{}, errors.New(
 			"stored people inference profile does not match its immutable policy")
 	}
-	profile = canonical
-	if err := profile.Validate(); err != nil {
+	if err := canonical.Validate(); err != nil {
 		return peoplesweep.ProviderProfile{}, err
 	}
-	return profile, nil
+	return canonical, nil
 }
 
 func validatePersonInferenceConsentInput(fingerprint, actor string) (string, error) {

@@ -177,7 +177,7 @@ func runEvaluationSensitivePolicy(
 			return
 		}
 		received <- body
-		w.Header().Set("x-request-id", "frozen-sensitive-request")
+		w.Header().Set("X-Request-ID", "frozen-sensitive-request")
 		_, _ = w.Write(responseBody)
 	}))
 	defer server.Close()
@@ -186,11 +186,19 @@ func runEvaluationSensitivePolicy(
 	require.NoError(t, err)
 	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(t, err)
+	require.NoError(t, f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint,
+		CheckedAt:          time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC),
+		DriverVersion:      profile.DriverVersion,
+		OutputMode:         profile.OutputMode,
+		ModelVersion:       "frozen-sensitive-model-v1",
+	}))
 	runner, err := peoplesweep.NewRunner(config, f.Store,
-		peoplesweep.NewOpenAICompatibleTransport(server.Client()),
-		func(name string) (string, bool) {
+		peoplesweep.NewTestDriverRegistry(peoplesweep.ProtocolOpenAIChat,
+			peoplesweep.NewOpenAIChatDriver(server.Client())),
+		peoplesweep.NewCredentialResolver(nil, func(name string) (string, bool) {
 			return "frozen-sensitive-key", name == "FROZEN_EVALUATION_API_KEY"
-		})
+		}))
 	require.NoError(t, err)
 	prepared, err := runner.PrepareStructured(t.Context(), batches[0].Request)
 	require.NoError(t, err)
@@ -230,7 +238,7 @@ func runEvaluationSensitivePolicy(
 		SourceCursors: []personfacts.SourceCursor{{Lane: "sensitive-evaluation", Start: "0", End: "1"}},
 		ProgramID:     peoplesweep.ExtractionProgramID, ProgramVersion: peoplesweep.ExtractionProgramVersion,
 		ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: allowedCatalog.Fingerprint,
-		Provider: profile.Kind, ProviderVersion: response.ProviderVersion,
+		Provider: string(profile.Protocol), ProviderVersion: response.ProviderVersion,
 		Model: profile.Model, ModelVersion: response.ModelVersion,
 		ResolvedAt: evaluationTime(t, step.ResolvedAt),
 		Policy: personfacts.PolicyContext{AllowSensitive: true,
@@ -318,8 +326,8 @@ func runEvaluationFixtureCase(t *testing.T, fixture evaluationFixture, metrics *
 		profile, err := config.Profile()
 		require.NoError(t, err)
 		for _, batch := range batches {
-			prepared, prepareErr := peoplesweep.NewOpenAICompatibleTransport(http.DefaultClient).
-				PrepareJSON(profile, batch.Request)
+			prepared, prepareErr := peoplesweep.NewOpenAIChatDriver(http.DefaultClient).
+				Prepare(profile, batch.Request)
 			require.NoError(t, prepareErr)
 			estimate, estimateErr := peoplesweep.EstimateWireTokenReservation(
 				prepared.WireRequest(), batch.Request.MaxOutputTokens)
@@ -424,14 +432,15 @@ func evaluationHasDecision(
 }
 
 func evaluationProviderConfig(allowSensitive bool, endpoint string) peoplesweep.Config {
-	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderOpenAICompatible, Endpoint: endpoint,
-		Model: "frozen-model", APIKeyEnv: "FROZEN_EVALUATION_API_KEY",
+	config := configWithProvider(peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: endpoint,
+		Model: "frozen-model", Auth: peoplesweep.AuthBearer,
+		Credential: peoplesweep.CredentialEnv, CredentialEnv: "FROZEN_EVALUATION_API_KEY",
+		OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
 		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
 		SourceSince:    "2000-01-01", AllowSensitive: allowSensitive,
-	}}
-	config.ApplyDefaults()
+	})
 	config.Budgets.InputCostMicroUSDPerMillionTokens = 2_000_000
 	config.Budgets.OutputCostMicroUSDPerMillionTokens = 6_000_000
 	config.Budgets.MaxEstimatedCostMicroUSDPerRun = 1_000_000_000

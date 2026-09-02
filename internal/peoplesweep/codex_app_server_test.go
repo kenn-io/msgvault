@@ -117,7 +117,9 @@ func (s *recordingCodexStarter) Start(
 
 func codexTestConfig() peoplesweep.ProviderConfig {
 	return peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		Protocol: peoplesweep.ProtocolCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		Auth: peoplesweep.AuthNone, Credential: peoplesweep.CredentialNone,
+		OutputMode:       peoplesweep.OutputModeNativeJSONSchema,
 		RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
 		SourceSince:    "2025-01-01", Executable: "codex",
@@ -127,8 +129,7 @@ func codexTestConfig() peoplesweep.ProviderConfig {
 
 func codexTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	t.Helper()
-	config := peoplesweep.Config{Enabled: true, Provider: codexTestConfig()}
-	config.ApplyDefaults()
+	config := configWithProvider(codexTestConfig())
 	profile, err := config.Profile()
 	require.NoError(t, err)
 	return profile
@@ -314,7 +315,7 @@ func writeCodexCompletedEvent(w io.Writer) error {
 func newSuccessfulCodexTransport(
 	t *testing.T,
 	finalJSON string,
-) (*peoplesweep.CodexAppServerTransport, *recordingCodexStarter, *recordingCodexGate, *codexTranscript) {
+) (*peoplesweep.CodexAppServerDriver, *recordingCodexStarter, *recordingCodexGate, *codexTranscript) {
 	t.Helper()
 	transcript := &codexTranscript{}
 	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
@@ -337,7 +338,7 @@ func newSuccessfulCodexTransport(
 		}
 	}
 	gate := &recordingCodexGate{}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, gate)
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
 	require.NoError(t, err)
 	return transport, starter, gate, transcript
 }
@@ -362,11 +363,11 @@ func TestCodexTransportUsesEphemeralSchemaConstrainedTurn(t *testing.T) {
 	transport, starter, gate, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
 	profile := codexTestProfile(t)
 	request := codexTestRequest()
-	prepared, err := transport.PrepareJSON(profile, request)
+	prepared, err := transport.Prepare(profile, request)
 	must.NoError(err)
-	response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
-	checks.JSONEq(`{"claims":[]}`, string(response.Output))
+	checks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
 	checks.Equal([]string{"initialize", "model/list", "thread/start", "turn/start"}, transcript.methods)
 	must.Len(transcript.frames, 4)
 
@@ -437,7 +438,7 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 	transport, starter, _, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
 	profile := codexTestProfile(t)
 	request := codexTestRequest()
-	prepared, err := transport.PrepareJSON(profile, request)
+	prepared, err := transport.Prepare(profile, request)
 	must.NoError(err)
 	components := decodeLengthPrefixedComponents(t, prepared.WireRequest())
 	must.Len(components, 5)
@@ -446,7 +447,7 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 		checks.True(bytes.HasSuffix(components[index], []byte("\n")), "JSONL frame %d", index)
 	}
 
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
 	checks.Equal(components[1:4], transcript.frames[:3])
 	var reservedTurn map[string]any
@@ -498,12 +499,12 @@ func TestCodexTransportRejectsUnsupportedModelAndEffort(t *testing.T) {
 			starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
 				successfulCodexScript(t, transcript, test.modelID, test.efforts, nil, `{"claims":[]}`),
 			}}
-			transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+			transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 			must.NoError(err)
 			profile := codexTestProfile(t)
-			prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+			prepared, err := transport.Prepare(profile, codexTestRequest())
 			must.NoError(err)
-			_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+			_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 			must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
 			checks.NotContains(transcript.methods, "turn/start")
 		})
@@ -528,15 +529,15 @@ func TestCodexTransportKillsProcessOnTimeout(t *testing.T) {
 			return errors.New("unexpected second codex request frame")
 		},
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, generateErr := transport.GeneratePreparedJSON(ctx, profile, "", prepared)
+		_, generateErr := transport.GeneratePrepared(ctx, profile, peoplesweep.Credential{}, prepared)
 		done <- generateErr
 	}()
 	<-started
@@ -572,14 +573,14 @@ func TestCodexCleanupKillsEOFIgnoringProcessAndClosesStreams(t *testing.T) {
 		process.onKill = func() { releaseOnce.Do(func() { close(killRelease) }) }
 		processReady <- process
 	}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	done := make(chan error, 1)
 	go func() {
-		_, generateErr := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+		_, generateErr := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 		done <- generateErr
 	}()
 	process := <-processReady
@@ -626,13 +627,13 @@ func TestCodexCleanupPreservesNaturalNonzeroExitWhenKillReportsAlreadyFinished(t
 		process.killErr = os.ErrProcessDone
 		process.onKill = func() { releaseOnce.Do(func() { close(naturalExit) }) }
 	}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	startedAt := time.Now()
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.Error(err)
 	checks.Less(time.Since(startedAt), 500*time.Millisecond)
 	checks.NotContains(err.Error(), secret)
@@ -673,15 +674,15 @@ func TestCodexCleanupReturnsBoundedSafeErrorWhenKillFailsAndWaitBlocks(t *testin
 		process.killErr = errors.New(secret)
 		processReady <- process
 	}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	done := make(chan error, 1)
 	startedAt := time.Now()
 	go func() {
-		_, generateErr := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+		_, generateErr := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 		done <- generateErr
 	}()
 	process := <-processReady
@@ -735,15 +736,15 @@ func TestCodexCleanupCancellationKillsAndJoinsOnce(t *testing.T) {
 		process.onKill = func() { releaseOnce.Do(func() { close(killRelease) }) }
 		processReady <- process
 	}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, generateErr := transport.GeneratePreparedJSON(ctx, profile, "", prepared)
+		_, generateErr := transport.GeneratePrepared(ctx, profile, peoplesweep.Credential{}, prepared)
 		done <- generateErr
 	}()
 	process := <-processReady
@@ -783,12 +784,12 @@ func TestCodexCleanupClosesStreamsOnNonzeroExit(t *testing.T) {
 			return errors.New(secret)
 		},
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.Error(err)
 	checks.NotContains(err.Error(), secret)
 	must.Len(starter.records, 1)
@@ -809,12 +810,12 @@ func TestCodexTransportRejectsUnboundedModelCatalog(t *testing.T) {
 	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
 		successfulCodexScript(t, transcript, "gpt-test", []string{"high"}, &cursor, `{"claims":[]}`),
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
 	checks.Equal([]string{"initialize", "model/list"}, transcript.methods)
 }
@@ -862,12 +863,12 @@ func TestCodexTransportRejectsMalformedOrOversizedThreadIDBeforeTurn(t *testing.
 					return errors.New("unexpected codex turn frame")
 				},
 			}}
-			transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+			transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 			must.NoError(err)
 			profile := codexTestProfile(t)
-			prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+			prepared, err := transport.Prepare(profile, codexTestRequest())
 			must.NoError(err)
-			_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+			_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 			must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
 			checks.NotContains(err.Error(), test.threadID)
 			checks.Equal([]string{"initialize", "model/list", "thread/start"}, transcript.methods)
@@ -880,12 +881,12 @@ func TestCodexLaunchReverifiesBeforeStartingProcess(t *testing.T) {
 	must := require.New(t)
 	gate := &recordingCodexGate{reverifyErr: peoplesweep.ErrCodexIsolationUnreleased}
 	starter := &recordingCodexStarter{t: t}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, gate)
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.ErrorIs(err, peoplesweep.ErrCodexIsolationUnreleased)
 	checks.Equal(int64(1), gate.verifyCalls.Load())
 	checks.Equal(int64(1), gate.reverifyCalls.Load())
@@ -897,11 +898,11 @@ func TestCodexTransportRejectsInvalidFinalSchema(t *testing.T) {
 	must := require.New(t)
 	transport, starter, gate, transcript := newSuccessfulCodexTransport(t, `{"not_claims":[]}`)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
-	checks.Empty(response.Output)
+	checks.Empty(response.CandidateJSON)
 	checks.Equal(peoplesweep.TokenUsage{InputTokens: 21, OutputTokens: 4}, response.Usage)
 	checks.NotEmpty(response.ProviderVersion)
 	checks.Equal("gpt-test", response.ModelVersion)
@@ -951,14 +952,14 @@ func TestCodexTransportPreservesUsageWhenCumulativeTotalsAreInvalid(t *testing.T
 					return writeCodexCompletedEvent(stdout)
 				}),
 			}}
-			transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+			transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 			must.NoError(err)
 			profile := codexTestProfile(t)
-			prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+			prepared, err := transport.Prepare(profile, codexTestRequest())
 			must.NoError(err)
-			response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+			response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 			must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
-			checks.Empty(response.Output)
+			checks.Empty(response.CandidateJSON)
 			checks.Equal(peoplesweep.TokenUsage{InputTokens: 21, OutputTokens: 4}, response.Usage)
 			checks.NotEmpty(response.ProviderVersion)
 			checks.Equal("gpt-test", response.ModelVersion)
@@ -984,16 +985,64 @@ func TestCodexTransportConsumesNotificationsQueuedBeforeTurnResponseOnce(t *test
 			return writeCodexCompletedEvent(stdout)
 		}, nil),
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
-	checks.JSONEq(`{"claims":[]}`, string(response.Output))
+	checks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
 	checks.Equal(peoplesweep.TokenUsage{InputTokens: 22, OutputTokens: 5}, response.Usage)
 	checks.Equal([]string{"initialize", "model/list", "thread/start", "turn/start"}, transcript.methods)
+}
+
+func TestCodexDriverMarksReportedZeroUsageKnown(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	transcript := &codexTranscript{}
+	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+		codexTurnEventScript(t, transcript, nil, func(stdout io.Writer) error {
+			if err := writeCodexUsageEvent(stdout, 0, 0); err != nil {
+				return err
+			}
+			if err := writeCodexFinalEvent(stdout, `{"claims":[]}`); err != nil {
+				return err
+			}
+			return writeCodexCompletedEvent(stdout)
+		}),
+	}}
+	driver, err := peoplesweep.NewCodexAppServerDriver(
+		codexTestConfig(), starter, &recordingCodexGate{})
+	require.NoError(err)
+	profile := codexTestProfile(t)
+	prepared, err := driver.Prepare(profile, codexTestRequest())
+	require.NoError(err)
+
+	response, err := driver.GeneratePrepared(
+		t.Context(), profile, peoplesweep.Credential{}, prepared)
+	require.NoError(err)
+	assert.True(response.UsageKnown)
+	assert.Equal(peoplesweep.TokenUsage{}, response.Usage)
+}
+
+func TestCodexDriverRejectsNonEmptyCredentialBeforeAttestation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	gate := &recordingCodexGate{}
+	starter := &recordingCodexStarter{t: t}
+	driver, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
+	require.NoError(err)
+	profile := codexTestProfile(t)
+	prepared, err := driver.Prepare(profile, codexTestRequest())
+	require.NoError(err)
+
+	_, err = driver.GeneratePrepared(t.Context(), profile,
+		peoplesweep.NewCredential(peoplesweep.AuthBearer, "codex-secret-canary"), prepared)
+	require.ErrorContains(err, "does not accept")
+	assert.NotContains(err.Error(), "codex-secret-canary")
+	assert.Zero(gate.verifyCalls.Load())
+	assert.Zero(starter.starts.Load())
 }
 
 func TestCodexTransportRejectsLateStderrOverflowAfterFinalFrame(t *testing.T) {
@@ -1011,12 +1060,12 @@ func TestCodexTransportRejectsLateStderrOverflowAfterFinalFrame(t *testing.T) {
 			return err
 		},
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.Error(err)
 	checks.NotContains(err.Error(), secret)
 	checks.Equal(peoplesweep.TokenUsage{InputTokens: 21, OutputTokens: 4}, response.Usage)
@@ -1044,7 +1093,7 @@ func TestCodexLoginAndModelsApplyConfiguredTimeout(t *testing.T) {
 			}}
 			config := codexTestConfig()
 			config.RequestTimeout = 30 * time.Millisecond
-			transport, err := peoplesweep.NewCodexAppServerTransport(config, starter, &recordingCodexGate{})
+			transport, err := peoplesweep.NewCodexAppServerDriver(config, starter, &recordingCodexGate{})
 			must.NoError(err)
 			parentCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 			defer cancel()
@@ -1115,7 +1164,7 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 			return nil
 		},
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	var login peoplesweep.DeviceLogin
 	err = transport.StartDeviceLogin(t.Context(), func(value peoplesweep.DeviceLogin) error {
@@ -1160,7 +1209,7 @@ func TestCodexModelListReturnsSupportedEfforts(t *testing.T) {
 			}})
 		},
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	models, err := transport.ListModels(t.Context())
 	must.NoError(err)
@@ -1177,10 +1226,10 @@ func TestCodexEveryProcessRequiresIsolationGate(t *testing.T) {
 	denied := errors.New("deny marker: " + peoplesweep.ErrCodexIsolationUnreleased.Error())
 	gate := &recordingCodexGate{verifyErr: errors.Join(peoplesweep.ErrCodexIsolationUnreleased, denied)}
 	starter := &recordingCodexStarter{t: t}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, gate)
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 
 	operations := []struct {
@@ -1188,7 +1237,7 @@ func TestCodexEveryProcessRequiresIsolationGate(t *testing.T) {
 		run  func() error
 	}{
 		{name: "generation", run: func() error {
-			_, callErr := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+			_, callErr := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 			return callErr
 		}},
 		{name: "login", run: func() error {
@@ -1196,11 +1245,17 @@ func TestCodexEveryProcessRequiresIsolationGate(t *testing.T) {
 		}},
 		{name: "models", run: func() error { _, callErr := transport.ListModels(t.Context()); return callErr }},
 		{name: "provider status", run: func() error {
-			_, callErr := peoplesweep.NewStructuredTransport(codexTestConfig(), nil, starter, gate)
+			registry, callErr := peoplesweep.NewDriverRegistry(nil, starter, gate)
+			if callErr == nil {
+				_, callErr = registry.Driver(peoplesweep.ProtocolCodexAppServer, codexTestConfig())
+			}
 			return callErr
 		}},
 		{name: "provider check", run: func() error {
-			_, callErr := peoplesweep.NewStructuredTransport(codexTestConfig(), nil, starter, gate)
+			registry, callErr := peoplesweep.NewDriverRegistry(nil, starter, gate)
+			if callErr == nil {
+				_, callErr = registry.Driver(peoplesweep.ProtocolCodexAppServer, codexTestConfig())
+			}
 			return callErr
 		}},
 	}
@@ -1219,9 +1274,9 @@ func TestCodexTransportReturnsAttestedVersions(t *testing.T) {
 	must := require.New(t)
 	transport, _, gate, _ := newSuccessfulCodexTransport(t, `{"claims":[]}`)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	response, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
 	wantProviderVersion, err := peoplesweep.CanonicalCodexProviderVersion(peoplesweep.CodexAttestation{
 		ExecutablePath: codexTestAbsolutePath(), Version: "codex-cli 0.149.0",
@@ -1245,17 +1300,17 @@ func TestCodexTransportRejectsModelVersionChangeAcrossBatches(t *testing.T) {
 		successfulCodexScript(t, firstTranscript, "gpt-test", []string{"high"}, nil, `{"claims":[]}`),
 		successfulCodexScript(t, secondTranscript, "gpt-test-drifted", []string{"high"}, nil, `{"claims":[{"unsafe":true}]}`),
 	}}
-	transport, err := peoplesweep.NewCodexAppServerTransport(codexTestConfig(), starter, &recordingCodexGate{})
+	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	first, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	first, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
 	checks.Equal("gpt-test", first.ModelVersion)
-	second, err := transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	second, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
-	checks.Empty(second.Output)
+	checks.Empty(second.CandidateJSON)
 	checks.NotContains(secondTranscript.methods, "turn/start")
 }
 
@@ -1267,9 +1322,9 @@ func TestCodexLaunchScrubsEnvironmentAndDisablesExtensions(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "auth-store"))
 	transport, starter, _, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
 	profile := codexTestProfile(t)
-	prepared, err := transport.PrepareJSON(profile, codexTestRequest())
+	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
 	must.Len(starter.records, 1)
 	record := starter.records[0]

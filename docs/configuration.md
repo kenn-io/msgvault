@@ -197,6 +197,130 @@ CLI forwards its effective consent for that operation; the remote daemon's own
 `[deletion]` section is not server policy for a command invoked elsewhere.
 Staging, listing, inspecting, and dry-running deletion batches remain ungated.
 
+## People sweep inference
+
+People sweeps use one named protocol profile at a time. A profile records the
+exact endpoint, model, wire protocol, negotiated output mode, privacy posture,
+and source scope. It is configuration, not a provider preset. Msgvault never
+changes the active profile or switches providers automatically.
+
+```toml
+[people.sweep]
+enabled = true
+provider = "glm"
+
+[people.sweep.providers.glm]
+protocol = "openai_chat"
+endpoint = "https://api.z.ai/api/paas/v4"
+model = "glm-5.3"
+auth = "bearer"
+credential = "env"
+credential_env = "ZAI_API_KEY"
+output_mode = "prompt_json"
+token_limit_parameter = "max_tokens"
+reasoning_effort = "max"
+request_timeout = "1m"
+retention_posture = "provider-declared"
+training_posture = "provider-declared"
+allowed_sources = ["conversation_text", "meeting_text"]
+source_since = "2026-01-01"
+allow_sensitive = true
+```
+
+`allow_sensitive = true` is required for real sweeps: any packet that
+carries seed or context evidence is marked sensitive, so a profile set to
+`false` fails on every real sweep. `true` permits sending that verbatim
+archive text to the selected provider; `false` leaves only the synthetic
+capability check, which sends no archive text.
+
+Usable protocols are `openai_chat`, `openai_responses`,
+`anthropic_messages`, and `google_generate_content`. A fifth protocol,
+`codex_app_server`, is defined but release-gated and cannot run yet; see the
+Codex app-server profiles section below. Onboarding negotiates and saves
+`native_json_schema`, `json_object`, or `prompt_json`. OpenAI Chat profiles
+also save either `max_completion_tokens` or `max_tokens`; the other protocols
+use their defined token-limit field.
+
+These are examples of protocol profiles, not built-in presets:
+
+| Example profile | Protocol | Typical profile choice |
+|---|---|---|
+| GLM 5.3 | `openai_chat` | Z.AI API base, `glm-5.3`, often `max_tokens` |
+| Kimi K3 | `openai_chat` or `anthropic_messages` | Choose the exact API surface the account exposes |
+| OpenRouter | `openai_chat` | OpenRouter API base and one explicit routed model ID |
+| Venice | `openai_chat` | Venice API base and one explicit model ID |
+| open-agent-api | `openai_chat` | The gateway's loopback API base and exposed model ID |
+| Gemini | `google_generate_content` | Google API base and one Gemini model ID |
+| Anthropic | `anthropic_messages` | Anthropic API base and one Claude model ID |
+| OpenAI Responses | `openai_responses` | OpenAI API base and one Responses model ID |
+
+Confirm current endpoints, model identifiers, privacy terms, and subscription
+rules with the selected operator before saving a profile. OpenRouter and Venice
+may route a request to another upstream operator, so the profile's retention
+and training declarations must cover that full path. Logged-in or
+subscription-backed endpoints, including local gateways, must be used within
+their provider terms.
+
+Credentials are not stored in this TOML. `credential = "stored"` keeps a
+profile-specific secret under the private tokens directory and is supported
+on Linux and macOS only; `credential = "env"` stores only the selected
+environment-variable name and works everywhere.
+`credential = "none"` is restricted to credentialless local or Codex paths.
+Changing a credential value does not change the profile fingerprint, but
+changing its source or reference does.
+
+Only `msgvault person provider add` may contact models.dev, and only when a
+transport field (`--protocol`, `--endpoint`, `--model`, `--auth`) is missing
+or `--accept-catalog-prices` is set; it sends no archive data or provider
+credential. `--custom` skips that catalog entirely; the required synthetic
+check still contacts the endpoint selected in the profile. The catalog is never used
+by scheduled or manual sweeps. A catalog suggestion also never chooses where a
+credential is sent: onboarding pairs a credential only with an endpoint you
+passed explicitly via `--endpoint` or with the first-party API hosts compiled
+into msgvault, so a compromised catalog cannot redirect your key. A successful check does not grant consent:
+`msgvault person provider consent <name> --yes` is a separate explicit step.
+Live credential checks are optional developer or operator verification and are
+never CI requirements.
+
+### Codex app-server profiles
+
+The `codex_app_server` protocol is not usable in this release. Its transport
+stays unavailable until the executable isolation gate releases a verified
+build, and until then every Codex operation fails closed with
+`codex app-server isolation is not released`. The profile shape is documented
+here so the configuration is ready when the gate ships.
+
+`codex_app_server` profiles are also the one protocol `person provider add`
+cannot create: generic onboarding negotiates HTTP capabilities through an
+endpoint, while codex_app_server has no endpoint to negotiate against and
+runs through an attested local Codex executable instead. Configure the
+profile manually, then authorize it with the device-code login:
+
+```toml
+[people.sweep.providers.codex]
+protocol = "codex_app_server"
+model = "gpt-5.3-codex"
+auth = "none"
+credential = "none"
+reasoning_effort = "medium"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2026-01-01"
+allow_sensitive = true
+```
+
+`endpoint` is not allowed, and `auth` and `credential` must both be set to
+`"none"`: the transport is the local Codex app server, authenticated by its
+own ChatGPT login. Sensitivity policy is protocol-agnostic: real Codex sweeps
+send the same seed and context packets, so `allow_sensitive = true` is
+required here as well. After saving
+the profile, run `msgvault person provider login` to complete the device-code
+authorization, review `msgvault person provider models` for the exact model
+identifiers and reasoning efforts your subscription exposes, then run
+`msgvault person provider check codex` and
+`msgvault person provider consent codex --yes` as with any other profile.
+
 ### Windows Paths
 
 TOML treats backslashes inside double-quoted strings as escape characters. On Windows, this means native paths like `"C:\Users\you\..."` will cause a parse error.

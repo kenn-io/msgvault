@@ -1194,11 +1194,11 @@ var nextRequestID atomic.Uint64
 
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-Id")
+		id := r.Header.Get("X-Request-ID")
 		if id == "" {
 			id = fmt.Sprintf("msgvault-%d", nextRequestID.Add(1))
 		}
-		w.Header().Set("X-Request-Id", id)
+		w.Header().Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
 		// Also stash it where the SQL logger reads it, so a "sql slow"
 		// line can be correlated with this request's "http request" line.

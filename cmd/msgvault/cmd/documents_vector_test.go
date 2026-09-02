@@ -24,6 +24,8 @@ import (
 )
 
 func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, spec := documentVectorCommandFixture(t)
 	t.Setenv("SYNTHETIC_EMBEDDING_KEY", "secret-that-must-not-print")
 	runtimeCalls := 0
@@ -39,82 +41,82 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	var unconfirmedOutput bytes.Buffer
 	unconfirmed.SetOut(&unconfirmedOutput)
 	unconfirmed.SetArgs([]string{documentVectorsSubcommand, "consent"})
-	require.ErrorContains(t, unconfirmed.ExecuteContext(t.Context()), "--yes")
-	assert.Contains(t, unconfirmedOutput.String(), "Hosted document embedding disclosure:")
-	assert.Contains(t, unconfirmedOutput.String(), "Destination: https://embeddings.example.test/v1")
-	assert.Contains(t, unconfirmedOutput.String(), "Authentication: environment variable SYNTHETIC_EMBEDDING_KEY")
-	assert.Contains(t, unconfirmedOutput.String(), "API format: openai")
-	assert.Contains(t, unconfirmedOutput.String(), "Model: embed-test")
-	assert.Contains(t, unconfirmedOutput.String(), "Dimension: 3")
-	assert.Contains(t, unconfirmedOutput.String(), "Maximum input: 4096 characters")
-	assert.Contains(t, unconfirmedOutput.String(), "Docbank-prepared normalized attachment document inputs will be sent")
-	assert.NotContains(t, unconfirmedOutput.String(), "Explicit semantic or hybrid document searches")
-	assert.NotContains(t, unconfirmedOutput.String(), "secret-that-must-not-print")
+	require.ErrorContains(unconfirmed.ExecuteContext(t.Context()), "--yes")
+	assert.Contains(unconfirmedOutput.String(), "Hosted document embedding disclosure:")
+	assert.Contains(unconfirmedOutput.String(), "Destination: https://embeddings.example.test/v1")
+	assert.Contains(unconfirmedOutput.String(), "Authentication: environment variable SYNTHETIC_EMBEDDING_KEY")
+	assert.Contains(unconfirmedOutput.String(), "API format: openai")
+	assert.Contains(unconfirmedOutput.String(), "Model: embed-test")
+	assert.Contains(unconfirmedOutput.String(), "Dimension: 3")
+	assert.Contains(unconfirmedOutput.String(), "Maximum input: 4096 characters")
+	assert.Contains(unconfirmedOutput.String(), "Docbank-prepared normalized attachment document inputs will be sent")
+	assert.NotContains(unconfirmedOutput.String(), "Explicit semantic or hybrid document searches")
+	assert.NotContains(unconfirmedOutput.String(), "secret-that-must-not-print")
 	consentSpec, err := configuredDocumentVectorConsentSpec(spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	unconfirmedConsent, err := fixture.Store.GetDocumentVectorConsent(t.Context(), consentSpec.EgressFingerprint)
-	require.NoError(t, err)
-	assert.Nil(t, unconfirmedConsent)
+	require.NoError(err)
+	assert.Nil(unconfirmedConsent)
 
 	consent := newDocumentsCmd(deps)
 	var consentOutput bytes.Buffer
 	consent.SetOut(&consentOutput)
 	consent.SetArgs([]string{documentVectorsSubcommand, "consent", "--yes"})
-	require.NoError(t, consent.ExecuteContext(t.Context()))
-	assert.Contains(t, consentOutput.String(), "Hosted document embedding disclosure:")
-	assert.Contains(t, consentOutput.String(), "Recorded consent for document vector egress fingerprint "+consentSpec.EgressFingerprint)
-	assert.NotContains(t, consentOutput.String(), "secret-that-must-not-print")
+	require.NoError(consent.ExecuteContext(t.Context()))
+	assert.Contains(consentOutput.String(), "Hosted document embedding disclosure:")
+	assert.Contains(consentOutput.String(), "Recorded consent for document vector egress fingerprint "+consentSpec.EgressFingerprint)
+	assert.NotContains(consentOutput.String(), "secret-that-must-not-print")
 	recorded, err := fixture.Store.GetDocumentVectorConsent(t.Context(), consentSpec.EgressFingerprint)
-	require.NoError(t, err)
-	require.NotNil(t, recorded)
-	assert.Equal(t, spec, recorded.DocumentVectorGenerationSpec)
-	assert.Equal(t, "document_embedding", recorded.Purpose)
+	require.NoError(err)
+	require.NotNil(recorded)
+	assert.Equal(spec, recorded.DocumentVectorGenerationSpec)
+	assert.Equal("document_embedding", recorded.Purpose)
 
 	queryConsentSpec, err := configuredDocumentVectorQueryConsentSpec(spec)
-	require.NoError(t, err)
-	assert.NotEqual(t, consentSpec.EgressFingerprint, queryConsentSpec.EgressFingerprint)
+	require.NoError(err)
+	assert.NotEqual(consentSpec.EgressFingerprint, queryConsentSpec.EgressFingerprint)
 	queryConsent := newDocumentsCmd(deps)
 	var queryConsentOutput bytes.Buffer
 	queryConsent.SetOut(&queryConsentOutput)
 	queryConsent.SetArgs([]string{documentVectorsSubcommand, "consent", "--purpose", "queries", "--yes"})
-	require.NoError(t, queryConsent.ExecuteContext(t.Context()))
-	assert.Contains(t, queryConsentOutput.String(), "Explicit semantic or hybrid document searches will send query text")
+	require.NoError(queryConsent.ExecuteContext(t.Context()))
+	assert.Contains(queryConsentOutput.String(), "Explicit semantic or hybrid document searches will send query text")
 	recordedQuery, err := fixture.Store.GetDocumentVectorConsent(t.Context(), queryConsentSpec.EgressFingerprint)
-	require.NoError(t, err)
-	require.NotNil(t, recordedQuery)
-	assert.Equal(t, "query_embedding", recordedQuery.Purpose)
+	require.NoError(err)
+	require.NotNil(recordedQuery)
+	assert.Equal("query_embedding", recordedQuery.Purpose)
 
 	consentedEndpoint := cfg.Vector.Embeddings.Endpoint
 	cfg.Vector.Embeddings.Endpoint = "https://hosted.example.test/v1"
 	changedConsentSpec, err := configuredDocumentVectorConsentSpec(spec)
-	require.NoError(t, err)
-	assert.NotEqual(t, consentSpec.EgressFingerprint, changedConsentSpec.EgressFingerprint)
-	require.ErrorContains(t, requireDocumentVectorConsent(t.Context(), fixture.Store, spec), "not consented")
+	require.NoError(err)
+	assert.NotEqual(consentSpec.EgressFingerprint, changedConsentSpec.EgressFingerprint)
+	require.ErrorContains(requireDocumentVectorConsent(t.Context(), fixture.Store, spec), "not consented")
 	cfg.Vector.Embeddings.Endpoint = consentedEndpoint
-	require.NoError(t, requireDocumentVectorConsent(t.Context(), fixture.Store, spec))
+	require.NoError(requireDocumentVectorConsent(t.Context(), fixture.Store, spec))
 
 	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	status := newDocumentsCmd(deps)
 	var statusOutput bytes.Buffer
 	status.SetOut(&statusOutput)
 	status.SetArgs([]string{documentVectorsSubcommand, statusValue})
-	require.NoError(t, status.ExecuteContext(t.Context()))
-	assert.Contains(t, statusOutput.String(), "building_generation=")
-	assert.Contains(t, statusOutput.String(), "state=building")
-	assert.Contains(t, statusOutput.String(), "pending=0 retryable=0 terminal=0 ready_live=0 obsolete=0 cleanup_pending=0")
-	assert.Contains(t, statusOutput.String(), "coverage_required=0 coverage_ready=0")
+	require.NoError(status.ExecuteContext(t.Context()))
+	assert.Contains(statusOutput.String(), "building_generation=")
+	assert.Contains(statusOutput.String(), "state=building")
+	assert.Contains(statusOutput.String(), "pending=0 retryable=0 terminal=0 ready_live=0 obsolete=0 cleanup_pending=0")
+	assert.Contains(statusOutput.String(), "coverage_required=0 coverage_ready=0")
 
 	retry := newDocumentsCmd(deps)
 	retry.SetOut(&bytes.Buffer{})
 	retry.SetArgs([]string{documentVectorsSubcommand, "retry", "--generation-id", "999", "--limit", "1"})
-	require.Error(t, retry.ExecuteContext(t.Context()))
+	require.Error(retry.ExecuteContext(t.Context()))
 
 	retire := newDocumentsCmd(deps)
 	retire.SetOut(&bytes.Buffer{})
 	retire.SetArgs([]string{documentVectorsSubcommand, cliEmbeddingsOperationRetire, "--generation-id", fmtInt64(generation.ID), "--yes"})
-	require.NoError(t, retire.ExecuteContext(t.Context()))
-	assert.Zero(t, runtimeCalls)
+	require.NoError(retire.ExecuteContext(t.Context()))
+	assert.Zero(runtimeCalls)
 }
 
 func TestDocumentVectorStatusWorksWhenEmbeddingsAreDisabled(t *testing.T) {
@@ -204,11 +206,13 @@ func TestDocumentVectorStatusWorksBeforeExtractionTargetExists(t *testing.T) {
 }
 
 func TestDocumentVectorProviderCommandsUseRuntimeAndValidateBounds(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, spec := documentVectorCommandFixture(t)
 	consentSpec, err := configuredDocumentVectorConsentSpec(spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
-	require.NoError(t, err)
+	require.NoError(err)
 	var calls []int64
 	deps := documentsCommandDeps{
 		openStore: func() (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
@@ -220,36 +224,38 @@ func TestDocumentVectorProviderCommandsUseRuntimeAndValidateBounds(t *testing.T)
 
 	invalid := newDocumentsCmd(deps)
 	invalid.SetArgs([]string{documentVectorsSubcommand, documentBuildSubcommand, "--limit", "0"})
-	require.ErrorContains(t, invalid.ExecuteContext(t.Context()), "limit")
-	assert.Empty(t, calls)
+	require.ErrorContains(invalid.ExecuteContext(t.Context()), "limit")
+	assert.Empty(calls)
 
 	build := newDocumentsCmd(deps)
 	build.SetOut(&bytes.Buffer{})
 	build.SetArgs([]string{documentVectorsSubcommand, documentBuildSubcommand, "--limit", "1"})
-	require.NoError(t, build.ExecuteContext(t.Context()))
-	require.Len(t, calls, 1)
+	require.NoError(build.ExecuteContext(t.Context()))
+	require.Len(calls, 1)
 	building, err := fixture.Store.GetBuildingDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	require.NotNil(t, building)
+	require.NoError(err)
+	require.NotNil(building)
 
 	resume := newDocumentsCmd(deps)
 	resume.SetOut(&bytes.Buffer{})
 	resume.SetArgs([]string{documentVectorsSubcommand, cmdUseResume, "--generation-id", fmtInt64(building.ID), "--limit", "1"})
-	require.NoError(t, resume.ExecuteContext(t.Context()))
-	assert.Len(t, calls, 2)
+	require.NoError(resume.ExecuteContext(t.Context()))
+	assert.Len(calls, 2)
 
-	require.NoError(t, fixture.Store.ActivateDocumentVectorGeneration(t.Context(), building.ID, time.Now()))
+	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(t.Context(), building.ID, time.Now()))
 	rebuild := newDocumentsCmd(deps)
 	rebuild.SetOut(&bytes.Buffer{})
 	rebuild.SetArgs([]string{documentVectorsSubcommand, "rebuild", "--generation-id", fmtInt64(building.ID), "--limit", "1", "--yes"})
-	require.NoError(t, rebuild.ExecuteContext(t.Context()))
-	assert.Len(t, calls, 3)
+	require.NoError(rebuild.ExecuteContext(t.Context()))
+	assert.Len(calls, 3)
 }
 
 func TestDocumentVectorResumeRunsBoundedCleanupForRetiredGeneration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, spec := documentVectorCommandFixture(t)
 	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	token := strings.Repeat("8", 64)
 	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
@@ -258,10 +264,10 @@ func TestDocumentVectorResumeRunsBoundedCleanupForRetiredGeneration(t *testing.T
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`), generation.ID,
 		"manual-cleanup-extraction", spec.TargetExtractionProfileID, strings.Repeat("a", 64),
 		"original", 1, "manual-cleanup-chunk", "manual-cleanup-checksum", 1, token)
-	require.NoError(t, err)
+	require.NoError(err)
 	retired, err := fixture.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, time.Now())
-	require.NoError(t, err)
-	require.True(t, retired)
+	require.NoError(err)
+	require.True(retired)
 
 	backend := &commandDocumentVectorBackend{}
 	deps := documentsCommandDeps{
@@ -281,17 +287,19 @@ func TestDocumentVectorResumeRunsBoundedCleanupForRetiredGeneration(t *testing.T
 		"--generation-id", fmtInt64(generation.ID), "--limit", "1",
 	})
 
-	require.NoError(t, command.ExecuteContext(t.Context()))
+	require.NoError(command.ExecuteContext(t.Context()))
 	var result vectordocument.ReconcileResult
-	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-	assert.True(t, result.Purged)
-	assert.True(t, result.Converged)
-	assert.Equal(t, [][]string{{token}}, backend.deletes)
+	require.NoError(json.Unmarshal(output.Bytes(), &result))
+	assert.True(result.Purged)
+	assert.True(result.Converged)
+	assert.Equal([][]string{{token}}, backend.deletes)
 	_, err = fixture.Store.GetDocumentVectorGeneration(t.Context(), generation.ID)
-	require.ErrorContains(t, err, "not found")
+	require.ErrorContains(err, "not found")
 }
 
 func TestDocumentVectorWorkerCheckpointsPartialErrorResult(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	wantErr := errors.New("provider partial failure")
 	runResult := vectordocument.RunResult{
 		ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44,
@@ -304,15 +312,15 @@ func TestDocumentVectorWorkerCheckpointsPartialErrorResult(t *testing.T) {
 		now:          func() time.Time { return time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC) },
 	}
 	result, err := worker.Run(t.Context(), 7, 10)
-	require.ErrorIs(t, err, wantErr)
-	assert.Equal(t, runResult, result)
+	require.ErrorIs(err, wantErr)
+	assert.Equal(runResult, result)
 	checkpoint, ok := worker.checkpointer.(*fakeDocumentVectorCheckpointer)
-	require.True(t, ok)
-	require.Len(t, checkpoint.calls, 1)
-	assert.Equal(t, strings.Repeat("a", 64), checkpoint.calls[0].fingerprint)
-	assert.Equal(t, int64(81), checkpoint.calls[0].afterChunkID)
-	assert.False(t, checkpoint.calls[0].exhausted)
-	assert.Equal(t, store.DocumentVectorUsageDelta{
+	require.True(ok)
+	require.Len(checkpoint.calls, 1)
+	assert.Equal(strings.Repeat("a", 64), checkpoint.calls[0].fingerprint)
+	assert.Equal(int64(81), checkpoint.calls[0].afterChunkID)
+	assert.False(checkpoint.calls[0].exhausted)
+	assert.Equal(store.DocumentVectorUsageDelta{
 		ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44,
 	}, checkpoint.calls[0].delta)
 }
@@ -354,20 +362,22 @@ func (c *fakeDocumentVectorCheckpointer) CheckpointDocumentVectorBuildForFingerp
 }
 
 func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, desired := documentVectorCommandFixture(t)
 	consentSpec, err := configuredDocumentVectorConsentSpec(desired)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
-	require.NoError(t, err)
+	require.NoError(err)
 	activeSpec := desired
 	activeSpec.Fingerprint = strings.Repeat("1", 64)
 	active, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), activeSpec)
-	require.NoError(t, err)
-	require.NoError(t, fixture.Store.ActivateDocumentVectorGeneration(t.Context(), active.ID, time.Now()))
+	require.NoError(err)
+	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(t.Context(), active.ID, time.Now()))
 	obsoleteSpec := desired
 	obsoleteSpec.Fingerprint = strings.Repeat("2", 64)
 	obsolete, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), obsoleteSpec)
-	require.NoError(t, err)
+	require.NoError(err)
 	for index := range 3 {
 		_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
 			INSERT INTO document_vector_publications
@@ -377,7 +387,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 			fmt.Sprintf("obsolete-%d", index), desired.TargetExtractionProfileID, strings.Repeat("a", 64),
 			"original", index+1, fmt.Sprintf("chunk-%d", index), fmt.Sprintf("checksum-%d", index),
 			1, fmt.Sprintf("%064x", index+1))
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	client := &commandDocumentSemanticClient{}
 	backend := &commandDocumentVectorBackend{}
@@ -385,38 +395,40 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
 	}
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
 	stillActive, err := fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	require.NotNil(t, stillActive)
-	assert.Equal(t, active.ID, stillActive.ID)
+	require.NoError(err)
+	require.NotNil(stillActive)
+	assert.Equal(active.ID, stillActive.ID)
 	retired, err := fixture.Store.GetDocumentVectorGeneration(t.Context(), obsolete.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.DocumentVectorGenerationRetired, retired.State)
-	require.Len(t, backend.deletes, 1)
-	assert.Len(t, backend.deletes[0], 2)
+	require.NoError(err)
+	assert.Equal(store.DocumentVectorGenerationRetired, retired.State)
+	require.Len(backend.deletes, 1)
+	assert.Len(backend.deletes[0], 2)
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
 	_, err = fixture.Store.GetDocumentVectorGeneration(t.Context(), obsolete.ID)
-	require.ErrorContains(t, err, "not found")
-	require.Len(t, backend.deletes, 2)
-	assert.Len(t, backend.deletes[1], 1)
+	require.ErrorContains(err, "not found")
+	require.Len(backend.deletes, 2)
+	assert.Len(backend.deletes[1], 1)
 	stillActive, err = fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, active.ID, stillActive.ID)
+	require.NoError(err)
+	assert.Equal(active.ID, stillActive.ID)
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 2))
 	newActive, err := fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	require.NotNil(t, newActive)
-	assert.Equal(t, desired, newActive.DocumentVectorGenerationSpec)
-	assert.Zero(t, client.documentCalls)
+	require.NoError(err)
+	require.NotNil(newActive)
+	assert.Equal(desired, newActive.DocumentVectorGenerationSpec)
+	assert.Zero(client.documentCalls)
 }
 
 func TestScheduledDocumentVectorCleansRetiredWithoutConsentOrProvider(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, spec := documentVectorCommandFixture(t)
 	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	token := strings.Repeat("9", 64)
 	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
@@ -425,22 +437,24 @@ func TestScheduledDocumentVectorCleansRetiredWithoutConsentOrProvider(t *testing
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`), generation.ID,
 		"retired-extraction", spec.TargetExtractionProfileID, strings.Repeat("a", 64),
 		"original", 1, "retired-chunk", "retired-checksum", 1, token)
-	require.NoError(t, err)
+	require.NoError(err)
 	retired, err := fixture.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, time.Now())
-	require.NoError(t, err)
-	require.True(t, retired)
+	require.NoError(err)
+	require.True(retired)
 	backend := &commandDocumentVectorBackend{}
 	vf := &vectorFeatures{DocumentBackend: backend, Cfg: cfg.Vector}
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
 
-	assert.Equal(t, [][]string{{token}}, backend.deletes)
+	assert.Equal([][]string{{token}}, backend.deletes)
 	_, err = fixture.Store.GetDocumentVectorGeneration(t.Context(), generation.ID)
-	require.ErrorContains(t, err, "not found")
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	require.ErrorContains(err, "not found")
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
 }
 
 func TestScheduledDocumentVectorObservesConsentRecordedAfterRuntimeInitialization(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, spec := documentVectorCommandFixture(t)
 	vf := &vectorFeatures{
 		DocumentBackend: &commandDocumentVectorBackend{},
@@ -448,32 +462,34 @@ func TestScheduledDocumentVectorObservesConsentRecordedAfterRuntimeInitializatio
 		Cfg:             cfg.Vector,
 	}
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
 	active, err := fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	assert.Nil(t, active)
+	require.NoError(err)
+	assert.Nil(active)
 
 	consentSpec, err := configuredDocumentVectorConsentSpec(spec)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
-	require.NoError(t, err)
+	require.NoError(err)
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
 	active, err = fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(t, err)
-	require.NotNil(t, active)
-	assert.Equal(t, spec, active.DocumentVectorGenerationSpec)
+	require.NoError(err)
+	require.NotNil(active)
+	assert.Equal(spec, active.DocumentVectorGenerationSpec)
 }
 
 func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplete(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, desired := documentVectorCommandFixture(t)
 	consentSpec, err := configuredDocumentVectorConsentSpec(desired)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
-	require.NoError(t, err)
+	require.NoError(err)
 	active, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), desired)
-	require.NoError(t, err)
-	require.NoError(t, fixture.Store.ActivateDocumentVectorGeneration(t.Context(), active.ID, time.Now()))
+	require.NoError(err)
+	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(t.Context(), active.ID, time.Now()))
 	token := strings.Repeat("c", 64)
 	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
@@ -482,33 +498,33 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`), active.ID,
 		"deleted-extraction", desired.TargetExtractionProfileID, strings.Repeat("d", 64),
 		"original", 1, "deleted-chunk", "deleted-checksum", 1, token)
-	require.NoError(t, err)
+	require.NoError(err)
 	coverage, err := fixture.Store.GetDocumentVectorCoverage(t.Context(), active.ID)
-	require.NoError(t, err)
-	assert.True(t, coverage.Complete())
+	require.NoError(err)
+	assert.True(coverage.Complete())
 	status, err := fixture.Store.GetDocumentVectorGenerationStatus(t.Context(), active.ID, "", 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), status.CleanupPending)
+	require.NoError(err)
+	assert.Equal(int64(1), status.CleanupPending)
 
 	client := &commandDocumentSemanticClient{}
 	backend := &commandDocumentVectorBackend{}
 	vf := &vectorFeatures{
 		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
 	}
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
-	require.Equal(t, [][]string{{token}}, backend.deletes)
-	assert.Zero(t, client.documentCalls)
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	require.Equal([][]string{{token}}, backend.deletes)
+	assert.Zero(client.documentCalls)
 	status, err = fixture.Store.GetDocumentVectorGenerationStatus(t.Context(), active.ID, "", 10)
-	require.NoError(t, err)
-	assert.Zero(t, status.CleanupPending)
+	require.NoError(err)
+	assert.Zero(status.CleanupPending)
 	var publications int
-	require.NoError(t, fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
 		`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), active.ID).Scan(&publications))
-	assert.Zero(t, publications)
+	assert.Zero(publications)
 
-	require.NoError(t, runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
-	assert.Len(t, backend.deletes, 1, "a converged replay does not re-delete finalized tokens")
-	assert.Zero(t, client.documentCalls)
+	require.NoError(runScheduledDocumentVectorGeneration(t.Context(), fixture.Store, vf, 10))
+	assert.Len(backend.deletes, 1, "a converged replay does not re-delete finalized tokens")
+	assert.Zero(client.documentCalls)
 }
 
 type commandDocumentSemanticClient struct{ documentCalls int }

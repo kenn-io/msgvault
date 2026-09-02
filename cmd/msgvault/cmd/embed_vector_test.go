@@ -81,6 +81,8 @@ func (r *cliPassRunner) RunBackstop(context.Context, vector.GenerationID) (embed
 func (r *cliPassRunner) ReclaimStale(context.Context) (int, error) { return 0, nil }
 
 func TestRunEmbeddingPasses_ContextualCLIContinuesUntilConverged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	runner := &cliPassRunner{results: []embed.RunResult{
 		{Claimed: 2, Succeeded: 2, Contextual: &embed.ContextConvergence{Converged: false}},
 		{Claimed: 3, Succeeded: 3, Contextual: &embed.ContextConvergence{Converged: false}},
@@ -88,12 +90,12 @@ func TestRunEmbeddingPasses_ContextualCLIContinuesUntilConverged(t *testing.T) {
 	}}
 
 	result, err := runEmbeddingPasses(t.Context(), runner, 7, false, vector.APIFormatVoyageContextual, &bytes.Buffer{})
-	require.NoError(t, err)
-	assert.Equal(t, 3, runner.calls)
-	assert.Equal(t, 6, result.Claimed)
-	assert.Equal(t, 6, result.Succeeded)
-	require.NotNil(t, result.Contextual)
-	assert.True(t, result.Contextual.Converged)
+	require.NoError(err)
+	assert.Equal(3, runner.calls)
+	assert.Equal(6, result.Claimed)
+	assert.Equal(6, result.Succeeded)
+	require.NotNil(result.Contextual)
+	assert.True(result.Contextual.Converged)
 }
 
 func TestRunEmbeddingPasses_ContextualCLIRejectsNonProgress(t *testing.T) {
@@ -107,6 +109,8 @@ func TestRunEmbeddingPasses_ContextualCLIRejectsNonProgress(t *testing.T) {
 }
 
 func TestRunEmbeddingPasses_PersonOnlyFailurePreservesMessageProgress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	personErr := errors.New("person provider failed")
 	runner := &cliPassRunner{
 		results: []embed.RunResult{{Claimed: 3, Succeeded: 3}},
@@ -115,11 +119,11 @@ func TestRunEmbeddingPasses_PersonOnlyFailurePreservesMessageProgress(t *testing
 
 	var stderr bytes.Buffer
 	result, err := runEmbeddingPasses(t.Context(), runner, 7, false, vector.APIFormatOpenAI, &stderr)
-	require.NoError(t, err)
-	assert.Equal(t, 1, runner.calls)
-	assert.Equal(t, 3, result.Claimed)
-	assert.Equal(t, 3, result.Succeeded)
-	assert.Contains(t, stderr.String(), personErr.Error())
+	require.NoError(err)
+	assert.Equal(1, runner.calls)
+	assert.Equal(3, result.Claimed)
+	assert.Equal(3, result.Succeeded)
+	assert.Contains(stderr.String(), personErr.Error())
 }
 
 func (c cliConvergenceChecker) CheckConvergence(context.Context, vector.GenerationID) (scheduler.ConvergenceResult, error) {
@@ -127,6 +131,10 @@ func (c cliConvergenceChecker) CheckConvergence(context.Context, vector.Generati
 }
 
 func TestActivateBuiltGeneration_ContextualBehavior(t *testing.T) {
+	newAssert := assert.New
+	newRequire := require.New
+	assert := assert.New(t)
+	require := require.New(t)
 	complete := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
 		PersonCoverageComplete:  true,
@@ -156,6 +164,8 @@ func TestActivateBuiltGeneration_ContextualBehavior(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := newAssert(t)
+			require := newRequire(t)
 			state := complete
 			tt.mutate(&state)
 			backend := &cliActivationBackend{}
@@ -163,12 +173,12 @@ func TestActivateBuiltGeneration_ContextualBehavior(t *testing.T) {
 			activated, err := activateBuiltGeneration(t.Context(), backend,
 				cliConvergenceChecker{state: state}, 7, vector.APIFormatVoyageContextual,
 				&stdout, &stderr)
-			require.NoError(t, err)
-			assert.False(t, activated)
-			assert.Empty(t, backend.activateCalls)
-			assert.Empty(t, stdout.String())
-			assert.Contains(t, stderr.String(), tt.want)
-			assert.Contains(t, stderr.String(), "generation 7 has not converged")
+			require.NoError(err)
+			assert.False(activated)
+			assert.Empty(backend.activateCalls)
+			assert.Empty(stdout.String())
+			assert.Contains(stderr.String(), tt.want)
+			assert.Contains(stderr.String(), "generation 7 has not converged")
 		})
 	}
 
@@ -177,15 +187,17 @@ func TestActivateBuiltGeneration_ContextualBehavior(t *testing.T) {
 	activated, err := activateBuiltGeneration(t.Context(), backend,
 		cliConvergenceChecker{state: complete}, 7, vector.APIFormatVoyageContextual,
 		&stdout, &stderr)
-	require.NoError(t, err)
-	assert.True(t, activated)
-	assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
-	assert.Equal(t, []int64{9}, backend.sequences)
-	assert.Equal(t, "Generation 7 activated.\n", stdout.String())
-	assert.Empty(t, stderr.String())
+	require.NoError(err)
+	assert.True(activated)
+	assert.Equal([]vector.GenerationID{7}, backend.activateCalls)
+	assert.Equal([]int64{9}, backend.sequences)
+	assert.Equal("Generation 7 activated.\n", stdout.String())
+	assert.Empty(stderr.String())
 }
 
 func TestActivateBuiltGeneration_OpenAILegacyHintUnchanged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend := &cliActivationBackend{}
 	state := scheduler.ConvergenceResult{
 		MessageCoverageComplete: false,
@@ -196,13 +208,15 @@ func TestActivateBuiltGeneration_OpenAILegacyHintUnchanged(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	activated, err := activateBuiltGeneration(t.Context(), backend,
 		cliConvergenceChecker{state: state}, 7, vector.APIFormatOpenAI, &stdout, &stderr)
-	require.NoError(t, err)
-	assert.False(t, activated)
-	assert.Empty(t, backend.activateCalls)
-	assert.Equal(t, remainingCoverageHint(7, 3), stderr.String())
+	require.NoError(err)
+	assert.False(activated)
+	assert.Empty(backend.activateCalls)
+	assert.Equal(remainingCoverageHint(7, 3), stderr.String())
 }
 
 func TestActivateBuiltGeneration_OpenAICompleteUsesLegacyActivation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend := &cliActivationBackend{}
 	state := scheduler.ConvergenceResult{
 		MessageCoverageComplete: true,
@@ -212,18 +226,20 @@ func TestActivateBuiltGeneration_OpenAICompleteUsesLegacyActivation(t *testing.T
 	var stdout, stderr bytes.Buffer
 	activated, err := activateBuiltGeneration(t.Context(), backend,
 		cliConvergenceChecker{state: state}, 7, vector.APIFormatOpenAI, &stdout, &stderr)
-	require.NoError(t, err)
-	assert.True(t, activated)
-	assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
-	assert.Empty(t, backend.sequences, "legacy builds must not require contextual document progress")
-	assert.Equal(t, "Generation 7 activated.\n", stdout.String())
-	assert.Empty(t, stderr.String())
+	require.NoError(err)
+	assert.True(activated)
+	assert.Equal([]vector.GenerationID{7}, backend.activateCalls)
+	assert.Empty(backend.sequences, "legacy builds must not require contextual document progress")
+	assert.Equal("Generation 7 activated.\n", stdout.String())
+	assert.Empty(stderr.String())
 }
 
 // TestActivateBuiltGenerationOpenAIReportsPersonCoverage catches the legacy
 // CLI claiming zero message stragglers while exact person revisions still
 // make the generation unsafe to activate.
 func TestActivateBuiltGenerationOpenAIReportsPersonCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend := &cliActivationBackend{}
 	state := scheduler.ConvergenceResult{
 		MessageCoverageComplete:  true,
@@ -234,10 +250,10 @@ func TestActivateBuiltGenerationOpenAIReportsPersonCoverage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	activated, err := activateBuiltGeneration(t.Context(), backend,
 		cliConvergenceChecker{state: state}, 7, vector.APIFormatOpenAI, &stdout, &stderr)
-	require.NoError(t, err)
-	assert.False(t, activated)
-	assert.Empty(t, backend.activateCalls)
-	assert.Contains(t, stderr.String(), "person_coverage_complete=false (mismatched=2, rejected=0)")
+	require.NoError(err)
+	assert.False(activated)
+	assert.Empty(backend.activateCalls)
+	assert.Contains(stderr.String(), "person_coverage_complete=false (mismatched=2, rejected=0)")
 }
 
 func TestRejectedOnlyPersonCoverageReportsTerminalRecoveryOptions(t *testing.T) {
@@ -275,14 +291,16 @@ func TestActivateBuiltGeneration_ContextualLifecycleErrorsDoNotActivateAnotherGe
 		assert.Empty(t, backend.activateCalls)
 	})
 	t.Run("backend rejects retired generation", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		backend := &cliActivationBackend{activateErr: vector.ErrGenerationRetired}
 		activated, err := activateBuiltGeneration(t.Context(), backend,
 			cliConvergenceChecker{state: complete}, 7,
 			vector.APIFormatVoyageContextual, &bytes.Buffer{}, &bytes.Buffer{})
-		assert.False(t, activated)
-		require.ErrorIs(t, err, vector.ErrGenerationRetired)
-		assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
-		assert.Equal(t, []int64{0}, backend.sequences)
+		assert.False(activated)
+		require.ErrorIs(err, vector.ErrGenerationRetired)
+		assert.Equal([]vector.GenerationID{7}, backend.activateCalls)
+		assert.Equal([]int64{0}, backend.sequences)
 	})
 }
 
@@ -581,6 +599,8 @@ func TestLegacyConvergenceTreatsAuthorizationUnavailableAsNoRequiredPersonCovera
 // catches activation checks that look only at message coverage, ignore stale
 // revisions/orphans, or treat an empty curated person corpus as incomplete.
 func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
 	vectorPath := filepath.Join(dir, "vectors.db")
@@ -595,111 +615,111 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	}
 
 	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = mainStore.Close() })
-	require.NoError(t, mainStore.InitSchema())
+	require.NoError(mainStore.InitSchema())
 	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
 		t.Context(), semanticProfile.Fingerprint, "test",
 	)
-	require.NoError(t, err)
-	require.NoError(t, sqlitevec.RegisterExtension())
+	require.NoError(err)
+	require.NoError(sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 2, MainDB: mainStore.DB(),
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = backend.Close() })
 	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 2, c.Vector.GenerationFingerprint())
-	require.NoError(t, err)
+	require.NoError(err)
 	personGate := vector.NewExactSemanticPersonEmbeddingGate(
 		func() (vector.Config, error) { return c.Vector, nil }, mainStore,
 	)
 	checker, err := newConvergenceChecker(c.Vector, mainStore, backend, personGate)
-	require.NoError(t, err)
+	require.NoError(err)
 	personChecker, ok := checker.(personsearch.CoverageChecker)
-	require.True(t, ok, "configured convergence must expose the person-only readiness check")
+	require.True(ok, "configured convergence must expose the person-only readiness check")
 	_, err = mainStore.DB().Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'person-coverage@example.test');
 		INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
 		VALUES (1, 1, 1, 'person-coverage-message', 'email');
 	`)
-	require.NoError(t, err)
+	require.NoError(err)
 	personCoverage, err := personChecker.CheckPersonCoverage(t.Context(), gen)
-	require.NoError(t, err)
-	assert.True(t, personCoverage.Complete(),
+	require.NoError(err)
+	assert.True(personCoverage.Complete(),
 		"person search readiness must not scan or depend on unrelated message coverage")
 	state, err := checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.False(t, state.MessageCoverageComplete, "precondition: message coverage is incomplete")
+	require.NoError(err)
+	assert.False(state.MessageCoverageComplete, "precondition: message coverage is incomplete")
 	_, err = mainStore.DB().Exec(`UPDATE messages SET embed_gen = ? WHERE id = 1`, gen)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.True(t, state.PersonCoverageComplete)
-	assert.Zero(t, state.PersonCoverageMismatched)
-	assert.True(t, state.Complete(), "zero-person archive must converge")
+	require.NoError(err)
+	assert.True(state.PersonCoverageComplete)
+	assert.Zero(state.PersonCoverageMismatched)
+	assert.True(state.Complete(), "zero-person archive must converge")
 	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid) VALUES (?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000000")
-	require.NoError(t, err)
+	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.True(t, state.Complete(), "person without semantic text must not require a vector")
+	require.NoError(err)
+	assert.True(state.Complete(), "person without semantic text must not require a vector")
 	_, err = mainStore.DB().Exec(`DELETE FROM persons WHERE vcard_uid = ?`,
 		"urn:uuid:00000000-0000-0000-0000-000000000000")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000001", "Synthetic Person")
-	require.NoError(t, err)
+	require.NoError(err)
 	documents, err := mainStore.ListPersonSemanticDocumentsContext(t.Context())
-	require.NoError(t, err)
-	require.Len(t, documents, 1)
+	require.NoError(err)
+	require.Len(documents, 1)
 
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.False(t, state.PersonCoverageComplete)
-	assert.Equal(t, int64(1), state.PersonCoverageMismatched)
-	assert.False(t, state.Complete(), "missing person vector must block activation")
+	require.NoError(err)
+	assert.False(state.PersonCoverageComplete)
+	assert.Equal(int64(1), state.PersonCoverageMismatched)
+	assert.False(state.Complete(), "missing person vector must block activation")
 
-	require.NoError(t, backend.UpsertPersons(t.Context(), gen, []vector.PersonEmbedding{{
+	require.NoError(backend.UpsertPersons(t.Context(), gen, []vector.PersonEmbedding{{
 		PersonID: documents[0].PersonID, Revision: documents[0].Revision,
 	}}))
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.False(t, state.PersonCoverageComplete)
-	assert.False(t, state.Complete(), "a terminal provider rejection must remain visible")
+	require.NoError(err)
+	assert.False(state.PersonCoverageComplete)
+	assert.False(state.Complete(), "a terminal provider rejection must remain visible")
 
-	require.NoError(t, backend.UpsertPersons(t.Context(), gen, []vector.PersonEmbedding{{
+	require.NoError(backend.UpsertPersons(t.Context(), gen, []vector.PersonEmbedding{{
 		PersonID: documents[0].PersonID, Revision: documents[0].Revision, Vector: []float32{1, 2},
 	}}))
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.True(t, state.Complete())
+	require.NoError(err)
+	assert.True(state.Complete())
 
 	_, err = mainStore.DB().Exec(`UPDATE persons SET display_name = ? WHERE id = ?`,
 		"Synthetic Person Updated", documents[0].PersonID)
-	require.NoError(t, err)
+	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.False(t, state.PersonCoverageComplete)
-	assert.Equal(t, int64(1), state.PersonCoverageMismatched)
-	assert.False(t, state.Complete(), "stale exact digest must block activation")
+	require.NoError(err)
+	assert.False(state.PersonCoverageComplete)
+	assert.Equal(int64(1), state.PersonCoverageMismatched)
+	assert.False(state.Complete(), "stale exact digest must block activation")
 
 	_, err = mainStore.DB().Exec(`DELETE FROM persons WHERE id = ?`, documents[0].PersonID)
-	require.NoError(t, err)
+	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.False(t, state.PersonCoverageComplete)
-	assert.Equal(t, int64(1), state.PersonCoverageMismatched, "orphaned vector must block activation")
-	require.NoError(t, backend.DeletePersonsNotIn(t.Context(), gen, nil))
+	require.NoError(err)
+	assert.False(state.PersonCoverageComplete)
+	assert.Equal(int64(1), state.PersonCoverageMismatched, "orphaned vector must block activation")
+	require.NoError(backend.DeletePersonsNotIn(t.Context(), gen, nil))
 	state, err = checker.CheckConvergence(t.Context(), gen)
-	require.NoError(t, err)
-	assert.True(t, state.Complete(), "reconciled zero-person archive must converge")
+	require.NoError(err)
+	assert.True(state.Complete(), "reconciled zero-person archive must converge")
 }
 
 // openTestBackend opens a fresh in-memory-ish sqlitevec backend with a
@@ -879,27 +899,29 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 }
 
 func TestPickEmbedGeneration_ContextualRejectsWrongGenerationFingerprint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	backend := openTestBackend(t)
 	_, err := backend.CreateGeneration(ctx, "voyage-context-4", 4,
 		"voyage-context-4:4:p1-111111:c32768:e1:avoyage-contextual:v0")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, rebuild, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
 		Model: "voyage-context-4", Dimension: 4,
 		Fingerprint: "voyage-context-4:4:p1-111111:c32768:e1:avoyage-contextual:v1",
 		Stderr:      openStderrSink(t),
 	})
-	require.Error(t, err)
-	assert.False(t, rebuild)
-	assert.Contains(t, err.Error(), "in-progress rebuild has fingerprint")
-	assert.Contains(t, err.Error(), "avoyage-contextual:v0")
-	assert.Contains(t, err.Error(), "avoyage-contextual:v1")
+	require.Error(err)
+	assert.False(rebuild)
+	assert.Contains(err.Error(), "in-progress rebuild has fingerprint")
+	assert.Contains(err.Error(), "avoyage-contextual:v0")
+	assert.Contains(err.Error(), "avoyage-contextual:v1")
 
 	building, lookupErr := backend.BuildingGeneration(ctx)
-	require.NoError(t, lookupErr)
-	require.NotNil(t, building)
-	assert.Equal(t, vector.GenerationBuilding, building.State)
+	require.NoError(lookupErr)
+	require.NotNil(building)
+	assert.Equal(vector.GenerationBuilding, building.State)
 }
 
 // TestPickEmbedGeneration_StaleActivePlusMatchingBuilding covers the

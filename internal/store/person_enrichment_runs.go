@@ -16,6 +16,11 @@ var (
 	ErrManualRunIdempotencyConflict = errors.New("manual person enrichment idempotency key belongs to another target")
 )
 
+const (
+	personEnrichmentStateRunning   = "running"
+	personEnrichmentStateSucceeded = "succeeded"
+)
+
 // PersonEnrichmentRun is one bounded, idempotent execution scope with counts
 // derived from its durable attempts.
 type PersonEnrichmentRun struct {
@@ -126,7 +131,7 @@ func (s *Store) StartManualPersonEnrichmentRunContext(
 			created = false
 			return err
 		}
-		if run.State != "running" {
+		if run.State != personEnrichmentStateRunning {
 			return nil
 		}
 		var existingRun sql.NullInt64
@@ -332,7 +337,7 @@ func (s *Store) GetPersonEnrichmentRunContext(
 func (s *Store) CompleteRun(
 	ctx context.Context, runID int64, completion personenrichment.RunCompletion,
 ) error {
-	if completion.State != "" && completion.State != "succeeded" &&
+	if completion.State != "" && completion.State != personEnrichmentStateSucceeded &&
 		completion.State != "partial" && completion.State != "failed" {
 		return errors.New("person enrichment run completion is invalid")
 	}
@@ -356,7 +361,7 @@ func (s *Store) CompleteRun(
 			s.dialect.SelectForUpdate(), runID).Scan(&state); err != nil {
 			return fmt.Errorf("lock person enrichment run: %w", err)
 		}
-		if state != "running" {
+		if state != personEnrichmentStateRunning {
 			return fmt.Errorf("person enrichment run is %q, not running", state)
 		}
 		var nonterminal int64
@@ -388,7 +393,7 @@ func (s *Store) CompleteRun(
 			// otherwise (successes and/or policy outcomes only) -> succeeded.
 			switch {
 			case failed == 0:
-				completion.State = "succeeded"
+				completion.State = personEnrichmentStateSucceeded
 			case started > 0 && failed == started:
 				completion.State = "failed"
 			default:

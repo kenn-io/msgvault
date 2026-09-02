@@ -120,22 +120,25 @@ func (s *Store) finalizeReclaimedPersonSweepAttempts(
 func (s *Store) finalizeReclaimedPersonSweepAttempt(
 	ctx context.Context, tx *loggedTx, attemptID, runID string,
 ) error {
-	rows, err := tx.QueryContext(ctx, `SELECT batch_ordinal, utc_day, status,
+	rows, err := tx.QueryContext(ctx, `SELECT batch_ordinal, call_ordinal, purpose, utc_day, status,
 		reserved_requests, reserved_input_tokens, reserved_output_tokens, reserved_cost_micro_usd
 		FROM person_sweep_batches
-		WHERE attempt_id = ? AND status IN ('reserved', 'running') ORDER BY batch_ordinal`, attemptID)
+		WHERE attempt_id = ?
+		ORDER BY batch_ordinal, call_ordinal`, attemptID)
 	if err != nil {
 		return fmt.Errorf("list abandoned person sweep batches: %w", err)
 	}
 	type abandonedBatch struct {
-		ordinal     int
-		day, status string
-		reserved    peoplesweep.Usage
+		ordinal, callOrdinal int
+		purpose              string
+		day, status          string
+		reserved             peoplesweep.Usage
 	}
 	batches := make([]abandonedBatch, 0)
 	for rows.Next() {
 		var batch abandonedBatch
-		if err := rows.Scan(&batch.ordinal, &batch.day, &batch.status,
+		if err := rows.Scan(&batch.ordinal, &batch.callOrdinal, &batch.purpose,
+			&batch.day, &batch.status,
 			&batch.reserved.Requests, &batch.reserved.InputTokens,
 			&batch.reserved.OutputTokens, &batch.reserved.EstimatedCostMicroUSD); err != nil {
 			_ = rows.Close()
@@ -150,7 +153,18 @@ func (s *Store) finalizeReclaimedPersonSweepAttempt(
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close abandoned person sweep batches: %w", err)
 	}
+	coordinates := make([]personSweepBatchCoordinate, 0, len(batches))
 	for _, batch := range batches {
+		coordinates = append(coordinates, personSweepBatchCoordinate{ordinal: batch.ordinal,
+			callOrdinal: batch.callOrdinal, purpose: batch.purpose, day: batch.day})
+	}
+	if err := validatePersonSweepCallCoordinateSet(coordinates); err != nil {
+		return fmt.Errorf("finalize abandoned person sweep attempt: %w", err)
+	}
+	for _, batch := range batches {
+		if batch.status != "reserved" && batch.status != "running" {
+			continue
+		}
 		actual := peoplesweep.Usage{}
 		status := "cancelled"
 		if batch.status == "running" {
@@ -160,10 +174,11 @@ func (s *Store) finalizeReclaimedPersonSweepAttempt(
 		_, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_sweep_batches SET
 			status = ?, actual_requests = ?, actual_input_tokens = ?, actual_output_tokens = ?,
 			actual_cost_micro_usd = ?, failure_class = ?, completed_at = %s
-			WHERE attempt_id = ? AND batch_ordinal = ? AND status = ?`, s.dialect.Now()),
+			WHERE attempt_id = ? AND batch_ordinal = ? AND call_ordinal = ? AND status = ?`,
+			s.dialect.Now()),
 			status, actual.Requests, actual.InputTokens, actual.OutputTokens,
 			actual.EstimatedCostMicroUSD, peoplesweep.FailureLeaseLost,
-			attemptID, batch.ordinal, batch.status)
+			attemptID, batch.ordinal, batch.callOrdinal, batch.status)
 		if err != nil {
 			return fmt.Errorf("finalize abandoned person sweep batch: %w", err)
 		}

@@ -137,7 +137,8 @@ func codexIsolationFixtureRegistry(contents []byte) map[CodexReleaseKey]CodexAtt
 
 func codexIsolationTransportConfig(executable string) ProviderConfig {
 	return ProviderConfig{
-		Kind: ProviderCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		Protocol: ProtocolCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+		Auth: AuthNone, Credential: CredentialNone, OutputMode: OutputModeNativeJSONSchema,
 		RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		AllowedSources: []SourceClass{SourceConversationText}, SourceSince: "2025-01-01",
 		Executable: executable, ExecutionBoundary: CodexExecutionBoundaryV1,
@@ -391,17 +392,19 @@ func TestCodexReleasedFixtureRequiresExactVersion(t *testing.T) {
 // TestCodexFactoryFailsBeforeStartingProcess catches construction of an
 // unreleased Codex transport reaching the App Server process boundary.
 func TestCodexFactoryFailsBeforeStartingProcess(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	executable, _ := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
 		version: codexIsolationFixtureVersion,
 	})
 	starter := &isolationCountingStarter{}
 
-	transport, err := NewStructuredTransport(
-		codexIsolationTransportConfig(executable), nil, starter, NewReleasedCodexIsolationGate(),
-	)
-	require.ErrorIs(t, err, ErrCodexIsolationUnreleased)
-	assert.Nil(t, transport)
-	assert.Zero(t, starter.starts.Load())
+	registry, err := NewDriverRegistry(nil, starter, NewReleasedCodexIsolationGate())
+	require.NoError(err)
+	transport, err := registry.Driver(ProtocolCodexAppServer, codexIsolationTransportConfig(executable))
+	require.ErrorIs(err, ErrCodexIsolationUnreleased)
+	assert.Nil(transport)
+	assert.Zero(starter.starts.Load())
 }
 
 // TestCodexReverifyRejectsExecutableReplacement catches an executable being
@@ -416,12 +419,11 @@ func TestCodexReverifyRejectsExecutableReplacement(t *testing.T) {
 		bytes: []byte("#!/bin/sh\nprintf 'replacement 0.149.0\\n'\n"),
 	}
 	starter := &isolationCountingStarter{}
-	transport, err := NewCodexAppServerTransport(
+	transport, err := NewCodexAppServerDriver(
 		codexIsolationTransportConfig(executable), starter, gate,
 	)
 	must.NoError(err)
-	config := Config{Enabled: true, Provider: codexIsolationTransportConfig(executable)}
-	config.ApplyDefaults()
+	config := testConfigWithProvider(codexIsolationTransportConfig(executable))
 	profile, err := config.Profile()
 	must.NoError(err)
 	request := StructuredRequest{
@@ -431,9 +433,9 @@ func TestCodexReverifyRejectsExecutableReplacement(t *testing.T) {
 		JSONSchema:      []byte(`{"type":"object","properties":{},"additionalProperties":false}`),
 		MaxOutputTokens: 16,
 	}
-	prepared, err := transport.PrepareJSON(profile, request)
+	prepared, err := transport.Prepare(profile, request)
 	must.NoError(err)
-	_, err = transport.GeneratePreparedJSON(t.Context(), profile, "", prepared)
+	_, err = transport.GeneratePrepared(t.Context(), profile, Credential{}, prepared)
 	must.ErrorIs(err, ErrCodexIsolationUnreleased)
 	assert.Zero(t, starter.starts.Load(), "replacement must fail at reverify before Start")
 }

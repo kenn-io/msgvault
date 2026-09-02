@@ -777,6 +777,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// the pre-filled section so changing endpoint cannot silently carry the
 	// default Voyage key environment name to another origin.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	// People-sweep provider defaults include a generated profile. Decode into
+	// an empty section so ApplyDefaults only fills it when the file defines
+	// no profiles of its own.
+	cfg.People.Sweep = peoplesweep.Config{}
 	metadata, err := toml.Decode(string(content), cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
@@ -786,27 +790,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
-	if cfg.People.Sweep.Provider.AllowAnonymous &&
-		!metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
-		// The default authenticated credential is loaded before TOML decoding.
-		// Anonymous loopback mode instead defaults to no credential, while an
-		// explicitly configured key remains visible to validation and is rejected.
-		cfg.People.Sweep.Provider.APIKeyEnv = ""
-	}
-	if cfg.People.Sweep.Provider.Kind == peoplesweep.ProviderCodexAppServer {
-		if !metadata.IsDefined("people", "sweep", "provider", "endpoint") {
-			cfg.People.Sweep.Provider.Endpoint = ""
-		}
-		if !metadata.IsDefined("people", "sweep", "provider", "api_key_env") {
-			cfg.People.Sweep.Provider.APIKeyEnv = ""
-		}
-		if !metadata.IsDefined("people", "sweep", "provider", "executable") {
-			cfg.People.Sweep.Provider.Executable = "codex"
-		}
-		if !metadata.IsDefined("people", "sweep", "provider", "execution_boundary") {
-			cfg.People.Sweep.Provider.ExecutionBoundary = peoplesweep.CodexExecutionBoundaryV1
-		}
-	}
+	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")

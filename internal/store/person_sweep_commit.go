@@ -28,10 +28,11 @@ const (
 )
 
 type personSweepLockCoordinate struct {
-	kind     personSweepLockKind
-	value    string
-	ordinal  int
-	personID int64
+	kind        personSweepLockKind
+	value       string
+	ordinal     int
+	callOrdinal int
+	personID    int64
 }
 
 func personSweepUsageWorkLockPlan(
@@ -44,14 +45,20 @@ func personSweepUsageWorkLockPlan(
 	slices.Sort(days)
 	days = slices.Compact(days)
 	coordinates = append([]personSweepBatchCoordinate(nil), coordinates...)
-	slices.SortFunc(coordinates, func(a, b personSweepBatchCoordinate) int { return a.ordinal - b.ordinal })
+	slices.SortFunc(coordinates, func(a, b personSweepBatchCoordinate) int {
+		if a.ordinal != b.ordinal {
+			return a.ordinal - b.ordinal
+		}
+		return a.callOrdinal - b.callOrdinal
+	})
 	plan := make([]personSweepLockCoordinate, 0, len(days)+len(coordinates)+1)
 	for _, day := range days {
 		plan = append(plan, personSweepLockCoordinate{kind: personSweepLockDailyUsage, value: day})
 	}
 	for _, coordinate := range coordinates {
 		plan = append(plan, personSweepLockCoordinate{kind: personSweepLockBatch,
-			value: coordinate.day, ordinal: coordinate.ordinal})
+			value: coordinate.day, ordinal: coordinate.ordinal,
+			callOrdinal: coordinate.callOrdinal})
 	}
 	if personID > 0 {
 		plan = append(plan, personSweepLockCoordinate{kind: personSweepLockWork, personID: personID})
@@ -237,9 +244,14 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 		strings.TrimSpace(request.Generation.ModelVersion) == "" {
 		return errors.New("apply person sweep provider generation has incomplete identity")
 	}
-	seen := make(map[int]struct{}, len(request.Batches))
+	if err := peoplesweep.ValidateBudgetConfig(request.Budget); err != nil {
+		return fmt.Errorf("apply person sweep provider generation has invalid budget: %w", err)
+	}
+	seen := make(map[peoplesweep.ProviderCallCoordinate]struct{}, len(request.Batches))
+	coordinates := make([]personSweepBatchCoordinate, 0, len(request.Batches))
 	for _, batch := range request.Batches {
 		if batch.Ordinal < 0 || batch.ReservationID == "" || batch.InputHash == "" ||
+			!validPersonSweepCallCoordinate(batch.CallOrdinal, batch.Purpose) ||
 			batch.Usage.InputTokens < 0 || batch.Usage.OutputTokens < 0 ||
 			batch.ActualCostMicroUSD < 0 || batch.Latency < 0 ||
 			batch.ProviderVersion != request.Generation.ProviderVersion ||
@@ -247,10 +259,22 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 			!peoplesweep.IsSafeProviderMetadata(batch.ProviderRequestID) {
 			return errors.New("apply person sweep completed batch has invalid identity or usage")
 		}
-		if _, duplicate := seen[batch.Ordinal]; duplicate {
-			return errors.New("apply person sweep completed batch ordinal is duplicated")
+		coordinate := completedBatchCoordinate(batch)
+		if _, duplicate := seen[coordinate]; duplicate {
+			return errors.New("apply person sweep completed call coordinate is duplicated")
 		}
-		seen[batch.Ordinal] = struct{}{}
+		seen[coordinate] = struct{}{}
+		coordinates = append(coordinates, personSweepBatchCoordinate{ordinal: batch.Ordinal,
+			callOrdinal: batch.CallOrdinal, purpose: batch.Purpose})
+	}
+	slices.SortFunc(coordinates, func(a, b personSweepBatchCoordinate) int {
+		if a.ordinal != b.ordinal {
+			return a.ordinal - b.ordinal
+		}
+		return a.callOrdinal - b.callOrdinal
+	})
+	if err := validatePersonSweepCallCoordinateSet(coordinates); err != nil {
+		return fmt.Errorf("apply person sweep: %w", err)
 	}
 	return nil
 }
@@ -308,16 +332,21 @@ func (s *Store) personSweepApplyBatchCoordinatesTx(
 	if len(coordinates) != len(request.Batches) {
 		return nil, errors.New("apply person sweep batches do not exactly cover durable reservations")
 	}
-	ordinals := make(map[int]struct{}, len(request.Batches))
+	calls := make(map[peoplesweep.ProviderCallCoordinate]struct{}, len(request.Batches))
 	for _, batch := range request.Batches {
-		ordinals[batch.Ordinal] = struct{}{}
+		calls[completedBatchCoordinate(batch)] = struct{}{}
 	}
 	for _, coordinate := range coordinates {
-		if _, ok := ordinals[coordinate.ordinal]; !ok {
+		if _, ok := calls[coordinate.providerCoordinate()]; !ok {
 			return nil, errors.New("apply person sweep batches do not exactly cover durable reservations")
 		}
 	}
 	return coordinates, nil
+}
+
+func completedBatchCoordinate(batch peoplesweep.CompletedBatch) peoplesweep.ProviderCallCoordinate {
+	return peoplesweep.ProviderCallCoordinate{BatchOrdinal: batch.Ordinal,
+		CallOrdinal: batch.CallOrdinal, Purpose: batch.Purpose}
 }
 
 func (s *Store) lockPersonSweepUsageThenWorkTx(
@@ -333,7 +362,8 @@ func (s *Store) lockPersonSweepUsageThenWorkTx(
 			}
 		case personSweepLockBatch:
 			if _, found, err := loadPersonSweepBatchTx(
-				ctx, tx, attemptID, coordinate.ordinal, s.IsPostgreSQL()); err != nil {
+				ctx, tx, attemptID, coordinate.ordinal, coordinate.callOrdinal,
+				s.IsPostgreSQL()); err != nil {
 				return false, err
 			} else if !found {
 				return false, errors.New("person sweep lock plan batch is missing")
@@ -393,20 +423,21 @@ func (s *Store) reconcilePersonSweepSuccessBatchesTx(
 	if len(coordinates) != len(request.Batches) {
 		return 0, errors.New("apply person sweep batches do not exactly cover durable reservations")
 	}
-	byOrdinal := make(map[int]peoplesweep.CompletedBatch, len(request.Batches))
+	byCoordinate := make(map[peoplesweep.ProviderCallCoordinate]peoplesweep.CompletedBatch,
+		len(request.Batches))
 	for _, completed := range request.Batches {
-		byOrdinal[completed.Ordinal] = completed
+		byCoordinate[completedBatchCoordinate(completed)] = completed
 	}
 	for _, coordinate := range coordinates {
-		if _, ok := byOrdinal[coordinate.ordinal]; !ok {
+		if _, ok := byCoordinate[coordinate.providerCoordinate()]; !ok {
 			return 0, errors.New("apply person sweep batches do not exactly cover durable reservations")
 		}
 	}
 	actualTotal := peoplesweep.Usage{}
 	for _, coordinate := range coordinates {
-		completed := byOrdinal[coordinate.ordinal]
+		completed := byCoordinate[coordinate.providerCoordinate()]
 		batch, found, err := loadPersonSweepBatchTx(ctx, tx, request.AttemptID,
-			coordinate.ordinal, s.IsPostgreSQL())
+			coordinate.ordinal, coordinate.callOrdinal, s.IsPostgreSQL())
 		if err != nil {
 			return 0, err
 		}
@@ -414,18 +445,32 @@ func (s *Store) reconcilePersonSweepSuccessBatchesTx(
 			batch.inputHash != completed.InputHash {
 			return 0, errors.New("apply person sweep completed batch is not the running reservation")
 		}
-		actual := peoplesweep.Usage{Requests: max(batch.reserved.Requests, 1),
-			InputTokens:           max(batch.reserved.InputTokens, completed.Usage.InputTokens),
-			OutputTokens:          max(batch.reserved.OutputTokens, completed.Usage.OutputTokens),
-			EstimatedCostMicroUSD: max(batch.reserved.EstimatedCostMicroUSD, completed.ActualCostMicroUSD)}
+		if batch.budgetFingerprint != personSweepBudgetFingerprint(request.Budget) {
+			return 0, errors.New("apply person sweep completed batch budget does not match its reservation")
+		}
+		actual := batch.reserved
+		if completed.UsageKnown {
+			reconciledTokens := peoplesweep.TokenUsage{
+				InputTokens:  max(batch.reserved.InputTokens, completed.Usage.InputTokens),
+				OutputTokens: max(batch.reserved.OutputTokens, completed.Usage.OutputTokens),
+			}
+			reconciledCost, err := peoplesweep.EstimateCostMicroUSD(reconciledTokens, request.Budget)
+			if err != nil {
+				return 0, fmt.Errorf("apply person sweep completed batch cost: %w", err)
+			}
+			actual = peoplesweep.Usage{Requests: max(batch.reserved.Requests, 1),
+				InputTokens: reconciledTokens.InputTokens, OutputTokens: reconciledTokens.OutputTokens,
+				EstimatedCostMicroUSD: reconciledCost}
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE person_sweep_batches SET status = 'succeeded',
 			provider_request_id = ?, actual_requests = ?, actual_input_tokens = ?,
 			actual_output_tokens = ?, actual_cost_micro_usd = ?, latency_milliseconds = ?,
-			failure_class = '', completed_at = ? WHERE attempt_id = ? AND batch_ordinal = ?
+			failure_class = '', completed_at = ?
+			WHERE attempt_id = ? AND batch_ordinal = ? AND call_ordinal = ?
 			AND status = 'running'`, completed.ProviderRequestID, actual.Requests,
 			actual.InputTokens, actual.OutputTokens, actual.EstimatedCostMicroUSD,
 			completed.Latency.Milliseconds(), s.dialect.TimestampParam(request.CompletedAt),
-			request.AttemptID, completed.Ordinal)
+			request.AttemptID, completed.Ordinal, completed.CallOrdinal)
 		if err != nil {
 			return 0, err
 		}

@@ -70,6 +70,8 @@ const (
 	// MessagesActivityColumns with a value-change guard, so embedding and
 	// FTS bookkeeping sweeps no longer requeue the archive.
 	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
+	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
+	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 )
 
 func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) error {

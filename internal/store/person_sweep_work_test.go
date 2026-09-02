@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,10 +142,17 @@ func TestPersonSweepExpiredLeaseReclaimFinalizesAbandonedAccounting(t *testing.T
 	must.NoError(err)
 	must.NoError(f.store.StartPersonSweepAttempt(t.Context(),
 		sweepStartAttempt(t, fixture.attemptID, fixture.runID, fixture.personID, first.Fence)))
-	reservation, err := f.store.ReservePersonSweepBudget(t.Context(),
-		sweepReservation(fixture, 0, 100, "provider-fingerprint", generousSweepBudget()))
+	primaryRequest := sweepReservation(fixture, 0, 100, "provider-fingerprint", generousSweepBudget())
+	reservation, err := f.store.ReservePersonSweepBudget(t.Context(), primaryRequest)
 	must.NoError(err)
-	must.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), reservation))
+	must.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), reservation, *first))
+	repairRequest := primaryRequest
+	repairRequest.CallOrdinal = 1
+	repairRequest.Purpose = peoplesweep.ProviderCallPurposeRepair
+	repairRequest.InputHash = strings.Repeat("a", 64)
+	repairReservation, err := f.store.ReservePersonSweepBudget(t.Context(), repairRequest)
+	must.NoError(err)
+	must.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), repairReservation, *first))
 	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE person_sweep_work SET lease_until = ? WHERE person_id = ?`),
 		time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), first.PersonID)
@@ -152,26 +160,185 @@ func TestPersonSweepExpiredLeaseReclaimFinalizesAbandonedAccounting(t *testing.T
 
 	second := claimPersonSweepFixture(t, f.store, "worker-b")
 	checks.Equal(first.Fence+1, second.Fence)
-	var attemptStatus, failureClass, batchStatus, runStatus string
+	var attemptStatus, failureClass, runStatus string
 	must.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT status, failure_class FROM person_sweep_attempts WHERE id = ?`),
 		fixture.attemptID).Scan(&attemptStatus, &failureClass))
+	var failedCalls int
 	must.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
-		`SELECT status FROM person_sweep_batches WHERE attempt_id = ? AND batch_ordinal = 0`),
-		fixture.attemptID).Scan(&batchStatus))
+		`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'failed'`),
+		fixture.attemptID).Scan(&failedCalls))
 	must.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT status FROM person_sweep_runs WHERE id = ?`), fixture.runID).Scan(&runStatus))
 	checks.Equal("failed", attemptStatus)
 	checks.Equal(string(peoplesweep.FailureLeaseLost), failureClass)
-	checks.Equal("failed", batchStatus)
+	checks.Equal(2, failedCalls)
 	checks.Equal("failed", runStatus)
 	var reservedRequests, actualRequests int64
 	must.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT reserved_requests, actual_requests FROM person_sweep_daily_usage WHERE utc_day = ?`),
 		testSweepUTCDate).Scan(&reservedRequests, &actualRequests))
 	checks.Zero(reservedRequests)
-	checks.Equal(int64(1), actualRequests,
-		"a request marked started remains conservatively charged after worker loss")
+	checks.Equal(int64(2), actualRequests,
+		"every call marked started remains conservatively charged after worker loss")
+}
+
+func TestPersonSweepReclaimedFailureReplayValidatesExactDurableShape(t *testing.T) {
+	require := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	f.insertMessage(t, "reclaimed-replay-shape", "email", f.aliceID,
+		time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
+	reconcilePersonSweepFixture(t, f, peoplesweep.SourceConversationText)
+	first := claimPersonSweepFixture(t, f.store, "worker-replay-old")
+	budgetFixture := personSweepBudgetFixture{store: f.store, personID: first.PersonID,
+		runID: "run-reclaimed-replay", attemptID: "attempt-reclaimed-replay"}
+	_, err := f.store.StartPersonSweepRun(t.Context(), peoplesweep.StartRun{
+		ID: budgetFixture.runID, Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		ProgramFingerprint: "program-fingerprint", CatalogFingerprint: "catalog-fingerprint",
+		ProviderFingerprint: "provider-fingerprint", StartedAt: sweepBudgetNow(),
+	})
+	require.NoError(err)
+	require.NoError(f.store.StartPersonSweepAttempt(t.Context(), sweepStartAttempt(t,
+		budgetFixture.attemptID, budgetFixture.runID, budgetFixture.personID, first.Fence)))
+	primaryRequest := sweepReservation(budgetFixture, 0, 100,
+		"provider-fingerprint", generousSweepBudget())
+	primary, err := f.store.ReservePersonSweepBudget(t.Context(), primaryRequest)
+	require.NoError(err)
+	require.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), primary, *first))
+	repairRequest := primaryRequest
+	repairRequest.CallOrdinal = 1
+	repairRequest.Purpose = peoplesweep.ProviderCallPurposeRepair
+	repairRequest.InputHash = strings.Repeat("e", 64)
+	repair, err := f.store.ReservePersonSweepBudget(t.Context(), repairRequest)
+	require.NoError(err)
+	require.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), repair, *first))
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_sweep_work SET lease_until = ? WHERE person_id = ?`),
+		time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), first.PersonID)
+	require.NoError(err)
+	_ = claimPersonSweepFixture(t, f.store, "worker-replay-new")
+
+	base := peoplesweep.FailureFinalization{Lease: *first, AttemptID: budgetFixture.attemptID,
+		Class: peoplesweep.FailureLeaseLost, RetryAt: sweepBudgetNow().Add(time.Hour),
+		Reservations: []peoplesweep.BudgetReservation{primary, repair},
+		FinalizedAt:  sweepBudgetNow().Add(time.Minute)}
+	require.NoError(f.store.FinalizePersonSweepFailure(t.Context(), base),
+		"an exact stale lease-lost replay is a safe no-op")
+
+	tests := []struct {
+		name   string
+		mutate func(*peoplesweep.FailureFinalization)
+	}{
+		{name: "empty reservations", mutate: func(input *peoplesweep.FailureFinalization) {
+			input.Reservations = nil
+		}},
+		{name: "different terminal class", mutate: func(input *peoplesweep.FailureFinalization) {
+			input.Class = peoplesweep.FailureProviderHTTP
+		}},
+		{name: "missing durable repair", mutate: func(input *peoplesweep.FailureFinalization) {
+			input.Reservations = input.Reservations[:1]
+		}},
+		{name: "completed metadata for reclaimed failure", mutate: func(input *peoplesweep.FailureFinalization) {
+			input.Completed = []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+				Purpose: peoplesweep.ProviderCallPurposePrimary, ProviderRequestID: "request-stale",
+				UsageKnown: true, Usage: peoplesweep.TokenUsage{InputTokens: 1, OutputTokens: 1}}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := base
+			input.Reservations = append([]peoplesweep.BudgetReservation(nil), base.Reservations...)
+			test.mutate(&input)
+			require.Error(f.store.FinalizePersonSweepFailure(t.Context(), input))
+		})
+	}
+}
+
+func TestPersonSweepReclaimRejectsMalformedDurableCallCoordinates(t *testing.T) {
+	tests := []struct {
+		name       string
+		addInvalid func(*testing.T, personSweepBudgetFixture, peoplesweep.BudgetReservationRequest,
+			peoplesweep.Lease)
+	}{
+		{name: "repair without primary", addInvalid: func(
+			t *testing.T, fixture personSweepBudgetFixture, primary peoplesweep.BudgetReservationRequest,
+			lease peoplesweep.Lease,
+		) {
+			t.Helper()
+			repair := primary
+			repair.CallOrdinal = 1
+			repair.Purpose = peoplesweep.ProviderCallPurposeRepair
+			repair.InputHash = strings.Repeat("f", 64)
+			reservation, err := fixture.store.ReservePersonSweepBudget(t.Context(), repair)
+			require.NoError(t, err)
+			require.NoError(t, fixture.store.MarkPersonSweepBudgetStarted(t.Context(), reservation, lease))
+		}},
+		{name: "primary ordinal gap", addInvalid: func(
+			t *testing.T, fixture personSweepBudgetFixture, _ peoplesweep.BudgetReservationRequest,
+			lease peoplesweep.Lease,
+		) {
+			t.Helper()
+			request := sweepReservation(fixture, 1, 100,
+				"provider-fingerprint", generousSweepBudget())
+			reservation, err := fixture.store.ReservePersonSweepBudget(t.Context(), request)
+			require.NoError(t, err)
+			require.NoError(t, fixture.store.MarkPersonSweepBudgetStarted(t.Context(), reservation, lease))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newPersonSweepJournalFixture(t, true, false)
+			f.insertMessage(t, "malformed-reclaim", "email", f.aliceID,
+				time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
+			reconcilePersonSweepFixture(t, f, peoplesweep.SourceConversationText)
+			first := claimPersonSweepFixture(t, f.store, "worker-malformed-old")
+			fixture := personSweepBudgetFixture{store: f.store, personID: first.PersonID,
+				runID: "run-malformed", attemptID: "attempt-malformed"}
+			_, err := f.store.StartPersonSweepRun(t.Context(), peoplesweep.StartRun{
+				ID: fixture.runID, Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+				ProgramFingerprint: "program-fingerprint", CatalogFingerprint: "catalog-fingerprint",
+				ProviderFingerprint: "provider-fingerprint", StartedAt: sweepBudgetNow(),
+			})
+			require.NoError(err)
+			require.NoError(f.store.StartPersonSweepAttempt(t.Context(), sweepStartAttempt(t,
+				fixture.attemptID, fixture.runID, fixture.personID, first.Fence)))
+			primaryRequest := sweepReservation(fixture, 0, 100,
+				"provider-fingerprint", generousSweepBudget())
+			primary, err := f.store.ReservePersonSweepBudget(t.Context(), primaryRequest)
+			require.NoError(err)
+			require.NoError(f.store.MarkPersonSweepBudgetStarted(t.Context(), primary, *first))
+			test.addInvalid(t, fixture, primaryRequest, *first)
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+				DELETE FROM person_sweep_batches
+				WHERE attempt_id = ? AND batch_ordinal = 0 AND call_ordinal = 0`), fixture.attemptID)
+			require.NoError(err)
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+				`UPDATE person_sweep_work SET lease_until = ? WHERE person_id = ?`),
+				time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), first.PersonID)
+			require.NoError(err)
+
+			lease, err := f.store.ClaimPersonSweep(t.Context(), peoplesweep.ClaimRequest{
+				WorkerID: "worker-malformed-new", LeaseDuration: time.Minute,
+			})
+			require.ErrorContains(err, "gap or missing primary")
+			assert.Nil(lease)
+			var attemptStatus, batchStatus, leaseOwner string
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+				`SELECT status FROM person_sweep_attempts WHERE id = ?`),
+				fixture.attemptID).Scan(&attemptStatus))
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+				`SELECT status FROM person_sweep_batches WHERE attempt_id = ?`),
+				fixture.attemptID).Scan(&batchStatus))
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+				`SELECT lease_owner FROM person_sweep_work WHERE person_id = ?`),
+				first.PersonID).Scan(&leaseOwner))
+			assert.Equal("running", attemptStatus)
+			assert.Equal("running", batchStatus)
+			assert.Equal(first.WorkerID, leaseOwner)
+		})
+	}
 }
 
 func TestPersonSweepConcurrentClaimHasOneWinner(t *testing.T) {

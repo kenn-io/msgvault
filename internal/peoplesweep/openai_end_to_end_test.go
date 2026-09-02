@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"slices"
 	"strconv"
@@ -51,6 +52,8 @@ type openAISweepServer struct {
 	responses   []openAISweepResponse
 	responseFor func([]byte, int) (openAISweepResponse, error)
 	wireHashes  []string
+	wireBodies  [][]byte
+	outputMode  peoplesweep.OutputMode
 }
 
 func (s *openAISweepServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,25 +73,34 @@ func (s *openAISweepServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wantHash := hex.EncodeToString(digest[:])
 	s.mu.Lock()
 	s.wireHashes = append(s.wireHashes, wantHash)
+	s.wireBodies = append(s.wireBodies, append([]byte(nil), raw...))
 	s.mu.Unlock()
 	if s.store != nil {
-		var reservedHash string
+		var callOrdinal int
+		var purpose string
 		err = s.store.DB().QueryRowContext(r.Context(), s.store.Rebind(`
-			SELECT input_hash FROM person_sweep_batches
-			WHERE status = 'running' ORDER BY batch_ordinal DESC LIMIT 1`)).Scan(&reservedHash)
+			SELECT call_ordinal, purpose FROM person_sweep_batches
+			WHERE status = 'running' AND input_hash = ?`), wantHash).Scan(&callOrdinal, &purpose)
 		assert.NoError(s.t, err)
-		assert.Equal(s.t, wantHash, reservedHash,
-			"the exact sent HTTP body must be covered by the durable reservation")
+		assert.True(s.t,
+			(callOrdinal == 0 && purpose == peoplesweep.ProviderCallPurposePrimary) ||
+				(callOrdinal == 1 && purpose == peoplesweep.ProviderCallPurposeRepair),
+			"the exact sent HTTP body must be covered by a valid durable call reservation")
 	}
 
 	var request capturedChatRequest
 	assert.NoError(s.t, json.Unmarshal(raw, &request))
 	assert.Equal(s.t, "model-request-2026", request.Model)
-	assert.Equal(s.t, peoplesweep.ExtractionSchemaName, request.ResponseFormat.JSONSchema.Name)
-	assert.Equal(s.t, "json_schema", request.ResponseFormat.Type)
-	assert.True(s.t, request.ResponseFormat.JSONSchema.Strict)
-	assert.JSONEq(s.t, string(peoplesweep.ExtractionJSONSchema()),
-		string(request.ResponseFormat.JSONSchema.Schema))
+	if s.outputMode == peoplesweep.OutputModePromptJSON {
+		assert.Empty(s.t, request.ResponseFormat.Type)
+		assert.Contains(s.t, request.Messages[0].Content, string(peoplesweep.ExtractionJSONSchema()))
+	} else {
+		assert.Equal(s.t, peoplesweep.ExtractionSchemaName, request.ResponseFormat.JSONSchema.Name)
+		assert.Equal(s.t, "json_schema", request.ResponseFormat.Type)
+		assert.True(s.t, request.ResponseFormat.JSONSchema.Strict)
+		assert.JSONEq(s.t, string(peoplesweep.ExtractionJSONSchema()),
+			string(request.ResponseFormat.JSONSchema.Schema))
+	}
 	var response openAISweepResponse
 	if s.responseFor != nil {
 		response, err = s.responseFor(raw, call)
@@ -124,6 +136,18 @@ type openAISweepFixture struct {
 	worker   peoplesweep.Worker
 }
 
+type countingOpenAISweepCatalog struct {
+	source peoplesweep.CatalogSource
+	calls  int
+}
+
+func (c *countingOpenAISweepCatalog) BuildPersonFactCatalogContext(
+	ctx context.Context, includeSensitive bool,
+) (personfacts.Catalog, error) {
+	c.calls++
+	return c.source.BuildPersonFactCatalogContext(ctx, includeSensitive)
+}
+
 func newOpenAISweepFixture(
 	t *testing.T,
 	server *httptest.Server,
@@ -145,14 +169,15 @@ func newOpenAISweepFixture(
 	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
 	require.NoError(t, err)
 
-	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderOpenAICompatible, Endpoint: server.URL + "/compatible/custom",
-		Model: "model-request-2026", APIKeyEnv: "SYNTHETIC_OPENAI_KEY",
+	config := configWithProvider(peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: server.URL + "/compatible/custom",
+		Model: "model-request-2026", Auth: peoplesweep.AuthBearer,
+		Credential: peoplesweep.CredentialEnv, CredentialEnv: "SYNTHETIC_OPENAI_KEY",
+		OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
 		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
 		SourceSince:    "2026-01-01", RequestTimeout: 2 * time.Second, AllowSensitive: true,
-	}}
-	config.ApplyDefaults()
+	})
 	if configure != nil {
 		configure(&config)
 	}
@@ -160,6 +185,13 @@ func newOpenAISweepFixture(
 	require.NoError(t, err)
 	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(t, err)
+	require.NoError(t, st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint,
+		CheckedAt:          time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC),
+		DriverVersion:      profile.DriverVersion,
+		OutputMode:         profile.OutputMode,
+		ModelVersion:       "model-verified-2026",
+	}))
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "synthetic-test")
 	require.NoError(t, err)
 	// Keep the real catalog path while limiting this provider-boundary fixture
@@ -190,12 +222,11 @@ func newOpenAISweepFixture(
 		require.NoError(t, err)
 	}
 
-	runner, err := peoplesweep.NewRunner(config, st,
-		peoplesweep.NewOpenAICompatibleTransport(server.Client()),
-		func(name string) (string, bool) {
-			assert.Equal(t, "SYNTHETIC_OPENAI_KEY", name)
-			return "synthetic-api-key", true
-		})
+	registry, err := peoplesweep.NewDriverRegistry(server.Client(), nil, nil)
+	require.NoError(t, err)
+	t.Setenv("SYNTHETIC_OPENAI_KEY", "synthetic-api-key")
+	runner, err := peoplesweep.NewRunner(config, st, registry,
+		peoplesweep.NewCredentialResolver(nil, os.LookupEnv))
 	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	ids := 0
@@ -214,6 +245,7 @@ func newOpenAISweepFixture(
 		WorkerID: "worker-openai-compatible",
 	}
 	provider.store = st
+	provider.outputMode = profile.OutputMode
 	return fixture
 }
 
@@ -301,6 +333,27 @@ func staticOpenAIEnvelope(t *testing.T, model, content string, input, output int
 	})
 	require.NoError(t, err)
 	return string(envelope)
+}
+
+// sweepExtractionMaxOutputTokens mirrors the extraction driver's unexported
+// output-token cap that every sweep reservation is estimated against.
+const sweepExtractionMaxOutputTokens = 4096
+
+// openAISweepWireReservation reconstructs the conservative usage a rejected
+// call is charged: the exact reserved wire bytes as input tokens and the
+// extraction output-token cap as output tokens.
+func openAISweepWireReservation(
+	t *testing.T, provider *openAISweepServer, call int,
+) peoplesweep.TokenUsage {
+	t.Helper()
+	provider.mu.Lock()
+	wire := provider.wireBodies[call]
+	provider.mu.Unlock()
+	require.NotEmpty(t, wire)
+	reservation, err := peoplesweep.EstimateWireTokenReservation(
+		wire, sweepExtractionMaxOutputTokens)
+	require.NoError(t, err)
+	return reservation
 }
 
 func runOpenAISweep(t *testing.T, fixture openAISweepFixture) (peoplesweep.RunResult, error) {
@@ -478,7 +531,7 @@ func inspectOpenAISweepFactState(
 	return nil
 }
 
-func TestOpenAICompatibleSweepAppliesSupportedClaimEndToEnd(t *testing.T) {
+func TestOpenAIEndToEndNativeSchemaAppliesSupportedClaim(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	var wantProjection peoplesweep.ProjectedValue
@@ -497,12 +550,15 @@ func TestOpenAICompatibleSweepAppliesSupportedClaimEndToEnd(t *testing.T) {
 	server := httptest.NewTLSServer(provider)
 	defer server.Close()
 	fixture := newOpenAISweepFixture(t, server, provider, 1, nil)
+	catalog := &countingOpenAISweepCatalog{source: fixture.store}
+	fixture.worker.Catalog = catalog
 	wantProjection, wantUnresolved = seedOpenAISweepFactState(t, fixture)
 
 	result, err := runOpenAISweep(t, fixture)
 	require.NoError(err)
 	assert.Equal(1, result.PeopleSucceeded)
 	assert.Equal(1, result.ProjectedWrites)
+	assert.Equal(1, catalog.calls, "one worker run must resolve one active profile and catalog")
 	values, err := fixture.store.ListPersonAttributeValuesContext(t.Context(), fixture.personID,
 		store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugAskMeAbout})
 	require.NoError(err)
@@ -518,7 +574,7 @@ func TestOpenAICompatibleSweepAppliesSupportedClaimEndToEnd(t *testing.T) {
 		SELECT provider_version, model_version FROM person_fact_generations
 		WHERE person_id = ? ORDER BY id DESC LIMIT 1`), fixture.personID).
 		Scan(&providerVersion, &modelVersion))
-	assert.Equal(peoplesweep.OpenAICompatibleProviderVersion, providerVersion)
+	assert.Equal(peoplesweep.OpenAIChatProviderVersion, providerVersion)
 	assert.Equal(sweepResponseModel, modelVersion)
 	var optimistic int64
 	require.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
@@ -527,7 +583,7 @@ func TestOpenAICompatibleSweepAppliesSupportedClaimEndToEnd(t *testing.T) {
 	assert.Positive(optimistic)
 }
 
-func TestOpenAICompatibleRejectsMissingResponseModel(t *testing.T) {
+func TestOpenAIChatRejectsMissingResponseModel(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	provider := &openAISweepServer{t: t, responses: []openAISweepResponse{{
@@ -542,13 +598,18 @@ func TestOpenAICompatibleRejectsMissingResponseModel(t *testing.T) {
 	attempt := openAISweepAttempt(t, fixture)
 	assert.Equal(peoplesweep.FailureInvalidOutput, attempt.FailureClass)
 	assert.Equal(1, attempt.Usage.Requests)
-	assert.Equal(int64(50_001), attempt.Usage.InputTokens)
-	assert.Equal(int64(8_001), attempt.Usage.OutputTokens)
+	// The response is rejected before any completed usage is recorded, so its
+	// provider-reported 50_001/8_001 tokens must never reach durable history;
+	// failure finalization instead conservatively charges the call's
+	// reservation: the exact reserved wire bytes in, the output-token cap out.
+	reservation := openAISweepWireReservation(t, provider, 0)
+	assert.Equal(reservation.InputTokens, attempt.Usage.InputTokens)
+	assert.Equal(reservation.OutputTokens, attempt.Usage.OutputTokens)
 	assert.Nil(attempt.GenerationID)
 	assertOpenAISweepCursorUnchanged(t, fixture)
 }
 
-func TestOpenAICompatibleSweepRejectsMixedModelVersions(t *testing.T) {
+func TestOpenAIChatSweepRejectsMixedModelVersions(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	provider := &openAISweepServer{t: t}
@@ -570,13 +631,18 @@ func TestOpenAICompatibleSweepRejectsMixedModelVersions(t *testing.T) {
 	attempt := openAISweepAttempt(t, fixture)
 	assert.Equal(peoplesweep.FailureInvalidOutput, attempt.FailureClass)
 	assert.Equal(2, attempt.Usage.Requests)
-	assert.Equal(int64(60_000), attempt.Usage.InputTokens)
-	assert.Equal(int64(10_000), attempt.Usage.OutputTokens)
+	// The first call is trustworthy and keeps its provider-reported usage; the
+	// second call is rejected for its diverging model identity, so it must not
+	// contribute its provider-reported usage and is charged only its
+	// conservative reservation on top of the first call's completed usage.
+	rejectedReservation := openAISweepWireReservation(t, provider, 1)
+	assert.Equal(int64(30_000)+rejectedReservation.InputTokens, attempt.Usage.InputTokens)
+	assert.Equal(int64(5_000)+rejectedReservation.OutputTokens, attempt.Usage.OutputTokens)
 	assert.Nil(attempt.GenerationID)
 	assertOpenAISweepCursorUnchanged(t, fixture)
 }
 
-func TestOpenAICompatibleRetryAfterBoundsRetry(t *testing.T) {
+func TestOpenAIChatRetryAfterBoundsRetry(t *testing.T) {
 	tests := []struct {
 		name    string
 		header  func() string
@@ -621,7 +687,7 @@ func TestOpenAICompatibleRetryAfterBoundsRetry(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleSweepFailureNeverAdvancesCursor(t *testing.T) {
+func TestOpenAIChatSweepFailureNeverAdvancesCursor(t *testing.T) {
 	tests := []struct {
 		name      string
 		response  openAISweepResponse
@@ -632,7 +698,7 @@ func TestOpenAICompatibleSweepFailureNeverAdvancesCursor(t *testing.T) {
 		{name: "schema mismatch", response: openAISweepResponse{Body: staticOpenAIEnvelope(t, sweepResponseModel, `{"claims":[{"unexpected":true}]}`, 19, 4)}, class: peoplesweep.FailureInvalidOutput},
 		{name: "429", response: openAISweepResponse{Status: http.StatusTooManyRequests, Body: sweepProviderSecret}, class: peoplesweep.FailureRateLimited},
 		{name: "500", response: openAISweepResponse{Status: http.StatusInternalServerError, Body: sweepProviderSecret}, class: peoplesweep.FailureProviderHTTP},
-		{name: "timeout", response: openAISweepResponse{Wait: true}, configure: func(config *peoplesweep.Config) { config.Provider.RequestTimeout = 30 * time.Millisecond }, class: peoplesweep.FailureTimeout},
+		{name: "timeout", response: openAISweepResponse{Wait: true}, configure: providerMutation(func(provider *peoplesweep.ProviderConfig) { provider.RequestTimeout = 30 * time.Millisecond }), class: peoplesweep.FailureTimeout},
 		{name: "redirect", response: openAISweepResponse{Status: http.StatusTemporaryRedirect, Headers: map[string]string{"Location": "/forbidden"}, Body: sweepProviderSecret}, class: peoplesweep.FailureProviderHTTP},
 		{name: "oversized response", response: openAISweepResponse{Body: strings.Repeat(sweepProviderSecret, (1<<20)/len(sweepProviderSecret)+2)}, class: peoplesweep.FailureInvalidOutput},
 	}

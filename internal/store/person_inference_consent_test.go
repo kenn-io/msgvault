@@ -18,20 +18,25 @@ import (
 func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	t.Helper()
 	config := peoplesweep.Config{
-		Enabled: true,
-		Provider: peoplesweep.ProviderConfig{
-			Kind:             peoplesweep.ProviderOpenAICompatible,
-			Endpoint:         "https://api.example.test/v1",
-			Model:            "gpt-test",
-			APIKeyEnv:        "TEST_KEY",
-			RetentionPosture: "zero_retention",
-			TrainingPosture:  "no_training",
+		Enabled:  true,
+		Provider: peoplesweep.ProviderSelection{Name: "default"},
+		Providers: map[string]peoplesweep.ProviderConfig{"default": {
+			Protocol:            peoplesweep.ProtocolOpenAIChat,
+			Endpoint:            "https://api.example.test/v1",
+			Model:               "gpt-test",
+			Auth:                peoplesweep.AuthBearer,
+			Credential:          peoplesweep.CredentialEnv,
+			CredentialEnv:       "TEST_KEY",
+			OutputMode:          peoplesweep.OutputModeNativeJSONSchema,
+			TokenLimitParameter: "max_completion_tokens",
+			RetentionPosture:    "zero_retention",
+			TrainingPosture:     "no_training",
 			AllowedSources: []peoplesweep.SourceClass{
 				peoplesweep.SourceConversationText,
 			},
 			SourceSince:    "2025-01-01",
 			RequestTimeout: time.Minute,
-		},
+		}},
 	}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
@@ -182,13 +187,19 @@ func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
-	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind: peoplesweep.ProviderCodexAppServer, Model: "gpt-test",
-		ReasoningEffort: "high", ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
-		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
-		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-		SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
-	}}
+	config := peoplesweep.Config{
+		Enabled:  true,
+		Provider: peoplesweep.ProviderSelection{Name: "codex"},
+		Providers: map[string]peoplesweep.ProviderConfig{"codex": {
+			Protocol: peoplesweep.ProtocolCodexAppServer, Model: "gpt-test",
+			Auth: peoplesweep.AuthNone, Credential: peoplesweep.CredentialNone,
+			OutputMode:      peoplesweep.OutputModeNativeJSONSchema,
+			ReasoningEffort: "high", ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+			RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+			SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
+		}},
+	}
 	config.ApplyDefaults()
 	profile, err := config.Profile()
 	requirements.NoError(err)

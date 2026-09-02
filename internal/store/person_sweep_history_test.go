@@ -32,7 +32,7 @@ func TestFinalizePersonSweepFailureAccountsAfterLeaseLoss(t *testing.T) {
 	reservation, err := journal.store.ReservePersonSweepBudget(t.Context(),
 		sweepReservation(f, 0, 250, "provider-fingerprint", generousSweepBudget()))
 	requirements.NoError(err)
-	requirements.NoError(journal.store.MarkPersonSweepBudgetStarted(t.Context(), reservation))
+	requirements.NoError(journal.store.MarkPersonSweepBudgetStarted(t.Context(), reservation, *first))
 
 	_, err = journal.store.DB().ExecContext(t.Context(), journal.store.Rebind(`
 		UPDATE person_sweep_work SET lease_until = ? WHERE person_id = ?`),
@@ -45,10 +45,15 @@ func TestFinalizePersonSweepFailureAccountsAfterLeaseLoss(t *testing.T) {
 	finalization := peoplesweep.FailureFinalization{Lease: *first,
 		AttemptID: "attempt-lease-loss", Class: peoplesweep.FailureProviderHTTP,
 		RetryAt: sweepBudgetNow().Add(time.Hour), Reservations: []peoplesweep.BudgetReservation{reservation},
-		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
+		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
 			ProviderRequestID: "safe-request-id", Usage: peoplesweep.TokenUsage{
 				InputTokens: 300, OutputTokens: 150}, Latency: time.Second}},
 		FinalizedAt: sweepBudgetNow().Add(time.Minute)}
+	requirements.Error(journal.store.FinalizePersonSweepFailure(t.Context(), finalization),
+		"a reclaimed lease-lost attempt rejects a different terminal class and metadata")
+	finalization.Class = peoplesweep.FailureLeaseLost
+	finalization.Completed = nil
 	requirements.NoError(journal.store.FinalizePersonSweepFailure(t.Context(), finalization))
 	requirements.NoError(journal.store.FinalizePersonSweepFailure(t.Context(), finalization))
 
@@ -82,7 +87,8 @@ func TestPersonSweepHistoryContainsOnlySafeMetadata(t *testing.T) {
 	requirements.NoError(f.store.FinalizePersonSweepFailure(t.Context(), peoplesweep.FailureFinalization{
 		Lease: sweepAttemptLease(f), AttemptID: f.attemptID, Class: peoplesweep.FailureInvalidOutput,
 		RetryAt: sweepBudgetNow().Add(time.Hour), Reservations: []peoplesweep.BudgetReservation{reservation},
-		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
+		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
 			ProviderRequestID: "request-id-safe", Usage: peoplesweep.TokenUsage{
 				InputTokens: 300, OutputTokens: 150}, Latency: 250 * time.Millisecond}},
 		FinalizedAt: sweepBudgetNow().Add(time.Minute),
@@ -148,6 +154,46 @@ func TestPersonSweepHistoryContainsOnlySafeMetadata(t *testing.T) {
 	requirements.Error(err)
 }
 
+func TestPersonSweepHistoryFiltersExactProviderFingerprint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newPersonSweepBudgetFixture(t, "provider-history-filter")
+	matching := strings.Repeat("a", 64)
+	other := strings.Repeat("b", 64)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+		UPDATE person_sweep_runs SET provider_fingerprint = ? WHERE id = ?`),
+		matching, f.runID)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+		UPDATE person_sweep_attempts SET provider_fingerprint = ? WHERE id = ?`),
+		matching, f.attemptID)
+	require.NoError(err)
+
+	runs, err := f.store.ListPersonSweepRuns(t.Context(), peoplesweep.RunFilter{
+		ProviderFingerprint: matching, Limit: 1,
+	})
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(matching, runs[0].ProviderFingerprint)
+	attempts, err := f.store.ListPersonSweepAttempts(t.Context(), peoplesweep.AttemptFilter{
+		ProviderFingerprint: matching, Limit: 1,
+	})
+	require.NoError(err)
+	require.Len(attempts, 1)
+	assert.Equal(matching, attempts[0].ProviderFingerprint)
+
+	runs, err = f.store.ListPersonSweepRuns(t.Context(), peoplesweep.RunFilter{
+		ProviderFingerprint: other, Limit: 1,
+	})
+	require.NoError(err)
+	assert.Empty(runs)
+	attempts, err = f.store.ListPersonSweepAttempts(t.Context(), peoplesweep.AttemptFilter{
+		ProviderFingerprint: other, Limit: 1,
+	})
+	require.NoError(err)
+	assert.Empty(attempts)
+}
+
 func TestPersonSweepOperationalStatusSelectsLatestSafeFailure(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -206,7 +252,8 @@ func TestFinalizePersonSweepFailureRejectsAttemptLeaseMismatch(t *testing.T) {
 				Lease: lease, AttemptID: f.attemptID, Class: peoplesweep.FailureTimeout,
 				RetryAt:      sweepBudgetNow().Add(time.Hour),
 				Reservations: []peoplesweep.BudgetReservation{reservation},
-				Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
+				Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+					Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
 					Usage: peoplesweep.TokenUsage{InputTokens: 300, OutputTokens: 150}}},
 				FinalizedAt: sweepBudgetNow().Add(time.Minute),
 			})
@@ -275,7 +322,8 @@ func TestPersonSweepHistoryRejectsUnsafeProviderRequestID(t *testing.T) {
 		Lease: sweepAttemptLease(f), AttemptID: f.attemptID,
 		Class: peoplesweep.FailureInvalidOutput, RetryAt: sweepBudgetNow().Add(time.Hour),
 		Reservations: []peoplesweep.BudgetReservation{reservation},
-		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
+		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary, UsageKnown: true,
 			ProviderRequestID: "unsafe\narchive-derived-value",
 			Usage:             peoplesweep.TokenUsage{InputTokens: 100, OutputTokens: 100}}},
 		FinalizedAt: sweepBudgetNow().Add(time.Minute),

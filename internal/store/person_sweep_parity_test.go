@@ -166,7 +166,7 @@ func (p *parityProvider) ServeHTTP(w http.ResponseWriter, request *http.Request)
 		http.Error(w, "invalid synthetic envelope", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("x-request-id", fmt.Sprintf("parity-request-%d", call))
+	w.Header().Set("X-Request-ID", fmt.Sprintf("parity-request-%d", call))
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(body)
 	assert.NoError(p.t, err)
@@ -241,15 +241,15 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 	defer f.server.Close()
 	ctx := t.Context()
 
-	// A provider-completed stale attempt is charged, but its expired fence
-	// cannot mutate the reclaimed work owner or cursor.
+	// A provider-completed stale attempt is conservatively charged by reclaim.
+	// Its exact lease-lost replay is a no-op and cannot rewrite the new owner.
 	oldLease := parityClaim(t, f.store, "parity-old-worker")
 	oldAssembly := parityAssembly(t, f)
 	oldRunID, oldAttemptID := "run-parity-old", "attempt-parity-old"
 	parityStartRunAttempt(t, f, oldRunID, oldAttemptID, oldLease,
 		oldAssembly.CursorEnvelope, peoplesweep.RunIncremental)
 	require.Len(oldAssembly.Batches, 1)
-	reservation, response := parityRunChargedBatch(t, f, oldRunID, oldAttemptID,
+	reservation, _ := parityRunChargedBatch(t, f, oldRunID, oldAttemptID, oldLease,
 		oldAssembly.Batches[0])
 	_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(`
 		UPDATE person_sweep_work SET lease_until = ? WHERE person_id = ?`),
@@ -257,12 +257,10 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 	require.NoError(err)
 	newLease := parityClaim(t, f.store, "parity-new-worker")
 	require.NoError(f.store.FinalizePersonSweepFailure(ctx, peoplesweep.FailureFinalization{
-		Lease: *oldLease, AttemptID: oldAttemptID, Class: peoplesweep.FailureProviderHTTP,
+		Lease: *oldLease, AttemptID: oldAttemptID, Class: peoplesweep.FailureLeaseLost,
 		RetryAt:      f.now.Add(time.Hour),
 		Reservations: []peoplesweep.BudgetReservation{reservation},
-		Completed: []peoplesweep.CompletedUsage{{BatchOrdinal: 0,
-			ProviderRequestID: response.ProviderRequestID, Usage: response.Usage}},
-		FinalizedAt: f.now,
+		FinalizedAt:  f.now,
 	}))
 	require.NoError(f.store.FinishPersonSweepRun(ctx, oldRunID,
 		peoplesweep.RunFailed, f.now))
@@ -292,7 +290,7 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 			f.sourceID, "parity-late-old"))
 	})
 	reimported := parityRunClaimedPerson(t, f, "reimported", peoplesweep.RunIncremental)
-	assert.Equal(peoplesweep.ProviderOpenAICompatible, reimported.Generation.Provider)
+	assert.Equal(string(peoplesweep.ProtocolOpenAIChat), reimported.Generation.Provider)
 	assert.Equal([]string{"chat"}, parityCurrentChannel(t, f))
 	parityPinProjectionTimes(t, f)
 
@@ -378,14 +376,17 @@ func newProductionPersonSweepParityFixture(t *testing.T) *personSweepParityFixtu
 	require.NoError(t, err)
 	_, err = f.store.SetPersonTrackingContext(t.Context(), f.personID, true)
 	require.NoError(t, err)
-	f.config = peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderConfig{
-		Kind:     peoplesweep.ProviderOpenAICompatible,
-		Endpoint: "https://parity-provider.example.test/v1",
-		Model:    "parity-request-model", APIKeyEnv: "PARITY_SYNTHETIC_KEY",
-		RetentionPosture: "zero_retention", TrainingPosture: "no_training",
-		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-		SourceSince:    "2000-01-01", RequestTimeout: 2 * time.Second,
-	}}
+	f.config = peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"},
+		Providers: map[string]peoplesweep.ProviderConfig{"default": {
+			Protocol: peoplesweep.ProtocolOpenAIChat,
+			Endpoint: "https://parity-provider.example.test/v1",
+			Model:    "parity-request-model", Auth: peoplesweep.AuthBearer,
+			Credential: peoplesweep.CredentialEnv, CredentialEnv: "PARITY_SYNTHETIC_KEY",
+			OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
+			RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+			SourceSince:    "2000-01-01", RequestTimeout: 2 * time.Second,
+		}}}
 	f.config.ApplyDefaults()
 	f.config.RetryBase, f.config.RetryMax = time.Millisecond, time.Millisecond
 	f.config.Budgets.InputCostMicroUSDPerMillionTokens = 2_000_000
@@ -396,6 +397,13 @@ func newProductionPersonSweepParityFixture(t *testing.T) *personSweepParityFixtu
 	require.NoError(t, err)
 	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), f.profile)
 	require.NoError(t, err)
+	require.NoError(t, f.store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: f.profile.Fingerprint,
+		CheckedAt:          f.now,
+		DriverVersion:      f.profile.DriverVersion,
+		OutputMode:         f.profile.OutputMode,
+		ModelVersion:       "parity-reported-model",
+	}))
 	_, _, err = f.store.GrantPersonInferenceConsent(t.Context(), f.profile.Fingerprint, "parity")
 	require.NoError(t, err)
 	f.catalog, err = f.store.BuildPersonFactCatalogContext(t.Context(), false)
@@ -442,12 +450,14 @@ func newProductionPersonSweepParityFixture(t *testing.T) *personSweepParityFixtu
 	require.NoError(t, err)
 	httpClient := f.server.Client()
 	httpClient.Transport = parityRewriteTransport{base: httpClient.Transport, target: targetURL}
+	registry, err := peoplesweep.NewDriverRegistry(httpClient, nil, nil)
+	require.NoError(t, err)
 	runner, err := peoplesweep.NewRunner(f.config, f.store,
-		peoplesweep.NewOpenAICompatibleTransport(httpClient),
-		func(name string) (string, bool) {
+		registry,
+		peoplesweep.NewCredentialResolver(nil, func(name string) (string, bool) {
 			assert.Equal(t, "PARITY_SYNTHETIC_KEY", name)
 			return "synthetic-parity-key", true
-		})
+		}))
 	require.NoError(t, err)
 	f.sourceRecorder = &paritySourceRecorder{store: f.store}
 	f.sinkRecorder = &paritySinkRecorder{store: f.store}
@@ -495,7 +505,7 @@ func parityStartRunAttempt(t *testing.T, f *personSweepParityFixture,
 }
 
 func parityRunChargedBatch(t *testing.T, f *personSweepParityFixture,
-	runID, attemptID string, batch peoplesweep.PacketBatch,
+	runID, attemptID string, lease *peoplesweep.Lease, batch peoplesweep.PacketBatch,
 ) (peoplesweep.BudgetReservation, peoplesweep.StructuredResponse) {
 	t.Helper()
 	prepared, err := f.worker.Runner.PrepareStructured(t.Context(), batch.Request)
@@ -507,14 +517,15 @@ func parityRunChargedBatch(t *testing.T, f *personSweepParityFixture,
 	require.NoError(t, err)
 	reservation, err := f.store.ReservePersonSweepBudget(t.Context(),
 		peoplesweep.BudgetReservationRequest{RunID: runID, AttemptID: attemptID,
-			BatchOrdinal: batch.Ordinal, PersonID: f.personID,
+			BatchOrdinal: batch.Ordinal, CallOrdinal: 0,
+			Purpose: peoplesweep.ProviderCallPurposePrimary, PersonID: f.personID,
 			ProviderFingerprint: f.profile.Fingerprint,
 			UTCDate:             f.now.Format(time.DateOnly), InputHash: prepared.WireSHA256(),
 			ItemCount: len(batch.Packet.Seeds) + len(batch.Packet.Context), EstimatedRequests: 1,
 			EstimatedInputTokens: estimate.InputTokens, EstimatedOutputTokens: estimate.OutputTokens,
 			EstimatedCostMicroUSD: cost, Budget: f.config.Budgets})
 	require.NoError(t, err)
-	require.NoError(t, f.store.MarkPersonSweepBudgetStarted(t.Context(), reservation))
+	require.NoError(t, f.store.MarkPersonSweepBudgetStarted(t.Context(), reservation, *lease))
 	response, err := f.worker.Runner.RunPreparedStructured(t.Context(), prepared)
 	require.NoError(t, err)
 	assert.Equal(t, parityInputTokens, response.Usage.InputTokens)
@@ -954,7 +965,7 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 		assert.Equal(t, personfacts.OriginExtraction, claim.Origin)
 		assert.Equal(t, 1000, claim.Confidence.ReportedScore)
 		require.Len(t, claim.EvidenceIDs, 1)
-		assert.Equal(t, peoplesweep.ProviderOpenAICompatible, claim.Generation.Provider)
+		assert.Equal(t, string(peoplesweep.ProtocolOpenAIChat), claim.Generation.Provider)
 		assert.Equal(t, "openai-chat-completions-json-schema-v1",
 			claim.Generation.ProviderVersion)
 		assert.Equal(t, "parity-model-v1", claim.Generation.ModelVersion)
@@ -987,48 +998,48 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 		targetKey      = "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"
 		targetRevision = "sha256:99794c3a2a04a5e39a49ee51f24d5a1790e3d787ff98d57f00ff1c6d80741787"
 		resolver       = "person-fact-resolver-v1"
-		providerPolicy = "144add1209b08796a7f8eb949e69f12d3c2917932d678af6b473bf44befdf334"
+		providerPolicy = "b4cd8faea9a6903d08c6df206eb542032028c6c83f974b81eff3dd4128dfda7a"
 		resolvedAt     = "2026-08-22T12:00:00Z"
 		zeroScore      = `{"authority":0,"confidence":0,"corroboration":0,"directness":0,"freshness":0,"source_class":0,"total":0}`
 		appliedScore   = `{"authority":100,"confidence":100,"corroboration":0,"directness":400,"freshness":0,"source_class":300,"total":900}`
-		originalClaim  = "sha256:8909cd34b6ab10a8deb965a34d3e4e7cd27bf702dd3a25901315ed81f77be05d"
-		editedClaim    = "sha256:83ed903e26a67659209b298e97ade08b9d96de38de8ce287884d43510cf3caad"
-		editInput      = "sha256:54082324cbd4f643b7e5e0bddb44c3ab3dd4ce6cb70c6a5a8ad31bbe729a6799"
+		originalClaim  = "sha256:ff40882f9438a8662b1c8efba4563eaf85368b5bdff7ba10ef86688cfbaa0995"
+		editedClaim    = "sha256:0ae7ed902d9b0d2c463d0b53e9d100dfa4bfd6a7632a1b0f64a5f9a4258abd39"
+		editInput      = "sha256:8c0a16286aa0a4ef422f7fdf0b91afc1cd9cadde2c9d91f232931c80809e90c4"
 	)
 	wantResolutions := []parityResolutionSnapshot{
 		{RunID: "run-parity-deleted", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:825d7f7bc8b81b971d841de5d18e960dd58dbf8815135f68dd48fe61ddd4d9c3",
+			InputFingerprint:          "sha256:7faedc14ae9a8dea36a13a7411d61d7828ae243e4b2e1924fcfd57f66349b4f4",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:9c0db9e920e0da0765a2af6c04119b3e324ee8326657befc75b9119cbea83f57",
+			DecisionKey: "sha256:b637f53636a20671ccf95ada04df23a8ac6e33c75ff5c5d57d2fb8bae9d7fd87",
 			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
 			ScoreJSON: zeroScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
 		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
 			InputFingerprint:          editInput,
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:6d56ef4de5577237ea198601e59f2bc73e738bee4fd9462c648c7e590b9e02e4",
-			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
-			ScoreJSON: zeroScore},
+			DecisionKey: "sha256:bc2d8472acf0448b2bf20d05e2b324a0f91ac1264346a45e19078a5ba0404a06",
+			ClaimKey:    editedClaim, Action: "applied", Reason: "applied-projection",
+			ScoreJSON: appliedScore},
 		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
 			InputFingerprint:          editInput,
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:7097aecc642274ce968e8c36d4a1d3b0a12b9985756177c969480b72ad34a06b",
-			ClaimKey:    editedClaim, Action: "applied", Reason: "applied-projection",
-			ScoreJSON: appliedScore},
+			DecisionKey: "sha256:c73212d2b952bb0991bc021ad51c6570b5b0cd983740413405761c125366f7fd",
+			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
+			ScoreJSON: zeroScore},
 		{RunID: "run-parity-reimported", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:c932622e57316a2a62b6b9dd128f20d289fc0fead753c3a827d922c48d80a512",
+			InputFingerprint:          "sha256:0b11f64aec91f7ecefad9e41ad0d921d57d970c598a6dadd6f6d73cc4141807a",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:9a8cf74131e61fc48cc4d75dacefc675308b84c39064bf0d68e66197a92c66ac",
+			DecisionKey: "sha256:a127d52d18c4275edb485d891c335f63bd472fcd3fca8b68f30ec8b54fcd06d8",
 			ClaimKey:    originalClaim, Action: "applied", Reason: "applied-projection",
 			ScoreJSON: appliedScore, ProjectionKind: "person_attribute", ProjectionRowID: 2},
 		{RunID: "run-parity-success", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          "sha256:bde65055cb89420dfc8efa40fd578c3790eda9e2405348ecb6b3e52f525c66b5",
+			InputFingerprint:          "sha256:071b0d30b9043029eb179d36e62343965768b342c89683ccaeb98325e12d2d6f",
 			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:33e60345335456b9e1856cc11e799301b1c5bd6afa257d08b0416f390f91b992",
+			DecisionKey: "sha256:1eb79ab4c0460e34049444735f12520fe72fd715ad397540318352fe13531271",
 			ClaimKey:    originalClaim, Action: "applied", Reason: "applied-projection",
 			ScoreJSON: appliedScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
 	}

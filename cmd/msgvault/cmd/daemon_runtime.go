@@ -148,10 +148,20 @@ func findCompatibleDaemonRuntimeContext(ctx context.Context, dataDir string) (*D
 // CLI upgrade or downgrade fails the compatibility check, yet it still holds
 // the database open.
 func findAnyDaemonRuntime(dataDir string) *DaemonRuntime {
+	return findAnyDaemonRuntimeContext(context.Background(), dataDir)
+}
+
+// findAnyDaemonRuntimeContext is the context-aware form of
+// findAnyDaemonRuntime. Guards that only need to know whether a live
+// process owns the archive (like the restore-into-home refusal) must use
+// this rather than findDaemonRuntime: a daemon left running across a CLI
+// upgrade or downgrade fails the compatibility check, yet it still holds
+// the database open.
+func findAnyDaemonRuntimeContext(ctx context.Context, dataDir string) *DaemonRuntime {
 	// findRespondingDaemonRuntime returns the accepted runtime's
 	// compatibility error alongside it; an incompatible daemon is exactly
 	// what this lookup must still surface, so only found matters here.
-	rt, found, _ := findRespondingDaemonRuntime(context.Background(), dataDir,
+	rt, found, _ := findRespondingDaemonRuntime(ctx, dataDir,
 		func(*DaemonRuntime, error) bool { return true })
 	if !found {
 		return nil
