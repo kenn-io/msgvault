@@ -358,6 +358,9 @@ func persistSlackdumpAttachments(
 	if err != nil {
 		return fmt.Errorf("read existing attachments: %w", err)
 	}
+	if len(message.Files) == 0 && len(existing) == 0 {
+		return nil
+	}
 	maxBytes := opts.MediaPolicy.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = opts.MaxMediaBytes
