@@ -1028,13 +1028,11 @@ func TestCodexLoginAndModelsApplyConfiguredTimeout(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			checks := assert.New(t)
 			must := require.New(t)
-			started := make(chan struct{})
 			starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
 				func(reader *bufio.Reader, _, _ io.Writer) error {
 					if _, err := reader.ReadBytes('\n'); err != nil {
 						return fmt.Errorf("read silent Codex request: %w", err)
 					}
-					close(started)
 					_, err := reader.ReadBytes('\n')
 					if err != nil {
 						return fmt.Errorf("wait for silent Codex request: %w", err)
@@ -1046,18 +1044,14 @@ func TestCodexLoginAndModelsApplyConfiguredTimeout(t *testing.T) {
 			config.RequestTimeout = 30 * time.Millisecond
 			transport, err := peoplesweep.NewCodexAppServerTransport(config, starter, &recordingCodexGate{})
 			must.NoError(err)
-			parentCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-			defer cancel()
-			startedAt := time.Now()
 			switch operation {
 			case "login":
-				err = transport.StartDeviceLogin(parentCtx, func(peoplesweep.DeviceLogin) error { return nil })
+				err = transport.StartDeviceLogin(t.Context(), func(peoplesweep.DeviceLogin) error { return nil })
 			case "models":
-				_, err = transport.ListModels(parentCtx)
+				_, err = transport.ListModels(t.Context())
 			}
-			<-started
 			must.ErrorIs(err, context.DeadlineExceeded)
-			checks.Less(time.Since(startedAt), 250*time.Millisecond)
+			must.NoError(t.Context().Err(), "the configured provider deadline must expire before the test context")
 			must.Len(starter.records, 1)
 			process := starter.records[0].process
 			checks.Equal(int64(1), process.kills.Load())

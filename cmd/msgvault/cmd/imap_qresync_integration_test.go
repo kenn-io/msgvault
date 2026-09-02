@@ -383,27 +383,32 @@ func writeScriptedRFC7162Fetch(
 	command string,
 	mailbox scriptedRFC7162Mailbox,
 ) {
-	headerOnly := strings.Contains(strings.ToUpper(command), "HEADER.FIELDS")
+	upper := strings.ToUpper(command)
+	headerOnly := strings.Contains(upper, "HEADER.FIELDS")
 	for _, uid := range parseScriptedRFC7162UIDSet(command) {
 		message, ok := scriptedRFC7162MessageByUID(mailbox.Messages, uid)
 		if !ok {
 			continue
 		}
 		sequence := scriptedRFC7162Sequence(mailbox.Messages, uid)
+		modSeq := ""
+		if strings.Contains(upper, "MODSEQ") {
+			modSeq = fmt.Sprintf(" MODSEQ (%d)", message.ModSeq)
+		}
 		if headerOnly {
 			body := "\r\n"
 			if message.MessageID != "" {
 				body = fmt.Sprintf("Message-ID: <%s>\r\n\r\n", message.MessageID)
 			}
 			_, _ = fmt.Fprintf(w,
-				"* %d FETCH (UID %d FLAGS (%s) BODY[HEADER.FIELDS (MESSAGE-ID)] {%d}\r\n%s)\r\n",
-				sequence, uid, formatScriptedRFC7162Flags(message.Flags), len(body), body)
+				"* %d FETCH (UID %d FLAGS (%s)%s BODY[HEADER.FIELDS (MESSAGE-ID)] {%d}\r\n%s)\r\n",
+				sequence, uid, formatScriptedRFC7162Flags(message.Flags), modSeq, len(body), body)
 			continue
 		}
 		raw := scriptedRFC7162RawMessage(message)
 		_, _ = fmt.Fprintf(w,
-			"* %d FETCH (UID %d FLAGS (%s) INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE %d BODY[] {%d}\r\n%s)\r\n",
-			sequence, uid, formatScriptedRFC7162Flags(message.Flags), len(raw), len(raw), raw)
+			"* %d FETCH (UID %d FLAGS (%s)%s INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE %d BODY[] {%d}\r\n%s)\r\n",
+			sequence, uid, formatScriptedRFC7162Flags(message.Flags), modSeq, len(raw), len(raw), raw)
 	}
 }
 

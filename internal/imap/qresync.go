@@ -219,6 +219,16 @@ func (c *Client) collectQresyncMailbox(
 			vanishedSet[uid] = struct{}{}
 		}
 	}
+	if err := c.verifyQresyncCoverage(
+		ctx, mailbox, prior, uint32(selected.UIDNext), changedSet, vanishedSet,
+	); err != nil {
+		return MailboxDelta{}, err
+	}
+	if err := c.refreshExistingQresyncChanges(
+		ctx, mailbox, prior, selected.HighestModSeq, changedSet, vanishedSet,
+	); err != nil {
+		return MailboxDelta{}, err
+	}
 	for uid := range vanishedSet {
 		delete(changedSet, uid)
 	}
@@ -242,12 +252,6 @@ func (c *Client) collectQresyncMailbox(
 	knownUIDs := slices.Collect(maps.Keys(known))
 	slices.Sort(knownUIDs)
 
-	if err := c.verifyQresyncCoverage(
-		ctx, mailbox, prior, uint32(selected.UIDNext), changedSet, vanishedSet,
-	); err != nil {
-		return MailboxDelta{}, err
-	}
-
 	return MailboxDelta{
 		Mailbox: mailbox,
 		State: FolderState{
@@ -260,6 +264,73 @@ func (c *Client) collectQresyncMailbox(
 		VanishedUIDs: vanishedUIDs,
 		Incremental:  true,
 	}, nil
+}
+
+// refreshExistingQresyncChanges independently checks the mod-sequence of each
+// message in the saved baseline. UIDNEXT proves how many new UIDs a
+// CHANGEDSINCE response must cover, but it says nothing about how many existing
+// messages changed. A plain FETCH provides that missing coverage: every live
+// baseline UID must be returned, and its mod-sequence says whether it belongs
+// in the delta. The normal delta fetch then reads and persists that UID's
+// current flags.
+func (c *Client) refreshExistingQresyncChanges(
+	ctx context.Context,
+	mailbox string,
+	prior FolderState,
+	currentHighestModSeq uint64,
+	changedSet, vanishedSet map[imap.UID]struct{},
+) error {
+	if currentHighestModSeq == prior.HighestModSeq || len(prior.KnownUIDs) == 0 {
+		return nil
+	}
+
+	for chunkStart := 0; chunkStart < len(prior.KnownUIDs); chunkStart += fetchChunkSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(chunkStart+fetchChunkSize, len(prior.KnownUIDs))
+		expected := make(map[imap.UID]struct{}, end-chunkStart)
+		var requested imap.UIDSet
+		for _, value := range prior.KnownUIDs[chunkStart:end] {
+			uid := imap.UID(value)
+			if uid == 0 || value >= prior.UIDNext {
+				return fmt.Errorf("QRESYNC %q has invalid baseline UID %d", mailbox, value)
+			}
+			expected[uid] = struct{}{}
+			requested.AddNum(uid)
+		}
+
+		msgs, err := c.conn.Fetch(requested, &imap.FetchOptions{
+			UID: true, Flags: true, ModSeq: true,
+		}).Collect()
+		if err != nil {
+			return fmt.Errorf("QRESYNC existing-message refresh in %q: %w", mailbox, err)
+		}
+		for _, msg := range msgs {
+			if _, wanted := expected[msg.UID]; !wanted {
+				continue
+			}
+			if msg.ModSeq == 0 {
+				return fmt.Errorf(
+					"QRESYNC existing-message refresh in %q returned no modseq for UID %d",
+					mailbox, msg.UID)
+			}
+			delete(expected, msg.UID)
+			if msg.ModSeq > prior.HighestModSeq {
+				changedSet[msg.UID] = struct{}{}
+			}
+		}
+		for uid := range vanishedSet {
+			delete(expected, uid)
+		}
+		if len(expected) != 0 {
+			missing := slices.Collect(maps.Keys(expected))
+			slices.Sort(missing)
+			return fmt.Errorf(
+				"QRESYNC existing-message refresh in %q omitted UIDs %v", mailbox, missing)
+		}
+	}
+	return nil
 }
 
 func (c *Client) beginQresyncCapture() {
@@ -355,11 +426,11 @@ func mergeKnownUIDs(prior []uint32, additions []imap.UID) []uint32 {
 // error is recorded, and HIGHESTMODSEQ still advances past it. No later run
 // has a reason to ask about it again, so the message is lost for good.
 //
-// Only UIDs at or above the previous UIDNEXT can be checked, and they are the
-// only ones that need it. A message with a UID that high was appended after
-// the last run read UIDNEXT, so its mod-sequence is above the one this fetch
-// asked about and the server was obliged to report it. An omission below that
-// mark costs nothing, because the message is already in the baseline.
+// Only UIDs at or above the previous UIDNEXT can be checked by this arithmetic.
+// A message with a UID that high was appended after the last run read UIDNEXT,
+// so its mod-sequence is above the one this fetch asked about and the server was
+// obliged to report it. refreshExistingQresyncChanges separately checks UIDs
+// below that mark because UIDNEXT cannot reveal an omitted flag change there.
 //
 // UIDs are handed out in sequence, so the growth in UIDNEXT is exactly how
 // many were assigned since the last run, and each of them has to come back

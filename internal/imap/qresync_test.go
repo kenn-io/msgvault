@@ -37,8 +37,11 @@ type qresyncServerConfig struct {
 	// omitFromFetch names UIDs the server leaves out of a plain UID FETCH
 	// response while still reporting them from SEARCH, which is how a server
 	// that drops a live message from a response behaves.
-	omitFromFetch            []imapv2.UID
-	fetchChanged             []imapv2.UID
+	omitFromFetch []imapv2.UID
+	fetchChanged  []imapv2.UID
+	// fetchModSeq overrides the mod-sequence returned by a plain UID FETCH.
+	// UIDs without an override are unchanged baseline messages.
+	fetchModSeq              map[imapv2.UID]uint64
 	fetchVanished            []imapv2.UID
 	filterVanishedByFetchSet bool
 	// dropOnSearchConnection closes the connection with that ID instead of
@@ -158,8 +161,13 @@ func serveQresyncTestConn(
 				writeVanished(conn, qresyncVanishedForFetch(command, cfg))
 				writeFetchResponses(conn, cfg.fetchChanged, cfg.highestModSeq)
 			} else {
-				writeFetchResponses(
-					conn, withoutUIDs(cfg.searchUIDs, cfg.omitFromFetch), cfg.highestModSeq)
+				for _, uid := range withoutUIDs(cfg.searchUIDs, cfg.omitFromFetch) {
+					modSeq := cfg.fetchModSeq[uid]
+					if modSeq == 0 {
+						modSeq = 1
+					}
+					writeFetchResponses(conn, []imapv2.UID{uid}, modSeq)
+				}
 			}
 			_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
 		case strings.HasPrefix(upper, "UID SEARCH"):
@@ -904,6 +912,45 @@ func TestQresyncOmittedNewUIDFallsBackToFullEnumeration(t *testing.T) {
 	require.Len(t, deltas, 1)
 	assert.Contains(deltas[0].State.KnownUIDs, uint32(3),
 		"and must reach the saved baseline")
+}
+
+// TestQresyncOmittedExistingChangeIsRecoveredIndependently covers the part of
+// CHANGEDSINCE coverage that UIDNEXT cannot measure. UID 2 existed before the
+// saved high-water mark, but its flags changed afterward. The server omits it
+// from CHANGEDSINCE while still returning it from a plain FETCH with a newer
+// mod-sequence. The independent refresh must put it back into the delta before
+// HIGHESTMODSEQ advances past the change.
+func TestQresyncOmittedExistingChangeIsRecoveredIndependently(t *testing.T) {
+	assert := assert.New(t)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       4,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3},
+		fetchChanged:  []imapv2.UID{},
+		fetchModSeq:   map[imapv2.UID]uint64{2: 20},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 4, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	commands := joinedCommands(server.commandsFor(1))
+	assert.Contains(commands, "CHANGEDSINCE 10 VANISHED",
+		"the server omission must occur on the incremental request")
+	assert.Contains(commands, "UID FETCH 1:3 (UID FLAGS MODSEQ)",
+		"existing flags need an independent complete response")
+	assert.Contains(listed, "INBOX|2",
+		"the independently observed change must be refreshed")
+	deltas := client.ObservedMailboxDeltas()
+	require.Len(t, deltas, 1)
+	assert.Equal([]imapv2.UID{2}, deltas[0].ChangedUIDs)
+	assert.Equal(uint64(20), deltas[0].State.HighestModSeq)
 }
 
 // TestQresyncOmittedNewUIDAfterExpungeFallsBack pins that a mailbox losing
