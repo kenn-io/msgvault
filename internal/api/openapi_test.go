@@ -491,6 +491,19 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 	assert.Fail("source_ids query parameter is not documented for fastSearch")
 }
 
+func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
+	operation := OpenAPIDocument().Paths["/api/v1/search"].Get
+	require.NotNil(t, operation, "search operation")
+
+	for _, parameter := range operation.Parameters {
+		if parameter.Name == "conversation_id" {
+			assert.Equal(t, "query", parameter.In)
+			return
+		}
+	}
+	require.Fail(t, "conversation_id must be documented on /api/v1/search")
+}
+
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

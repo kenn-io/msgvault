@@ -884,6 +884,7 @@ func (c *Client) GetCLIHybridSearch(
 				Label:           optionalString(req.Filter.Label),
 				TimePeriod:      optionalString(req.Filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(req.Filter.TimeRange.Granularity)),
+				ConversationID:  req.Filter.ConversationID,
 				SourceID:        req.Filter.SourceID,
 				AttachmentsOnly: optionalBool(req.Filter.WithAttachmentsOnly),
 				After:           optionalTimeRFC3339(req.Filter.After),

@@ -62,6 +62,20 @@ func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 	assert.Equal(t, []any{`{"sms","mms"}`}, args)
 }
 
+func TestBuildPGFilterClausesConversationIDs(t *testing.T) {
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	clauses := buildPGFilterClauses(vector.Filter{ConversationIDs: []int64{7, 11}}, bind)
+
+	require.Len(t, clauses, 1)
+	assert.Equal(t, "m.conversation_id = ANY($1::bigint[])", clauses[0])
+	assert.Equal(t, []any{`{7,11}`}, args)
+}
+
 func TestBuildPGFilterClausesLegacyEmail(t *testing.T) {
 	var args []any
 	bind := func(v any) string {

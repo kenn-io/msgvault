@@ -19636,7 +19636,7 @@ export interface operations {
             query: {
                 /** @description Search query */
                 q: string;
-                /** @description Search mode: fts, vector, or hybrid. Structured filter parameters are supported only in vector and hybrid modes */
+                /** @description Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid */
                 mode?: string;
                 /** @description One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400. */
                 page?: number;
@@ -19656,6 +19656,8 @@ export interface operations {
                 account?: string;
                 /** @description Restrict to one collection */
                 collection?: string;
+                /** @description Exact conversation ID (all search modes) */
+                conversation_id?: number;
                 /** @description Exact sender email/address filter (vector or hybrid mode only) */
                 sender?: string;
                 /** @description Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only) */

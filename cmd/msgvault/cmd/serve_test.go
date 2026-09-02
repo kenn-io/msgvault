@@ -1778,6 +1778,7 @@ func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 		{name: "successful account removal", args: []string{"remove-account", "alice@example.com", "--yes"}, wantRemoved: true},
 		{name: "failed account removal", args: []string{"remove-account", "alice@example.com", "--yes"}, predecessorErr: errors.New("remove failed")},
 		{name: "successful excluded media purge", args: []string{"purge-excluded-media", "--yes"}, wantRemoved: true},
+		{name: "successful garbage collection", args: []string{"gc", "--yes"}, wantRemoved: true},
 		{name: "dry run is not a removal", args: []string{"purge-excluded-media", "--dry-run"}},
 		{name: "unconfirmed purge is not a removal", args: []string{"purge-excluded-media"}},
 		{name: "failed excluded media purge", args: []string{"purge-excluded-media", "--yes"}, predecessorErr: errors.New("purge failed")},

@@ -199,6 +199,7 @@ type Chunk struct {
 type Filter struct {
 	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
+	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
 	SenderGroups       [][]int64 // one inner slice per `from:` token; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
 	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd
@@ -219,6 +220,7 @@ type Filter struct {
 func (f Filter) IsEmpty() bool {
 	return len(f.MessageIDs) == 0 &&
 		len(f.SourceIDs) == 0 &&
+		len(f.ConversationIDs) == 0 &&
 		len(f.SenderGroups) == 0 &&
 		len(f.SenderExactGroups) == 0 &&
 		len(f.RecipientAnyGroups) == 0 &&

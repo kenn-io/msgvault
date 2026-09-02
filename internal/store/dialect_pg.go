@@ -626,6 +626,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS previous_mapping_revision BIGINT`, "carddav_conflicts.previous_mapping_revision"},
 		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS pending_started_at TIMESTAMPTZ`, "carddav_conflicts.pending_started_at"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS sync_config JSONB`, "sync_config"},
+		{`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS sync_type TEXT NOT NULL DEFAULT ''`, "sync_runs.sync_type"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},

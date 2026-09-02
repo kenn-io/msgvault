@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -203,6 +205,31 @@ func TestAKeyShowsAllMessages(t *testing.T) {
 	assertFilterKey(t, model, "")
 	assertCmd(t, cmd, true)
 	assertBreadcrumbCount(t, model, 1)
+}
+
+func TestStageForDeletionPreservesConversationOnlyDrillScope(t *testing.T) {
+	var captured query.MessageFilter
+	engine := newMockEngine(MockConfig{})
+	engine.GetDeletionTargetsByFilterFunc = func(_ context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+		captured = filter
+		return []query.DeletionTarget{{
+			MessageID: 1, SourceID: 1, SourceType: "gmail",
+			SourceIdentifier: "test@example.com", SourceMessageID: "message-1",
+		}}, nil
+	}
+	conversationID := int64(42)
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.drillFilter = query.MessageFilter{ConversationID: &conversationID}
+	model.selection.aggregateKeys["2026"] = true
+	model.selection.aggregateViewType = query.ViewTime
+	model.timeGranularity = query.TimeYear
+
+	newModel, _ := model.stageForDeletion()
+	model = asModel(t, newModel)
+
+	require.NotNil(t, captured.ConversationID)
+	assert.Equal(t, conversationID, *captured.ConversationID)
+	assertModal(t, model, modalDeleteConfirm)
 }
 
 func TestModalDismiss(t *testing.T) {

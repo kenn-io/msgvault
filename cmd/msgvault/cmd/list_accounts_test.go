@@ -45,7 +45,10 @@ func TestListAccountsUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 
 	assert.Equal(1, int(accountRequests.Load()), "accounts endpoint calls")
 	assert.Contains(out, "ID  ACCOUNT", "table header")
-	assert.Contains(out, "alice@example.com", "account row")
+	assert.Regexp(`(?m)^7\s+alice@example\.com\s+gmail\s+Alice\s+1,234\s+2024-01-02 03:04$`, out,
+		"Gmail account and source type")
+	assert.Regexp(`(?m)^8\s+imaps://bob@imap\.example\.com:993\s+imap\s+Bob\s+42\s+-$`, out,
+		"IMAP account and source type")
 	assert.Contains(out, "Alice", "display name")
 	assert.Contains(out, "1,234", "message count formatting")
 	assert.Contains(out, "2024-01-02 03:04", "last sync formatting")
@@ -74,6 +77,13 @@ func accountsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 				"display_name": "Alice",
 				"message_count": 1234,
 				"last_sync": "2024-01-02T03:04:05Z"
+			}, {
+				"id": 8,
+				"email": "imaps://bob@imap.example.com:993",
+				"type": "imap",
+				"display_name": "Bob",
+				"message_count": 42,
+				"last_sync": null
 			}]
 		}`))
 	})

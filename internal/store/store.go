@@ -78,6 +78,7 @@ type Store struct {
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	identityMatchAcceptBeforeDecisionHook func()
+	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
 	personMergeAfterSnapshotHook          func()
 	personEnrichmentClock                 func() time.Time
@@ -160,16 +161,20 @@ func OpenForTest(dbPath string) (*Store, error) {
 // openSQLite opens a SQLite database at the given file path with the
 // supplied DSN parameters appended.
 func openSQLite(dbPath, params string) (*Store, error) {
+	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
+	}
 	// Ensure directory exists (skip for in-memory databases)
 	if dbPath != ":memory:" && !strings.Contains(dbPath, ":memory:") {
-		dir := filepath.Dir(dbPath)
+		dir := filepath.Dir(filesystemPath)
 		// #nosec G703 -- dbPath is the caller-selected database location; creating its parent is intentional.
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("create db directory: %w", err)
 		}
 	}
 
-	dsn := dbPath + params
+	dsn := appendSQLiteParams(normalizedDSN, params)
 	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -219,6 +224,16 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	s.fts5Available = available
 
 	return s, nil
+}
+
+func appendSQLiteParams(dsn, params string) string {
+	if params == "" {
+		return dsn
+	}
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + strings.TrimPrefix(params, "?")
+	}
+	return dsn + params
 }
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
@@ -275,7 +290,11 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return openPostgresReadOnly(dbPath)
 	}
 
-	if _, err := os.Stat(dbPath); err != nil {
+	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
+	}
+	if _, err := os.Stat(filesystemPath); err != nil {
 		return nil, fmt.Errorf(
 			"database not found: %s "+
 				"(run 'msgvault init-db' first)", dbPath,
@@ -286,7 +305,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 	// to create or update -wal/-shm sidecar files on open, which fails
 	// under SQLITE_OPEN_READONLY. _query_only opens normally (so SQLite
 	// can manage sidecars) but rejects all write SQL at the query layer.
-	dsn := dbPath + "?_query_only=true&_busy_timeout=5000"
+	dsn := appendSQLiteParams(normalizedDSN, "?_query_only=true&_busy_timeout=5000")
 	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database (read-only): %w", err)

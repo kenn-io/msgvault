@@ -921,6 +921,7 @@ func (m Model) hasDrillFilter() bool {
 		m.drillFilter.RecipientName != "" ||
 		m.drillFilter.Domain != "" ||
 		m.drillFilter.Label != "" ||
+		m.drillFilter.ConversationID != nil ||
 		m.drillFilter.TimeRange.Period != "" ||
 		m.drillFilter.HasEmptyTargets()
 }

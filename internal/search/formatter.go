@@ -27,6 +27,12 @@ func Format(q *Query) string {
 	parts = appendSearchOperators(parts, "subject", q.SubjectTerms)
 	parts = appendSearchOperators(parts, "label", q.Labels)
 	parts = appendSearchOperators(parts, "message_type", q.MessageTypes)
+	if q.ConversationIDs != nil && len(q.ConversationIDs) == 0 {
+		parts = append(parts, "conversation_id:"+conversationIDMatchNone)
+	}
+	for _, conversationID := range q.ConversationIDs {
+		parts = append(parts, "conversation_id:"+strconv.FormatInt(conversationID, 10))
+	}
 	if q.HasAttachment != nil && *q.HasAttachment {
 		parts = append(parts, "has:attachment")
 	}

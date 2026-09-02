@@ -1737,10 +1737,13 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"backup with no subcommand rejected", []string{"backup"}, false},
 		{"backup unknown subcommand rejected", []string{"backup", "restore"}, false},
 		{"logs still allowed", []string{"logs"}, true},
+		{"gc allowed", []string{"gc", "--yes"}, true},
+		{"import-eml allowed", []string{"import-eml", "--identifier", "me@example.test", "dir"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
+		{"repair-senders apply allowed", []string{"repair-senders", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
 		{"add-discord allowed", []string{"add-discord"}, true},
 		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},
@@ -5504,6 +5507,38 @@ func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
 	}
 }
 
+func TestSearchConversationIDFilterParamReachesEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "fast", path: "/api/v1/search/fast?q=hello&conversation_id=42"},
+		{name: "deep", path: "/api/v1/search/deep?q=hello&conversation_id=42"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotConversationIDs []int64
+			engine := &querytest.MockEngine{
+				Stats: &query.TotalStats{},
+				SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					if filter.ConversationID != nil {
+						gotConversationIDs = []int64{*filter.ConversationID}
+					}
+					return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+				},
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					gotConversationIDs = append([]int64(nil), q.ConversationIDs...)
+					return nil, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+			w := doGet(srv, tc.path)
+
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			assert.Equal(t, []int64{42}, gotConversationIDs, "conversation scope")
+		})
+	}
+}
+
 // TestFastDeepSearchRejectInvalidOperatorValue verifies the fast and deep
 // search endpoints reject a query with an invalid known-operator value with a
 // 400 invalid_query instead of silently dropping the operator and running a
@@ -6481,6 +6516,18 @@ func TestHandleSearch_DefaultFTSRejectsStructuredSemanticFilter(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assert.Equal(t, "unsupported_filter_mode", errResp.Error, "error")
+}
+
+func TestHandleSearch_FTSAppliesConversationIDParam(t *testing.T) {
+	srv, st := newTestServerWithMockStore(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=fts&conversation_id=42", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.NotNil(t, st.searchMessagesQueryLast, "structured query")
+	assert.Equal(t, []int64{42}, st.searchMessagesQueryLast.ConversationIDs)
 }
 
 func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {

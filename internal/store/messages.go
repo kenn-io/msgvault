@@ -1773,6 +1773,9 @@ func (s *Store) EnsureParticipantsBatch(addresses []mime.Address) (map[string]in
 // ReplaceMessageRecipients replaces all recipients for a message atomically.
 func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
 	return s.withTx(func(tx *loggedTx) error {
+		if err := s.lockMessageForRecipientWrite(tx, messageID); err != nil {
+			return err
+		}
 		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
@@ -1791,6 +1794,21 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 		// granular path never reach persistMessageWith's final recompute.
 		return refreshMessageAttributionWith(tx, messageID)
 	})
+}
+
+func (s *Store) lockMessageForRecipientWrite(q querier, messageID int64) error {
+	if lockSQL := s.dialect.RowWriterLockSQL("messages", "sender_id"); lockSQL != "" {
+		if _, err := q.Exec(lockSQL, messageID); err != nil {
+			return fmt.Errorf("lock message %d for recipient write: %w", messageID, err)
+		}
+	}
+	var lockedID int64
+	if err := q.QueryRow(`
+		SELECT id FROM messages WHERE id = ?
+	`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil {
+		return fmt.Errorf("lock message %d for recipient write: %w", messageID, err)
+	}
+	return nil
 }
 
 func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) error {
@@ -2256,7 +2274,16 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 		return nil
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		return s.addMessageLabelsTx(tx, messageID, labelIDs)
+		changed, err := s.reconcileMessageLabelsTx(
+			tx, messageID, labelIDs, false,
+		)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return nil
+		}
+		return s.bumpDerivedDataRevision(tx)
 	})
 }
 

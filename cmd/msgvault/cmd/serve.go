@@ -1669,6 +1669,9 @@ func attachmentRemovalCommand(args []string) bool {
 	if args[0] == removeAccountCommandName {
 		return true
 	}
+	if args[0] == "gc" {
+		return true
+	}
 	if args[0] != purgeExcludedMediaCommandName {
 		return false
 	}

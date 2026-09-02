@@ -12,21 +12,22 @@ import (
 
 // Query represents a parsed search query with all supported filters.
 type Query struct {
-	TextTerms     []string   // Full-text search terms
-	FromAddrs     []string   // from: filters
-	ToAddrs       []string   // to: filters
-	CcAddrs       []string   // cc: filters
-	BccAddrs      []string   // bcc: filters
-	SubjectTerms  []string   // subject: filters
-	Labels        []string   // label: filters
-	HasAttachment *bool      // has:attachment
-	BeforeDate    *time.Time // before: filter
-	AfterDate     *time.Time // after: filter
-	LargerThan    *int64     // larger: filter (bytes)
-	SmallerThan   *int64     // smaller: filter (bytes)
-	AccountIDs    []int64    // in: account filter (one or more source IDs)
-	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
-	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
+	TextTerms       []string   // Full-text search terms
+	FromAddrs       []string   // from: filters
+	ToAddrs         []string   // to: filters
+	CcAddrs         []string   // cc: filters
+	BccAddrs        []string   // bcc: filters
+	SubjectTerms    []string   // subject: filters
+	Labels          []string   // label: filters
+	HasAttachment   *bool      // has:attachment
+	BeforeDate      *time.Time // before: filter
+	AfterDate       *time.Time // after: filter
+	LargerThan      *int64     // larger: filter (bytes)
+	SmallerThan     *int64     // smaller: filter (bytes)
+	AccountIDs      []int64    // in: account filter (one or more source IDs)
+	ConversationIDs []int64    // conversation_id: local conversation filter
+	MessageTypes    []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
+	HideDeleted     bool       // exclude messages where deleted_from_source_at IS NOT NULL
 
 	// DeletionScope selects which messages the Store and query-engine
 	// lexical search paths cover relative to source deletion
@@ -122,6 +123,7 @@ func (q *Query) IsEmpty() bool {
 		q.LargerThan == nil &&
 		q.SmallerThan == nil &&
 		len(q.AccountIDs) == 0 &&
+		q.ConversationIDs == nil &&
 		len(q.MessageTypes) == 0
 }
 
@@ -129,6 +131,8 @@ func (q *Query) IsEmpty() bool {
 // It returns a non-nil error when the value is invalid for a known operator
 // (e.g. an unparseable date or size); Parse records the error on the Query.
 type operatorFn func(q *Query, value string, now time.Time) error
+
+const conversationIDMatchNone = "__none__"
 
 // normalizeAddr normalizes an address filter value. If it looks like a bare
 // domain (e.g. "example.com"), it is prefixed with "@" so downstream engines
@@ -197,10 +201,11 @@ func isKnownTLD(s string) bool {
 // dateFormatHint and friends describe the accepted value syntax in the
 // uniform "invalid value ..." error emitted for a bad operator value.
 const (
-	dateFormatHint = "expected a date like YYYY-MM-DD"
-	ageFormatHint  = "expected a relative age like 7d, 2w, 1m, or 1y"
-	sizeFormatHint = "expected a size like 5M, 100K, or 1G"
-	hasFormatHint  = "expected attachment"
+	dateFormatHint           = "expected a date like YYYY-MM-DD"
+	ageFormatHint            = "expected a relative age like 7d, 2w, 1m, or 1y"
+	sizeFormatHint           = "expected a size like 5M, 100K, or 1G"
+	hasFormatHint            = "expected attachment"
+	conversationIDFormatHint = "expected a positive integer"
 )
 
 var operators = map[string]operatorFn{
@@ -306,6 +311,21 @@ var operators = map[string]operatorFn{
 		if v = strings.TrimSpace(strings.ToLower(v)); v != "" {
 			q.MessageTypes = append(q.MessageTypes, v)
 		}
+		return nil
+	},
+	"conversation_id": func(q *Query, v string, _ time.Time) error {
+		value := strings.TrimSpace(v)
+		if value == conversationIDMatchNone {
+			if q.ConversationIDs == nil {
+				q.ConversationIDs = []int64{}
+			}
+			return nil
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			return operatorValueError("conversation_id", v, conversationIDFormatHint)
+		}
+		q.ConversationIDs = append(q.ConversationIDs, id)
 		return nil
 	},
 }
@@ -569,6 +589,7 @@ func (q *Query) HasOperators() bool {
 		q.AfterDate != nil ||
 		q.LargerThan != nil ||
 		q.SmallerThan != nil ||
+		q.ConversationIDs != nil ||
 		len(q.MessageTypes) > 0
 }
 

@@ -115,7 +115,6 @@ func SemanticMessageSearchSupportsFilter(filter MessageFilter) bool {
 	return filter.SourceIDs == nil &&
 		filter.SenderName == "" &&
 		filter.RecipientName == "" &&
-		filter.ConversationID == nil &&
 		!filter.HasEmptyTargets()
 }
 

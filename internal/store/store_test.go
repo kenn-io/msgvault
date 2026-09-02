@@ -1559,14 +1559,24 @@ func TestStore_AddMessageLabels(t *testing.T) {
 	f.AssertLabelCount(msgID, 1)
 
 	// Add STARRED — should go from 1 to 2
+	revisionBefore, err := f.Store.DerivedDataRevision()
+	require.NoError(err, "DerivedDataRevision before additive label")
 	err = f.Store.AddMessageLabels(msgID, []int64{labels["STARRED"]})
 	require.NoError(err, "AddMessageLabels(STARRED)")
 	f.AssertLabelCount(msgID, 2)
+	revisionAfter, err := f.Store.DerivedDataRevision()
+	require.NoError(err, "DerivedDataRevision after additive label")
+	assert.Equal(t, revisionBefore+1, revisionAfter,
+		"additive labels must invalidate exported message facts")
 
 	// Add INBOX again — should be a no-op (INSERT OR IGNORE)
 	err = f.Store.AddMessageLabels(msgID, []int64{labels["INBOX"]})
 	require.NoError(err, "AddMessageLabels(INBOX duplicate)")
 	f.AssertLabelCount(msgID, 2)
+	revisionAfterDuplicate, err := f.Store.DerivedDataRevision()
+	require.NoError(err, "DerivedDataRevision after duplicate label")
+	assert.Equal(t, revisionAfter, revisionAfterDuplicate,
+		"duplicate labels must not invalidate unchanged exported message facts")
 
 	// Add multiple labels at once, including one that already exists
 	err = f.Store.AddMessageLabels(msgID, []int64{labels["SENT"], labels["TRASH"], labels["STARRED"]})

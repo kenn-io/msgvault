@@ -507,6 +507,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
+		"import-eml",
 		"import-emlx",
 		"import-gvoice",
 		"import-imessage",

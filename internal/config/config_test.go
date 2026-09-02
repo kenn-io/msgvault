@@ -1956,7 +1956,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db"
 		got, err := cfg.DatabasePath()
 		require.NoError(t, err, "DatabasePath")
-		assert.Equal(t, "/var/lib/msgvault.db", got)
+		assert.Equal(t, filepath.FromSlash("/var/lib/msgvault.db"), got)
 	})
 
 	t.Run("file: URI with query string drops query", func(t *testing.T) {
@@ -1964,7 +1964,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db?_journal_mode=WAL&_busy_timeout=5000"
 		got, err := cfg.DatabasePath()
 		require.NoError(t, err, "DatabasePath")
-		assert.Equal(t, "/var/lib/msgvault.db", got)
+		assert.Equal(t, filepath.FromSlash("/var/lib/msgvault.db"), got)
 	})
 
 	t.Run("file: URI decodes percent-encoded path", func(t *testing.T) {
@@ -1972,7 +1972,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/my%20vault.db"
 		got, err := cfg.DatabasePath()
 		require.NoError(t, err, "DatabasePath")
-		assert.Equal(t, "/var/lib/my vault.db", got)
+		assert.Equal(t, filepath.FromSlash("/var/lib/my vault.db"), got)
 	})
 
 	t.Run("file: URI relative path (Opaque)", func(t *testing.T) {
@@ -1994,6 +1994,14 @@ func TestDatabasePath(t *testing.T) {
 		got, err := cfg.DatabasePath()
 		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "my vault.db", got)
+	})
+
+	t.Run("net/url Windows path form", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = `file://C:%5CUsers%5Crunner%5Cmsgvault.db`
+		got, err := cfg.DatabasePath()
+		require.NoError(t, err, "DatabasePath")
+		assert.Equal(t, `C:\Users\runner\msgvault.db`, got)
 	})
 
 	t.Run("postgres:// is rejected", func(t *testing.T) {

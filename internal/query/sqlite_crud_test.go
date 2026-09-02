@@ -738,6 +738,25 @@ func TestGetDeletionTargetsByFilter_Label(t *testing.T) {
 	}
 }
 
+func TestGetDeletionTargetsByFilter_ConversationID(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`
+		INSERT INTO conversations (
+			id, source_id, source_conversation_id, conversation_type, title
+		) VALUES (2, 1, 'thread2', 'email_thread', 'Other Thread');
+		UPDATE messages SET conversation_id = 2 WHERE id IN (3, 4, 5)
+	`)
+	require.NoError(t, err, "create unrelated conversation")
+	conversationID := int64(1)
+
+	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(
+		env.Ctx, MessageFilter{ConversationID: &conversationID},
+	))
+
+	require.NoError(t, err, "GetDeletionTargetsByFilter")
+	assert.ElementsMatch(t, []string{"msg1", "msg2"}, ids)
+}
+
 func TestGetDeletionTargetsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 

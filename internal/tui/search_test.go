@@ -170,15 +170,27 @@ func TestInlineSearchTabCyclesThroughSemanticWhenEnabled(t *testing.T) {
 	assert.Equal(searchModeFast, m.searchMode)
 }
 
-func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
+func TestInlineSearchIncludesSemanticForConversationScope(t *testing.T) {
+	assert := assert.New(t)
 	conversationID := int64(42)
+	model := NewBuilder().WithLevel(levelMessageList).
+		WithActiveSearch("find the invoice", searchModeDeep).Build()
+	model.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+	model.drillFilter = query.MessageFilter{ConversationID: &conversationID}
+
+	assert.Contains(model.searchPlaceholder(), "semantic")
+	model, cmd := applyInlineSearchKey(t, model, keyTab())
+	assert.Equal(searchModeSemantic, model.searchMode)
+	assert.NotNil(cmd)
+}
+
+func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
 	tests := []struct {
 		name   string
 		filter query.MessageFilter
 	}{
 		{name: "sender display name", filter: query.MessageFilter{SenderName: "Billing Team"}},
 		{name: "recipient display name", filter: query.MessageFilter{RecipientName: "Accounts Payable"}},
-		{name: "conversation", filter: query.MessageFilter{ConversationID: &conversationID}},
 		{name: "empty aggregate bucket", filter: query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewSenderNames: true}}},
 		{name: "multiple sources", filter: query.MessageFilter{SourceIDs: []int64{7, 8}}},
 	}
