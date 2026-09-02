@@ -296,6 +296,19 @@ func baselineUIDNext(reportedUIDNext uint32, knownUIDs []uint32) uint32 {
 	return highest + 1
 }
 
+// metadataChunkSize bounds one metadata FETCH. fetchChunkSize is 50 because a
+// body fetch of more than that times out on large mailboxes. Flags and
+// mod-sequences are a few dozen bytes each, and the UID set coalesces adjacent
+// UIDs into ranges, so what bounds this fetch is the encoded command rather
+// than the response: a contiguous baseline of any size encodes as "1:N", and a
+// worst-case alternating one costs about 3 bytes per UID.
+//
+// Measured against Dovecot on a LAN with a 0.86 ms round trip, a 100k baseline
+// took 2.52 s as 2000 chunks of 50 and 0.22 s as one command. Round trips were
+// 68 % of that even at sub-millisecond latency, so the same refresh against a
+// server 30 ms away would spend about a minute per changed mailbox per run.
+const metadataChunkSize = 5000
+
 func (c *Client) refreshExistingQresyncChanges(
 	ctx context.Context,
 	mailbox string,
@@ -307,11 +320,11 @@ func (c *Client) refreshExistingQresyncChanges(
 		return nil
 	}
 
-	for chunkStart := 0; chunkStart < len(prior.KnownUIDs); chunkStart += fetchChunkSize {
+	for chunkStart := 0; chunkStart < len(prior.KnownUIDs); chunkStart += metadataChunkSize {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		end := min(chunkStart+fetchChunkSize, len(prior.KnownUIDs))
+		end := min(chunkStart+metadataChunkSize, len(prior.KnownUIDs))
 		expected := make(map[imap.UID]struct{}, end-chunkStart)
 		var requested imap.UIDSet
 		for _, value := range prior.KnownUIDs[chunkStart:end] {

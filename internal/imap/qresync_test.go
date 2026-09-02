@@ -1259,3 +1259,45 @@ func TestQresyncCoverageSearchRejectsChangedEpoch(t *testing.T) {
 	assert.NotContains(joinedCommands(server.commandsFor(3)), "CHANGEDSINCE",
 		"the fallback enumerates rather than trusting the delta")
 }
+
+// TestQresyncRefreshFetchesTheBaselineInFewCommands pins what the existing
+// message refresh costs. It reads flags and mod-sequences, not bodies, and a
+// baseline of adjacent UIDs encodes as one range, so the whole mailbox fits in
+// one command. Chunking it at the body-fetch size turns a 100k mailbox into
+// 2000 round trips on every run in which anything changed.
+func TestQresyncRefreshFetchesTheBaselineInFewCommands(t *testing.T) {
+	assert := assert.New(t)
+	const baselineSize = 5000
+	searchUIDs := make([]imapv2.UID, baselineSize)
+	knownUIDs := make([]uint32, baselineSize)
+	for i := range baselineSize {
+		searchUIDs[i] = imapv2.UID(i + 1)
+		knownUIDs[i] = uint32(i + 1)
+	}
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       baselineSize + 1,
+		highestModSeq: 20,
+		searchUIDs:    searchUIDs,
+		fetchChanged:  []imapv2.UID{},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: baselineSize + 1, HighestModSeq: 10,
+			KnownUIDs: knownUIDs,
+		},
+	})
+
+	listQresyncMessages(t, client)
+
+	plainFetches := 0
+	for _, command := range server.commandsFor(1) {
+		upper := strings.ToUpper(command)
+		if strings.Contains(upper, "UID FETCH") && !strings.Contains(upper, "CHANGEDSINCE") {
+			plainFetches++
+		}
+	}
+	assert.LessOrEqual(plainFetches, 2,
+		"a metadata refresh of one mailbox must not cost a round trip per 50 messages")
+}
