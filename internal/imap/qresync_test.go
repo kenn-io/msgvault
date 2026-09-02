@@ -1173,3 +1173,38 @@ func TestFullEnumerationSavesUIDNextAboveKnownUIDs(t *testing.T) {
 	assert.Empty(secondServer.commandsFor(2),
 		"a self-consistent baseline must not force a full enumeration")
 }
+
+// TestQresyncOverlappingReportCannotCoverAnOmission pins that coverage counts
+// the union of the two reports. A UID may arrive as changed and as vanished in
+// one response, and the coverage check runs before the caller removes vanished
+// UIDs from the changed set. Counting that UID twice lets one message account
+// for two of the UIDs assigned since the last run.
+func TestQresyncOverlappingReportCannotCoverAnOmission(t *testing.T) {
+	assert := assert.New(t)
+	// UIDs 5, 6 and 7 were assigned since the last run. The response reports 5
+	// and 6 as changed, reports 6 as vanished as well, and omits 7.
+	mailboxExists := uint32(5)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1 ENABLE QRESYNC CONDSTORE"},
+		uidValidity:   77,
+		uidNext:       8,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3, 5, 7},
+		selectExists:  &mailboxExists,
+		fetchChanged:  []imapv2.UID{5, 6},
+		fetchVanished: []imapv2.UID{6},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{
+		"INBOX": {
+			UIDValidity: 77, UIDNext: 5, HighestModSeq: 10,
+			KnownUIDs: []uint32{1, 2, 3},
+		},
+	})
+
+	listed := listQresyncMessages(t, client)
+
+	assert.Contains(joinedCommands(server.commandsFor(1)), "UID SEARCH UID 5:*",
+		"one UID reported twice must not account for two assigned UIDs")
+	assert.Contains(listed, "INBOX|7",
+		"the omitted message must be recovered by the fallback")
+}

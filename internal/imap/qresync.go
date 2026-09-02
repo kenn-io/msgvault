@@ -491,6 +491,9 @@ func (c *Client) verifyQresyncCoverage(
 	inAssignedSpan := func(uid imap.UID) bool {
 		return uint32(uid) >= prior.UIDNext && uint32(uid) < currentUIDNext
 	}
+	// Count the union. The check runs before the caller removes vanished UIDs
+	// from the changed set, so a UID reported both ways is in both sets, and
+	// counting it twice lets one report account for two assigned UIDs.
 	accounted := uint32(0)
 	for uid := range changedSet {
 		if inAssignedSpan(uid) {
@@ -498,6 +501,9 @@ func (c *Client) verifyQresyncCoverage(
 		}
 	}
 	for uid := range vanishedSet {
+		if _, alsoChanged := changedSet[uid]; alsoChanged {
+			continue
+		}
 		if inAssignedSpan(uid) {
 			accounted++
 		}
