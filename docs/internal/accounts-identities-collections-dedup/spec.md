@@ -313,9 +313,9 @@ preference runs in this order:
 
 1. Source preference (when `--prefer` is configured, or the default
    order: `gmail,imap,mbox,emlx,hey`).
-2. Complete original payload — has raw MIME, then, when normalized
-   raw MIME matches, more attachments, an attachment-presence signal,
-   and a larger original payload.
+2. Complete original payload — has raw MIME, then, only when every
+   eligible copy has the same normalized raw MIME hash, more attachments,
+   an attachment-presence signal, and a larger original payload.
 3. Source metadata quality — provider IDs, threading info, presence
    of Message-ID.
 4. Richer label or folder metadata.
@@ -324,9 +324,9 @@ preference runs in this order:
 
 Earlier rules win outright. Later rules apply only when all earlier
 ones tie. Attachment and payload-size metadata are authoritative only
-when both rows have raw MIME and their normalized MIME hashes match;
-a shared Message-ID alone is insufficient. The exact policy is visible
-in dry-run output.
+when every eligible copy has raw MIME and all normalized MIME hashes
+match; a shared Message-ID alone is insufficient. The exact policy is
+visible in dry-run output.
 
 The public [Deduplication](../../usage/deduplication.md) guide carries
 the rendered survivor-selection diagram.
