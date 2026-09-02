@@ -324,10 +324,11 @@ func (s *Store) MessageConversation(messageID int64) (MessageConversationRef, er
 // Provider identities used to select membership semantics. Callers pass
 // either a source type or the provider's attachment-ID prefix.
 const (
-	sourceTypeDiscord = "discord"
-	sourceTypeTeams   = "teams"
-	sourceTypeSlack   = "slack"
-	sourceTypeBeeper  = "beeper"
+	sourceTypeDiscord   = "discord"
+	sourceTypeTeams     = "teams"
+	sourceTypeSlack     = "slack"
+	sourceTypeSlackdump = "slackdump"
+	sourceTypeBeeper    = "beeper"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
@@ -378,7 +379,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeBeeper:
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper:
 		return record.memberCount
 	default:
 		return observed

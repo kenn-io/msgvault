@@ -40,6 +40,9 @@ All notable changes to msgvault, grouped by release.
   clients safely forward consent through local and remote daemon execution;
   daemon-host config and environment are not treated as client consent.
 
+- Import Slackdump directories and ZIPs without a Slack token, preserving
+  conversations, threads, reactions, identities, raw JSON, and exported files.
+
 - Exact source selection is available through `--source-id` on `sync`,
   `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
   Account arguments continue to accept identifiers and display names, while

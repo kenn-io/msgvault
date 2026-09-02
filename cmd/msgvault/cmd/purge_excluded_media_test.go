@@ -137,6 +137,19 @@ func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
 	assert.NoFileExists(f.fullPath)
 }
 
+func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
+	current := &config.Config{Slack: config.SlackConfig{
+		MaxMediaMB: 7,
+		AccountsConfig: map[string]config.MediaAccountConfig{
+			"T_TEST": {MaxMediaMB: 11},
+		},
+	}}
+
+	policy, ok := mediaPolicyForSource(current, "slackdump", "T_TEST:UALICE")
+	require.True(t, ok)
+	assert.Equal(t, int64(11)<<20, policy.MaxBytes)
+}
+
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

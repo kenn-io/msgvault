@@ -54,7 +54,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type IN ('beeper', 'slack', 'discord', 'teams')
+		WHERE src.source_type IN ('beeper', 'slack', 'slackdump', 'discord', 'teams')
 		  AND COALESCE(a.attachment_state, '') IN (?, '')
 		  AND (
 		    COALESCE(a.source_attachment_id, '') <> ''

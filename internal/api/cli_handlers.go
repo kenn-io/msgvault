@@ -1559,6 +1559,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-mbox",
 		"import-messenger",
 		"import-pst",
+		"import-slackdump",
 		"import-synctech-sms",
 		"import-whatsapp",
 		"list-deletions",

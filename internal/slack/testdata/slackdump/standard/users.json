@@ -1,0 +1,4 @@
+[
+  {"id":"UALICE","team_id":"T_TEST","name":"alice","profile":{"email":"alice@example.com","display_name":"Alice Test"}},
+  {"id":"UBOB","team_id":"T_TEST","name":"bob","profile":{"email":"bob@example.com","display_name":"Bob Test"}}
+]

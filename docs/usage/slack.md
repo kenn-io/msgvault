@@ -1,6 +1,7 @@
 ---
+last_edited: 2026-08-30
 title: Slack
-description: Archive your Slack workspaces — channels, group DMs, and DMs — via the Web API.
+description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
 
 msgvault archives your own view of a Slack workspace: every public and
@@ -11,6 +12,41 @@ search.
 
 Slack sync is strictly read-only: msgvault only calls read methods of the Web
 API and never posts, edits, or marks anything in Slack.
+
+## Import a Slackdump export
+
+Use `import-slackdump` when you already have an export created by
+[Slackdump](https://github.com/rusq/slackdump). The import runs entirely from
+the local directory or ZIP and does not need a Slack token:
+
+```bash
+msgvault import-slackdump --me you@example.com /path/to/slackdump-export
+msgvault import-slackdump --me U0123456789 /path/to/slackdump-export.zip
+```
+
+`--me` accepts your exact Slack user ID or a unique profile email from the
+export. The importer preserves channels, private channels, group DMs, DMs,
+threads, reactions, mentions, raw Slack JSON, and exported files. Standard
+Slackdump attachment directories and Mattermost-style `__uploads` directories
+are both supported.
+
+Each imported account is stored as a `slackdump` source identified by
+`<team-id>:<user-id>`. Messages still use `message_type = slack`, so live Slack
+syncs and offline imports share the same search and analytics behavior while
+remaining separately filterable sources.
+
+| Flag | Description |
+|---|---|
+| `--me ID_OR_EMAIL` | Your Slack user ID or unique profile email in the export (required) |
+| `--limit N` | Import at most N messages per conversation (0 = unlimited) |
+| `--max-media-mb N` | Skip exported files larger than N MiB (0 = configured/default limit) |
+
+Re-running the same export updates existing messages and reuses stored file
+content instead of creating duplicates. If a file is referenced but absent
+from the export, msgvault keeps a metadata-only attachment record and reports
+it as missing in the command summary. With a configured remote, run the import
+on the daemon host with `--local`; msgvault does not upload the export from a
+client machine.
 
 ## Prerequisites
 

@@ -202,13 +202,15 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 	assert.True(referenced)
 }
 
-func TestAttachmentPolicyCandidatesIncludeLegacyAliasesAndTeamsInlineRows(t *testing.T) {
+func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, slackMessageID := newPolicyMessage(t, st, "slack", "T01:U01", "channel", "legacy-alias", 5)
+	_, slackdumpMessageID := newPolicyMessage(t, st, "slackdump", "T02:U02", "channel", "exported-file", 3)
 	_, teamsMessageID := newPolicyMessage(t, st, "teams", "user@example.com", "direct_chat", "legacy-inline", 2)
 	aliasHash := strings.Repeat("ab", 32)
+	slackdumpHash := strings.Repeat("bc", 32)
 	inlineHash := strings.Repeat("cd", 32)
 
 	var aliasID int64
@@ -217,6 +219,18 @@ func TestAttachmentPolicyCandidatesIncludeLegacyAliasesAndTeamsInlineRows(t *tes
 		VALUES (?, ?, NULL, ?)
 		RETURNING id
 	`), slackMessageID, aliasHash[:2]+"/"+aliasHash, "slack:legacy-alias").Scan(&aliasID)
+	require.NoError(err)
+	var slackdumpID int64
+	err = st.DB().QueryRow(st.Rebind(`
+		INSERT INTO attachments (message_id, storage_path, content_hash, source_attachment_id, attachment_state)
+		VALUES (?, ?, ?, ?, 'stored')
+		RETURNING id
+	`), slackdumpMessageID, slackdumpHash[:2]+"/"+slackdumpHash, slackdumpHash, "slack:F_EXPORT").Scan(&slackdumpID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE conversations SET participant_count = 99
+		WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)
+	`), slackdumpMessageID)
 	require.NoError(err)
 	var inlineID int64
 	err = st.DB().QueryRow(st.Rebind(`
@@ -228,13 +242,16 @@ func TestAttachmentPolicyCandidatesIncludeLegacyAliasesAndTeamsInlineRows(t *tes
 
 	candidates, err := st.ListAttachmentPolicyCandidates(context.Background())
 	require.NoError(err)
-	require.Len(candidates, 2)
+	require.Len(candidates, 3)
 	byID := make(map[int64]store.AttachmentPolicyCandidate, len(candidates))
 	for _, candidate := range candidates {
 		byID[candidate.AttachmentID] = candidate
 	}
 	assert.Equal(aliasHash, byID[aliasID].ContentHash)
 	assert.Equal("slack:legacy-alias", byID[aliasID].SourceAttachmentID)
+	assert.Equal(slackdumpHash, byID[slackdumpID].ContentHash)
+	assert.Equal("slack:F_EXPORT", byID[slackdumpID].SourceAttachmentID)
+	assert.Equal(3, byID[slackdumpID].ParticipantCount, "Slackdump roster snapshot is authoritative")
 	assert.Equal(inlineHash, byID[inlineID].ContentHash)
 	assert.Equal(fmt.Sprintf("teams:inline:legacy:%d", inlineID), byID[inlineID].SourceAttachmentID)
 

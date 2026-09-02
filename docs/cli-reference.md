@@ -559,6 +559,28 @@ After adding, sync with `msgvault sync-slack`.
 
 ---
 
+## import-slackdump
+
+Import a Slackdump directory or ZIP without contacting Slack. `--me` resolves
+your account from `users.json` by exact Slack user ID or unique profile email.
+The import preserves conversations, threads, reactions, raw JSON, identities,
+and exported files. The path must be local to the daemon host; exports are not
+uploaded through a configured remote. See
+[Slack](/usage/slack/#import-a-slackdump-export).
+
+```bash
+msgvault import-slackdump --me you@example.com /path/to/export
+msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | required | Slack user ID or unique profile email in the export |
+| `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
+| `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
+
+---
+
 ## sync-slack
 
 Sync Slack conversations — channels you are a member of, group DMs, and 1:1

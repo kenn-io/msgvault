@@ -41,7 +41,10 @@ type convScope struct {
 	cs              *ConvState
 	toRecipients    []messageRecipient
 	membershipReady bool
-	budgetUsed      int
+	// filesHandledExternally lets the offline Slackdump importer preserve the
+	// shared message mapping while replacing file rows from exported bytes.
+	filesHandledExternally bool
+	budgetUsed             int
 }
 
 type messageRecipient struct {
@@ -1108,8 +1111,10 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		}
 	}
 
-	if err := imp.persistFiles(ctx, cc.syncID, messageID, m, cc.opts, sum); err != nil {
-		return err
+	if !cc.filesHandledExternally {
+		if err := imp.persistFiles(ctx, cc.syncID, messageID, m, cc.opts, sum); err != nil {
+			return err
+		}
 	}
 
 	if err := imp.persistRecipients(messageID, m, senderPID, cc.toRecipients); err != nil {

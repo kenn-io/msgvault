@@ -32,17 +32,18 @@ type AuthTestResult struct {
 // Conversation is one channel/group DM/DM from conversations.list or
 // users.conversations.
 type Conversation struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	IsChannel  bool   `json:"is_channel"`
-	IsGroup    bool   `json:"is_group"`
-	IsIM       bool   `json:"is_im"`
-	IsMpim     bool   `json:"is_mpim"`
-	IsPrivate  bool   `json:"is_private"`
-	IsArchived bool   `json:"is_archived"`
-	IsMember   bool   `json:"is_member"`
-	User       string `json:"user"` // IM peer user ID (im only)
-	NumMembers int    `json:"num_members"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	IsChannel  bool     `json:"is_channel"`
+	IsGroup    bool     `json:"is_group"`
+	IsIM       bool     `json:"is_im"`
+	IsMpim     bool     `json:"is_mpim"`
+	IsPrivate  bool     `json:"is_private"`
+	IsArchived bool     `json:"is_archived"`
+	IsMember   bool     `json:"is_member"`
+	User       string   `json:"user"` // IM peer user ID (im only)
+	NumMembers int      `json:"num_members"`
+	Members    []string `json:"members"`
 }
 
 // User is one workspace member from users.list.

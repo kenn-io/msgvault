@@ -97,6 +97,7 @@ make lint                     # Run linter
 ./msgvault add-slack                         # Register a workspace (prompts for xoxp token)
 ./msgvault sync-slack                        # Sync channels, group DMs, DMs
 ./msgvault sync-slack --full                 # Repair: re-fetch + upsert in place
+./msgvault import-slackdump --me you@example.com /path/to/export.zip  # Offline Slackdump import
 
 # Daemon mode (NAS/server deployment)
 ./msgvault serve                                      # Start HTTP API + scheduled syncs

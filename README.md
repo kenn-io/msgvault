@@ -26,9 +26,9 @@ Archive a lifetime of email, messages, meetings. Analytics and search in millise
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
 Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, CardDAV,
-Granola, Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
-exports, Apple Mail (`.emlx`) directories, PST archives, and common chat/text
-export formats.
+Granola, Circleback, Beeper Desktop, and IMAP sync, plus offline imports from
+Slackdump, MBOX exports, Apple Mail (`.emlx`) directories, PST archives, and
+common chat/text export formats.
 
 ## Features
 
@@ -37,6 +37,7 @@ export formats.
 - **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
 - **Discord sync**: archive guild channels, threads, forum posts, and attachments through a read-only bot with `message_type = discord`
 - **Slack sync**: archive joined channels, group DMs, direct messages, threads, reactions, and files with `message_type = slack`
+- **Slackdump import**: archive a Slackdump directory or ZIP without a Slack token or network access
 - **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
 - **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
@@ -124,6 +125,7 @@ available with `msgvault tui`.
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
 | `add-discord` / `sync-discord` | Register a read-only bot and sync Discord guild channels and threads |
 | `add-slack` / `sync-slack` | Register and archive a Slack workspace, including threads and media |
+| `import-slackdump` | Import a Slackdump directory or ZIP, including threads, reactions, and exported files |
 | `add-carddav` / `sync-carddav` | Discover and sync a CardDAV account; passwords are read from stdin, never argv |
 | `carddav` | Manage address-book roles and resolve retained conflicts |
 | `export-messages` | Stream a bounded, provider-neutral archive window as versioned JSONL |
