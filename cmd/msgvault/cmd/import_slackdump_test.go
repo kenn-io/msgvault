@@ -41,6 +41,7 @@ func TestImportSlackdumpCommandForwardsFlagsAndPath(t *testing.T) {
 		"--me", "alice@example.com",
 		"--limit", "25",
 		"--max-media-mb", "7",
+		"--no-default-identity",
 		"relative/export.zip",
 	}))
 
@@ -51,6 +52,7 @@ func TestImportSlackdumpCommandForwardsFlagsAndPath(t *testing.T) {
 		"--limit=25",
 		"--max-media-mb=7",
 		"--me=alice@example.com",
+		"--no-default-identity",
 		"relative/export.zip",
 	}, args)
 }

@@ -578,6 +578,7 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 | `--me` | required | Slack user ID or unique profile email in the export |
 | `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
 | `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
+| `--no-default-identity` | `false` | Do not auto-confirm the workspace user ID as the source's "me" identity |
 
 ---
 

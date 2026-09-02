@@ -40,6 +40,7 @@ remaining separately filterable sources.
 | `--me ID_OR_EMAIL` | Your Slack user ID or unique profile email in the export (required) |
 | `--limit N` | Import at most N messages per conversation (0 = unlimited) |
 | `--max-media-mb N` | Skip exported files larger than N MiB (0 = configured/default limit) |
+| `--no-default-identity` | Do not auto-confirm the workspace user ID as the source's "me" identity |
 
 Re-running the same export updates existing messages and reuses stored file
 content instead of creating duplicates. If a file is referenced but absent

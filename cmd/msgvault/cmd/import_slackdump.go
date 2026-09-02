@@ -13,9 +13,10 @@ import (
 )
 
 type slackdumpCLIOptions struct {
-	Me         string
-	Limit      int
-	MaxMediaMB int64
+	Me                string
+	Limit             int
+	MaxMediaMB        int64
+	NoDefaultIdentity bool
 }
 
 func newImportSlackdumpCmd() *cobra.Command {
@@ -46,6 +47,7 @@ func newImportSlackdumpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Me, "me", "", "your Slack user ID or profile email (required)")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "maximum messages per conversation (0 = unlimited)")
 	cmd.Flags().Int64Var(&opts.MaxMediaMB, "max-media-mb", 0, "maximum exported file size in MiB (0 = configured/default limit)")
+	cmd.Flags().BoolVar(&opts.NoDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
 	_ = cmd.MarkFlagRequired("me")
 	return cmd
 }
@@ -84,6 +86,16 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run the command to import the export again.")
 		}
 		return errors.Join(fmt.Errorf("import Slackdump: %w", importErr), rebuildCacheAfterWrite(dbPath))
+	}
+	if !opts.NoDefaultIdentity {
+		source, sourceErr := st.GetSourceByID(summary.SourceID)
+		if sourceErr != nil {
+			return errors.Join(fmt.Errorf("read Slackdump source: %w", sourceErr), rebuildCacheAfterWrite(dbPath))
+		}
+		confirmDefaultIdentity(
+			cmd.OutOrStdout(), st, source.ID,
+			source.Identifier, source.Identifier, "account-identifier",
+		)
 	}
 	if err := runPostSourceCreateMigrations(st); err != nil {
 		return errors.Join(fmt.Errorf("post-source-create migrations: %w", err), rebuildCacheAfterWrite(dbPath))

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
@@ -48,6 +49,21 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	require.NoError(err)
 	require.Len(sources, 1)
 	assert.Equal("slackdump", sources[0].SourceType)
+	identities, err := st.ListAccountIdentities(sources[0].ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal("T_TEST:UALICE", identities[0].Address)
+	assert.Equal("account-identifier", identities[0].SourceSignal)
+	assert.Contains(stdout.String(), "Confirmed identity T_TEST:UALICE")
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { _ = duckdb.Close() })
+	var ownerRows int
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ?`,
+		filepath.Join(home, "analytics", "owner_participants", "*.parquet"), sources[0].ID,
+	).Scan(&ownerRows))
+	assert.Equal(1, ownerRows)
 
 	results, total, err := st.SearchMessages("first day", 0, 10)
 	require.NoError(err)
@@ -70,6 +86,39 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(home, "attachments", filepath.FromSlash(storagePath)))
 	require.NoError(err)
 	assert.Equal([]byte("standard attachment bytes\n"), content)
+}
+
+func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
+	require := require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	t.Cleanup(saveMessengerState(t))
+	resetImportSlackdumpFlagsAfterTest(t)
+
+	home := t.TempDir()
+	fixture, err := filepath.Abs("../../../internal/slack/testdata/slackdump/standard")
+	require.NoError(err)
+
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{
+		"--home", home,
+		"import-slackdump",
+		"--me", "UALICE",
+		"--no-default-identity",
+		fixture,
+	})
+	require.NoError(rootCmd.ExecuteContext(context.Background()))
+
+	st, err := store.Open(filepath.Join(home, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	sources, err := st.GetSourcesByIdentifier("T_TEST:UALICE")
+	require.NoError(err)
+	require.Len(sources, 1)
+	identities, err := st.ListAccountIdentities(sources[0].ID)
+	require.NoError(err)
+	assert.Empty(t, identities)
 }
 
 func resetImportSlackdumpFlagsAfterTest(t *testing.T) {
