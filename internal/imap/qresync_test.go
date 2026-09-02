@@ -943,8 +943,16 @@ func TestQresyncOmittedExistingChangeIsRecoveredIndependently(t *testing.T) {
 	commands := joinedCommands(server.commandsFor(1))
 	assert.Contains(commands, "CHANGEDSINCE 10 VANISHED",
 		"the server omission must occur on the incremental request")
-	assert.Contains(commands, "UID FETCH 1:3 (UID FLAGS MODSEQ)",
-		"existing flags need an independent complete response")
+	plainRefresh := false
+	for command := range strings.SplitSeq(commands, "\n") {
+		if strings.Contains(command, "UID FETCH 1:3") &&
+			strings.Contains(command, "MODSEQ") &&
+			!strings.Contains(command, "CHANGEDSINCE") {
+			plainRefresh = true
+			break
+		}
+	}
+	assert.True(plainRefresh, "existing flags need an independent complete response")
 	assert.Contains(listed, "INBOX|2",
 		"the independently observed change must be refreshed")
 	deltas := client.ObservedMailboxDeltas()
