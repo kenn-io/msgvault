@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/slack"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 type slackdumpCLIOptions struct {
@@ -81,24 +83,21 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		},
 		Progress: func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
 	})
+	postImportErr := runSlackdumpPostImportMigrations(
+		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity,
+	)
 	if importErr != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run the command to import the export again.")
 		}
-		return errors.Join(fmt.Errorf("import Slackdump: %w", importErr), rebuildCacheAfterWrite(dbPath))
-	}
-	if !opts.NoDefaultIdentity {
-		source, sourceErr := st.GetSourceByID(summary.SourceID)
-		if sourceErr != nil {
-			return errors.Join(fmt.Errorf("read Slackdump source: %w", sourceErr), rebuildCacheAfterWrite(dbPath))
-		}
-		confirmDefaultIdentity(
-			cmd.OutOrStdout(), st, source.ID,
-			source.Identifier, source.Identifier, "account-identifier",
+		return errors.Join(
+			fmt.Errorf("import Slackdump: %w", importErr),
+			postImportErr,
+			rebuildCacheAfterWrite(dbPath),
 		)
 	}
-	if err := runPostSourceCreateMigrations(st); err != nil {
-		return errors.Join(fmt.Errorf("post-source-create migrations: %w", err), rebuildCacheAfterWrite(dbPath))
+	if postImportErr != nil {
+		return errors.Join(postImportErr, rebuildCacheAfterWrite(dbPath))
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport complete!")
@@ -112,6 +111,34 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:        %d\n", summary.Errors)
 	}
 	return rebuildCacheAfterWrite(dbPath)
+}
+
+func runSlackdumpPostImportMigrations(
+	out io.Writer,
+	st *store.Store,
+	summary *slack.SlackdumpImportSummary,
+	noDefaultIdentity bool,
+) error {
+	if summary == nil || summary.SourceID == 0 {
+		return nil
+	}
+	var identityErr error
+	if !noDefaultIdentity {
+		source, err := st.GetSourceByID(summary.SourceID)
+		if err != nil {
+			identityErr = fmt.Errorf("read Slackdump source: %w", err)
+		} else {
+			confirmDefaultIdentity(
+				out, st, source.ID,
+				source.Identifier, source.Identifier, "account-identifier",
+			)
+		}
+	}
+	migrationErr := runPostSourceCreateMigrations(st)
+	if migrationErr != nil {
+		migrationErr = fmt.Errorf("post-source-create migrations: %w", migrationErr)
+	}
+	return errors.Join(identityErr, migrationErr)
 }
 
 func resolveSlackdumpMediaPolicy(teamID string, overrideMB int64) attachmentpolicy.Policy {

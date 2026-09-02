@@ -121,6 +121,51 @@ func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 	assert.Empty(t, identities)
 }
 
+func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
+	require := require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	t.Cleanup(saveMessengerState(t))
+	resetImportSlackdumpFlagsAfterTest(t)
+
+	home := t.TempDir()
+	fixture, err := filepath.Abs("../../../internal/slack/testdata/slackdump/standard")
+	require.NoError(err)
+	exportRoot := filepath.Join(t.TempDir(), "export")
+	require.NoError(os.CopyFS(exportRoot, os.DirFS(fixture)))
+	require.NoError(os.WriteFile(
+		filepath.Join(exportRoot, "general", "2024-01-02.json"),
+		[]byte(`[{"type":"message"`),
+		0o600,
+	))
+
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{
+		"--home", home,
+		"import-slackdump",
+		"--me", "UALICE",
+		exportRoot,
+	})
+	err = rootCmd.ExecuteContext(context.Background())
+	require.Error(err)
+	require.ErrorContains(err, "2024-01-02.json")
+
+	st, err := store.Open(filepath.Join(home, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	var messages int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	assert.Positive(t, messages)
+	sources, err := st.GetSourcesByIdentifier("T_TEST:UALICE")
+	require.NoError(err)
+	require.Len(sources, 1)
+	identities, err := st.ListAccountIdentities(sources[0].ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal(t, "T_TEST:UALICE", identities[0].Address)
+}
+
 func resetImportSlackdumpFlagsAfterTest(t *testing.T) {
 	t.Helper()
 	command, _, err := rootCmd.Find([]string{"import-slackdump"})
