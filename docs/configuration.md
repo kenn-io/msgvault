@@ -233,11 +233,13 @@ carries seed or context evidence is marked sensitive, so a profile set to
 archive text to the selected provider; `false` leaves only the synthetic
 capability check, which sends no archive text.
 
-Supported protocols are `openai_chat`, `openai_responses`,
-`anthropic_messages`, `google_generate_content`, and `codex_app_server`.
-Onboarding negotiates and saves `native_json_schema`, `json_object`, or
-`prompt_json`. OpenAI Chat profiles also save either `max_completion_tokens`
-or `max_tokens`; the other protocols use their defined token-limit field.
+Usable protocols are `openai_chat`, `openai_responses`,
+`anthropic_messages`, and `google_generate_content`. A fifth protocol,
+`codex_app_server`, is defined but release-gated and cannot run yet; see the
+Codex app-server profiles section below. Onboarding negotiates and saves
+`native_json_schema`, `json_object`, or `prompt_json`. OpenAI Chat profiles
+also save either `max_completion_tokens` or `max_tokens`; the other protocols
+use their defined token-limit field.
 
 These are examples of protocol profiles, not built-in presets:
 
@@ -251,7 +253,6 @@ These are examples of protocol profiles, not built-in presets:
 | Gemini | `google_generate_content` | Google API base and one Gemini model ID |
 | Anthropic | `anthropic_messages` | Anthropic API base and one Claude model ID |
 | OpenAI Responses | `openai_responses` | OpenAI API base and one Responses model ID |
-| Codex | `codex_app_server` | Local attested Codex executable and packet-only boundary |
 
 Confirm current endpoints, model identifiers, privacy terms, and subscription
 rules with the selected operator before saving a profile. OpenRouter and Venice
@@ -261,16 +262,18 @@ subscription-backed endpoints, including local gateways, must be used within
 their provider terms.
 
 Credentials are not stored in this TOML. `credential = "stored"` keeps a
-profile-specific secret under the private tokens directory;
-`credential = "env"` stores only the selected environment-variable name.
+profile-specific secret under the private tokens directory and is supported
+on Linux and macOS only; `credential = "env"` stores only the selected
+environment-variable name and works everywhere.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.
 
-Only interactive `msgvault person provider add` onboarding may contact
-models.dev, and it sends no archive data or provider credential. `--custom`
-skips that catalog and works without models.dev; the required synthetic check
-still contacts the endpoint selected in the profile. The catalog is never used
+Only `msgvault person provider add` may contact models.dev, and only when a
+transport field (`--protocol`, `--endpoint`, `--model`, `--auth`) is missing
+or `--accept-catalog-prices` is set; it sends no archive data or provider
+credential. `--custom` skips that catalog entirely; the required synthetic
+check still contacts the endpoint selected in the profile. The catalog is never used
 by scheduled or manual sweeps. A catalog suggestion also never chooses where a
 credential is sent: onboarding pairs a credential only with an endpoint you
 passed explicitly via `--endpoint` or with the first-party API hosts compiled
@@ -281,11 +284,17 @@ never CI requirements.
 
 ### Codex app-server profiles
 
-`codex_app_server` profiles are the one protocol `person provider add` cannot
-create: generic onboarding negotiates HTTP capabilities through an endpoint,
-while codex_app_server has no endpoint to negotiate against and runs through
-an attested local Codex executable instead. Configure the profile manually,
-then authorize it with the device-code login:
+The `codex_app_server` protocol is not usable in this release. Its transport
+stays unavailable until the executable isolation gate releases a verified
+build, and until then every Codex operation fails closed with
+`codex app-server isolation is not released`. The profile shape is documented
+here so the configuration is ready when the gate ships.
+
+`codex_app_server` profiles are also the one protocol `person provider add`
+cannot create: generic onboarding negotiates HTTP capabilities through an
+endpoint, while codex_app_server has no endpoint to negotiate against and
+runs through an attested local Codex executable instead. Configure the
+profile manually, then authorize it with the device-code login:
 
 ```toml
 [people.sweep.providers.codex]
@@ -310,10 +319,7 @@ the profile, run `msgvault person provider login` to complete the device-code
 authorization, review `msgvault person provider models` for the exact model
 identifiers and reasoning efforts your subscription exposes, then run
 `msgvault person provider check codex` and
-`msgvault person provider consent codex --yes` as with any other profile. The
-Codex transport additionally stays unavailable until its executable isolation
-gate releases a verified build; until then every Codex operation fails closed
-with `codex app-server isolation is not released`.
+`msgvault person provider consent codex --yes` as with any other profile.
 
 ### Windows Paths
 

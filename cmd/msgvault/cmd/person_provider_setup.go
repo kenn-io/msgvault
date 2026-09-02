@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -56,6 +57,13 @@ type personProviderAddOptions struct {
 	requestTimeout      time.Duration
 	acceptCatalogPrices bool
 	confirmed           bool
+	jsonOutput          bool
+}
+
+type personProviderAddOutput struct {
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+	Checked     bool   `json:"checked"`
 }
 
 // explicitTransport reports whether the operator supplied every transport
@@ -143,6 +151,7 @@ func newPersonProviderAddCommand(deps personProviderCommandDeps) *cobra.Command 
 	flags.BoolVar(&options.acceptCatalogPrices, "accept-catalog-prices", false,
 		"Explicitly copy the exact matching catalog price hint into sweep budgets")
 	flags.BoolVar(&options.confirmed, "yes", false, "Confirm the final provider and privacy values")
+	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
 }
 
@@ -183,11 +192,17 @@ func runPersonProviderAdd(
 		if catalogErr != nil {
 			return errors.New("models.dev suggestions are unavailable; use --custom with explicit transport fields")
 		}
-		printPersonProviderSuggestions(command.OutOrStdout(), suggestions)
+		if !options.jsonOutput {
+			printPersonProviderSuggestions(command.OutOrStdout(), suggestions)
+		}
 	}
 	candidate, err := resolvePersonProviderAddCandidate(options, suggestions)
 	if err != nil {
 		return err
+	}
+	if candidate.Credential == peoplesweep.CredentialStored && !peoplesweep.StoredCredentialsSupported() {
+		return errors.New(
+			"stored people provider credentials are unsupported on this platform; pass --credential-env NAME to reference an environment variable instead")
 	}
 	configured := deps.config()
 	if _, exists := configured.Providers[name]; exists {
@@ -196,7 +211,9 @@ func runPersonProviderAdd(
 	if err := validatePersonProviderCandidate(configured, name, candidate); err != nil {
 		return err
 	}
-	printPersonProviderCandidate(command.OutOrStdout(), name, candidate)
+	if !options.jsonOutput {
+		printPersonProviderCandidate(command.OutOrStdout(), name, candidate)
+	}
 
 	before, err := deps.readConfigFile()
 	if err != nil {
@@ -281,11 +298,15 @@ func runPersonProviderAdd(
 		}
 		return rollbackNewPersonProviderCredential(err, credentialStore, name, credentialCleanup)
 	}
+	checkOutput := command.OutOrStdout()
+	if options.jsonOutput {
+		checkOutput = io.Discard
+	}
 	checkedConfig, err := personProviderConfigFromSnapshot(deps, after)
 	if err == nil {
 		checkedDeps := deps
 		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
-		err = executeSavedPersonProviderCheck(command, checkedDeps, name)
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, checkOutput)
 	}
 	if err != nil {
 		rollbackErr := rollbackPersonProviderAdd(deps, before, after, credentialStore, name, credentialCleanup)
@@ -296,9 +317,23 @@ func runPersonProviderAdd(
 			return fmt.Errorf("close newly created people provider credential cleanup guard: %w", err)
 		}
 	}
+	if options.jsonOutput {
+		selected, err := selectPersonProviderConfig(checkedConfig, name)
+		if err != nil {
+			return err
+		}
+		selected.Enabled = true
+		profile, err := selected.Profile()
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderAddOutput{
+			Name: name, Fingerprint: profile.Fingerprint, Checked: true,
+		})
+	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
-		"Added and checked people provider profile %q; run `msgvault person provider use %q` to select and enable it.\n",
-		name, name)
+		"Added and checked people provider profile %q; run `msgvault person provider consent %q --yes` to grant consent, then `msgvault person provider use %q` to select and enable it.\n",
+		name, name, name)
 	return nil
 }
 
@@ -842,6 +877,7 @@ func executeSavedPersonProviderCheck(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	out io.Writer,
 ) error {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
 		return err
@@ -855,9 +891,13 @@ func executeSavedPersonProviderCheck(
 		directStore = !owned
 	}
 	if directStore {
-		return runPersonProviderCheck(command, deps, name, false)
+		output, err := checkPersonProvider(command, deps, name)
+		if err != nil {
+			return err
+		}
+		return writePersonProviderCheckOutput(out, output, false)
 	}
-	return proxySavedPersonProviderOperation(command, deps, "check", name, "")
+	return proxySavedPersonProviderOperation(command, deps, "check", name, "", out)
 }
 
 func proxySavedPersonProviderRevoke(
@@ -866,7 +906,7 @@ func proxySavedPersonProviderRevoke(
 	name string,
 	fingerprint string,
 ) error {
-	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint)
+	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, command.OutOrStdout())
 }
 
 func proxySavedPersonProviderOperation(
@@ -875,6 +915,7 @@ func proxySavedPersonProviderOperation(
 	operation string,
 	name string,
 	fingerprint string,
+	out io.Writer,
 ) error {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
 		return err
@@ -901,7 +942,7 @@ func proxySavedPersonProviderOperation(
 	provider.AddCommand(leaf)
 	person.AddCommand(provider)
 	root.AddCommand(person)
-	leaf.SetOut(command.OutOrStdout())
+	leaf.SetOut(out)
 	leaf.SetErr(command.ErrOrStderr())
 	return deps.proxy(leaf, []string{name}, nil)
 }

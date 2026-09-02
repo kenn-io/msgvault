@@ -75,9 +75,13 @@ msgvault person sweep status
 still disabled. `provider use <name>` selects that profile and enables people
 sweeps, so the following manual run and future scheduled runs use it.
 `provider add` never switches the active selection or enables sweeps: it only
-publishes the profile, and when it adds the first profile it records the
-`provider` selector that `config.toml` validity requires, which stays inert
-while people sweeps are disabled.
+publishes the profile and records its synthetic check. A profile can exist
+without being selected as long as people sweeps stay disabled.
+
+`add`, `use`, `remove`, `check`, `consent`, and `status` all accept `--json`.
+`status <name> --json` reports the profile, its recorded `check`, and its
+`consent` state, which together are every gate a sweep must pass, so an agent
+can decide the next step without parsing prose.
 
 `provider use` and `provider remove` edit the `config.toml` on the machine
 where you run them, so run them on the daemon host; against a configured
@@ -89,20 +93,22 @@ which both operations remind you about on success.
 
 Use `--api-key-stdin` during `provider add` to store a profile-specific key
 outside `config.toml`, or `--credential-env NAME` to store only an environment
-variable name. Never put the secret value in a command argument. Custom local
-gateways can use `--custom`; their synthetic check still calls the configured
-endpoint.
+variable name. Never put the secret value in a command argument. Stored keys
+are supported on Linux and macOS only; on other platforms `provider add`
+refuses a stored credential before reading it, so pass `--credential-env`
+there. Custom local gateways can use `--custom`; their synthetic check still
+calls the configured endpoint.
 
-GLM 5.3, Kimi K3, OpenRouter, Venice, open-agent-api, Gemini, Anthropic,
-OpenAI Responses, and Codex are examples of profiles over the supported
-protocols, not presets or provider-name branches. A gateway uses the protocol
-it exposes. OpenRouter and Venice may forward data to upstream operators, so
+GLM 5.3, Kimi K3, OpenRouter, Venice, open-agent-api, Gemini, Anthropic, and
+OpenAI Responses are examples of profiles over the supported HTTP protocols,
+not presets or provider-name branches. A gateway uses the protocol it
+exposes. OpenRouter and Venice may forward data to upstream operators, so
 review the complete routing path and its privacy terms. Use subscription and
-logged-in endpoints only as their terms allow. Codex is the exception to
-`provider add`: its `codex_app_server` profile is configured manually in
-`config.toml` and authorized with `msgvault person provider login` because the
-transport is an attested local executable rather than an HTTP endpoint; see
-the Codex app-server profiles section of the configuration reference.
+logged-in endpoints only as their terms allow. The `codex_app_server`
+protocol is present but release-gated: every Codex operation currently fails
+closed until its executable isolation gate ships, and `provider add` cannot
+create it; see the Codex app-server profiles section of the configuration
+reference.
 
 Msgvault never switches providers automatically. A locally invalid response
 may receive one repair call on the same resolved profile, credential, endpoint,

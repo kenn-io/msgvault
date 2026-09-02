@@ -84,8 +84,22 @@ type personProviderCommandDeps struct {
 
 type personProviderStatusOutput struct {
 	Profile        peoplesweep.ProviderProfile         `json:"profile"`
+	Check          *store.PersonInferenceCheck         `json:"check,omitempty"`
 	Consent        store.PersonInferenceConsentStatus  `json:"consent"`
 	CodexIsolation *personProviderCodexIsolationStatus `json:"codex_isolation,omitempty"`
+}
+
+type personProviderUseOutput struct {
+	Name                  string `json:"name"`
+	Fingerprint           string `json:"fingerprint"`
+	Enabled               bool   `json:"enabled"`
+	DaemonRestartRequired bool   `json:"daemon_restart_required"`
+}
+
+type personProviderRemoveOutput struct {
+	Name                  string `json:"name"`
+	Removed               bool   `json:"removed"`
+	DaemonRestartRequired bool   `json:"daemon_restart_required"`
 }
 
 type personProviderCodexIsolationStatus struct {
@@ -369,25 +383,31 @@ func newPersonProviderListCommand(deps personProviderCommandDeps) *cobra.Command
 }
 
 func newPersonProviderUseCommand(deps personProviderCommandDeps) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	command := &cobra.Command{
 		Use:   "use <name>",
 		Short: "Select an exactly checked people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			return runPersonProviderUse(command, deps, args[0])
+			return runPersonProviderUse(command, deps, args[0], jsonOutput)
 		},
 	}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
 }
 
 func newPersonProviderRemoveCommand(deps personProviderCommandDeps) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	command := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove a named people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			return runPersonProviderRemove(command, deps, args[0])
+			return runPersonProviderRemove(command, deps, args[0], jsonOutput)
 		},
 	}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
 }
 
 func runPersonProviderList(
@@ -499,6 +519,7 @@ func runPersonProviderUse(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	jsonOutput bool,
 ) error {
 	if err := rejectRemotePersonProviderMutation(deps, "use"); err != nil {
 		return err
@@ -547,6 +568,12 @@ func runPersonProviderUse(
 	if _, err := deps.editConfigTables(before.ETag, planPersonProviderUseEdits(name)); err != nil {
 		return err
 	}
+	if jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderUseOutput{
+			Name: name, Fingerprint: profile.Fingerprint, Enabled: true,
+			DaemonRestartRequired: daemonRunning,
+		})
+	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Selected people provider profile %q.\n", name)
 	if daemonRunning {
 		writePersonProviderDaemonRestartNotice(command.OutOrStdout())
@@ -566,6 +593,7 @@ func runPersonProviderRemove(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	jsonOutput bool,
 ) (retErr error) {
 	if err := rejectRemotePersonProviderMutation(deps, "remove"); err != nil {
 		return err
@@ -680,6 +708,11 @@ func runPersonProviderRemove(
 			return errors.Join(err, restoreErr,
 				errors.New("exact people provider consent remains revoked"))
 		}
+	}
+	if jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderRemoveOutput{
+			Name: name, Removed: true, DaemonRestartRequired: daemonRunning,
+		})
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Removed people provider profile %q; audit history was retained.\n", name)
 	if daemonRunning {
@@ -982,13 +1015,12 @@ func runPersonProviderStatus(
 		return err
 	}
 	defer cleanup()
-	status, err := st.GetPersonInferenceConsentStatus(command.Context(), profile.Fingerprint)
+	output, err := personProviderStatusFor(command.Context(), st, profile)
 	if err != nil {
 		return err
 	}
-	return writePersonProviderStatusWithCodexIsolation(
-		command.OutOrStdout(), profile, status, codexIsolation, jsonOutput,
-	)
+	output.CodexIsolation = codexIsolation
+	return writePersonProviderStatus(command.OutOrStdout(), output, jsonOutput)
 }
 
 func runPersonProviderConsent(
@@ -1022,12 +1054,12 @@ func runPersonProviderConsent(
 	); err != nil {
 		return err
 	}
-	status, err := st.GetPersonInferenceConsentStatus(command.Context(), profile.Fingerprint)
-	if err != nil {
-		return err
-	}
 	if jsonOutput {
-		return writePersonProviderStatus(command.OutOrStdout(), profile, status, true)
+		output, err := personProviderStatusFor(command.Context(), st, profile)
+		if err != nil {
+			return err
+		}
+		return writePersonProviderStatus(command.OutOrStdout(), output, true)
 	}
 	printPersonProviderDisclosure(command.OutOrStdout(), profile)
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent: active (%s)\n", profile.Fingerprint)
@@ -1083,12 +1115,12 @@ func runPersonProviderRevoke(
 	); err != nil {
 		return err
 	}
-	status, err := st.GetPersonInferenceConsentStatus(command.Context(), profile.Fingerprint)
-	if err != nil {
-		return err
-	}
 	if jsonOutput {
-		return writePersonProviderStatus(command.OutOrStdout(), profile, status, true)
+		output, err := personProviderStatusFor(command.Context(), st, profile)
+		if err != nil {
+			return err
+		}
+		return writePersonProviderStatus(command.OutOrStdout(), output, true)
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", profile.Fingerprint)
 	return nil
@@ -1235,40 +1267,54 @@ func runPersonProviderCheck(
 	name string,
 	jsonOutput bool,
 ) error {
+	output, err := checkPersonProvider(command, deps, name)
+	if err != nil {
+		return err
+	}
+	return writePersonProviderCheckOutput(command.OutOrStdout(), output, jsonOutput)
+}
+
+// checkPersonProvider runs the synthetic capability check for one exact
+// profile and records it. It performs no consent grant.
+func checkPersonProvider(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name string,
+) (personProviderCheckOutput, error) {
 	config := deps.config()
 	if name != "" {
 		var err error
 		config, err = selectPersonProviderConfig(config, name)
 		if err != nil {
-			return err
+			return personProviderCheckOutput{}, err
 		}
 		config.Enabled = true
 	}
 	profile, err := config.Profile()
 	if err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
 	st, cleanup, err := deps.openStore()
 	if err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
 	defer cleanup()
 	checker, err := deps.newChecker(config, st)
 	if err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
 	response, err := checker.Check(command.Context())
 	if err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
 	// Codex app-server profiles configure the bare codex driver family while
 	// the driver attests "<family>:<attestation-digest>"; eligibility accepts
 	// that attested identity for its family and still rejects unsafe values.
 	if !peoplesweep.DriverVersionMatches(profile.DriverVersion, response.ProviderVersion) {
-		return errors.New("people inference provider check returned a mismatched driver version")
+		return personProviderCheckOutput{}, errors.New("people inference provider check returned a mismatched driver version")
 	}
 	if _, err := st.EnsurePersonInferenceProfile(command.Context(), profile); err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
 	if err := st.RecordPersonInferenceCheck(command.Context(), store.PersonInferenceCheck{
 		ProfileFingerprint: profile.Fingerprint,
@@ -1278,16 +1324,19 @@ func runPersonProviderCheck(
 		ProviderRequestID:  response.ProviderRequestID,
 		ModelVersion:       response.ModelVersion,
 	}); err != nil {
-		return err
+		return personProviderCheckOutput{}, err
 	}
-	output := personProviderCheckOutput{
+	return personProviderCheckOutput{
 		OK: true, ProviderRequestID: response.ProviderRequestID,
 		Model: profile.Model, Usage: response.Usage,
-	}
+	}, nil
+}
+
+func writePersonProviderCheckOutput(w io.Writer, output personProviderCheckOutput, jsonOutput bool) error {
 	if jsonOutput {
-		return json.NewEncoder(command.OutOrStdout()).Encode(output)
+		return json.NewEncoder(w).Encode(output)
 	}
-	_, _ = fmt.Fprintf(command.OutOrStdout(),
+	_, _ = fmt.Fprintf(w,
 		"People inference provider check succeeded (model=%s, request_id=%s, input_tokens=%d, output_tokens=%d).\n",
 		output.Model, output.ProviderRequestID, output.Usage.InputTokens, output.Usage.OutputTokens)
 	return nil
@@ -1446,47 +1495,59 @@ func openPersonSemanticProviderProfile(
 	return profile, st, cleanup, nil
 }
 
-func writePersonProviderStatus(
-	w io.Writer,
+// personProviderStatusFor assembles the exact policy, its recorded synthetic
+// check, and its consent state so operators and agents can see every gate a
+// sweep must pass for this profile.
+func personProviderStatusFor(
+	ctx context.Context,
+	st personProviderStore,
 	profile peoplesweep.ProviderProfile,
-	status *store.PersonInferenceConsentStatus,
-	jsonOutput bool,
-) error {
-	return writePersonProviderStatusWithCodexIsolation(w, profile, status, nil, jsonOutput)
+) (personProviderStatusOutput, error) {
+	check, err := st.GetPersonInferenceCheck(ctx, profile.Fingerprint)
+	if err != nil {
+		return personProviderStatusOutput{}, err
+	}
+	status, err := st.GetPersonInferenceConsentStatus(ctx, profile.Fingerprint)
+	if err != nil {
+		return personProviderStatusOutput{}, err
+	}
+	if status == nil {
+		return personProviderStatusOutput{}, errors.New("people inference consent status is empty")
+	}
+	return personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}, nil
 }
 
-func writePersonProviderStatusWithCodexIsolation(
+func writePersonProviderStatus(
 	w io.Writer,
-	profile peoplesweep.ProviderProfile,
-	status *store.PersonInferenceConsentStatus,
-	codexIsolation *personProviderCodexIsolationStatus,
+	output personProviderStatusOutput,
 	jsonOutput bool,
 ) error {
-	if status == nil {
-		return errors.New("people inference consent status is empty")
-	}
 	if jsonOutput {
-		return json.NewEncoder(w).Encode(personProviderStatusOutput{
-			Profile: profile, Consent: *status, CodexIsolation: codexIsolation,
-		})
+		return json.NewEncoder(w).Encode(output)
 	}
-	printPersonProviderDisclosure(w, profile)
+	printPersonProviderDisclosure(w, output.Profile)
+	if output.Check == nil {
+		_, _ = fmt.Fprintln(w, "Check: none")
+	} else {
+		_, _ = fmt.Fprintf(w, "Check: %s (model_version=%s)\n",
+			output.Check.CheckedAt.Format(time.RFC3339), output.Check.ModelVersion)
+	}
 	state := "inactive"
-	if status.Active {
+	if output.Consent.Active {
 		state = "active"
-	} else if status.LastRevoked != nil {
+	} else if output.Consent.LastRevoked != nil {
 		state = "revoked"
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
-	if codexIsolation != nil {
+	if output.CodexIsolation != nil {
 		availability := "unavailable"
-		if codexIsolation.Available {
+		if output.CodexIsolation.Available {
 			availability = "available"
 		}
 		_, _ = fmt.Fprintf(w, "Codex isolation: %s\n", availability)
-		_, _ = fmt.Fprintf(w, "Execution boundary: %s\n", codexIsolation.ExecutionBoundary)
-		if codexIsolation.Reason != "" {
-			_, _ = fmt.Fprintf(w, "Reason: %s\n", codexIsolation.Reason)
+		_, _ = fmt.Fprintf(w, "Execution boundary: %s\n", output.CodexIsolation.ExecutionBoundary)
+		if output.CodexIsolation.Reason != "" {
+			_, _ = fmt.Fprintf(w, "Reason: %s\n", output.CodexIsolation.Reason)
 		}
 	}
 	return nil
@@ -1524,14 +1585,11 @@ func personProviderStatuses(
 ) ([]personProviderStatusOutput, error) {
 	statuses := make([]personProviderStatusOutput, 0, len(profiles))
 	for _, profile := range profiles {
-		status, err := st.GetPersonInferenceConsentStatus(ctx, profile.Fingerprint)
+		status, err := personProviderStatusFor(ctx, st, profile)
 		if err != nil {
 			return nil, err
 		}
-		if status == nil {
-			return nil, errors.New("people inference consent status is empty")
-		}
-		statuses = append(statuses, personProviderStatusOutput{Profile: profile, Consent: *status})
+		statuses = append(statuses, status)
 	}
 	return statuses, nil
 }
@@ -1573,7 +1631,7 @@ func writePersonProviderStatuses(
 		if i > 0 {
 			_, _ = fmt.Fprintln(w)
 		}
-		if err := writePersonProviderStatus(w, status.Profile, &status.Consent, false); err != nil {
+		if err := writePersonProviderStatus(w, status, false); err != nil {
 			return err
 		}
 	}

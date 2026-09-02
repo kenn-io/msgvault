@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1135,6 +1136,58 @@ func TestPersonProviderUseStillSelectsAndEnablesAfterAdd(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("new-provider", reloaded.People.Sweep.Provider.Name)
 	assert.True(reloaded.People.Sweep.Enabled)
+}
+
+// TestPersonProviderLifecycleJSONOutput pins the machine-readable contract an
+// agent drives the lifecycle with: add reports the checked fingerprint, status
+// exposes the recorded check next to consent, and use and remove report the
+// resulting selection and daemon restart requirement.
+func TestPersonProviderLifecycleJSONOutput(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := personProviderAddSelectionConfigFile(t, false, true)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("EXACT_PROVIDER_KEY", providerSetupSecretCanary)
+
+	addRaw, err := executePersonProviderCommand(t, deps,
+		append(addPersonProviderSelectionArgs("json-provider"), "--json")...)
+	require.NoError(err)
+	var added personProviderAddOutput
+	require.NoError(json.Unmarshal([]byte(addRaw), &added), addRaw)
+	assert.Equal("json-provider", added.Name)
+	assert.True(added.Checked)
+	assert.Len(added.Fingerprint, 64)
+
+	// Each real CLI invocation loads config.toml fresh; mirror that here.
+	published, err := config.Load(path, "")
+	require.NoError(err)
+	deps.config = func() peoplesweep.Config { return published.People.Sweep }
+
+	statusRaw, err := executePersonProviderCommand(t, deps, "status", "json-provider", "--json")
+	require.NoError(err)
+	var status personProviderStatusOutput
+	require.NoError(json.Unmarshal([]byte(statusRaw), &status), statusRaw)
+	assert.Equal(added.Fingerprint, status.Profile.Fingerprint)
+	require.NotNil(status.Check, "status must expose the recorded check")
+	assert.Equal(added.Fingerprint, status.Check.ProfileFingerprint)
+	assert.False(status.Consent.Active)
+
+	useRaw, err := executePersonProviderCommand(t, deps, "use", "json-provider", "--json")
+	require.NoError(err)
+	var used personProviderUseOutput
+	require.NoError(json.Unmarshal([]byte(useRaw), &used), useRaw)
+	assert.Equal(personProviderUseOutput{
+		Name: "json-provider", Fingerprint: added.Fingerprint, Enabled: true,
+		DaemonRestartRequired: true,
+	}, used)
+
+	removeRaw, err := executePersonProviderCommand(t, deps, "remove", "default", "--json")
+	require.NoError(err)
+	var removed personProviderRemoveOutput
+	require.NoError(json.Unmarshal([]byte(removeRaw), &removed), removeRaw)
+	assert.Equal(personProviderRemoveOutput{
+		Name: "default", Removed: true, DaemonRestartRequired: true,
+	}, removed)
 }
 
 func executePersonProviderCommandWithInput(

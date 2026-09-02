@@ -903,3 +903,7 @@ func unixCredentialEntryMatches(rootFD int, name string, opened unix.Stat_t) boo
 	return opened.Dev == current.Dev && opened.Ino == current.Ino &&
 		validateUnixCredentialStat(current, "file") == nil
 }
+
+// StoredCredentialsSupported reports whether this build can keep a
+// profile-specific secret in the private tokens directory.
+func StoredCredentialsSupported() bool { return true }

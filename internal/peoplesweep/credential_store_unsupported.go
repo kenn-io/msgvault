@@ -43,3 +43,9 @@ func (s *FileCredentialStore) withCredentialRoot(
 	_ = callback
 	return errCredentialStoreUnsupported
 }
+
+// StoredCredentialsSupported reports whether this build can keep a
+// profile-specific secret in the private tokens directory. Setup checks it
+// before reading a secret so an operator is told to use --credential-env up
+// front instead of after the network check.
+func StoredCredentialsSupported() bool { return false }
