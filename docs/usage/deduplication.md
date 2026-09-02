@@ -38,10 +38,10 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 7. Earlier archive timestamp.
 8. A stable row ID, as the final tie-breaker.
 
-Earlier rules win outright; later rules apply only when all earlier ones tie. The attachment-count, attachment-presence, and payload-size rules apply only when both copies have raw MIME and their normalized MIME hashes match. A shared `Message-ID` alone cannot make those payload-completeness signals authoritative. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
+Earlier rules win outright; later rules apply only when all earlier ones tie. The attachment-count, attachment-presence, and payload-size rules apply only when every eligible copy has raw MIME and all their normalized MIME hashes match. A shared `Message-ID` alone cannot make those payload-completeness signals authoritative. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection runs the sent-copy eligibility filter first, then a priority list: source preference, raw MIME, more attachments, an attachment-presence signal, a larger payload, richer labels, earlier archive time, and finally a stable row ID." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection filters to eligible sent copies first, then considers source preference and raw MIME. Only when every eligible copy has matching normalized MIME does it compare attachments, attachment presence, and payload size before labels, archive time, and stable row ID." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## Choosing a Scope
