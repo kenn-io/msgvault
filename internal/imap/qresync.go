@@ -390,14 +390,21 @@ func (c *Client) verifyQresyncCoverage(
 	// difference is a real count, and int is 32 bits wide on a 32-bit build.
 	assigned := currentUIDNext - prior.UIDNext
 
+	// Only UIDs inside the assigned span count. A report about a UID at or
+	// above the current UIDNEXT names a message the server has not assigned
+	// yet, and letting it count would let one such report stand in for a real
+	// message the response left out.
+	inAssignedSpan := func(uid imap.UID) bool {
+		return uint32(uid) >= prior.UIDNext && uint32(uid) < currentUIDNext
+	}
 	accounted := uint32(0)
 	for uid := range changedSet {
-		if uint32(uid) >= prior.UIDNext {
+		if inAssignedSpan(uid) {
 			accounted++
 		}
 	}
 	for uid := range vanishedSet {
-		if uint32(uid) >= prior.UIDNext {
+		if inAssignedSpan(uid) {
 			accounted++
 		}
 	}
@@ -408,6 +415,15 @@ func (c *Client) verifyQresyncCoverage(
 	present, err := c.enumerateMailbox(ctx, mailbox, imap.UID(prior.UIDNext))
 	if err != nil {
 		return fmt.Errorf("QRESYNC coverage search in %q: %w", mailbox, err)
+	}
+	// enumerateMailbox reconnects on a network error, and a reconnect clears
+	// the ENABLE. Every mailbox after this one would then ask for VANISHED on a
+	// connection that never enabled QRESYNC. This costs nothing when the
+	// connection survived, and fails the mailbox when the new one cannot enable
+	// it, which the caller answers with a full enumeration.
+	if !c.enableQresync() {
+		return fmt.Errorf(
+			"QRESYNC unavailable after the coverage search in %q", mailbox)
 	}
 	for _, uid := range present {
 		// "UID SEARCH UID n:*" returns the last message even when n is past
