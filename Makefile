@@ -115,11 +115,12 @@ clean:
 	rm -f msgvault msgvault.exe mimeshootout
 	rm -rf bin/
 
-# Run tests. The CLI package has nearly 1,000 tests, including heavy DuckDB
-# coverage, and its per-package wall clock can exceed 40m on contended CI
-# runners even when no individual test is stalled.
+# Run the full SQLite suite. The three largest packages run as shards after the
+# unsharded remainder so one test binary cannot set the full wall clock. CI runs
+# the same two parts as separate jobs.
 test:
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./...
+	$(MAKE) test-unsharded
+	$(MAKE) test-shards
 
 # Everything except SHARDED_TEST_PKGS. CI's test lane runs this alongside the
 # sharded jobs; together they cover exactly what `make test` covers.
@@ -154,12 +155,12 @@ test-pg: require-test-db
 # has to be exercised against a PostgreSQL archive too. This is the lane
 # .github/workflows/ci.yml's test-postgres job runs.
 #
-# It is a named target rather than an inline `go test` so its flags match the
-# `test` target exactly. Go's test cache keys on the flags, so any package that
-# never reads MSGVAULT_TEST_DB — the SQLite-only ones — is served from `make
-# test`'s cache instead of being re-run here.
+# Run the unsharded remainder first, then the large packages as shards. The
+# steps stay sequential here so at most TEST_SHARDS test processes share the
+# configured PostgreSQL server; CI gives each package its own job and server.
 test-pg-shipped: require-test-db
-	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" ./...
+	$(MAKE) test-pg-shipped-unsharded
+	$(MAKE) test-shards
 
 # test-pg-shipped minus SHARDED_TEST_PKGS, for CI's test-postgres lane; the
 # test-postgres-sharded jobs cover the rest against their own servers.
