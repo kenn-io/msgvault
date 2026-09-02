@@ -309,6 +309,46 @@ func baselineUIDNext(reportedUIDNext uint32, knownUIDs []uint32) uint32 {
 // server 30 ms away would spend about a minute per changed mailbox per run.
 const metadataChunkSize = 5000
 
+// metadataCommandBudget bounds the encoded UID set of one metadata FETCH. The
+// count limit alone does not: a baseline of alternating UIDs cannot coalesce
+// into ranges, so 5000 high-numbered UIDs reach about 35 KB of command, and a
+// server may reject or truncate a line that long. A contiguous baseline still
+// travels as "1:N" and is never split by this.
+const metadataCommandBudget = 4000
+
+// metadataMeasureStride is how often the encoded length is measured while a
+// chunk fills. It bounds the overshoot at 320 characters, which keeps the
+// worst chunk under 4.4 KB.
+const metadataMeasureStride = 32
+
+// metadataFetchChunks splits a baseline into chunks that are bounded both in
+// UID count and in encoded command size.
+func metadataFetchChunks(knownUIDs []uint32) [][]uint32 {
+	var chunks [][]uint32
+	var set imap.UIDSet
+	start := 0
+	for i, value := range knownUIDs {
+		set.AddNum(imap.UID(value))
+		full := i-start+1 >= metadataChunkSize
+		// Measuring every UID would be quadratic, and the encoded length only
+		// grows, so measure on a stride. A chunk can therefore pass the budget
+		// by at most one stride of UIDs, which is 32 times the 10 characters a
+		// 32-bit UID and its separator can take.
+		if !full && (i-start)%metadataMeasureStride == metadataMeasureStride-1 {
+			full = len(set.String()) >= metadataCommandBudget
+		}
+		if full {
+			chunks = append(chunks, knownUIDs[start:i+1])
+			start = i + 1
+			set = nil
+		}
+	}
+	if start < len(knownUIDs) {
+		chunks = append(chunks, knownUIDs[start:])
+	}
+	return chunks
+}
+
 func (c *Client) refreshExistingQresyncChanges(
 	ctx context.Context,
 	mailbox string,
@@ -320,14 +360,13 @@ func (c *Client) refreshExistingQresyncChanges(
 		return nil
 	}
 
-	for chunkStart := 0; chunkStart < len(prior.KnownUIDs); chunkStart += metadataChunkSize {
+	for _, chunk := range metadataFetchChunks(prior.KnownUIDs) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		end := min(chunkStart+metadataChunkSize, len(prior.KnownUIDs))
-		expected := make(map[imap.UID]struct{}, end-chunkStart)
+		expected := make(map[imap.UID]struct{}, len(chunk))
 		var requested imap.UIDSet
-		for _, value := range prior.KnownUIDs[chunkStart:end] {
+		for _, value := range chunk {
 			uid := imap.UID(value)
 			if uid == 0 || value >= prior.UIDNext {
 				return fmt.Errorf("QRESYNC %q has invalid baseline UID %d", mailbox, value)

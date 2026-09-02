@@ -1219,3 +1219,33 @@ func TestSourceMessageExistsIsNotDefiniteWhenHeadersMissing(t *testing.T) {
 	require.Error(err, "a live message without headers is not definitive absence")
 	require.NotErrorIs(err, errIMAPFetchResultMissing)
 }
+
+// TestAllMailSnapshotSavesUIDNextAboveKnownUIDs covers the third place a
+// baseline is saved. The \All snapshot rebuilds every folder state from
+// STATUS, whose UIDNEXT was read before the enumeration that produced the
+// UIDs, so a message delivered between the two commands leaves a baseline the
+// saved UIDNEXT does not cover.
+func TestAllMailSnapshotSavesUIDNextAboveKnownUIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// STATUS reports UIDNEXT 4. The SEARCH that follows reports UID 4.
+	addr, _ := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities:  []string{"IMAP4rev1"},
+		mailboxes:     []string{"All Mail", "Projects"},
+		uidValidity:   77,
+		uidNext:       4,
+		highestModSeq: 20,
+		searchUIDs:    []imapv2.UID{1, 2, 3, 4},
+	})
+	client := newQresyncTestClient(t, addr, map[string]FolderState{})
+	client.mailboxCache = []string{"All Mail", "Projects"}
+	client.allMailFolder = "All Mail"
+
+	listAllMessages(t, client)
+
+	saved := client.ObservedFolderStates()
+	require.Contains(saved, "All Mail")
+	require.Contains(saved["All Mail"].KnownUIDs, uint32(4))
+	assert.Greater(saved["All Mail"].UIDNext, uint32(4),
+		"the snapshot must not save a UIDNEXT its own baseline exceeds")
+}

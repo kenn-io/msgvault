@@ -1301,3 +1301,44 @@ func TestQresyncRefreshFetchesTheBaselineInFewCommands(t *testing.T) {
 	assert.LessOrEqual(plainFetches, 2,
 		"a metadata refresh of one mailbox must not cost a round trip per 50 messages")
 }
+
+// TestMetadataFetchChunksBoundCommandSize pins both limits the refresh needs.
+// A contiguous baseline coalesces into one range and must not be split by the
+// size budget. A baseline of alternating UIDs cannot coalesce, so 5000 of them
+// would reach about 35 KB of command, and a server may reject a line that
+// long.
+func TestMetadataFetchChunksBoundCommandSize(t *testing.T) {
+	assert := assert.New(t)
+
+	contiguous := make([]uint32, 100000)
+	for i := range contiguous {
+		contiguous[i] = uint32(i + 1)
+	}
+	chunks := metadataFetchChunks(contiguous)
+	assert.Len(chunks, 20, "a contiguous baseline is bounded by the UID count alone")
+
+	sparse := make([]uint32, 20000)
+	for i := range sparse {
+		sparse[i] = uint32(500000 + i*2)
+	}
+	for _, chunk := range metadataFetchChunks(sparse) {
+		var set imapv2.UIDSet
+		for _, uid := range chunk {
+			set.AddNum(imapv2.UID(uid))
+		}
+		assert.LessOrEqual(len(set.String()), metadataCommandBudget+320,
+			"a sparse baseline must be split before the command grows too long")
+	}
+
+	assert.Equal(len(sparse), countChunkedUIDs(metadataFetchChunks(sparse)),
+		"chunking must cover every UID exactly once")
+	assert.Empty(metadataFetchChunks(nil))
+}
+
+func countChunkedUIDs(chunks [][]uint32) int {
+	total := 0
+	for _, chunk := range chunks {
+		total += len(chunk)
+	}
+	return total
+}

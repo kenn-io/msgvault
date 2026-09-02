@@ -1153,10 +1153,10 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			}
 			for _, mailbox := range allMailboxes {
 				state := folderStatuses[mailbox]
-				if deltaIndex, ok := deltaByMailbox[mailbox]; ok {
+				deltaIndex, hasDelta := deltaByMailbox[mailbox]
+				if hasDelta {
 					state.KnownUIDs = append(
 						[]uint32(nil), c.observedMailboxDeltas[deltaIndex].State.KnownUIDs...)
-					c.observedMailboxDeltas[deltaIndex].State = state
 				} else {
 					state.KnownUIDs = make([]uint32, 0)
 					for _, observation := range c.observedMemberships {
@@ -1165,6 +1165,15 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 						}
 					}
 					slices.Sort(state.KnownUIDs)
+				}
+				// The snapshot rebuilds the state from STATUS, whose UIDNEXT was
+				// read before the enumeration that produced these UIDs. A message
+				// delivered in between belongs to the baseline and sits at or
+				// above that mark, so the saved UIDNEXT has to cover it.
+				state.UIDNext = baselineUIDNext(state.UIDNext, state.KnownUIDs)
+				if hasDelta {
+					c.observedMailboxDeltas[deltaIndex].State = state
+				} else {
 					c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
 						Mailbox: mailbox,
 						State:   state,
