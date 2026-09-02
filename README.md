@@ -1,7 +1,3 @@
----
-last_edited: "2026-08-26"
----
-
 <p align="center">
   <img src=".github/assets/msgvault-mark.svg" width="160" height="160" alt="msgvault logo">
 </p>
@@ -45,7 +41,7 @@ export formats.
 - **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
 - **CardDAV contacts**: pull address books, explicitly publish curated people, and resolve conflicts without losing remote card data
-- **Provider-neutral people sweeps**: maintain consented profile fields through explicit OpenAI Chat, OpenAI Responses, Anthropic Messages, Gemini, or isolated Codex protocol profiles
+- **Provider-neutral people sweeps**: maintain consented profile fields through explicit OpenAI Chat, OpenAI Responses, Anthropic Messages, or Gemini protocol profiles
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats
 - **First-party web UI**: dense, keyboard-driven search, grouping, people/domain, file, source, and deletion workspaces served directly by the daemon
