@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
@@ -33,20 +34,35 @@ import (
 // owns. That is the whole reclamation story; no pid, boot id, or /proc is
 // involved, so it holds on every platform and across containers sharing one
 // server.
+//
+// PostgreSQL scopes advisory locks to the database a session is connected to,
+// and every binary here locks through its admin handle on its configured
+// database. So a lock taken in one configured database says nothing about a
+// template built by a run configured against another database on the same
+// server. Every template and clone name therefore carries a scope — a hash of
+// the configured database's name — and a sweep judges only names in its own
+// scope, where the locks it takes and the locks owners hold are the same
+// locks.
 const (
 	// templateDBPrefix marks a template database as owned by this fixture. The
-	// full name carries the owner token whose advisory lock the building binary
-	// holds. It deliberately does not overlap the msgvault_test_ prefix of
-	// per-schema fixtures, or the configured database's own name.
+	// full name carries the scope and the owner token whose advisory lock the
+	// building binary holds. It deliberately does not overlap the
+	// msgvault_test_ prefix of per-schema fixtures, or the configured
+	// database's own name.
 	templateDBPrefix = "msgvault_tt_"
 
 	// cloneDBPrefix marks a per-test clone. The name carries the template's
-	// owner token, so a sweep that reclaims a template reclaims its clones too.
+	// scope and owner token, so a sweep that reclaims a template reclaims its
+	// clones too.
 	cloneDBPrefix = "msgvault_tc_"
 
 	// templateTokenBytes is the width of the owner token: eight bytes, so it is
 	// also the advisory lock key.
 	templateTokenBytes = 8
+
+	// templateScopeBytes is the width of the scope: the leading bytes of a
+	// SHA-256 of the configured database's name.
+	templateScopeBytes = 4
 
 	// templateDisableEnv set to "0" turns template cloning off and sends every
 	// fixture down the per-schema path. An escape hatch for diagnosing whether
@@ -57,8 +73,8 @@ const (
 // templateNamePattern and cloneNamePattern are the sole gates on what the
 // sweep may consider and what dropOwnedDatabase may drop.
 var (
-	templateNamePattern = regexp.MustCompile("^" + templateDBPrefix + "([0-9a-f]{16})$")
-	cloneNamePattern    = regexp.MustCompile("^" + cloneDBPrefix + "([0-9a-f]{16})_([0-9a-f]{16})$")
+	templateNamePattern = regexp.MustCompile("^" + templateDBPrefix + "([0-9a-f]{8})_([0-9a-f]{16})$")
+	cloneNamePattern    = regexp.MustCompile("^" + cloneDBPrefix + "([0-9a-f]{8})_([0-9a-f]{16})_([0-9a-f]{16})$")
 )
 
 var (
@@ -97,6 +113,7 @@ type pgTemplate struct {
 	dbURL string
 
 	mu    sync.Mutex
+	scope string    // lock scope of the configured database; set with token
 	token string    // set once the template is built
 	err   error     // set once building failed; the fixture falls back for good
 	owner *sql.Conn // pinned session holding the ownership lock; never closed
@@ -120,7 +137,7 @@ func templateFor(dbURL string) *pgTemplate {
 
 // name returns the template database's name.
 func (p *pgTemplate) name() string {
-	return templateDBPrefix + p.token
+	return templateDBPrefix + p.scope + "_" + p.token
 }
 
 // ensure builds the template on first use and reports whether it is usable. A
@@ -134,59 +151,78 @@ func (p *pgTemplate) ensure() error {
 		return p.err
 	}
 
-	p.token, p.owner, p.err = buildTemplate(p.dbURL)
+	p.scope, p.token, p.owner, p.err = buildTemplate(p.dbURL)
 
 	return p.err
 }
 
 // buildTemplate creates and initializes a template database, returning its
-// owner token and the pinned session that holds the ownership lock. The lock
-// is taken before the database exists so no sweep can ever see an unlocked
-// template of ours; the last-used-connection ordering at the end is what lets
-// the server accept the template as a clone source.
-func buildTemplate(dbURL string) (string, *sql.Conn, error) {
+// scope, its owner token, and the pinned session that holds the ownership
+// lock. The lock is taken before the database exists so no sweep can ever see
+// an unlocked template of ours; the last-used-connection ordering at the end
+// is what lets the server accept the template as a clone source.
+func buildTemplate(dbURL string) (string, string, *sql.Conn, error) {
 	admin, err := pgAdminDB(dbURL)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	ctx := context.Background()
 
+	scope, err := templateScope(ctx, admin)
+	if err != nil {
+		return "", "", nil, err
+	}
+
 	// Best effort: reclaim what earlier binaries left behind.
-	_, _ = sweepOrphanTemplates(ctx, admin)
+	_, _ = sweepOrphanTemplates(ctx, admin, scope)
 
 	token, err := newTemplateToken()
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 
 	owner, err := admin.Conn(ctx)
 	if err != nil {
-		return "", nil, fmt.Errorf("pin template owner session: %w", err)
+		return "", "", nil, fmt.Errorf("pin template owner session: %w", err)
 	}
 	if _, err := owner.ExecContext(ctx, "SELECT pg_advisory_lock($1)", templateLockKey(token)); err != nil {
 		_ = owner.Close()
 
-		return "", nil, fmt.Errorf("take template ownership lock: %w", err)
+		return "", "", nil, fmt.Errorf("take template ownership lock: %w", err)
 	}
 	release := func() {
 		_, _ = owner.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", templateLockKey(token))
 		_ = owner.Close()
 	}
 
-	name := templateDBPrefix + token
+	name := templateDBPrefix + scope + "_" + token
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
 		release()
 
-		return "", nil, fmt.Errorf("create template database: %w", err)
+		return "", "", nil, fmt.Errorf("create template database: %w", err)
 	}
 	if err := initTemplate(ctx, admin, dbURL, name); err != nil {
 		dropOwnedDatabase(admin, name)
 		release()
 
-		return "", nil, err
+		return "", "", nil, err
 	}
 
-	return token, owner, nil
+	return scope, token, owner, nil
+}
+
+// templateScope names the lock space this binary's advisory locks live in: a
+// hash of the configured database, which is where the admin handle takes
+// them. Asked of the server rather than parsed from the URL so it matches
+// whatever database the connection actually landed in.
+func templateScope(ctx context.Context, admin *sql.DB) (string, error) {
+	var database string
+	if err := admin.QueryRowContext(ctx, "SELECT current_database()").Scan(&database); err != nil {
+		return "", fmt.Errorf("configured database name: %w", err)
+	}
+	sum := sha256.Sum256([]byte(database))
+
+	return hex.EncodeToString(sum[:templateScopeBytes]), nil
 }
 
 // initTemplate makes a fresh template database match the configured one: the
@@ -254,7 +290,7 @@ func (p *pgTemplate) clone(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("random clone name: %w", err)
 	}
 
-	name := cloneDBPrefix + p.token + "_" + hex.EncodeToString(suffix)
+	name := cloneDBPrefix + p.scope + "_" + p.token + "_" + hex.EncodeToString(suffix)
 	//nolint:gosec // both names are prefixes plus hex tokens generated here.
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name+" TEMPLATE "+p.name()); err != nil {
 		return "", fmt.Errorf("clone template database: %w", err)
@@ -274,9 +310,8 @@ func newTemplateToken() (string, error) {
 }
 
 // templateLockKey is the advisory lock key for an owner token: the token's
-// eight bytes read as an integer. Advisory locks are scoped to the database a
-// session is connected to, and every party here — builder and sweepers alike
-// — takes them through the admin handle on the configured database.
+// eight bytes read as an integer. The key is meaningful only within one
+// scope, since the lock lives in the configured database.
 func templateLockKey(token string) int64 {
 	raw, err := hex.DecodeString(token)
 	if err != nil || len(raw) != templateTokenBytes {
@@ -286,18 +321,18 @@ func templateLockKey(token string) int64 {
 	return int64(binary.BigEndian.Uint64(raw)) //nolint:gosec // deliberate reinterpretation of eight random bytes
 }
 
-// ownedDatabaseToken returns the owner token carried by a template or clone
-// name, or false for any other name. Every name this package creates, and
-// every name it drops, passes through here.
-func ownedDatabaseToken(name string) (string, bool) {
+// ownedDatabaseParts returns the scope and owner token carried by a template
+// or clone name, or false for any other name. Every name this package creates,
+// and every name it drops, passes through here.
+func ownedDatabaseParts(name string) (scope, token string, ok bool) {
 	if match := templateNamePattern.FindStringSubmatch(name); match != nil {
-		return match[1], true
+		return match[1], match[2], true
 	}
 	if match := cloneNamePattern.FindStringSubmatch(name); match != nil {
-		return match[1], true
+		return match[1], match[2], true
 	}
 
-	return "", false
+	return "", "", false
 }
 
 // dropOwnedDatabase removes a template or clone this package created, and does
@@ -318,7 +353,7 @@ type execer interface {
 // dropOwnedDatabaseOn is dropOwnedDatabase on a caller-chosen connection, for
 // the sweep, which must not need a second pooled connection while it holds one.
 func dropOwnedDatabaseOn(ctx context.Context, on execer, name string) error {
-	if _, ok := ownedDatabaseToken(name); !ok {
+	if _, _, ok := ownedDatabaseParts(name); !ok {
 		return nil
 	}
 
@@ -331,18 +366,22 @@ func dropOwnedDatabaseOn(ctx context.Context, on execer, name string) error {
 // owning binary is gone. Ownership is decided by the server: a token whose
 // advisory lock this sweep can take has no live owner, because a live owner
 // holds that lock on a pinned session until it exits. A token it cannot lock
-// belongs to a running binary and is left alone, clones included. It returns
-// the names it dropped.
-func sweepOrphanTemplates(ctx context.Context, admin *sql.DB) ([]string, error) {
+// belongs to a running binary and is left alone, clones included. Only names
+// in the sweep's own scope are judged: an owner in another scope holds its
+// lock in another database, where this sweep cannot see it, so a free key
+// here would prove nothing. It returns the names it dropped.
+func sweepOrphanTemplates(ctx context.Context, admin *sql.DB, scope string) ([]string, error) {
 	names, err := listOwnedDatabases(ctx, admin)
 	if err != nil {
 		return nil, err
 	}
 	byToken := map[string][]string{}
 	for _, name := range names {
-		if token, ok := ownedDatabaseToken(name); ok {
-			byToken[token] = append(byToken[token], name)
+		nameScope, token, ok := ownedDatabaseParts(name)
+		if !ok || nameScope != scope {
+			continue
 		}
+		byToken[token] = append(byToken[token], name)
 	}
 
 	var dropped []string

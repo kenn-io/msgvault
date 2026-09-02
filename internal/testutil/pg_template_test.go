@@ -26,6 +26,21 @@ func requirePostgresTestURL(t *testing.T) string {
 	return testDB
 }
 
+// requireTemplate returns this binary's template, skipping the calling test
+// when fixtures are on the per-schema path instead: cloning switched off, or
+// a role that cannot CREATE DATABASE. The contracts below are the template's.
+func requireTemplate(t *testing.T, dbURL string) *pgTemplate {
+	t.Helper()
+	if os.Getenv(templateDisableEnv) == "0" {
+		t.Skip("template cloning is switched off")
+	}
+	tmpl := templateFor(dbURL)
+	if err := tmpl.ensure(); err != nil {
+		t.Skipf("template cloning unavailable on this server: %v", err)
+	}
+	return tmpl
+}
+
 // currentSchemaOf reports the schema a store's connections resolve unqualified
 // names against.
 func currentSchemaOf(t *testing.T, st *store.Store) string {
@@ -70,7 +85,7 @@ func databaseExists(t *testing.T, db *sql.DB, name string) bool {
 func TestPostgresFixturesGetPrivateEmptyDatabases(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	requirePostgresTestURL(t)
+	requireTemplate(t, requirePostgresTestURL(t))
 
 	first := NewTestStore(t)
 	second := NewTestStore(t)
@@ -92,6 +107,7 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := requirePostgresTestURL(t)
+	requireTemplate(t, dbURL)
 
 	adminDB, err := pgAdminDB(dbURL)
 	require.NoError(err, "open admin connection")
@@ -113,9 +129,7 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 func TestPostgresFixtureIssuesNoDDLOnceTemplateExists(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	requirePostgresTestURL(t)
-
-	NewTestStore(t) // first fixture in the binary builds the template
+	requireTemplate(t, requirePostgresTestURL(t))
 
 	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true, MaxStmtChars: 10_000})
 	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
@@ -169,7 +183,8 @@ func createOwnedDatabaseForTest(t *testing.T, admin *sql.DB, name string) {
 // TestSweepReclaimsOnlyUnownedTemplates covers the sweep's ownership rule: a
 // template whose owner session is gone is reclaimed together with its clones;
 // one whose lock is still held — by another running binary, or by this one —
-// is left alone.
+// is left alone; and one from another scope is never judged at all, because
+// its owner's lock lives in a database this sweep cannot observe.
 func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -181,13 +196,12 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 
 	// This binary's own template first: building it sweeps, and the staged
 	// databases below must be judged by the sweep under test, not that one.
-	own := templateFor(dbURL)
-	require.NoError(own.ensure(), "this binary's own template")
+	own := requireTemplate(t, dbURL)
 
 	deadToken, err := newTemplateToken()
 	require.NoError(err, "dead owner token")
-	dead := templateDBPrefix + deadToken
-	deadClone := cloneDBPrefix + deadToken + "_" + deadToken
+	dead := templateDBPrefix + own.scope + "_" + deadToken
+	deadClone := cloneDBPrefix + own.scope + "_" + deadToken + "_" + deadToken
 	createOwnedDatabaseForTest(t, admin, dead)
 	createOwnedDatabaseForTest(t, admin, deadClone)
 
@@ -195,8 +209,20 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	// sweep, exactly as a running sibling binary holds its own.
 	liveToken, err := newTemplateToken()
 	require.NoError(err, "live owner token")
-	live := templateDBPrefix + liveToken
+	live := templateDBPrefix + own.scope + "_" + liveToken
 	createOwnedDatabaseForTest(t, admin, live)
+
+	// A template from a run configured against another database on this
+	// server. Nobody holds its lock here, and that is exactly why the sweep
+	// must not read anything into it.
+	foreignScope := "0123abcd"
+	if foreignScope == own.scope {
+		foreignScope = "abcd0123"
+	}
+	foreignToken, err := newTemplateToken()
+	require.NoError(err, "foreign owner token")
+	foreign := templateDBPrefix + foreignScope + "_" + foreignToken
+	createOwnedDatabaseForTest(t, admin, foreign)
 	holder, err := admin.Conn(ctx)
 	require.NoError(err, "pin holder session")
 	_, err = holder.ExecContext(ctx, "SELECT pg_advisory_lock($1)", templateLockKey(liveToken))
@@ -206,7 +232,7 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 		_ = holder.Close()
 	})
 
-	dropped, err := sweepOrphanTemplates(ctx, admin)
+	dropped, err := sweepOrphanTemplates(ctx, admin, own.scope)
 	require.NoError(err, "sweep")
 
 	// Other binaries' leftovers may be reclaimed in the same pass, so the
@@ -217,6 +243,8 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	assert.False(databaseExists(t, admin, deadClone), "dead owner's clone is gone")
 	assert.True(databaseExists(t, admin, live), "a live owner's template survives")
 	assert.True(databaseExists(t, admin, own.name()), "this binary's own template survives")
+	assert.NotContains(dropped, foreign, "sweep never judges another scope's template")
+	assert.True(databaseExists(t, admin, foreign), "another scope's template survives")
 }
 
 // TestDropOwnedDatabaseIgnoresForeignNames is the safety gate on every DROP
