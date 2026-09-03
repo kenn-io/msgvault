@@ -69,6 +69,12 @@ const (
 	listPageSize   = 100
 )
 
+var connectRetryDelays = [...]time.Duration{
+	5 * time.Second,
+	15 * time.Second,
+	45 * time.Second,
+}
+
 // Trash is the canonical fallback name for the trash mailbox on servers
 // that do not advertise \Trash via special-use attributes.
 const Trash = "Trash"
@@ -129,6 +135,7 @@ type Client struct {
 	// unchanged the running count of mailboxes skipped via saved
 	// folder state.
 	listProgress func(done, total int, mailbox string, found, unchanged int)
+	sleep        func(context.Context, time.Duration) error
 }
 
 // NewClient creates a new IMAP client.
@@ -138,6 +145,7 @@ func NewClient(cfg *Config, password string, opts ...Option) *Client {
 		password:         password,
 		logger:           slog.Default(),
 		labelMapComplete: true,
+		sleep:            sleepContext,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -179,11 +187,55 @@ func (c *Client) labelsSnapshotFilteredLocked() bool {
 			len(c.folderFilterExclude) > 0)
 }
 
-// connect establishes and authenticates the IMAP connection. Caller must hold mu.
+type retryableConnectError struct{ err error }
+
+func (e *retryableConnectError) Error() string { return e.err.Error() }
+
+func (e *retryableConnectError) Unwrap() error { return e.err }
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// connect establishes and authenticates the IMAP connection. Dial and
+// greeting failures are retried with bounded backoff. Caller must hold mu.
 func (c *Client) connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
+	for attempt := 0; ; attempt++ {
+		err := c.connectOnce(ctx)
+		if err == nil {
+			return nil
+		}
+		var retryErr *retryableConnectError
+		if !errors.As(err, &retryErr) {
+			return err
+		}
+		if attempt >= len(connectRetryDelays) {
+			return retryErr.Unwrap()
+		}
+		delay := connectRetryDelays[attempt]
+		c.logger.Warn("retrying IMAP connection",
+			"addr", c.config.Addr(),
+			"attempt", attempt+2,
+			"limit", len(connectRetryDelays)+1,
+			"delay", delay,
+			"error", retryErr.Unwrap())
+		if err := c.sleep(ctx, delay); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *Client) connectOnce(ctx context.Context) error {
 
 	addr := c.config.Addr()
 	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
@@ -205,12 +257,20 @@ func (c *Client) connect(ctx context.Context) error {
 		conn, err = imapclient.DialInsecure(addr, imapOpts)
 	}
 	if err != nil {
-		return fmt.Errorf("dial IMAP %s: %w", addr, err)
+		return &retryableConnectError{
+			err: fmt.Errorf("dial IMAP %s: %w", addr, err),
+		}
 	}
 
 	if err := conn.WaitGreeting(); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		var protocolErr *imap.Error
+		if errors.As(err, &protocolErr) {
+			return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		}
+		return &retryableConnectError{
+			err: fmt.Errorf("IMAP greeting from %s: %w", addr, err),
+		}
 	}
 
 	switch c.config.EffectiveAuthMethod() {

@@ -49,6 +49,28 @@ type statusErrorSession struct {
 	mailbox string
 }
 
+type droppingListener struct {
+	net.Listener
+	remaining atomic.Int64
+	accepted  atomic.Int64
+}
+
+func (l *droppingListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		l.accepted.Add(1)
+		if l.remaining.Load() > 0 {
+			l.remaining.Add(-1)
+			_ = conn.Close()
+			continue
+		}
+		return conn, nil
+	}
+}
+
 func (s *statusErrorSession) Status(
 	mailbox string,
 	options *imap.StatusOptions,
@@ -387,6 +409,19 @@ func StartIMAPMemServer(t *testing.T, messagesPerMailbox map[string]int) (string
 	return startIMAPMemServer(t, messagesPerMailbox, nil, "", 0, "", nil)
 }
 
+// StartIMAPMemServerWithDroppedConnections runs an in-memory IMAP server that
+// drops the requested number of accepted sockets before serving connections.
+// The returned counter includes both dropped and served sockets.
+func StartIMAPMemServerWithDroppedConnections(
+	t *testing.T,
+	messagesPerMailbox map[string]int,
+	dropCount int,
+) (string, *imapmemserver.User, func() int64) {
+	t.Helper()
+	return startIMAPMemServerWithDropCount(
+		t, messagesPerMailbox, nil, "", 0, "", nil, dropCount)
+}
+
 // StartIMAPMemServerWithSpecialUse runs an in-memory IMAP server whose LIST
 // responses advertise the supplied special-use attributes.
 func StartIMAPMemServerWithSpecialUse(
@@ -446,6 +481,22 @@ func startIMAPMemServer(
 	statusErrorMailbox string,
 	missingUID *missingUIDConfig,
 ) (string, *imapmemserver.User) {
+	addr, user, _ := startIMAPMemServerWithDropCount(
+		t, messagesPerMailbox, specialUse, selectErrorMailbox, selectErrorCount,
+		statusErrorMailbox, missingUID, 0)
+	return addr, user
+}
+
+func startIMAPMemServerWithDropCount(
+	t *testing.T,
+	messagesPerMailbox map[string]int,
+	specialUse map[string][]imap.MailboxAttr,
+	selectErrorMailbox string,
+	selectErrorCount int,
+	statusErrorMailbox string,
+	missingUID *missingUIDConfig,
+	dropCount int,
+) (string, *imapmemserver.User, func() int64) {
 	t.Helper()
 	user := imapmemserver.NewUser(IMAPTestUsername, IMAPTestPassword)
 	mailboxes := make([]string, 0, len(messagesPerMailbox))
@@ -494,10 +545,14 @@ func startIMAPMemServer(
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	go func() { _ = server.Serve(ln) }()
+	dropListener := &droppingListener{Listener: ln}
+	dropListener.remaining.Store(int64(dropCount))
+	go func() { _ = server.Serve(dropListener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	return ln.Addr().String(), user
+	return ln.Addr().String(), user, func() int64 {
+		return dropListener.accepted.Load()
+	}
 }
 
 // ExpungeIMAPMessage permanently removes one UID from a mailbox on a server
