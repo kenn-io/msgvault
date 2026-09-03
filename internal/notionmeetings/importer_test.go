@@ -154,7 +154,9 @@ func TestImporterFullRepairsDerivedArchiveData(t *testing.T) {
 	metadata, err := st.GetMessageMetadata(messageID)
 	require.NoError(err)
 	assert.True(metadata.Valid)
-	assert.Contains(metadata.String, `"platform":"notion_meetings"`)
+	var repairedMetadata map[string]any
+	require.NoError(json.Unmarshal([]byte(metadata.String), &repairedMetadata))
+	assert.Equal("notion_meetings", repairedMetadata["platform"])
 	var envelope, rawFormat string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT mr.email_address, raw.raw_format
