@@ -1627,7 +1627,9 @@ func cliRepairMessageSubprocessArgs(req api.CLIRepairMessageRequest) []string {
 		args = append(args, "--json")
 	}
 	if req.Reference != "" {
-		args = append(args, req.Reference)
+		// The reference is user data. Terminate flag parsing so a value such
+		// as "--audit" reaches the subprocess as a positional argument.
+		args = append(args, "--", req.Reference)
 	}
 	return args
 }

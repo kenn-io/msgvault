@@ -62,6 +62,27 @@ func TestRepairMessageCommandValidatesModeAndSourceScope(t *testing.T) {
 	}
 }
 
+func TestRepairMessageCommandTreatsHyphenReferenceAfterTerminatorAsRepair(t *testing.T) {
+	storeErr := errors.New("writable store opened for repair")
+	auditOpened := false
+	command := newRepairMessageCmd(repairMessageCommandDeps{
+		isDaemonSubprocess: func() bool { return true },
+		openWritableStore: func() (*store.Store, func(), error) {
+			return nil, func() {}, storeErr
+		},
+		openReadOnlyStore: func() (*store.Store, func(), error) {
+			auditOpened = true
+			return nil, func() {}, errors.New("must not audit")
+		},
+	})
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"--", "--audit"})
+
+	require.ErrorIs(t, command.Execute(), storeErr)
+	assert.False(t, auditOpened, "a reference spelled like a flag must not select audit mode")
+}
+
 func TestRepairMessageCommandRunsProductionRepairAndPrintsStableResult(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

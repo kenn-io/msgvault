@@ -1655,7 +1655,12 @@ func TestStoreAPIAdapterRunCLIRepairMessageUsesDedicatedLocalArgv(t *testing.T) 
 		{
 			name: "repair",
 			req:  api.CLIRepairMessageRequest{Reference: "gmail-42", SourceID: 7},
-			want: []string{"repair-message", "--local", "--source-id", "7", "gmail-42"},
+			want: []string{"repair-message", "--local", "--source-id", "7", "--", "gmail-42"},
+		},
+		{
+			name: "hyphen-prefixed reference stays positional",
+			req:  api.CLIRepairMessageRequest{Reference: "--audit"},
+			want: []string{"repair-message", "--local", "--", "--audit"},
 		},
 		{
 			name: "whole archive audit json",
