@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-01
+last_edited: 2026-09-03
 title: Changelog
 description: Release history for msgvault
 ---
@@ -66,6 +66,11 @@ All notable changes to msgvault, grouped by release.
   metadata, plus `msgvault person track|untrack` and
   `/api/v1/people/{id}/tracking` to opt a durable person into future profile
   maintenance.
+
+- The seeded person catalog gains `how_we_met`, a searchable single-value
+  text field for how you and a person first met. It is seeded on store open
+  for SQLite and PostgreSQL alike, so a fresh archive has the field before
+  anyone types, and it joins the inference target catalog for tracked people.
 
 - Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
   keeps the daemon's scheduled embeds within the listed accounts, and

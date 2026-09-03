@@ -32,6 +32,7 @@ const (
 	AttributeUniversalIDInterestsFunGrowingUp = "7ffd6a23-74cc-4e05-ad6b-7d765d883a94"
 	AttributeUniversalIDFavoritesFood         = "12612daa-90b0-461b-b928-79d4a2bc07ba"
 	AttributeUniversalIDFavoritesPlace        = "be2bccc1-c395-4bb4-8f68-02e745ea7b22"
+	AttributeUniversalIDHowWeMet              = "ab373615-6ee4-43e7-9f60-8c1d4dbf46c6"
 )
 
 const (
@@ -51,6 +52,7 @@ const (
 	AttributeSlugInterestsFunGrowingUp = "interests_fun_growing_up"
 	AttributeSlugFavoritesFood         = "favorites_food"
 	AttributeSlugFavoritesPlace        = "favorites_place"
+	AttributeSlugHowWeMet              = "how_we_met"
 )
 
 // AttributeDerivedSourceActivitySpine names the future last-contacted producer.
@@ -196,7 +198,36 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			"Foods this person especially likes", 140, AttributeCardinalityMulti, false, true),
 		profileText(AttributeUniversalIDFavoritesPlace, AttributeSlugFavoritesPlace, "Favorite place",
 			"Places this person especially likes", 150, AttributeCardinalityMulti, false, true),
+		howWeMetDefinition(),
 	)
+}
+
+// howWeMetDefinition is the one relationship-scoped seed: it describes how the
+// archive owner and this person first met, not a fact about the person alone.
+// It carries a longer cap than the profile seeds because it is usually a
+// sentence rather than a label.
+func howWeMetDefinition() AttributeDefinitionInput {
+	description := "How you and this person first met"
+	return AttributeDefinitionInput{
+		UniversalID:  AttributeUniversalIDHowWeMet,
+		ObjectType:   AttributeObjectPerson,
+		Slug:         AttributeSlugHowWeMet,
+		Label:        "How we met",
+		Description:  &description,
+		ValueType:    AttributeValueText,
+		FieldType:    AttributeFieldText,
+		Cardinality:  AttributeCardinalitySingle,
+		DisplayOrder: 155,
+		Ownership:    AttributeOwnershipSystem,
+		UICreatable:  true,
+		UIEditable:   true,
+		APIMutable:   true,
+		IsSearchable: true,
+		IsSensitive:  false,
+		IsAudited:    true,
+		IsDeletable:  false,
+		Options:      &AttributeOptions{MaxLength: 240},
+	}
 }
 
 // EnsureSeededAttributeDefinitions reconciles shipped definitions.

@@ -39,6 +39,7 @@ func TestInitSchemaSeedsTheSystemPersonCatalog(t *testing.T) {
 		"location", "birthplace", "membership", "religion", "politics",
 		"personality", "family_pets", "interests_fun_now",
 		"interests_fun_growing_up", "favorites_food", "favorites_place",
+		store.AttributeSlugHowWeMet,
 	}, slugs, "seeding must be minimal and display-ordered")
 
 	organization, err := st.ListAttributeDefinitionsContext(ctx,
@@ -99,6 +100,37 @@ func TestSeededAttributeDefinitionsIncludeExpandedPersonCatalog(t *testing.T) {
 			seenIDs[definition.UniversalID] = struct{}{}
 		})
 	}
+}
+
+func TestSeededAttributeDefinitionsIncludeHowWeMet(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	definition, err := st.GetAttributeDefinitionBySlugContext(
+		t.Context(), store.AttributeObjectPerson, store.AttributeSlugHowWeMet)
+	require.NoError(err)
+	assert.Equal("ab373615-6ee4-43e7-9f60-8c1d4dbf46c6", definition.UniversalID)
+	assert.Equal(store.AttributeUniversalIDHowWeMet, definition.UniversalID)
+	assert.Equal("How we met", definition.Label)
+	require.NotNil(definition.Description)
+	assert.Equal("How you and this person first met", *definition.Description)
+	assert.Equal(store.AttributeValueText, definition.ValueType)
+	assert.Equal(store.AttributeFieldText, definition.FieldType)
+	assert.Equal(store.AttributeCardinalitySingle, definition.Cardinality)
+	assert.Equal(int64(155), definition.DisplayOrder)
+	assert.Equal(store.AttributeOwnershipSystem, definition.Ownership)
+	assert.True(definition.UICreatable)
+	assert.True(definition.UIEditable)
+	assert.True(definition.APIMutable)
+	assert.True(definition.IsSearchable)
+	assert.False(definition.IsSensitive)
+	assert.True(definition.IsAudited)
+	assert.False(definition.IsDeletable)
+	assert.True(definition.IsActive)
+	assert.Nil(definition.DerivedSource)
+	require.NotNil(definition.Options)
+	assert.Equal(240, definition.Options.MaxLength)
 }
 
 func TestSeededAttributeDefinitionsIncludeNotes(t *testing.T) {

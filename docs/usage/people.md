@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-30"
+last_edited: "2026-09-03"
 title: People, Profiles, and Source Identities
 description: Discover the addresses that mean you inside each source, curate stable person profiles, and store typed profile attributes.
 ---
@@ -278,14 +278,36 @@ personal data.
 
 ## Store typed attributes
 
-Every archive starts with four person-field definitions:
+Every archive starts with the same seeded person-field catalog. The
+definitions are system-owned and cannot be deleted; labels, descriptions, and
+display order can be edited. Sensitive fields are not searchable and stay out
+of provider inference unless a provider profile opts in.
 
-| Slug | Type | Cardinality | Behavior |
-|---|---|---|---|
-| `primary_channel` | text choice | single | Writable: email, phone, SMS, chat, or in person |
-| `contact_frequency` | integer days | single | Writable |
-| `ask_me_about` | text | multiple | Writable and searchable |
-| `last_contacted` | timestamp | single | Read-only derived field; it remains empty until its producer supplies a value |
+| Slug | Label | Type | Cardinality | Sensitive | Behavior |
+|---|---|---|---|---|---|
+| `primary_channel` | Primary channel | text choice | single | no | Writable: email, phone, SMS, chat, or in person |
+| `contact_frequency` | Contact frequency | integer days | single | no | Writable |
+| `ask_me_about` | Ask me about | text | multiple | no | Writable and searchable |
+| `last_contacted` | Last contacted | timestamp | single | no | Read-only derived field; it remains empty until its producer supplies a value |
+| `notes` | Notes | text | single | yes | Private free-form notes; maps to the vCard `NOTE` property |
+| `location` | Location | text | single | no | Where this person lives or is based |
+| `birthplace` | Born in | text | single | no | Where this person was born |
+| `membership` | Membership | text | multiple | no | Groups and communities |
+| `religion` | Religion | text | single | yes | Religious identity or affiliation |
+| `politics` | Politics | text | single | yes | Political views or affiliation |
+| `personality` | Personality | text | multiple | yes | Traits and working style |
+| `family_pets` | Pets | text | multiple | no | Pets in this person's family |
+| `interests_fun_now` | Fun now | text | multiple | no | Activities this person enjoys now |
+| `interests_fun_growing_up` | Fun growing up | text | multiple | no | Activities this person enjoyed growing up |
+| `favorites_food` | Favorite food | text | multiple | no | Foods this person especially likes |
+| `favorites_place` | Favorite place | text | multiple | no | Places this person especially likes |
+| `how_we_met` | How we met | text | single | no | How you and this person first met; the one seeded field about your relationship rather than the person alone |
+
+Contact points, addresses, dates such as birthdays, categories, organizations
+and employment, and typed relationships such as partner or child are structured
+records rather than attributes. Manage them with `msgvault person`,
+`msgvault organization`, `msgvault employment`, and `msgvault person
+relationship`, or through the `/api/v1/people` routes in the OpenAPI contract.
 
 List fields and values, set scalar values, and retain superseded history:
 
