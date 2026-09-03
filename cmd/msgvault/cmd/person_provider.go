@@ -608,7 +608,7 @@ func runPersonProviderSet(
 		return err
 	}
 
-	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore); err != nil {
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, true); err != nil {
 		return err
 	}
 
@@ -619,7 +619,7 @@ func runPersonProviderSet(
 		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
 			errors.New("exact people provider consent remains revoked"))
 	}
-	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore); err != nil {
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, false); err != nil {
 		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
 			errors.New("exact people provider consent remains revoked"))
 	}
@@ -675,6 +675,7 @@ func revokePersonProviderSetConsent(
 	deps personProviderCommandDeps,
 	name, fingerprint string,
 	directStore bool,
+	guard bool,
 ) error {
 	if directStore {
 		if deps.openStore == nil {
@@ -690,7 +691,10 @@ func revokePersonProviderSetConsent(
 		cleanup()
 		return revokeErr
 	}
-	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
+	if guard {
+		return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
+	}
+	return proxySavedPersonProviderOperation(command, deps, "revoke", name, "", io.Discard)
 }
 
 func rollbackPersonProviderSetConfig(

@@ -970,8 +970,13 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return true, nil }
 	var proxied []string
 	var checkFingerprint string
+	var revokeFingerprints []string
 	deps.proxy = func(command *cobra.Command, _ []string, _ map[string]string) error {
 		proxied = append(proxied, command.Use)
+		if command.Use == "revoke" {
+			fingerprint, _ := command.Flags().GetString(personProviderIfFingerprintFlag)
+			revokeFingerprints = append(revokeFingerprints, fingerprint)
+		}
 		if command.Use == "check" {
 			checkFingerprint, _ = command.Flags().GetString(personProviderIfFingerprintFlag)
 		}
@@ -985,6 +990,9 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	assert.Contains(output, "msgvault daemon restart")
 	assert.Contains(output, "Updated and checked people provider profile")
 	assert.Equal([]string{"revoke", "revoke", "check"}, proxied)
+	assert.Len(revokeFingerprints, 2)
+	assert.NotEmpty(revokeFingerprints[0])
+	assert.Empty(revokeFingerprints[1])
 	assert.NotEmpty(checkFingerprint)
 }
 

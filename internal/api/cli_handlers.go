@@ -1689,6 +1689,7 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 	case "check":
 		maxPositionals = 1
 		boolFlags["json"] = true
+		valueFlags["if-fingerprint"] = true
 	default:
 		return false
 	}
