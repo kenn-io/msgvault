@@ -1063,11 +1063,36 @@ func proxySavedPersonProviderRevoke(
 	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, command.OutOrStdout())
 }
 
+func proxySavedPersonProviderRevokeFingerprint(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name string,
+	fingerprint string,
+) error {
+	return proxySavedPersonProviderOperationWithFlag(
+		command, deps, "revoke", name, "fingerprint", fingerprint, io.Discard,
+	)
+}
+
 func proxySavedPersonProviderOperation(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	operation string,
 	name string,
+	fingerprint string,
+	out io.Writer,
+) error {
+	return proxySavedPersonProviderOperationWithFlag(
+		command, deps, operation, name, personProviderIfFingerprintFlag, fingerprint, out,
+	)
+}
+
+func proxySavedPersonProviderOperationWithFlag(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	operation string,
+	name string,
+	flag string,
 	fingerprint string,
 	out io.Writer,
 ) error {
@@ -1082,14 +1107,14 @@ func proxySavedPersonProviderOperation(
 	provider := &cobra.Command{Use: "provider"}
 	leaf := &cobra.Command{Use: operation}
 	if fingerprint != "" {
-		if operation != "revoke" && operation != "check" {
+		if flag != "fingerprint" && operation != "revoke" && operation != "check" {
 			return errors.New("people provider fingerprint guard is unavailable for this operation")
 		}
 		if err := validatePersonProviderFingerprint(fingerprint); err != nil {
 			return err
 		}
-		leaf.Flags().String(personProviderIfFingerprintFlag, "", "")
-		if err := leaf.Flags().Set(personProviderIfFingerprintFlag, fingerprint); err != nil {
+		leaf.Flags().String(flag, "", "")
+		if err := leaf.Flags().Set(flag, fingerprint); err != nil {
 			return fmt.Errorf("set person provider fingerprint guard: %w", err)
 		}
 	}

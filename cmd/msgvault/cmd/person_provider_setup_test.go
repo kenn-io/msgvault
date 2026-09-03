@@ -971,11 +971,14 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	var proxied []string
 	var checkFingerprint string
 	var revokeFingerprints []string
+	var revokeTargets []string
 	deps.proxy = func(command *cobra.Command, _ []string, _ map[string]string) error {
 		proxied = append(proxied, command.Use)
 		if command.Use == "revoke" {
 			fingerprint, _ := command.Flags().GetString(personProviderIfFingerprintFlag)
 			revokeFingerprints = append(revokeFingerprints, fingerprint)
+			target, _ := command.Flags().GetString("fingerprint")
+			revokeTargets = append(revokeTargets, target)
 		}
 		if command.Use == "check" {
 			checkFingerprint, _ = command.Flags().GetString(personProviderIfFingerprintFlag)
@@ -993,6 +996,8 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	assert.Len(revokeFingerprints, 2)
 	assert.NotEmpty(revokeFingerprints[0])
 	assert.Empty(revokeFingerprints[1])
+	assert.Empty(revokeTargets[0])
+	assert.NotEmpty(revokeTargets[1])
 	assert.NotEmpty(checkFingerprint)
 }
 

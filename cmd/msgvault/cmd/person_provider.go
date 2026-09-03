@@ -150,6 +150,11 @@ type personProviderRevokeAllOutput struct {
 	Profiles []personProviderStatusOutput `json:"profiles"`
 }
 
+type personProviderRevokeFingerprintOutput struct {
+	Fingerprint string `json:"fingerprint"`
+	Revoked     bool   `json:"revoked"`
+}
+
 type personSemanticProviderStatusOutput struct {
 	Profile vector.SemanticPersonEmbeddingProfile      `json:"profile"`
 	Consent store.PersonSemanticEmbeddingConsentStatus `json:"consent"`
@@ -694,7 +699,7 @@ func revokePersonProviderSetConsent(
 	if guard {
 		return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
 	}
-	return proxySavedPersonProviderOperation(command, deps, "revoke", name, "", io.Discard)
+	return proxySavedPersonProviderRevokeFingerprint(command, deps, name, fingerprint)
 }
 
 func rollbackPersonProviderSetConfig(
@@ -977,11 +982,20 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	var jsonOutput bool
 	var semanticEmbeddings bool
 	var ifFingerprint string
+	var fingerprint string
 	command := &cobra.Command{
 		Use:   "revoke [name]",
 		Short: "Revoke consent for the exact people inference policy",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if fingerprint != "" {
+				if err := validatePersonProviderFingerprint(fingerprint); err != nil {
+					return err
+				}
+				if len(args) != 1 || all || semanticEmbeddings {
+					return errors.New("--fingerprint requires one named people provider revoke")
+				}
+			}
 			if ifFingerprint != "" {
 				if err := validatePersonProviderFingerprint(ifFingerprint); err != nil {
 					return err
@@ -1014,6 +1028,12 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 						return errors.New("people provider profile changed since removal began")
 					}
 				}
+				if fingerprint != "" {
+					return runPersonProviderRevokeFingerprint(command, runDeps, fingerprint, jsonOutput)
+				}
+			}
+			if fingerprint != "" {
+				return errors.New("--fingerprint requires one named people provider revoke")
 			}
 			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings)
 		},
@@ -1025,6 +1045,8 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
 		"Require an exact provider fingerprint")
 	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
+	command.Flags().StringVar(&fingerprint, "fingerprint", "", "Revoke a specific provider fingerprint")
+	_ = command.Flags().MarkHidden("fingerprint")
 	return command
 }
 
@@ -1322,6 +1344,32 @@ func runPersonProviderRevoke(
 		return writePersonProviderStatus(command.OutOrStdout(), output, true)
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", profile.Fingerprint)
+	return nil
+}
+
+func runPersonProviderRevokeFingerprint(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	fingerprint string,
+	jsonOutput bool,
+) error {
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	revoked, err := st.RevokePersonInferenceConsent(
+		command.Context(), fingerprint, personProviderConsentActor,
+	)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderRevokeFingerprintOutput{
+			Fingerprint: fingerprint, Revoked: revoked,
+		})
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", fingerprint)
 	return nil
 }
 
