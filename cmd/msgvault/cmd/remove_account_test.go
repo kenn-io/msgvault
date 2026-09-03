@@ -1399,6 +1399,34 @@ func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "token file should be removed for Circleback source")
 }
 
+func TestRemoveAccountCmd_RemovesNotionMeetingSource(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = st.GetOrCreateSource(sourceTypeNotionMeetings, "notion-personal")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "notion-personal", "--yes", "--type", sourceTypeNotionMeetings,
+	})
+	require.NoError(root.Execute())
+
+	check, err := store.Open(dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(check.Close()) }()
+	_, err = check.GetSourceByTypeAndIdentifier(sourceTypeNotionMeetings, "notion-personal")
+	require.ErrorIs(err, store.ErrSourceNotFound)
+}
+
 func TestRemoveAccountCmd_SlackRemovesToken(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()

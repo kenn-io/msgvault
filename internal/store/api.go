@@ -76,6 +76,16 @@ type APIMessage struct {
 	Attachments          []APIAttachment
 }
 
+// MessageRecipient is one archived message-recipient relationship.
+// EmailAddress comes from the immutable message envelope when available,
+// rather than from a participant that may be merged. ParticipantID groups
+// historical envelope aliases that now resolve to the same participant.
+type MessageRecipient struct {
+	ParticipantID int64
+	EmailAddress  string
+	DisplayName   string
+}
+
 // APIAttachment represents attachment metadata for API responses.
 type APIAttachment struct {
 	ID          int64
@@ -1176,6 +1186,45 @@ func (s *Store) getRecipients(ctx context.Context, messageID int64, recipientTyp
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate recipients: %w", err)
+	}
+	return recipients, nil
+}
+
+// GetMessageRecipientsContext returns structured recipient relationships for a
+// message. Importers use this when provider identity lookup is temporarily
+// degraded and replacing an already verified relationship would lose data.
+func (s *Store) GetMessageRecipientsContext(
+	ctx context.Context, messageID int64, recipientType string,
+) ([]MessageRecipient, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			mr.participant_id,
+			COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
+			COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), '')
+		FROM message_recipients mr
+		JOIN participants p ON p.id = mr.participant_id
+		WHERE mr.message_id = ? AND mr.recipient_type = ?
+		ORDER BY mr.id
+	`, messageID, recipientType)
+	if err != nil {
+		return nil, fmt.Errorf("get structured recipients: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var recipients []MessageRecipient
+	for rows.Next() {
+		var recipient MessageRecipient
+		if err := rows.Scan(
+			&recipient.ParticipantID, &recipient.EmailAddress, &recipient.DisplayName,
+		); err != nil {
+			return nil, fmt.Errorf("scan structured recipient: %w", err)
+		}
+		if strings.TrimSpace(recipient.EmailAddress) != "" {
+			recipients = append(recipients, recipient)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate structured recipients: %w", err)
 	}
 	return recipients, nil
 }

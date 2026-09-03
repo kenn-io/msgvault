@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-30
+last_edited: "2026-08-31"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -350,6 +350,50 @@ removed from the archive and directs you to run `add-granola` again.
 | `--full` | `false` | Ignore stored cursor and re-fetch every note |
 
 See [Meeting Transcripts](/usage/meetings/) for setup and what gets stored.
+
+---
+
+## add-notion-meetings
+
+Validate a configured read-only Notion integration and register its meeting
+source without printing meeting content.
+
+```bash
+msgvault add-notion-meetings [identifier]
+```
+
+The matching `[[notion_meetings]]` entry requires `account_email` and `token`.
+With one entry, the identifier may be omitted.
+
+---
+
+## sync-notion-meetings
+
+Sync Notion AI Meeting Notes from the attendee-visible recent window.
+
+```bash
+msgvault sync-notion-meetings [identifier]
+msgvault sync-notion-meetings --limit 3
+msgvault sync-notion-meetings --full --after 2026-01-01
+msgvault sync-notion-meetings --probe
+```
+
+Notion returns at most 50 meeting notes and exposes no discovery cursor.
+Every run hydrates and checksum-verifies the selected visible meetings.
+`--full` also sends matching snapshots through archive upsert so cursor/archive
+divergence can be repaired; `--after` filters the visible set locally. Partial
+coverage is reported when Notion says more records exist. Due transcript
+maintenance runs outside `--limit`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum visible meetings hydrated and verified; due maintenance is additional |
+| `--after` | — | Local visible-set lower bound in `YYYY-MM-DD` form; implies `--full` |
+| `--full` | `false` | Force selected snapshots through archive upsert instead of skipping matching checksums |
+| `--probe` | `false` | Validate capabilities and result shape without printing meeting content |
+
+See [Meeting Transcripts](/usage/meetings/#notion-ai-meeting-notes) for setup,
+privacy, retry behavior, and stored evidence.
 
 ---
 

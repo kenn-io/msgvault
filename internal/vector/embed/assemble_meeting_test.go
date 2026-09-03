@@ -89,6 +89,23 @@ func TestAssembleMeetingDocument_PlainTranscriptUsesStrictGenericFallback(t *tes
 	assertNonOverlappingDense(t, doc.Chunks)
 }
 
+func TestAssembleMeetingDocument_NotionCanonicalSectionsRemainSearchable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	body := "Notion planning\nWhen: 2026-08-29 10:00 - 10:30\nAttendees: Test Attendee\n\nSummary:\nRelease scope agreed.\n\nNotes:\nOwner prepares rollout.\n\nTranscript:\nTest Speaker: Ready to ship."
+	doc, err := embed.AssembleMeetingDocument(meetingRow(18, body), embed.AssemblyPolicy{MaxChunkRunes: 500})
+	require.NoError(err)
+	require.NotEmpty(doc.Chunks)
+	joined := concatenateMeetingSource(body, doc.Chunks)
+	assert.Contains(joined, "Release scope agreed.")
+	assert.Contains(joined, "Owner prepares rollout.")
+	assert.Contains(joined, "Test Speaker: Ready to ship.")
+	for _, chunk := range doc.Chunks {
+		assert.Contains(chunk.Text, "Notion planning")
+		assert.Equal(vector.SourceBasisBody, chunk.SourceBasis)
+	}
+}
+
 func TestAssembleMeetingDocument_IncompleteSpeakerContractFallsBackForTranscriptRegion(t *testing.T) {
 	transcript := "[00:01] Alice: Complete.\nBob: missing timestamp."
 	body := "Strict parser\nWhen: 2026-08-08 09:00\n\nTranscript:\n" + transcript

@@ -1,6 +1,7 @@
 ---
+last_edited: "2026-08-30"
 title: msgvault
-description: Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, a keyboard-driven TUI, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, and Circleback.
+description: Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, a keyboard-driven TUI, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, Circleback, and Notion.
 ---
 
 # msgvault
@@ -18,7 +19,7 @@ search, and local AI workflows.
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
-Supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, Granola, Circleback, Beeper
+Supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, Granola, Circleback, Notion AI Meeting Notes, Beeper
 Desktop, IMAP, and Microsoft 365 mail sync; verifiable backup snapshots; PST,
 MBOX, and Apple Mail import; and chat/text import from WhatsApp, iMessage,
 Google Voice, Facebook Messenger, and SMS Backup & Restore.
@@ -53,7 +54,7 @@ Your email and message data is yours. msgvault downloads a complete local copy
 of your email (from Gmail, IMAP, or local archives) and imports chats and texts
 from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup &
 Restore, and can sync Teams conversations, Discord guilds, Slack workspaces,
-Beeper chats, plus Granola and Circleback meeting notes.
+Beeper chats, plus Granola, Circleback, and Notion meeting notes.
 Keyword search, analytics, the Web UI, the TUI, and the MCP server query your archive.
 **Source services are contacted only by authorization/registration, sync,
 media-backfill, provider-backed identity discovery, and deletion workflows that
@@ -88,7 +89,7 @@ it lives in an archive on disk that you own and control.
   </section>
   <section>
     <h3>Slack, Meetings &amp; Beeper</h3>
-    <p>Archive Slack workspaces, sync Granola and Circleback notes and transcripts, and archive chats and media from networks connected to Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
+    <p>Archive Slack workspaces, sync Granola, Circleback, and Notion notes and transcripts, and archive chats and media from networks connected to Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
   </section>
   <section>
     <h3>Backup Snapshots</h3>

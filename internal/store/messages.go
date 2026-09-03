@@ -1226,6 +1226,9 @@ func upsertMessageRawWithFormat(q querier, messageID int64, rawData []byte, form
 	return err
 }
 
+// ErrInvalidMessageRaw marks raw message data that cannot be decompressed.
+var ErrInvalidMessageRaw = errors.New("invalid message raw data")
+
 // GetMessageRaw retrieves and decompresses the raw MIME data for a message.
 func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
 	var compressed []byte
@@ -1241,21 +1244,37 @@ func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
 	return decodeMessageRaw(compressed, compression)
 }
 
+// GetMessageBodyText returns the archived plain-text body for one message.
+// A message without a body returns an empty string.
+func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	var body sql.NullString
+	err := s.db.QueryRow(`
+		SELECT body_text FROM message_bodies WHERE message_id = ?
+	`, messageID).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return nullStringValue(body), nil
+}
+
 func decodeMessageRaw(compressed []byte, compression sql.NullString) ([]byte, error) {
 	if !compression.Valid || compression.String != "zlib" {
 		return compressed, nil
 	}
 	r, err := zlib.NewReader(bytes.NewReader(compressed))
 	if err != nil {
-		return nil, fmt.Errorf("zlib reader: %w", err)
+		return nil, fmt.Errorf("%w: zlib reader: %w", ErrInvalidMessageRaw, err)
 	}
 	data, readErr := io.ReadAll(r)
 	closeErr := r.Close()
 	if readErr != nil {
-		return nil, readErr
+		return nil, fmt.Errorf("%w: read zlib data: %w", ErrInvalidMessageRaw, readErr)
 	}
 	if closeErr != nil {
-		return nil, fmt.Errorf("close zlib reader: %w", closeErr)
+		return nil, fmt.Errorf("%w: close zlib reader: %w", ErrInvalidMessageRaw, closeErr)
 	}
 	return data, nil
 }

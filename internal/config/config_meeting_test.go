@@ -40,6 +40,13 @@ identifier = "alice@example.com"
 account_email = "alice@example.com"
 schedule = "30 */6 * * *"
 enabled = true
+
+[[notion_meetings]]
+identifier = "notion-work"
+account_email = " Notion.User@Example.COM "
+token = "ntn_test"
+schedule = "15 */6 * * *"
+enabled = true
 `)
 
 	cfg, err := Load(configPath, "")
@@ -60,6 +67,12 @@ enabled = true
 	cb := cfg.GetCirclebackSource("alice@example.com")
 	require.NotNil(cb)
 	require.Len(cfg.ScheduledCirclebackSources(), 1)
+
+	notion := cfg.GetNotionMeetingsSource("NOTION-WORK")
+	require.NotNil(notion)
+	assert.Equal("notion.user@example.com", notion.AccountEmail)
+	assert.Equal("ntn_test", notion.Token)
+	require.Len(cfg.ScheduledNotionMeetingsSources(), 1)
 }
 
 func TestLoadMeetingSourceSingleEntryDefaultsIdentifier(t *testing.T) {
@@ -73,12 +86,18 @@ enabled = true
 [[circleback]]
 account_email = "circleback@example.com"
 enabled = true
+
+[[notion_meetings]]
+account_email = "notion@example.com"
+token = "ntn_test"
+enabled = true
 `)
 
 	cfg, err := Load(configPath, "")
 	require.NoError(err, "Load()")
 	require.Equal("default", cfg.Granola[0].Identifier)
 	require.Equal("default", cfg.Circleback[0].Identifier)
+	require.Equal("default", cfg.NotionMeetings[0].Identifier)
 }
 
 func TestMeetingSourceEffectiveAccountEmail(t *testing.T) {
@@ -99,6 +118,12 @@ func TestMeetingSourceEffectiveAccountEmail(t *testing.T) {
 			name:      "circleback explicit account email is normalized and preferred",
 			provider:  "circleback",
 			config:    "identifier = \"label@example.net\"\naccount_email = \"  User-A@Example.COM  \"",
+			wantEmail: "user-a@example.com",
+		},
+		{
+			name:      "notion explicit account email is normalized and preferred",
+			provider:  "notion_meetings",
+			config:    "identifier = \"label@example.net\"\naccount_email = \"  User-A@Example.COM  \"\ntoken = \"ntn_test\"",
 			wantEmail: "user-a@example.com",
 		},
 		{
@@ -148,12 +173,36 @@ func TestMeetingSourceEffectiveAccountEmail(t *testing.T) {
 				assert.Equal(tt.wantEmail, got)
 				return
 			}
-			require.Len(cfg.Circleback, 1)
-			got, effectiveErr := cfg.Circleback[0].EffectiveAccountEmail()
+			if tt.provider == "circleback" {
+				require.Len(cfg.Circleback, 1)
+				got, effectiveErr := cfg.Circleback[0].EffectiveAccountEmail()
+				require.NoError(effectiveErr)
+				assert.Equal(tt.wantEmail, got)
+				return
+			}
+			require.Len(cfg.NotionMeetings, 1)
+			got, effectiveErr := cfg.NotionMeetings[0].EffectiveAccountEmail()
 			require.NoError(effectiveErr)
 			assert.Equal(tt.wantEmail, got)
 		})
 	}
+}
+
+func TestLoadNotionMeetingSourceDuplicateIdentifiersRejected(t *testing.T) {
+	configPath := writeMeetingConfig(t, `
+[[notion_meetings]]
+identifier = "work"
+account_email = "first@example.com"
+token = "ntn_a"
+
+[[notion_meetings]]
+identifier = "WORK"
+account_email = "second@example.com"
+token = "ntn_b"
+`)
+
+	_, err := Load(configPath, "")
+	require.ErrorContains(t, err, "[[notion_meetings]]: duplicate identifier")
 }
 
 func TestLoadMeetingSourceDuplicateIdentifiersRejected(t *testing.T) {

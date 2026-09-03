@@ -23,3 +23,16 @@ func TestCLIRunCommandAllowedSlackCommands(t *testing.T) {
 	}
 	assert.False(t, cliRunCommandAllowed([]string{"slack-not-a-command"}))
 }
+
+func TestCLIRunCommandAllowedNotionMeetingsCommands(t *testing.T) {
+	for _, args := range [][]string{
+		{"add-notion-meetings"},
+		{"add-notion-meetings", "notion-personal"},
+		{"sync-notion-meetings"},
+		{"sync-notion-meetings", "notion-personal", "--full"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
+		})
+	}
+}

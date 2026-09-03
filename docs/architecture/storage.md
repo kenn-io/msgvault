@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-09"
+last_edited: "2026-08-30"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -25,7 +25,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `mbox`, `whatsapp`, `granola`, or `circleback` |
+| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `mbox`, `whatsapp`, `granola`, `circleback`, or `notion_meetings` |
 | `identifier` | TEXT | Provider-stable identifier such as an email address, phone number, or Discord guild ID |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
@@ -67,6 +67,12 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `message_id` | INTEGER PK/FK | References `messages` |
 | `raw_data` | BLOB | Compressed MIME or provider JSON data |
 | `compression` | TEXT | `zlib` |
+
+Native Notion meetings use raw format `notion_meeting_json`. The compressed
+envelope keeps provider discovery, structured blocks, page Markdown, minimized
+resolved users, canonical text used for safe transcript preservation, and
+hydration warnings. Integration tokens and authorization headers are never
+part of the envelope.
 
 **participants** -- Unified contacts.
 

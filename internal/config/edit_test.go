@@ -1999,6 +1999,28 @@ func TestEditConfigRejectsInvalidSlackSchedule(t *testing.T) {
 	assert.Equal(before, string(got))
 }
 
+func TestEditConfigRejectsInvalidNotionMeetingsSchedule(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[[notion_meetings]]\n" +
+		"identifier = \"notion-work\"\n" +
+		"account_email = \"notion@example.com\"\n" +
+		"token = \"ntn_test\"\n" +
+		"schedule = \"15 */6 * * *\"\n" +
+		"enabled = true\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "notion_meetings.schedule", Value: "not a cron"}})
+	require.ErrorIs(err, ErrInvalidConfigCandidate)
+	assert.Contains(err.Error(), "invalid notion_meetings[0].schedule")
+	got, readErr := os.ReadFile(path)
+	require.NoError(readErr)
+	assert.Equal(before, string(got))
+}
+
 func TestEditConfigPreservesModeAndExistingSymlink(t *testing.T) {
 	if runtime.GOOS == windowsOS {
 		t.Skip("symlink permission semantics differ on Windows")

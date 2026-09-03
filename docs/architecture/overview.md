@@ -1,10 +1,11 @@
 ---
+last_edited: "2026-08-30"
 title: Architecture Overview
 description: Package structure and data flow.
 ---
 
 msgvault syncs Gmail, Google Calendar, IMAP, Microsoft 365 mail, Microsoft
-Teams, Discord, Slack, Beeper Desktop, Granola, and Circleback into a local SQLite database by
+Teams, Discord, Slack, Beeper Desktop, Granola, Circleback, and Notion into a local SQLite database by
 default and can import local PST/MBOX archives, Apple Mail exports, and common
 chat/text formats. PostgreSQL is available as an opt-in backend for new
 archives. Keyword search, analytics, the Web UI, the TUI, and the MCP server run against
@@ -54,6 +55,8 @@ msgvault/
 │   ├── beeper/              # Beeper Desktop client and importer
 │   ├── granola/             # Granola meeting-note client and importer
 │   ├── circleback/          # Circleback MCP/OAuth client and importer
+│   ├── notionmeetings/      # Notion Meeting Notes client, hydration, and sync state
+│   ├── meetingarchive/      # Provider-neutral canonical meeting persistence
 │   ├── oauth/               # OAuth2 flows (browser + device)
 │   └── mime/                # MIME parsing
 ├── go.mod
@@ -94,7 +97,8 @@ msgvault/
 | `internal/teams` | Microsoft Teams Graph client mapping, sync cursors, and importer |
 | `internal/discord` | Read-only Discord REST client, credential bindings, channel/thread checkpoints, mapping, and media archival |
 | `internal/beeper` | Beeper Desktop local-API client, resumable sync state, media download, and message mapping |
-| `internal/granola` / `internal/circleback` | Meeting-note provider clients, authentication, formatting, and archive ingestion |
+| `internal/granola` / `internal/circleback` / `internal/notionmeetings` | Meeting-note provider clients, authentication, formatting, and sync state |
+| `internal/meetingarchive` | Provider-neutral canonical meeting persistence |
 | `internal/mime` | MIME message parsing, charset detection |
 
 ## Design Decisions

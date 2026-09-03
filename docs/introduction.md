@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-30"
 title: Introduction
 description: Why msgvault was created and what problem it solves.
 ---
@@ -25,7 +26,7 @@ This means:
 
 I started with Gmail but I want all my life's messages in this system,
 including Google Calendar, Microsoft Teams, Discord guilds, Slack workspaces,
-Beeper Desktop chats, Granola and Circleback meeting notes, WhatsApp, iMessage,
+Beeper Desktop chats, Granola, Circleback, and Notion meeting notes, WhatsApp, iMessage,
 Google Voice, Facebook Messenger,
 SMS Backup & Restore archives, and old local email
 archives.

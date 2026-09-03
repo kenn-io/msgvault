@@ -808,6 +808,36 @@ label, add `account_email`, manage aliases with `msgvault identity`, and run
 Circleback OAuth always confirms the primary identity; there is no identity
 opt-out flag.
 
+### Notion AI Meeting Notes Sources
+
+Notion meeting sync uses one top-level `[[notion_meetings]]` entry per Notion
+identity. The token must belong to a read-only integration with AI Meeting
+Notes access and Read Content access. User Information access is optional; it
+is required only to resolve attendee IDs to verified email addresses.
+
+```toml
+[[notion_meetings]]
+identifier = "notion-personal"      # stable source label; defaults to "default" for one entry
+account_email = "you@example.com"   # required primary account identity
+token = "ntn_..."                   # Notion integration token; keep this file private
+schedule = "15 */6 * * *"           # optional 5-field cron, no seconds
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Source name used by commands and scheduler logs |
+| `account_email` | (required) | Normalized primary identity for relationships; it is not assumed to be the meeting organizer |
+| `token` | (required) | Read-only Notion integration token |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether the source is daemon-scheduled |
+
+Run `msgvault add-notion-meetings <identifier>` to validate access and register
+the source before enabling a schedule. Removing the source prevents the
+scheduler from recreating it. See [Meeting Transcripts](/usage/meetings/) for
+the 50-result discovery limit, attendee visibility, transcript retries, and
+stored data.
+
 ### `[vector]`
 
 Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
