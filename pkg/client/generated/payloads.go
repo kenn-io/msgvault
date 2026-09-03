@@ -54,6 +54,8 @@ type DiscoverCLIIdentitiesBody = DiscoverRequest
 
 type ImportCLIIdentitiesBody = ImportRequest
 
+type RepairMessageCLIBody = CLIRepairMessageRequest
+
 type RunCLIBody = CLIRunRequest
 
 type CreateCommunicationServiceBody = CreateCommunicationServiceRequest

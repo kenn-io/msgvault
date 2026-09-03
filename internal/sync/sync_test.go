@@ -3131,6 +3131,99 @@ func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t 
 	assert.Zero(itemCount, "sync_run_items")
 }
 
+func TestIncrementalSyncKeepsSiblingPayloadsDistinctWhenAddsRepeatAsLabelChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.CreateSourceWithHistory(t, "12340")
+
+	rawByID := map[string][]byte{
+		"sibling-a": testemail.NewMessage().
+			From("sender-a@example.test").
+			To("recipient-a@example.test").
+			Subject("Sibling A subject").
+			Body("Sibling A body").
+			Bytes(),
+		"sibling-b": testemail.NewMessage().
+			From("sender-b@example.test").
+			To("recipient-b@example.test").
+			Subject("Sibling B subject").
+			Body("Sibling B body").
+			Bytes(),
+	}
+	env.Mock.Profile.MessagesTotal = 2
+	for id, raw := range rawByID {
+		env.Mock.AddMessage(id, raw, []string{"INBOX", "STARRED"})
+	}
+
+	env.SetHistory(12350, gmail.HistoryRecord{
+		MessagesAdded: []gmail.HistoryMessage{
+			{Message: gmail.MessageID{ID: "sibling-a", ThreadID: "thread-sibling-a"}},
+			{Message: gmail.MessageID{ID: "sibling-b", ThreadID: "thread-sibling-b"}},
+		},
+		LabelsAdded: []gmail.HistoryLabelChange{
+			{
+				Message:  gmail.MessageID{ID: "sibling-a", ThreadID: "thread-sibling-a"},
+				LabelIDs: []string{"STARRED"},
+			},
+			{
+				Message:  gmail.MessageID{ID: "sibling-b", ThreadID: "thread-sibling-b"},
+				LabelIDs: []string{"STARRED"},
+			},
+		},
+	})
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(2)), Added: new(int64(2)), Errors: new(int64(0))})
+	assert.ElementsMatch([]string{"sibling-a", "sibling-b"}, env.Mock.GetMessageCalls,
+		"each provider message is fetched once despite appearing in both event categories")
+	assertMessageCount(t, env.Store, 2)
+
+	wants := map[string]struct {
+		subject string
+		body    string
+		from    string
+		to      string
+	}{
+		"sibling-a": {
+			subject: "Sibling A subject",
+			body:    "Sibling A body\n",
+			from:    "sender-a@example.test",
+			to:      "recipient-a@example.test",
+		},
+		"sibling-b": {
+			subject: "Sibling B subject",
+			body:    "Sibling B body\n",
+			from:    "sender-b@example.test",
+			to:      "recipient-b@example.test",
+		},
+	}
+	internalIDs := make(map[string]int64, len(wants))
+	for sourceMessageID, want := range wants {
+		var internalID int64
+		err := env.Store.DB().QueryRow(
+			env.Store.Rebind(`SELECT id FROM messages WHERE source_id = (SELECT id FROM sources WHERE identifier = ?) AND source_message_id = ?`),
+			testEmail,
+			sourceMessageID,
+		).Scan(&internalID)
+		require.NoError(err, "look up %s", sourceMessageID)
+		internalIDs[sourceMessageID] = internalID
+
+		message, err := env.Store.GetMessage(internalID)
+		require.NoError(err, "GetMessage %s", sourceMessageID)
+		assert.Equal(want.subject, message.Subject, "%s subject", sourceMessageID)
+		assert.Equal(want.body, message.BodyText, "%s body", sourceMessageID)
+		assert.Equal(want.from, message.FromEmail, "%s from envelope", sourceMessageID)
+		assert.Equal([]string{want.to}, message.To, "%s to envelope", sourceMessageID)
+
+		persistedRaw, err := env.Store.GetMessageRaw(internalID)
+		require.NoError(err, "GetMessageRaw %s", sourceMessageID)
+		assert.Equal(rawByID[sourceMessageID], persistedRaw, "%s raw MIME", sourceMessageID)
+	}
+	assert.NotEqual(internalIDs["sibling-a"], internalIDs["sibling-b"],
+		"provider siblings must persist as distinct internal rows")
+}
+
 // TestIncrementalSyncMixedOperations tests a history page with adds, deletes,
 // and label changes all at once.
 func TestIncrementalSyncMixedOperations(t *testing.T) {

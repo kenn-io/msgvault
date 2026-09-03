@@ -444,6 +444,7 @@ const (
 	sourceIDSyncMinAPISchemaVersion    = "2.4.0"
 	searchDeletionMinAPISchemaVersion  = "2.12.0"
 	deduplicatePlanMinAPISchemaVersion = "2.13.0"
+	repairMessageMinAPISchemaVersion   = "2.15.0"
 )
 
 func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
@@ -535,6 +536,52 @@ func (c *Client) RunCLIRepairEncoding(
 	output func(stream, data string) error,
 ) error {
 	return c.runCLIStream(ctx, "/api/v1/cli/repair-encoding", "repair-encoding", nil, output)
+}
+
+// RunCLIRepairMessage repairs one Gmail message snapshot or audits stored
+// Gmail MIME through the dedicated generated endpoint. The explicit schema
+// probe is load-bearing: an older daemon must never receive a request that it
+// could reinterpret as a broader sync operation.
+func (c *Client) RunCLIRepairMessage(
+	ctx context.Context,
+	req generated.CLIRepairMessageRequest,
+	output func(stream, data string) error,
+) error {
+	return c.RunCLIRepairMessageWithPreflight(ctx, req, nil, output)
+}
+
+// RunCLIRepairMessageWithPreflight validates the daemon capability before
+// running the caller's credential preflight, then opens the dedicated repair
+// stream. Keeping that order inside the client prevents credential changes
+// when the selected daemon cannot execute the operation.
+func (c *Client) RunCLIRepairMessageWithPreflight(
+	ctx context.Context,
+	req generated.CLIRepairMessageRequest,
+	preflight func(context.Context) error,
+	output func(stream, data string) error,
+) error {
+	version, err := c.daemonAPISchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("check daemon repair-message capability: %w", err)
+	}
+	if !apiSchemaVersionAtLeast(version, repairMessageMinAPISchemaVersion) {
+		return fmt.Errorf(
+			"repair-message requires daemon API schema %s or newer (daemon reports %q)",
+			repairMessageMinAPISchemaVersion, version,
+		)
+	}
+	if preflight != nil {
+		if err := preflight(ctx); err != nil {
+			return err
+		}
+	}
+	return c.runCLIStream(
+		ctx,
+		"/api/v1/cli/repair-message",
+		"repair-message",
+		&generated.RepairMessageCLIRequestOptions{Body: &req},
+		output,
+	)
 }
 
 func (c *Client) RunCLICommand(

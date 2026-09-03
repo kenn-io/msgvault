@@ -1155,6 +1155,7 @@ var _ api.CLICacheBuilder = (*storeAPIAdapter)(nil)
 var _ api.CLISyncRunner = (*storeAPIAdapter)(nil)
 var _ api.CLIVerifyRunner = (*storeAPIAdapter)(nil)
 var _ api.CLIRepairEncodingRunner = (*storeAPIAdapter)(nil)
+var _ api.CLIRepairMessageRunner = (*storeAPIAdapter)(nil)
 var _ api.CLIRunner = (*storeAPIAdapter)(nil)
 var _ api.CLIAddCalendarPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDeleteStagedPlanner = (*storeAPIAdapter)(nil)
@@ -1577,6 +1578,58 @@ func (a *storeAPIAdapter) RunCLIRepairEncoding(
 		}
 		return emit(api.CLIRepairEncodingEvent{Type: stream, Data: data})
 	})
+}
+
+func (a *storeAPIAdapter) RunCLIRepairMessage(
+	ctx context.Context,
+	req api.CLIRepairMessageRequest,
+	emit func(api.CLIRepairMessageEvent) error,
+) error {
+	return a.runCLIRepairMessageWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+}
+
+func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
+	ctx context.Context,
+	req api.CLIRepairMessageRequest,
+	emit func(api.CLIRepairMessageEvent) error,
+	run cliSyncSubprocessRunner,
+) error {
+	emitSubprocess := func(stream, data string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIRepairMessageEvent{Type: stream, Data: data})
+	}
+	runRepair := func(ctx context.Context) error {
+		return run(ctx, cliRepairMessageSubprocessArgs(req), emitSubprocess)
+	}
+	if req.Audit {
+		return runRepair(ctx)
+	}
+	emitWarning := func(message string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIRepairMessageEvent{Type: "stderr", Data: message})
+	}
+	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, runRepair, emitWarning)
+}
+
+func cliRepairMessageSubprocessArgs(req api.CLIRepairMessageRequest) []string {
+	args := []string{"repair-message", "--local"}
+	if req.Audit {
+		args = append(args, "--audit")
+	}
+	if req.SourceID > 0 {
+		args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+	}
+	if req.JSON {
+		args = append(args, "--json")
+	}
+	if req.Reference != "" {
+		args = append(args, req.Reference)
+	}
+	return args
 }
 
 func (a *storeAPIAdapter) RunCLICommand(

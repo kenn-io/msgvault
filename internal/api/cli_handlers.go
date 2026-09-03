@@ -304,6 +304,10 @@ type CLIVerifyRunner interface {
 	RunCLIVerify(ctx context.Context, req CLIVerifyRequest, emit func(CLIVerifyEvent) error) error
 }
 
+type CLIRepairMessageRunner interface {
+	RunCLIRepairMessage(ctx context.Context, req CLIRepairMessageRequest, emit func(CLIRepairMessageEvent) error) error
+}
+
 type CLIRunner interface {
 	RunCLICommand(ctx context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error
 }
@@ -489,6 +493,19 @@ type CLIVerifyEvent struct {
 }
 
 type CLIRepairEncodingEvent struct {
+	Type  string `json:"type"`
+	Data  string `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type CLIRepairMessageRequest struct {
+	Reference string `json:"reference,omitempty"`
+	SourceID  int64  `json:"source_id,omitempty"`
+	Audit     bool   `json:"audit,omitempty"`
+	JSON      bool   `json:"json,omitempty"`
+}
+
+type CLIRepairMessageEvent struct {
 	Type  string `json:"type"`
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
@@ -1212,6 +1229,53 @@ func (s *Server) handleCLIRepairEncoding(w http.ResponseWriter, r *http.Request)
 	}
 	if err := writeEvent(CLIRepairEncodingEvent{Type: cliStreamEventTypeComplete}); err != nil {
 		s.logger.Error("failed to stream CLI repair-encoding completion event", "error", err)
+	}
+}
+
+func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) {
+	runner, ok := s.store.(CLIRepairMessageRunner)
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
+	var req CLIRepairMessageRequest
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
+		return
+	}
+	req.Reference = strings.TrimSpace(req.Reference)
+	if req.Audit {
+		if req.Reference != "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "audit does not accept a reference")
+			return
+		}
+	} else if req.Reference == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "reference is required unless audit is true")
+		return
+	}
+	if req.SourceID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "source_id must be positive")
+		return
+	}
+	if req.JSON && !req.Audit {
+		writeError(w, http.StatusBadRequest, "invalid_request", "json requires audit")
+		return
+	}
+
+	writeEvent := newCLINDJSONEventWriter[CLIRepairMessageEvent](w)
+	if err := runner.RunCLIRepairMessage(r.Context(), req, writeEvent); err != nil {
+		s.logger.Error("failed to run CLI repair-message", "audit", req.Audit, "source_id", req.SourceID, "error", err)
+		if writeErr := writeEvent(CLIRepairMessageEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+			s.logger.Error("failed to stream CLI repair-message error event", "error", writeErr)
+		}
+		return
+	}
+	if err := writeEvent(CLIRepairMessageEvent{Type: cliStreamEventTypeComplete}); err != nil {
+		s.logger.Error("failed to stream CLI repair-message completion event", "error", err)
 	}
 }
 

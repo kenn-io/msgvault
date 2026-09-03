@@ -247,7 +247,10 @@ import (
 // values in the message change feed. Remote clients must require this version
 // before sending list_id because older compatible daemons ignore unknown query
 // parameters and could widen a scoped request.
-const APISchemaVersion = "2.14.0"
+// 2.15.0 adds POST /api/v1/cli/repair-message with a dedicated request and
+// streaming event contract for Gmail snapshot repair and audit operations.
+// Additive (minor bump): existing CLI routes and clients remain unchanged.
+const APISchemaVersion = "2.15.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

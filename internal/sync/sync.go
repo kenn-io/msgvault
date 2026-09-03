@@ -1253,21 +1253,69 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
-	message        *store.Message
-	bodyText       string
-	bodyHTML       string
-	rawMIME        []byte
-	from           []mime.Address
-	to             []mime.Address
-	cc             []mime.Address
-	bcc            []mime.Address
-	gmailLabelIDs  []string
-	attachments    []mime.Attachment
-	participantMap map[string]int64
+	message           *store.Message
+	threadID          string
+	conversationType  string
+	conversationTitle string
+	bodyText          string
+	bodyHTML          string
+	rawMIME           []byte
+	from              []mime.Address
+	to                []mime.Address
+	cc                []mime.Address
+	bcc               []mime.Address
+	gmailLabelIDs     []string
+	attachments       []mime.Attachment
+	participantMap    map[string]int64
 }
 
 // parseToModel parses a raw Gmail message into a messageData struct.
 func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID string) (*messageData, error) {
+	data, err := s.prepareMessage(sourceID, raw, threadID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	allAddresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
+	allAddresses = append(allAddresses, data.from...)
+	allAddresses = append(allAddresses, data.to...)
+	allAddresses = append(allAddresses, data.cc...)
+	allAddresses = append(allAddresses, data.bcc...)
+	participantMap, err := s.store.EnsureParticipantsBatch(allAddresses)
+	if err != nil {
+		return nil, fmt.Errorf("ensure participants: %w", err)
+	}
+
+	if len(data.from) > 0 && data.from[0].Email != "" {
+		if id, ok := participantMap[data.from[0].Email]; ok {
+			data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
+		}
+	}
+
+	var conversationID int64
+	if data.conversationType == conversationTypeChat {
+		conversationID, err = s.store.EnsureConversationWithType(
+			sourceID, data.threadID, data.conversationType, data.conversationTitle,
+		)
+	} else {
+		conversationID, err = s.store.EnsureConversation(
+			sourceID, data.threadID, data.conversationTitle,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ensure conversation: %w", err)
+	}
+	data.message.ConversationID = conversationID
+	data.participantMap = participantMap
+	return data, nil
+}
+
+// prepareMessage converts one provider payload into an immutable in-memory
+// snapshot without touching the store. Repair selects strict parsing; ordinary
+// ingest keeps recovery parsing and performs its writes only after this returns.
+func (s *Syncer) prepareMessage(
+	sourceID int64, raw *gmail.RawMessage, threadID string, strict bool,
+) (*messageData, error) {
 	// Validate raw MIME data exists
 	if len(raw.Raw) == 0 {
 		return nil, fmt.Errorf("missing raw MIME data for message %s", raw.ID)
@@ -1284,10 +1332,19 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 
 	// Parse MIME - on failure, salvage headers and store a placeholder body
 	// (threading override for IMAP happens after parsing below)
-	parsed, parseErr := mime.ParseWithRecovery(
-		raw.Raw,
-		extractSubjectFromSnippet(raw.Snippet),
-	)
+	var parsed *mime.Message
+	var parseErr error
+	if strict {
+		parsed, parseErr = mime.Parse(raw.Raw)
+		if parseErr != nil {
+			return nil, fmt.Errorf("strictly parse MIME message %s: %w", raw.ID, parseErr)
+		}
+	} else {
+		parsed, parseErr = mime.ParseWithRecovery(
+			raw.Raw,
+			extractSubjectFromSnippet(raw.Snippet),
+		)
+	}
 	if parseErr != nil {
 		// Extract just the first line of error (enmime includes full stack traces)
 		errMsg := textutil.FirstLine(parseErr.Error())
@@ -1324,42 +1381,16 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		parsed.Attachments[i].ContentType = textutil.EnsureUTF8(parsed.Attachments[i].ContentType)
 	}
 
-	// Ensure participants exist in database
-	allAddresses := make([]mime.Address, 0, len(parsed.From)+len(parsed.To)+len(parsed.Cc)+len(parsed.Bcc))
-	allAddresses = append(allAddresses, parsed.From...)
-	allAddresses = append(allAddresses, parsed.To...)
-	allAddresses = append(allAddresses, parsed.Cc...)
-	allAddresses = append(allAddresses, parsed.Bcc...)
-	participantMap, err := s.store.EnsureParticipantsBatch(allAddresses)
-	if err != nil {
-		return nil, fmt.Errorf("ensure participants: %w", err)
-	}
-
-	// Get sender ID
-	var senderID sql.NullInt64
-	if len(parsed.From) > 0 && parsed.From[0].Email != "" {
-		if id, ok := participantMap[parsed.From[0].Email]; ok {
-			senderID = sql.NullInt64{Int64: id, Valid: true}
-		}
-	}
-
 	// Use placeholder for conversation matching only (subject can be empty for storage)
 	convSubject := subject
 	if convSubject == "" {
 		convSubject = "(no subject)"
 	}
 	messageType := store.MessageTypeEmail
-	var conversationID int64
+	conversationType := "email_thread"
 	if s.isGmailChat(raw.LabelIDs) {
 		messageType = store.MessageTypeGoogleChat
-		conversationID, err = s.store.EnsureConversationWithType(
-			sourceID, threadID, conversationTypeChat, convSubject,
-		)
-	} else {
-		conversationID, err = s.store.EnsureConversation(sourceID, threadID, convSubject)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("ensure conversation: %w", err)
+		conversationType = conversationTypeChat
 	}
 
 	// Build message record
@@ -1374,13 +1405,11 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		listID = sql.NullString{String: parsed.ListID, Valid: true}
 	}
 	msg := &store.Message{
-		ConversationID:  conversationID,
 		SourceID:        sourceID,
 		SourceMessageID: raw.ID,
 		RFC822MessageID: rfc822ID,
 		ListID:          listID,
 		MessageType:     messageType,
-		SenderID:        senderID,
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:         sql.NullString{String: snippet, Valid: snippet != ""},
 		SizeEstimate:    raw.SizeEstimate,
@@ -1414,17 +1443,19 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 	}
 
 	return &messageData{
-		message:        msg,
-		bodyText:       bodyText,
-		bodyHTML:       bodyHTML,
-		rawMIME:        raw.Raw,
-		from:           parsed.From,
-		to:             parsed.To,
-		cc:             parsed.Cc,
-		bcc:            parsed.Bcc,
-		gmailLabelIDs:  raw.LabelIDs,
-		attachments:    parsed.Attachments,
-		participantMap: participantMap,
+		message:           msg,
+		threadID:          threadID,
+		conversationType:  conversationType,
+		conversationTitle: convSubject,
+		bodyText:          bodyText,
+		bodyHTML:          bodyHTML,
+		rawMIME:           raw.Raw,
+		from:              parsed.From,
+		to:                parsed.To,
+		cc:                parsed.Cc,
+		bcc:               parsed.Bcc,
+		gmailLabelIDs:     raw.LabelIDs,
+		attachments:       parsed.Attachments,
 	}, nil
 }
 

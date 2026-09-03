@@ -797,6 +797,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cli/repair-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Repair or audit Gmail message snapshots */
+        post: operations["repairMessageCLI"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cli/run": {
         parameters: {
             query?: never;
@@ -3565,6 +3582,20 @@ export interface components {
             type: string;
         } & {
             [key: string]: unknown;
+        };
+        CLIRepairMessageEvent: {
+            data?: string;
+            error?: string;
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        CLIRepairMessageRequest: {
+            audit?: boolean;
+            json?: boolean;
+            reference?: string;
+            /** Format: int64 */
+            source_id?: number;
         };
         CLIRunEvent: {
             data?: string;
@@ -11010,6 +11041,39 @@ export interface operations {
                 };
                 content: {
                     "application/x-ndjson": components["schemas"]["CLIRepairEncodingEvent"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    repairMessageCLI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CLIRepairMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["CLIRepairMessageEvent"];
                 };
             };
             /** @description Error */

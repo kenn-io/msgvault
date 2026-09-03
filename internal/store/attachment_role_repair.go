@@ -79,7 +79,8 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 			return AttachmentRoleRepairProgress{}, err
 		}
 		decodeLimit := min(int64(attachmentRoleRepairMaxMessageBytes), remainingBytes)
-		raw, bytesRead, decodeErr := decodeMessageRawBounded(compressed, compression, decodeLimit)
+		raw, bytesRead, decodeErr := decodeMessageRawBounded(
+			compressed, compression, decodeLimit, errAttachmentRoleRepairMessageTooLarge)
 		if errors.Is(decodeErr, errAttachmentRoleRepairMessageTooLarge) &&
 			decodeLimit < attachmentRoleRepairMaxMessageBytes {
 			hasMore = true
@@ -278,17 +279,23 @@ func (s *Store) attachmentRoleRepairMessageRaw(
 	return compressed, compression, nil
 }
 
+// decodeMessageRawBounded decompresses at most maxBytes of a stored raw
+// record. Decompression is capped with an io.LimitReader of maxBytes+1, so a
+// stream larger than the cap is detected without materializing it, and the
+// caller-supplied tooLargeErr is returned instead. bytesRead reports how many
+// decompressed bytes were consumed before the cap or stream end.
 func decodeMessageRawBounded(
 	compressed []byte,
 	compression sql.NullString,
 	maxBytes int64,
+	tooLargeErr error,
 ) ([]byte, int64, error) {
 	if maxBytes <= 0 {
-		return nil, 0, errAttachmentRoleRepairMessageTooLarge
+		return nil, 0, tooLargeErr
 	}
 	if !compression.Valid || compression.String != "zlib" {
 		if int64(len(compressed)) > maxBytes {
-			return nil, maxBytes + 1, errAttachmentRoleRepairMessageTooLarge
+			return nil, maxBytes + 1, tooLargeErr
 		}
 		return compressed, int64(len(compressed)), nil
 	}
@@ -300,7 +307,7 @@ func decodeMessageRawBounded(
 	closeErr := reader.Close()
 	bytesRead := int64(len(data))
 	if bytesRead > maxBytes {
-		return nil, bytesRead, errAttachmentRoleRepairMessageTooLarge
+		return nil, bytesRead, tooLargeErr
 	}
 	if readErr != nil {
 		return nil, bytesRead, readErr

@@ -22,6 +22,7 @@ func TestDecodeMessageRawBoundedStopsAtLimit(t *testing.T) {
 
 	raw, bytesRead, err := decodeMessageRawBounded(
 		compressed.Bytes(), sql.NullString{String: "zlib", Valid: true}, 64,
+		errAttachmentRoleRepairMessageTooLarge,
 	)
 	require.ErrorIs(err, errAttachmentRoleRepairMessageTooLarge)
 	assert.Nil(raw)

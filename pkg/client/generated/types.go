@@ -716,6 +716,23 @@ func (c CLIRepairEncodingEvent) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CLIRepairMessageEvent struct {
+	Data      *string `json:"data,omitempty"`
+	ErrorData *string `json:"error,omitempty"`
+	Type      string  `json:"type" validate:"required"`
+}
+
+func (c CLIRepairMessageEvent) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CLIRepairMessageRequest struct {
+	Audit     *bool   `json:"audit,omitempty"`
+	JSON      *bool   `json:"json,omitempty"`
+	Reference *string `json:"reference,omitempty"`
+	SourceID  *int64  `json:"source_id,omitempty"`
+}
+
 type CLIRunEvent struct {
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`

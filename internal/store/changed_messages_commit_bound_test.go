@@ -586,10 +586,11 @@ func TestListChangedMessages_DeletionRunTombstonesAllArrive(t *testing.T) {
 
 	stop := make(chan struct{})
 	var workers sync.WaitGroup
-
-	workers.Go(func() {
-		consumer.pollInBackground(st, stop, func(int) time.Duration { return 500 * time.Microsecond })
+	stopWorkers := sync.OnceFunc(func() {
+		close(stop)
+		workers.Wait()
 	})
+	t.Cleanup(stopWorkers)
 
 	// Ordinary sync traffic arriving while the deletion run is open. On
 	// PostgreSQL these commit alongside it; on SQLite they queue behind it.
@@ -614,25 +615,36 @@ func TestListChangedMessages_DeletionRunTombstonesAllArrive(t *testing.T) {
 		}
 	})
 
-	// The deletion list streams in, which is why the transaction outlives the
-	// consumer's poll interval.
+	// The deletion list streams in. Keep its reader open after every doomed ID
+	// has been processed so the transaction is provably still uncommitted when
+	// the consumer reads the bound.
 	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	markDone := make(chan error, 1)
 	go func() {
-		for i := range doomedCount {
-			_, _ = fmt.Fprintf(writer, "doomed-%d\n", i)
-			time.Sleep(5 * time.Millisecond)
-		}
-		_ = writer.Close()
+		markDone <- st.MarkMessagesDeletedFromReader(src.ID, reader, 4)
 	}()
-	// Record complete_through on every page read while the deletion transaction
-	// is open. Everything it stamps is uncommitted for the whole of this call.
-	consumer.watchBounds(func() {
-		require.NoError(st.MarkMessagesDeletedFromReader(src.ID, reader, 4),
-			"MarkMessagesDeletedFromReader")
-	})
+	for i := range doomedCount {
+		_, err := fmt.Fprintf(writer, "doomed-%d\n", i)
+		require.NoError(err, "stream a doomed message ID")
+	}
+	// This partial token is read only after Scanner has returned and the store
+	// has flushed the preceding complete token. With no newline or EOF, the
+	// next Scan remains blocked here and keeps the transaction open.
+	_, err = io.WriteString(writer, "hold-open")
+	require.NoError(err, "hold the deletion stream open")
 
-	close(stop)
-	workers.Wait()
+	// Record a bound from a page that completed while the deletion transaction
+	// was still open. Recording until MarkMessagesDeletedFromReader returned
+	// also included polls that acquired SQLite's write lock just after COMMIT,
+	// which made the old test mistake a valid post-commit bound for a violation.
+	consumer.watchBounds(func() {
+		consumer.mustPoll(t, st)
+	})
+	require.NoError(writer.Close(), "finish the deletion stream")
+	require.NoError(<-markDone, "MarkMessagesDeletedFromReader")
+
+	stopWorkers()
 	require.NoError(consumer.failure, "a background worker failed")
 
 	missing := func() []int64 {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1649,6 +1650,183 @@ func TestRunCLIRepairEncodingStreamsOutput(t *testing.T) {
 
 	require.NoError(err, "RunCLIRepairEncoding")
 	assert.Equal([]string{"stdout:Scanning messages\n", "stderr:repair warning\n"}, output, "output")
+}
+
+func TestRunCLIRepairMessageUsesGeneratedRequestAndStreamsOutput(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/health":
+			writeJSONResponse(t, w, map[string]any{
+				"status": "ok", "api_schema_version": "2.15.0",
+			})
+		case "/api/v1/cli/repair-message":
+			assertions.Equal(http.MethodPost, r.Method)
+			assertions.Empty(r.URL.RawQuery, "repair request is encoded in the generated JSON body")
+			var body generated.CLIRepairMessageRequest
+			if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				return
+			}
+			if !assertions.NotNil(body.Reference) {
+				return
+			}
+			assertions.Equal("gmail-42", *body.Reference)
+			if !assertions.NotNil(body.SourceID) {
+				return
+			}
+			assertions.Equal(int64(7), *body.SourceID)
+			assertions.Nil(body.Audit)
+			assertions.Nil(body.JSON)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte(`{"type":"stdout","data":"repaired\n"}` + "\n"))
+			_, _ = w.Write([]byte(`{"type":"stderr","data":"repair warning\n"}` + "\n"))
+			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+		default:
+			http.Error(w, "unexpected endpoint", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newTestStore(srv, "secret")
+	reference := "gmail-42"
+	sourceID := int64(7)
+	var output []string
+	err := s.RunCLIRepairMessage(context.Background(), generated.CLIRepairMessageRequest{
+		Reference: &reference,
+		SourceID:  &sourceID,
+	}, func(stream, data string) error {
+		output = append(output, stream+":"+data)
+		return nil
+	})
+
+	requirements.NoError(err)
+	assertions.Equal([]string{"/api/v1/health", "/api/v1/cli/repair-message"}, paths)
+	assertions.Equal([]string{"stdout:repaired\n", "stderr:repair warning\n"}, output)
+}
+
+func TestRunCLIRepairMessageWithPreflightChecksCapabilityBeforePreflightAndRequest(t *testing.T) {
+	assert := assert.New(t)
+	var sequence atomic.Int32
+	var capabilityStep atomic.Int32
+	var repairStep atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			capabilityStep.Store(sequence.Add(1))
+			writeJSONResponse(t, w, map[string]any{
+				"status": "ok", "api_schema_version": "2.15.0",
+			})
+		case "/api/v1/cli/repair-message":
+			repairStep.Store(sequence.Add(1))
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+		default:
+			http.Error(w, "unexpected endpoint", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newTestStore(srv, "secret")
+	reference := "gmail-42"
+	var preflightStep atomic.Int32
+	err := s.RunCLIRepairMessageWithPreflight(
+		context.Background(),
+		generated.CLIRepairMessageRequest{Reference: &reference},
+		func(context.Context) error {
+			preflightStep.Store(sequence.Add(1))
+			return nil
+		},
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(int32(1), capabilityStep.Load())
+	assert.Equal(int32(2), preflightStep.Load())
+	assert.Equal(int32(3), repairStep.Load())
+}
+
+func TestRunCLIRepairMessageFailsClosedWithoutCompatibleSchema(t *testing.T) {
+	tests := []struct {
+		name          string
+		healthPayload string
+		wantVersion   string
+	}{
+		{name: "missing version", healthPayload: `{"status":"ok"}`, wantVersion: `daemon reports ""`},
+		{name: "malformed version", healthPayload: `{"status":"ok","api_schema_version":"2.13"}`, wantVersion: `daemon reports "2.13"`},
+		{name: "older version", healthPayload: `{"status":"ok","api_schema_version":"2.13.0"}`, wantVersion: `daemon reports "2.13.0"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var nonHealthRequests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(test.healthPayload))
+					return
+				}
+				nonHealthRequests.Add(1)
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+			}))
+			t.Cleanup(srv.Close)
+
+			s := newTestStore(srv, "")
+			reference := "gmail-42"
+			err := s.RunCLIRepairMessage(context.Background(), generated.CLIRepairMessageRequest{
+				Reference: &reference,
+			}, nil)
+
+			require.ErrorContains(t, err, "requires daemon API schema 2.15.0")
+			require.ErrorContains(t, err, test.wantVersion)
+			assert.Zero(t, nonHealthRequests.Load(), "incompatible daemon must receive neither repair nor sync requests")
+		})
+	}
+}
+
+func TestRunCLIRepairMessagePropagatesCancellation(t *testing.T) {
+	repairStarted := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{
+				"status": "ok", "api_schema_version": "2.15.0",
+			})
+			return
+		}
+		assert.Equal(t, "/api/v1/cli/repair-message", r.URL.Path)
+		close(repairStarted)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+
+	s := newTestStore(srv, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	audit := true
+	go func() {
+		done <- s.RunCLIRepairMessage(ctx, generated.CLIRepairMessageRequest{Audit: &audit}, nil)
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case <-repairStarted:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+
+	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 func TestRebuildCLIFTSUsesGeneratedClientAdapter(t *testing.T) {

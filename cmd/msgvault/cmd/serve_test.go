@@ -1646,6 +1646,55 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	}
 }
 
+func TestStoreAPIAdapterRunCLIRepairMessageUsesDedicatedLocalArgv(t *testing.T) {
+	tests := []struct {
+		name string
+		req  api.CLIRepairMessageRequest
+		want []string
+	}{
+		{
+			name: "repair",
+			req:  api.CLIRepairMessageRequest{Reference: "gmail-42", SourceID: 7},
+			want: []string{"repair-message", "--local", "--source-id", "7", "gmail-42"},
+		},
+		{
+			name: "whole archive audit json",
+			req:  api.CLIRepairMessageRequest{Audit: true, JSON: true},
+			want: []string{"repair-message", "--local", "--audit", "--json"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotArgs []string
+			var events []api.CLIRepairMessageEvent
+			adapter := &storeAPIAdapter{}
+			err := adapter.runCLIRepairMessageWithRunner(t.Context(), test.req, func(event api.CLIRepairMessageEvent) error {
+				events = append(events, event)
+				return nil
+			}, func(_ context.Context, args []string, emit func(string, string) error) error {
+				gotArgs = append([]string(nil), args...)
+				return emit("stdout", "line\n")
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, test.want, gotArgs)
+			assert.Equal(t, []api.CLIRepairMessageEvent{{Type: "stdout", Data: "line\n"}}, events)
+		})
+	}
+}
+
+func TestStoreAPIAdapterRunCLIRepairMessagePropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	adapter := &storeAPIAdapter{}
+	err := adapter.runCLIRepairMessageWithRunner(ctx, api.CLIRepairMessageRequest{Audit: true}, nil,
+		func(ctx context.Context, _ []string, _ func(string, string) error) error {
+			cancel()
+			<-ctx.Done()
+			return ctx.Err()
+		})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 	adapter := &storeAPIAdapter{}
 	req := api.CLIRunRequest{
