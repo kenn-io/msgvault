@@ -465,11 +465,11 @@ func rawOptionalJSONString(object map[string]json.RawMessage, key string) (strin
 	if !present {
 		return "", false, true
 	}
-	var value string
-	if json.Unmarshal(raw, &value) != nil {
+	var value *string
+	if json.Unmarshal(raw, &value) != nil || value == nil {
 		return "", true, false
 	}
-	return value, true, true
+	return *value, true, true
 }
 
 func validateFixedHTTPHeaders(headers map[string]string) (map[string]string, error) {

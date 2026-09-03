@@ -383,6 +383,9 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			require.Error(negotiationErr)
 			assert.Empty(got)
 			assert.LessOrEqual(calls.Load(), int32(1))
+			if test.wait {
+				assert.ErrorIs(negotiationErr, context.DeadlineExceeded)
+			}
 			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 			assert.NotContains(negotiationErr.Error(), capabilityCredentialValue)
 			assert.NotContains(negotiationErr.Error(), capabilityArchiveCanary)
@@ -929,6 +932,8 @@ func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
 		{name: "other class", body: `{"error":{"type":"billing_error","code":"insufficient_quota"}}`,
 			wantDiag: otherClassProviderDiagnostics()},
 		{name: "malformed", body: `{"error":`, wantDiag: unreadableProviderDiagnostics()},
+		{name: "null parameter", body: `{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":null}}`,
+			wantDiag: recognizedProviderDiagnostics(ProviderDiagnosticCodeRejectedField, ProviderDiagnosticFieldMalformed)},
 		{name: "duplicate", body: `{"error":{"type":"invalid_request_error","code":"model_not_found"},"error":{}}`,
 			wantDiag: unreadableProviderDiagnostics()},
 		{name: "oversized", body: strings.Repeat("x", (32<<10)+1), wantDiag: unreadableProviderDiagnostics()},

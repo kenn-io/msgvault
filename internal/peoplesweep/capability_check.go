@@ -108,7 +108,7 @@ func newNegotiationError(
 ) *NegotiationError {
 	result := &NegotiationError{
 		Stage: stage, OutputMode: mode, TokenLimitParameter: tokenParameter,
-		Reasoning: reasoning,
+		Reasoning: reasoning, cause: cause,
 	}
 	var providerErr *ProviderError
 	if errors.As(cause, &providerErr) {
@@ -116,7 +116,6 @@ func newNegotiationError(
 		result.RequestID = providerErr.RequestID
 		result.Capability = providerErr.Capability
 		result.Diagnostics = providerErr.Diagnostics
-		result.cause = providerErr
 	}
 	return result
 }
