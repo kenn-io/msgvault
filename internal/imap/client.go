@@ -488,7 +488,8 @@ func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.
 		startTLSOptions.TLSConfig = &tls.Config{ServerName: normalizeHost(c.config.Host)}
 		conn, err := newStartTLS(ctx, observed, &startTLSOptions)
 		if err != nil {
-			return nil, err, observed.transientStartTLSFailure(err), observed
+			return nil, err,
+				observed.transientStartTLSFailure(err) || isTransientGreetingError(err, observed), observed
 		}
 		return conn, nil, false, observed
 	}

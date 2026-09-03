@@ -226,6 +226,28 @@ func TestRetryRetriesSTARTTLSConnectionFailure(t *testing.T) {
 	assert.Equal(t, int64(len(connectRetryDelays)+1), accepted())
 }
 
+func TestRetryRetriesDroppedSTARTTLSGreeting(t *testing.T) {
+	addr, accepted := startDroppedSTARTTLSGreetingServer(t)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{
+		Host: host, Port: port, STARTTLS: true, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	t.Cleanup(func() { _ = client.Close() })
+	var delays []time.Duration
+	client.sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.Equal(t, connectRetryDelays[:1], delays)
+	assert.Equal(t, int64(2), accepted())
+}
+
 func TestRetryHonorsCancellationDuringGreeting(t *testing.T) {
 	addr, accepted := startSilentGreetingServer(t)
 	client := newTestClient(t, addr)
@@ -369,6 +391,35 @@ func startDroppedSTARTTLSServer(t *testing.T, connections int) (string, func() i
 			if int(counted.accepted.Load()) >= connections {
 				return
 			}
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startDroppedSTARTTLSGreetingServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			if counted.accepted.Load() == 1 {
+				if tcpConn, ok := conn.(*net.TCPConn); ok {
+					_ = tcpConn.SetLinger(0)
+				}
+				_ = conn.Close()
+				continue
+			}
+			_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+			buffer := make([]byte, 128)
+			_, _ = conn.Read(buffer)
+			_, _ = conn.Write([]byte("* NO STARTTLS rejected\r\n"))
+			_ = conn.Close()
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
