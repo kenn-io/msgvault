@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -411,6 +412,53 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 	assert.Equal("msg_err", batch[2].ID, "batch[2].ID")
 	assert.Nil(batch[2].Message, "batch[2].Message")
 	require.Error(batch[2].Err, "batch[2].Err")
+}
+
+func TestGetMessagesRawBatchWithErrorsRetainsRequestedIdentityDuringParallelFetch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := path.Base(r.URL.Path)
+		if id == "msg-a" {
+			close(firstStarted)
+			<-releaseFirst
+		} else {
+			<-firstStarted
+			close(releaseFirst)
+		}
+		raw := base64.RawURLEncoding.EncodeToString([]byte("body-" + id))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           id,
+			"threadId":     "thread-" + id,
+			"internalDate": "1704067200000",
+			"raw":          raw,
+		})
+	}))
+	defer srv.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{Transport: &rewriteTransport{base: srv.URL, wrapped: http.DefaultTransport}},
+		userID:      "me",
+		concurrency: 2,
+		logger:      slog.Default(),
+		rateLimiter: NewRateLimiter(1000),
+	}
+
+	results, err := client.GetMessagesRawBatchWithErrors(t.Context(), []string{"msg-a", "msg-b"})
+
+	require.NoError(err)
+	require.Len(results, 2)
+	assert.Equal("msg-a", results[0].ID)
+	require.NotNil(results[0].Message)
+	assert.Equal("msg-a", results[0].Message.ID)
+	assert.Equal([]byte("body-msg-a"), results[0].Message.Raw)
+	assert.Equal("msg-b", results[1].ID)
+	require.NotNil(results[1].Message)
+	assert.Equal("msg-b", results[1].Message.ID)
+	assert.Equal([]byte("body-msg-b"), results[1].Message.Raw)
 }
 
 func TestListCompleteMessageSnapshotIncludesSpamAndTrash(t *testing.T) {

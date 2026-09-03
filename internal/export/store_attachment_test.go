@@ -157,9 +157,11 @@ func TestStoreAttachmentFileDurableStoresEmptyContent(t *testing.T) {
 	emptyHash := hex.EncodeToString(emptySum[:])
 	att := &mime.Attachment{ContentHash: emptyHash}
 
-	storagePath, err := StoreAttachmentFileDurable(dir, att)
+	receipt, err := StoreAttachmentFileDurable(dir, att)
 	require.NoError(err)
+	storagePath := receipt.StoragePath
 	assert.Equal(path.Join(emptyHash[:2], emptyHash), storagePath)
+	assert.True(receipt.Created)
 	assert.Equal(emptyHash, att.ContentHash)
 	info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(storagePath)))
 	require.NoError(err)
@@ -217,9 +219,10 @@ func TestStoreAttachmentFileDurableSurfacesParentSyncFailure(t *testing.T) {
 	require.ErrorIs(err, syncErr)
 
 	pack.SyncDir = originalSyncDir
-	storagePath, err := StoreAttachmentFileDurable(dir, att)
+	receipt, err := StoreAttachmentFileDurable(dir, att)
 	require.NoError(err, "retry must validate and durably reuse loose residue")
-	require.FileExists(filepath.Join(dir, filepath.FromSlash(storagePath)))
+	assert.False(t, receipt.Created)
+	require.FileExists(filepath.Join(dir, filepath.FromSlash(receipt.StoragePath)))
 }
 
 func TestStoreAttachmentFileDurableRejectsCanonicalSymlink(t *testing.T) {

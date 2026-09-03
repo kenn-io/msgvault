@@ -259,6 +259,10 @@ type ClientInterface interface {
 	RepairEncodingCLI(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RepairEncodingCLIResponse, error)
 	RepairEncodingCLIWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RepairEncodingCLIResp, error)
 
+	// RepairMessageCLI Repair or audit Gmail message snapshots
+	RepairMessageCLI(ctx context.Context, options *RepairMessageCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairMessageCLIResponse, error)
+	RepairMessageCLIWithResponse(ctx context.Context, options *RepairMessageCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairMessageCLIResp, error)
+
 	// RunCLI Run an allowlisted CLI command
 	RunCLI(ctx context.Context, options *RunCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCLIResponse, error)
 	RunCLIWithResponse(ctx context.Context, options *RunCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCLIResp, error)
@@ -4396,6 +4400,56 @@ func (c *Client) RepairEncodingCLI(ctx context.Context, reqEditors ...runtime.Re
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/repair-encoding")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RepairMessageCLI Repair or audit Gmail message snapshots
+func (c *Client) RepairMessageCLI(ctx context.Context, options *RepairMessageCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairMessageCLIResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/repair-message",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RepairMessageCLIResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RepairMessageCLIErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RepairMessageCLIErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := RepairMessageCLIResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/repair-message")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

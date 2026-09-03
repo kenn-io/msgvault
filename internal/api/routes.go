@@ -291,6 +291,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaNDJSONRoute[CLICacheBuildEvent](apiV1, "buildCLICache", http.MethodPost, "/cli/build-cache", "Build the CLI analytics cache", s.handleCLIBuildCache)
 	registerAPIV1RawHumaNDJSONRoute[CLISyncEvent](apiV1, "syncCLI", http.MethodPost, "/cli/sync", "Run CLI incremental sync", s.handleCLISync)
 	registerAPIV1RawHumaNDJSONRoute[CLISyncEvent](apiV1, "syncFullCLI", http.MethodPost, "/cli/sync-full", "Run CLI full sync", s.handleCLISyncFull)
+	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRepairMessageRequest, CLIRepairMessageEvent](apiV1, "repairMessageCLI", http.MethodPost, "/cli/repair-message", "Repair or audit Gmail message snapshots", s.handleCLIRepairMessage)
 	registerAPIV1RawHumaNDJSONRoute[CLIVerifyEvent](apiV1, "verifyCLI", http.MethodPost, "/cli/verify", "Verify the CLI archive against Gmail", s.handleCLIVerify)
 	registerAPIV1RawHumaNDJSONRoute[CLIRepairEncodingEvent](apiV1, "repairEncodingCLI", http.MethodPost, "/cli/repair-encoding", "Repair CLI archive encoding", s.handleCLIRepairEncoding)
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIAddCalendarPlanRequest, CLIAddCalendarPlanResponse](apiV1, "planCLIAddCalendar", http.MethodPost, "/cli/add-calendar/plan", "Plan CLI Calendar account setup", s.handleCLIAddCalendarPlan)

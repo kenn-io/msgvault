@@ -443,6 +443,10 @@ type RepairEncodingCLIResponse = []byte
 
 type RepairEncodingCLIErrorResponse = ErrorResponse
 
+type RepairMessageCLIResponse = []byte
+
+type RepairMessageCLIErrorResponse = ErrorResponse
+
 type RunCLIResponse = []byte
 
 type RunCLIErrorResponse = ErrorResponse
@@ -3204,6 +3208,12 @@ type RebuildCLIFTSResp struct {
 }
 
 type RepairEncodingCLIResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
+type RepairMessageCLIResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int

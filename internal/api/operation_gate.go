@@ -448,6 +448,16 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
+	if r.URL.Path == "/api/v1/cli/repair-message" {
+		label, skip, err := cliRepairMessageGateDecision(r)
+		if err != nil {
+			return false, "", err
+		}
+		if skip {
+			return false, "", nil
+		}
+		return true, label, nil
+	}
 	if r.URL.Path == "/api/v1/cli/run" {
 		label, skip, err := cliRunGateDecision(r)
 		if err != nil {
@@ -459,6 +469,31 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 		return true, label, nil
 	}
 	return true, operationGateLabelFromPath(r.URL.Path), nil
+}
+
+// cliRepairMessageGateDecision bypasses the mutation gate only for a request
+// body that the handler will accept as read-only audit mode. The body is
+// restored before returning so the Huma handler sees the exact same bytes.
+// Malformed and invalid bodies stay gated and are rejected by the handler.
+func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err error) {
+	if r == nil || r.Body == nil {
+		return "msgvault repair-message", false, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, cliRunGateInspectionMaxBytes+1))
+	if err != nil {
+		return "", false, err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) > cliRunGateInspectionMaxBytes {
+		return "", false, errCLIRunGateInspectionBodyTooLarge
+	}
+
+	var req CLIRepairMessageRequest
+	if json.Unmarshal(body, &req) == nil &&
+		req.Audit && strings.TrimSpace(req.Reference) == "" && req.SourceID >= 0 {
+		return "", true, nil
+	}
+	return "msgvault repair-message", false, nil
 }
 
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are

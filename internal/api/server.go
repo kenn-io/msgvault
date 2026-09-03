@@ -1094,6 +1094,7 @@ func isLongDaemonRequest(path string) bool {
 		"/api/v1/cli/identities/discover",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
+		"/api/v1/cli/repair-message",
 		"/api/v1/cli/run",
 		"/api/v1/cli/search",
 		"/api/v1/cli/sync",

@@ -847,6 +847,30 @@ components:
       required:
         - type
       type: object
+    CLIRepairMessageEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIRepairMessageRequest:
+      additionalProperties: false
+      properties:
+        audit:
+          type: boolean
+        json:
+          type: boolean
+        reference:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      type: object
     CLIRunEvent:
       properties:
         data:
@@ -10671,7 +10695,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.14.0
+  version: 2.15.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -13224,6 +13248,33 @@ paths:
       security:
         - apiKey: []
       summary: Repair CLI archive encoding
+      tags:
+        - API
+  /api/v1/cli/repair-message:
+    post:
+      operationId: repairMessageCLI
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIRepairMessageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIRepairMessageEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Repair or audit Gmail message snapshots
       tags:
         - API
   /api/v1/cli/run:

@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,22 +75,309 @@ type ParticipantPersistData struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message        *Message
-	Conversation   *ConversationPersistData
-	Metadata       *sql.NullString
-	BodyText       sql.NullString
-	BodyHTML       sql.NullString
-	RawMIME        []byte
-	RawFormat      string
-	Recipients     []RecipientSet
-	LabelIDs       []int64
-	PreserveLabels bool
-	FTS            *FTSDoc
+	Message                   *Message
+	Conversation              *ConversationPersistData
+	Metadata                  *sql.NullString
+	BodyText                  sql.NullString
+	BodyHTML                  sql.NullString
+	RawMIME                   []byte
+	RawFormat                 string
+	Recipients                []RecipientSet
+	LabelIDs                  []int64
+	LabelRefs                 []MessageLabelRef
+	PreserveLabels            bool
+	MIMEAttachmentReplacement *[]AttachmentWrite
+	FTS                       *FTSDoc
+}
+
+// MessageIdentityGuard binds repair persistence to the exact archive row that
+// was resolved before provider fetch and snapshot preparation.
+type MessageIdentityGuard struct {
+	ID              int64
+	SourceID        int64
+	SourceMessageID string
+}
+
+// RepairMessageTarget is one archive identity matched by a repair reference.
+// Callers decide whether multiple rows make the user-supplied reference
+// ambiguous before making any provider request.
+type RepairMessageTarget struct {
+	MessageIdentityGuard
+
+	SourceType       string
+	SourceIdentifier string
+}
+
+// GmailAuditRecipient is immutable envelope evidence for one archived row.
+type GmailAuditRecipient struct {
+	Type         string
+	EmailAddress sql.NullString
+}
+
+// GmailAuditAttachment is MIME-owned attachment evidence. Provider-owned
+// rows are deliberately excluded by StreamGmailAuditEvidencePageContext.
+type GmailAuditAttachment struct {
+	ContentHash   sql.NullString
+	SourcePartKey sql.NullString
+}
+
+// GmailAuditEvidence contains the stored fields independently derivable from
+// raw MIME. SenderID is intentionally absent because participant merges may
+// rewrite it.
+type GmailAuditEvidence struct {
+	ID              int64
+	SourceID        int64
+	SourceMessageID string
+	RFC822MessageID sql.NullString
+	Subject         sql.NullString
+	BodyText        sql.NullString
+	BodyHTML        sql.NullString
+	RawMIME         []byte
+	RawMIMEPresent  bool
+	RawMIMEError    string
+	Recipients      []GmailAuditRecipient
+	Attachments     []GmailAuditAttachment
+}
+
+// FindRepairMessageTargetsContext applies both interpretations of a repair
+// reference: provider message ID always, and internal ID when the reference is
+// a positive decimal integer. sourceID zero means no source scope.
+func (s *Store) FindRepairMessageTargetsContext(
+	ctx context.Context, reference string, sourceID int64,
+) ([]RepairMessageTarget, error) {
+	internalID := int64(-1)
+	if parsed, err := strconv.ParseInt(reference, 10, 64); err == nil && parsed > 0 {
+		internalID = parsed
+	}
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT m.id, m.source_id, m.source_message_id, src.source_type, src.identifier
+		FROM messages m
+		JOIN sources src ON src.id = m.source_id
+		WHERE (m.source_message_id = ? OR m.id = ?)
+		  AND (? = 0 OR m.source_id = ?)
+		ORDER BY m.id
+	`), reference, internalID, sourceID, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("find repair message targets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var targets []RepairMessageTarget
+	for rows.Next() {
+		var target RepairMessageTarget
+		if err := rows.Scan(
+			&target.ID, &target.SourceID, &target.SourceMessageID,
+			&target.SourceType, &target.SourceIdentifier,
+		); err != nil {
+			return nil, fmt.Errorf("scan repair message target: %w", err)
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repair message targets: %w", err)
+	}
+	return targets, nil
+}
+
+// GmailAuditMaxRawMIMEBytes bounds how much stored raw MIME one Gmail audit
+// evidence record may decompress to. A record above the cap is reported as
+// inconclusive (RawMIMEError) instead of being fully materialized: raw
+// storage has no size limit, so unbounded decompression of one record — let
+// alone a whole page of them — could exhaust memory on a corrupt or hostile
+// archive.
+const GmailAuditMaxRawMIMEBytes = 64 << 20
+
+var errGmailAuditRawMIMETooLarge = fmt.Errorf(
+	"stored raw MIME exceeds the %d-byte Gmail audit decompression limit", int64(GmailAuditMaxRawMIMEBytes))
+
+// StreamGmailAuditEvidencePageContext loads one ascending internal-ID keyset
+// page of Gmail audit evidence and streams each record to handle. The keyset
+// page query stays lightweight — it selects only internal IDs — and the ID
+// page plus every per-record load (message row, body, raw MIME, recipients,
+// MIME-owned attachments) run inside one read snapshot spanning the whole
+// page, so a concurrently committed repair can never split one page across
+// two database states. Only one record is materialized at a time: handle
+// receives and may release each record before the next one loads, and raw
+// decompression is bounded by GmailAuditMaxRawMIMEBytes, so peak memory
+// tracks one message rather than the page size. It returns the number of IDs
+// the keyset page selected (not the number of records handle accepted).
+// Every query is read-only; sourceID zero audits all Gmail sources.
+func (s *Store) StreamGmailAuditEvidencePageContext(
+	ctx context.Context, sourceID, afterID int64, limit int,
+	handle func(GmailAuditEvidence) error,
+) (int, error) {
+	if limit <= 0 {
+		return 0, errors.New("gmail audit page limit must be positive")
+	}
+	if handle == nil {
+		return 0, errors.New("gmail audit evidence handler is required")
+	}
+	pageSize := 0
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		ids, err := s.gmailAuditPageIDsTx(ctx, tx, sourceID, afterID, limit)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			evidence, err := s.loadGmailAuditEvidenceTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if err := handle(evidence); err != nil {
+				return err
+			}
+		}
+		pageSize = len(ids)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return pageSize, nil
+}
+
+// gmailAuditPageIDsTx selects one ascending internal-ID keyset page of Gmail
+// messages. It reads only the messages.id column so the page query itself
+// never materializes bodies or raw MIME.
+func (s *Store) gmailAuditPageIDsTx(
+	ctx context.Context, tx *loggedTx, sourceID, afterID int64, limit int,
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.id
+		FROM messages m
+		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
+		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
+		ORDER BY m.id
+		LIMIT ?
+	`, afterID, sourceID, sourceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list Gmail audit evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := make([]int64, 0, limit)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan Gmail audit evidence ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Gmail audit evidence: %w", err)
+	}
+	return ids, nil
+}
+
+// loadGmailAuditEvidenceTx loads one message's full evidence record — message
+// row, body, raw MIME, recipients, and MIME-owned attachments — on the
+// snapshot transaction the page shares.
+func (s *Store) loadGmailAuditEvidenceTx(
+	ctx context.Context, tx *loggedTx, id int64,
+) (GmailAuditEvidence, error) {
+	var item GmailAuditEvidence
+	var rawMessageID sql.NullInt64
+	var compressed []byte
+	var rawFormat sql.NullString
+	var compression sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT m.id, m.source_id, m.source_message_id, m.rfc822_message_id,
+		       m.subject, mb.body_text, mb.body_html,
+		       mr.message_id, mr.raw_data, mr.raw_format, mr.compression
+		FROM messages m
+		LEFT JOIN message_bodies mb ON mb.message_id = m.id
+		LEFT JOIN message_raw mr ON mr.message_id = m.id
+		WHERE m.id = ?
+	`, id).Scan(
+		&item.ID, &item.SourceID, &item.SourceMessageID,
+		&item.RFC822MessageID, &item.Subject, &item.BodyText, &item.BodyHTML,
+		&rawMessageID, &compressed, &rawFormat, &compression,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, fmt.Errorf("gmail audit evidence %d vanished inside the page snapshot", id)
+	}
+	if err != nil {
+		return item, fmt.Errorf("scan Gmail audit evidence: %w", err)
+	}
+	item.RawMIMEPresent = rawMessageID.Valid
+	if item.RawMIMEPresent {
+		if !rawFormat.Valid || rawFormat.String != "mime" {
+			item.RawMIMEError = fmt.Sprintf("stored raw format %q is not MIME", rawFormat.String)
+		} else {
+			raw, _, decodeErr := decodeMessageRawBounded(
+				compressed, compression, GmailAuditMaxRawMIMEBytes, errGmailAuditRawMIMETooLarge)
+			if decodeErr != nil {
+				item.RawMIMEError = fmt.Sprintf("decode stored raw MIME: %v", decodeErr)
+			} else {
+				item.RawMIME = raw
+			}
+		}
+	}
+
+	recipientRows, err := tx.QueryContext(ctx, `
+		SELECT recipient_type, email_address
+		FROM message_recipients
+		WHERE message_id = ?
+		ORDER BY recipient_type, id
+	`, id)
+	if err != nil {
+		return item, fmt.Errorf("list Gmail audit recipients: %w", err)
+	}
+	for recipientRows.Next() {
+		var recipient GmailAuditRecipient
+		if err := recipientRows.Scan(&recipient.Type, &recipient.EmailAddress); err != nil {
+			_ = recipientRows.Close()
+			return item, fmt.Errorf("scan Gmail audit recipient: %w", err)
+		}
+		item.Recipients = append(item.Recipients, recipient)
+	}
+	if err := recipientRows.Err(); err != nil {
+		_ = recipientRows.Close()
+		return item, fmt.Errorf("iterate Gmail audit recipients: %w", err)
+	}
+	if err := recipientRows.Close(); err != nil {
+		return item, fmt.Errorf("close Gmail audit recipients: %w", err)
+	}
+
+	attachmentRows, err := tx.QueryContext(ctx, `
+		SELECT content_hash, source_part_key
+		FROM attachments
+		WHERE message_id = ? AND source_attachment_id IS NULL
+		ORDER BY id
+	`, id)
+	if err != nil {
+		return item, fmt.Errorf("list Gmail audit attachments: %w", err)
+	}
+	for attachmentRows.Next() {
+		var attachment GmailAuditAttachment
+		if err := attachmentRows.Scan(&attachment.ContentHash, &attachment.SourcePartKey); err != nil {
+			_ = attachmentRows.Close()
+			return item, fmt.Errorf("scan Gmail audit attachment: %w", err)
+		}
+		item.Attachments = append(item.Attachments, attachment)
+	}
+	if err := attachmentRows.Err(); err != nil {
+		_ = attachmentRows.Close()
+		return item, fmt.Errorf("iterate Gmail audit attachments: %w", err)
+	}
+	if err := attachmentRows.Close(); err != nil {
+		return item, fmt.Errorf("close Gmail audit attachments: %w", err)
+	}
+	return item, nil
+}
+
+// MessageLabelRef carries provider label identity and its current descriptor
+// so repair can resolve the label catalog in the message transaction.
+type MessageLabelRef struct {
+	SourceLabelID string
+	Info          LabelInfo
 }
 
 // ConversationPersistData optionally makes conversation identity, title, and
 // membership part of PersistMessage's transaction. When absent, PersistMessage
-// uses Message.ConversationID as before.
+// uses Message.ConversationID as before. A nil Participants slice carries no
+// membership snapshot, so existing conversation membership is preserved; a
+// non-nil slice — empty or not — authoritatively replaces the roster.
 type ConversationPersistData struct {
 	SourceConversationID string
 	ConversationType     string
@@ -1478,10 +1766,108 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	return s.persistMessageWithParticipantsContext(ctx, participants, build)
 }
 
+// PersistRepairMessageWithParticipantsContext atomically replaces one
+// provider-authoritative message snapshot after revalidating the exact archive
+// identity. A nil MIMEAttachmentReplacement preserves current attachment rows;
+// a non-nil empty replacement removes every MIME-owned row and keeps rows with
+// provider source_attachment_id provenance.
+func (s *Store) PersistRepairMessageWithParticipantsContext(
+	ctx context.Context,
+	expected MessageIdentityGuard,
+	participants []ParticipantPersistData,
+	build func(participantIDs []int64) *MessagePersistData,
+) (int64, error) {
+	if build == nil {
+		return 0, errors.New("persist repair message requires a participant builder")
+	}
+	beforeParticipants := func(ctx context.Context, tx *loggedTx) error {
+		var actual MessageIdentityGuard
+		err := tx.QueryRowContext(ctx, `
+			SELECT id, source_id, source_message_id
+			FROM messages WHERE id = ?`+s.dialect.SelectForUpdate(), expected.ID,
+		).Scan(&actual.ID, &actual.SourceID, &actual.SourceMessageID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("repair message identity guard mismatch: target id %d not found", expected.ID)
+		}
+		if err != nil {
+			return fmt.Errorf("read repair message identity guard: %w", err)
+		}
+		if actual != expected {
+			return fmt.Errorf(
+				"repair message identity guard mismatch: expected (%d, %d, %q), found (%d, %d, %q)",
+				expected.ID, expected.SourceID, expected.SourceMessageID,
+				actual.ID, actual.SourceID, actual.SourceMessageID,
+			)
+		}
+		return nil
+	}
+	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
+		if data == nil || data.Message == nil {
+			return nil, errors.New("persist repair message requires a message")
+		}
+		if data.Message.SourceID != expected.SourceID ||
+			data.Message.SourceMessageID != expected.SourceMessageID {
+			return nil, fmt.Errorf(
+				"repair message snapshot identity mismatch: expected source (%d, %q), got (%d, %q)",
+				expected.SourceID, expected.SourceMessageID,
+				data.Message.SourceID, data.Message.SourceMessageID,
+			)
+		}
+		labelIDs, err := ensureMessageLabelRefsWith(
+			boundQuerier{ctx: ctx, q: tx}, expected.SourceID, data.LabelRefs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve repair message labels: %w", err)
+		}
+		prepared := *data
+		prepared.LabelIDs = labelIDs
+		prepared.PreserveLabels = false
+		return &prepared, nil
+	}
+	afterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+		if messageID != expected.ID {
+			return fmt.Errorf(
+				"repair message identity guard mismatch: persistence returned id %d, expected %d",
+				messageID, expected.ID,
+			)
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
+			return fmt.Errorf("replace repair message attachments: %w", err)
+		}
+		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+			return fmt.Errorf("recompute repair message attachment stats: %w", err)
+		}
+		return nil
+	}
+	messageID, err := s.persistMessageWithParticipantsTransaction(
+		ctx, beforeParticipants, participants, build, prepare, afterPersist,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return messageID, nil
+}
+
 func (s *Store) persistMessageWithParticipantsContext(
 	ctx context.Context,
 	participants []ParticipantPersistData,
 	build func(participantIDs []int64) *MessagePersistData,
+) (int64, error) {
+	return s.persistMessageWithParticipantsTransaction(ctx, nil, participants, build, nil, nil)
+}
+
+type messagePersistBeforeParticipants func(context.Context, *loggedTx) error
+type messagePersistPrepare func(context.Context, *loggedTx, *MessagePersistData) (*MessagePersistData, error)
+type messagePersistAfter func(context.Context, *loggedTx, *MessagePersistData, int64) error
+
+func (s *Store) persistMessageWithParticipantsTransaction(
+	ctx context.Context,
+	beforeParticipants messagePersistBeforeParticipants,
+	participants []ParticipantPersistData,
+	build func(participantIDs []int64) *MessagePersistData,
+	prepare messagePersistPrepare,
+	afterPersist messagePersistAfter,
 ) (int64, error) {
 	var messageID int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -1494,7 +1880,15 @@ func (s *Store) persistMessageWithParticipantsContext(
 			}
 		}
 		if len(participants) > 1 {
+			// Participant merges take the directory lock before rewriting
+			// message rows. Keep the same order when a repair's preflight
+			// callback locks its target message for identity revalidation.
 			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if beforeParticipants != nil {
+			if err := beforeParticipants(ctx, tx); err != nil {
 				return err
 			}
 		}
@@ -1534,12 +1928,24 @@ func (s *Store) persistMessageWithParticipantsContext(
 		if data == nil || data.Message == nil {
 			return errors.New("persist message requires a message")
 		}
+		if prepare != nil {
+			var err error
+			data, err = prepare(ctx, tx, data)
+			if err != nil {
+				return err
+			}
+		}
 		if err := s.requireSyncSource(data.Message.SourceID); err != nil {
 			return err
 		}
 		id, err := s.persistMessageWith(ctx, tx, data)
 		if err != nil {
 			return err
+		}
+		if afterPersist != nil {
+			if err := afterPersist(ctx, tx, data, id); err != nil {
+				return err
+			}
 		}
 		messageID = id
 		return nil
@@ -1567,10 +1973,12 @@ func (s *Store) persistMessageWith(
 		if err != nil {
 			return 0, fmt.Errorf("ensure conversation: %w", err)
 		}
-		if err := replaceConversationParticipantsTx(
-			ctx, tx, s.dialect, conversationID, data.Conversation.Participants,
-		); err != nil {
-			return 0, fmt.Errorf("replace conversation participants: %w", err)
+		if data.Conversation.Participants != nil {
+			if err := replaceConversationParticipantsTx(
+				ctx, tx, s.dialect, conversationID, data.Conversation.Participants,
+			); err != nil {
+				return 0, fmt.Errorf("replace conversation participants: %w", err)
+			}
 		}
 		messageCopy := *data.Message
 		messageCopy.ConversationID = conversationID
@@ -2112,62 +2520,82 @@ func IsSystemLabel(sourceLabelID string) bool {
 func (s *Store) EnsureLabelsBatch(
 	sourceID int64, labels map[string]LabelInfo,
 ) (map[string]int64, error) {
-	result := make(map[string]int64, len(labels))
+	var result map[string]int64
 	err := s.withTx(func(tx *loggedTx) error {
-		// Phase 1: Move all renamed labels to temporary names so
-		// that cross-renames don't cause one label to incorrectly
-		// merge the other. Temp names embed the row PK (unique by
-		// construction within this source_id) and a SOH (U+0001)
-		// prefix that real Gmail label names cannot contain — Gmail's
-		// UI rejects control characters, so the temp name cannot
-		// collide with any real label name in the same source. The
-		// SQLite-only X'00' hex literal that previously played this
-		// role is not portable: PostgreSQL doesn't parse X'00' and
-		// PG TEXT rejects embedded NUL bytes outright, so we build
-		// the sentinel in Go and bind it as a parameter.
-		for sourceLabelID, info := range labels {
-			var id int64
-			var curName string
-			err := tx.QueryRow(`
-				SELECT id, name FROM labels
-				WHERE source_id = ? AND source_label_id = ?
-			`, sourceID, sourceLabelID).Scan(&id, &curName)
-			if errors.Is(err, sql.ErrNoRows) || curName == info.Name {
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf(
-					"check label %s: %w", sourceLabelID, err,
-				)
-			}
-			tempName := fmt.Sprintf("\x01__msgvault_pending_rename__%d", id)
-			if _, err = tx.Exec(`
-				UPDATE labels SET name = ? WHERE id = ?
-			`, tempName, id); err != nil {
-				return fmt.Errorf(
-					"clear name for label %s: %w", sourceLabelID, err,
-				)
-			}
-		}
-
-		// Phase 2: Apply final names. After phase 1 any remaining
-		// name conflict is from a label NOT in this batch, which
-		// is safe to merge (dead/imported label).
-		for sourceLabelID, info := range labels {
-			id, err := ensureLabelWith(
-				tx, sourceID, sourceLabelID, info.Name, info.Type, &info.SystemRole,
-			)
-			if err != nil {
-				return err
-			}
-			result[sourceLabelID] = id
-		}
-		return nil
+		var err error
+		result, err = ensureLabelsBatchWith(tx, sourceID, labels)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func ensureLabelsBatchWith(
+	q querier, sourceID int64, labels map[string]LabelInfo,
+) (map[string]int64, error) {
+	result := make(map[string]int64, len(labels))
+	// Phase 1: Move all renamed labels to temporary names so that cross-renames
+	// do not merge labels that are both present in this snapshot.
+	for sourceLabelID, info := range labels {
+		var id int64
+		var curName string
+		err := q.QueryRow(`
+			SELECT id, name FROM labels
+			WHERE source_id = ? AND source_label_id = ?
+		`, sourceID, sourceLabelID).Scan(&id, &curName)
+		if errors.Is(err, sql.ErrNoRows) || curName == info.Name {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("check label %s: %w", sourceLabelID, err)
+		}
+		tempName := fmt.Sprintf("\x01__msgvault_pending_rename__%d", id)
+		if _, err = q.Exec(`UPDATE labels SET name = ? WHERE id = ?`, tempName, id); err != nil {
+			return nil, fmt.Errorf("clear name for label %s: %w", sourceLabelID, err)
+		}
+	}
+
+	// Phase 2: Apply final descriptors. Any remaining name conflict belongs to
+	// a label outside this snapshot and is safe for ensureLabelWith to merge.
+	for sourceLabelID, info := range labels {
+		id, err := ensureLabelWith(
+			q, sourceID, sourceLabelID, info.Name, info.Type, &info.SystemRole,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result[sourceLabelID] = id
+	}
+	return result, nil
+}
+
+func ensureMessageLabelRefsWith(
+	q querier, sourceID int64, refs []MessageLabelRef,
+) ([]int64, error) {
+	labels := make(map[string]LabelInfo, len(refs))
+	for _, ref := range refs {
+		if ref.SourceLabelID == "" {
+			return nil, errors.New("message label reference requires a source label ID")
+		}
+		labels[ref.SourceLabelID] = ref.Info
+	}
+	resolved, err := ensureLabelsBatchWith(q, sourceID, labels)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(refs))
+	seen := make(map[int64]struct{}, len(refs))
+	for _, ref := range refs {
+		id := resolved[ref.SourceLabelID]
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // ReplaceMessageLabels replaces all labels for a message atomically.
@@ -4843,18 +5271,22 @@ func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
-		_, err := q.Exec(`
-			UPDATE messages
-			SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
-			    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
-			WHERE id = ?
-		`, messageID, messageID, messageID)
-		return err
+		return recomputeMessageAttachmentStatsWith(q, messageID)
 	}
 	if s.syncGeneration == nil {
 		return write(s.db)
 	}
 	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+func recomputeMessageAttachmentStatsWith(q querier, messageID int64) error {
+	_, err := q.Exec(`
+		UPDATE messages
+		SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
+		    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
+		WHERE id = ?
+	`, messageID, messageID, messageID)
+	return err
 }
 
 type AttachmentRef struct {

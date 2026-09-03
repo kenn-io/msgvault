@@ -4844,6 +4844,42 @@ func (c *Client) RepairEncodingCLIWithResponse(ctx context.Context, reqEditors .
 	}
 }
 
+// RepairMessageCLI Repair or audit Gmail message snapshots
+func (c *Client) RepairMessageCLIWithResponse(ctx context.Context, options *RepairMessageCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairMessageCLIResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/repair-message",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/repair-message")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &RepairMessageCLIResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		return out, nil
+	case 500:
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // RunCLI Run an allowlisted CLI command
 func (c *Client) RunCLIWithResponse(ctx context.Context, options *RunCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCLIResp, error) {
 	var err error
