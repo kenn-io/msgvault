@@ -184,6 +184,38 @@ func TestRetryDoesNotClassifySTARTTLSProtocolFailure(t *testing.T) {
 	assert.Equal(t, int64(1), accepted())
 }
 
+func TestRetryRetriesSTARTTLSConnectionFailure(t *testing.T) {
+	addr, accepted := startDroppedSTARTTLSServer(t, len(connectRetryDelays)+1)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{
+		Host: host, Port: port, STARTTLS: true, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	var delays []time.Duration
+	client.sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.Equal(t, connectRetryDelays[:], delays)
+	assert.Equal(t, int64(len(connectRetryDelays)+1), accepted())
+}
+
+func TestRetryHonorsCancellationDuringGreeting(t *testing.T) {
+	addr, accepted := startSilentGreetingServer(t)
+	client := newTestClient(t, addr)
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+
+	err := client.connect(ctx)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, int64(1), accepted())
+}
+
 func TestRetryPropagatesCancellationDuringBackoff(t *testing.T) {
 	addr, _, accepted := testutil.StartIMAPMemServerWithDroppedConnections(
 		t, map[string]int{"INBOX": 1}, 1)
@@ -264,6 +296,54 @@ func startTruncatedSTARTTLSServer(t *testing.T) (string, func() int64) {
 			}
 			_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
 			buffer := make([]byte, 128)
+			_, _ = conn.Read(buffer)
+			_, _ = conn.Write([]byte("A001 OK"))
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.CloseWrite()
+			}
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startDroppedSTARTTLSServer(t *testing.T, connections int) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+			buffer := make([]byte, 128)
+			_, _ = conn.Read(buffer)
+			_ = conn.Close()
+			if int(counted.accepted.Load()) >= connections {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startSilentGreetingServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			buffer := make([]byte, 1)
 			_, _ = conn.Read(buffer)
 			_ = conn.Close()
 		}
