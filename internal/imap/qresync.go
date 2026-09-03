@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -124,7 +125,7 @@ func (c *Client) tryBuildQresyncMessageList(
 		}
 		prior := c.priorFolderStates[mailbox]
 		var delta MailboxDelta
-		delta, err := c.collectQresyncMailbox(mailbox, prior)
+		delta, err := c.collectQresyncMailbox(ctx, mailbox, prior)
 		if err != nil {
 			return false, err
 		}
@@ -151,7 +152,9 @@ func (c *Client) tryBuildQresyncMessageList(
 	return true, nil
 }
 
-func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (MailboxDelta, error) {
+func (c *Client) collectQresyncMailbox(
+	ctx context.Context, mailbox string, prior FolderState,
+) (MailboxDelta, error) {
 	c.clearQresyncCapture()
 	selected, err := c.conn.Select(mailbox, &imap.SelectOptions{CondStore: true}).Wait()
 	if err != nil {
@@ -217,6 +220,16 @@ func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (Mailb
 			vanishedSet[uid] = struct{}{}
 		}
 	}
+	if err := c.verifyQresyncCoverage(
+		ctx, mailbox, prior, uint32(selected.UIDNext), changedSet, vanishedSet,
+	); err != nil {
+		return MailboxDelta{}, err
+	}
+	if err := c.refreshExistingQresyncChanges(
+		ctx, mailbox, prior, selected.HighestModSeq, changedSet, vanishedSet,
+	); err != nil {
+		return MailboxDelta{}, err
+	}
 	for uid := range vanishedSet {
 		delete(changedSet, uid)
 	}
@@ -244,7 +257,7 @@ func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (Mailb
 		Mailbox: mailbox,
 		State: FolderState{
 			UIDValidity:   selected.UIDValidity,
-			UIDNext:       uint32(selected.UIDNext),
+			UIDNext:       baselineUIDNext(uint32(selected.UIDNext), uidsToUint32(knownUIDs)),
 			HighestModSeq: selected.HighestModSeq,
 			KnownUIDs:     uidsToUint32(knownUIDs),
 		},
@@ -252,6 +265,147 @@ func (c *Client) collectQresyncMailbox(mailbox string, prior FolderState) (Mailb
 		VanishedUIDs: vanishedUIDs,
 		Incremental:  true,
 	}, nil
+}
+
+// refreshExistingQresyncChanges independently checks the mod-sequence of each
+// message in the saved baseline. UIDNEXT proves how many new UIDs a
+// CHANGEDSINCE response must cover, but it says nothing about how many existing
+// messages changed. A plain FETCH provides that missing coverage: every live
+// baseline UID must be returned, and its mod-sequence says whether it belongs
+// in the delta. The normal delta fetch then reads and persists that UID's
+// current flags.
+// baselineUIDNext is the UIDNEXT to save beside a baseline. UIDNEXT is
+// guaranteed larger than every UID in the mailbox (RFC 3501 2.3.1.1), so a
+// baseline that holds a UID at or above the reported UIDNEXT says the real one
+// is higher.
+//
+// A full enumeration reads UIDNEXT from STATUS and the UIDs from a later
+// SEARCH, so a message delivered between the two lands in the baseline with a
+// UID the saved UIDNEXT does not cover. Saving the reported value verbatim
+// stores a baseline that contradicts itself, and the next QRESYNC run reads
+// that as a corrupt baseline: refreshExistingQresyncChanges fails the mailbox,
+// and a QRESYNC failure discards every delta and enumerates the whole account.
+func baselineUIDNext(reportedUIDNext uint32, knownUIDs []uint32) uint32 {
+	highest := uint32(0)
+	for _, uid := range knownUIDs {
+		highest = max(highest, uid)
+	}
+	if highest < reportedUIDNext || highest == math.MaxUint32 {
+		return reportedUIDNext
+	}
+	return highest + 1
+}
+
+// metadataChunkSize bounds one metadata FETCH. fetchChunkSize is 50 because a
+// body fetch of more than that times out on large mailboxes. Flags and
+// mod-sequences are a few dozen bytes each, and the UID set coalesces adjacent
+// UIDs into ranges, so what bounds this fetch is the encoded command rather
+// than the response: a contiguous baseline of any size encodes as "1:N", and a
+// worst-case alternating one costs about 3 bytes per UID.
+//
+// Measured against Dovecot on a LAN with a 0.86 ms round trip, a 100k baseline
+// took 2.52 s as 2000 chunks of 50 and 0.22 s as one command. Round trips were
+// 68 % of that even at sub-millisecond latency, so the same refresh against a
+// server 30 ms away would spend about a minute per changed mailbox per run.
+const metadataChunkSize = 5000
+
+// metadataCommandBudget bounds the encoded UID set of one metadata FETCH. The
+// count limit alone does not: a baseline of alternating UIDs cannot coalesce
+// into ranges, so 5000 high-numbered UIDs reach about 35 KB of command, and a
+// server may reject or truncate a line that long. A contiguous baseline still
+// travels as "1:N" and is never split by this.
+const metadataCommandBudget = 4000
+
+// metadataMeasureStride is how often the encoded length is measured while a
+// chunk fills. It bounds the overshoot at 320 characters, which keeps the
+// worst chunk under 4.4 KB.
+const metadataMeasureStride = 32
+
+// metadataFetchChunks splits a baseline into chunks that are bounded both in
+// UID count and in encoded command size.
+func metadataFetchChunks(knownUIDs []uint32) [][]uint32 {
+	var chunks [][]uint32
+	var set imap.UIDSet
+	start := 0
+	for i, value := range knownUIDs {
+		set.AddNum(imap.UID(value))
+		full := i-start+1 >= metadataChunkSize
+		// Measuring every UID would be quadratic, and the encoded length only
+		// grows, so measure on a stride. A chunk can therefore pass the budget
+		// by at most one stride of UIDs, which is 32 times the 10 characters a
+		// 32-bit UID and its separator can take.
+		if !full && (i-start)%metadataMeasureStride == metadataMeasureStride-1 {
+			full = len(set.String()) >= metadataCommandBudget
+		}
+		if full {
+			chunks = append(chunks, knownUIDs[start:i+1])
+			start = i + 1
+			set = nil
+		}
+	}
+	if start < len(knownUIDs) {
+		chunks = append(chunks, knownUIDs[start:])
+	}
+	return chunks
+}
+
+func (c *Client) refreshExistingQresyncChanges(
+	ctx context.Context,
+	mailbox string,
+	prior FolderState,
+	currentHighestModSeq uint64,
+	changedSet, vanishedSet map[imap.UID]struct{},
+) error {
+	if currentHighestModSeq == prior.HighestModSeq || len(prior.KnownUIDs) == 0 {
+		return nil
+	}
+
+	for _, chunk := range metadataFetchChunks(prior.KnownUIDs) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		expected := make(map[imap.UID]struct{}, len(chunk))
+		var requested imap.UIDSet
+		for _, value := range chunk {
+			uid := imap.UID(value)
+			if uid == 0 || value >= prior.UIDNext {
+				return fmt.Errorf("QRESYNC %q has invalid baseline UID %d", mailbox, value)
+			}
+			expected[uid] = struct{}{}
+			requested.AddNum(uid)
+		}
+
+		msgs, err := c.conn.Fetch(requested, &imap.FetchOptions{
+			UID: true, Flags: true, ModSeq: true,
+		}).Collect()
+		if err != nil {
+			return fmt.Errorf("QRESYNC existing-message refresh in %q: %w", mailbox, err)
+		}
+		for _, msg := range msgs {
+			if _, wanted := expected[msg.UID]; !wanted {
+				continue
+			}
+			if msg.ModSeq == 0 {
+				return fmt.Errorf(
+					"QRESYNC existing-message refresh in %q returned no modseq for UID %d",
+					mailbox, msg.UID)
+			}
+			delete(expected, msg.UID)
+			if msg.ModSeq > prior.HighestModSeq {
+				changedSet[msg.UID] = struct{}{}
+			}
+		}
+		for uid := range vanishedSet {
+			delete(expected, uid)
+		}
+		if len(expected) != 0 {
+			missing := slices.Collect(maps.Keys(expected))
+			slices.Sort(missing)
+			return fmt.Errorf(
+				"QRESYNC existing-message refresh in %q omitted UIDs %v", mailbox, missing)
+		}
+	}
+	return nil
 }
 
 func (c *Client) beginQresyncCapture() {
@@ -336,4 +490,118 @@ func mergeKnownUIDs(prior []uint32, additions []imap.UID) []uint32 {
 	values := slices.Collect(maps.Keys(known))
 	slices.Sort(values)
 	return values
+}
+
+// verifyQresyncCoverage checks that the CHANGEDSINCE response accounted for
+// every message that arrived since the last run.
+//
+// A server that leaves a live UID out of that response looks exactly like one
+// that had nothing to report for it, and nothing downstream can tell the two
+// apart: the UID never reaches KnownUIDs, it is never listed or fetched, no
+// error is recorded, and HIGHESTMODSEQ still advances past it. No later run
+// has a reason to ask about it again, so the message is lost for good.
+//
+// Only UIDs at or above the previous UIDNEXT can be checked by this arithmetic.
+// A message with a UID that high was appended after the last run read UIDNEXT,
+// so its mod-sequence is above the one this fetch asked about and the server was
+// obliged to report it. refreshExistingQresyncChanges separately checks UIDs
+// below that mark because UIDNEXT cannot reveal an omitted flag change there.
+//
+// UIDs are handed out in sequence, so the growth in UIDNEXT is exactly how
+// many were assigned since the last run, and each of them has to come back
+// either as changed or as vanished. When that many are accounted for the
+// response is complete by arithmetic alone and nothing is asked of the server:
+// the ordinary case of new mail arriving costs nothing, which is what QRESYNC
+// is for.
+//
+// Only a shortfall is worth a question, and then the question goes to UID
+// SEARCH, which is independent of the FETCH that misbehaved.
+//
+// Neither the message count nor the size of KnownUIDs appears here. KnownUIDs
+// is read back from stored memberships, so it drifts from the server in both
+// directions -- short when an earlier run failed to ingest something, long
+// when messages left without the server reporting VANISHED -- and drift in the
+// second direction hides exactly the omission this is looking for.
+func (c *Client) verifyQresyncCoverage(
+	ctx context.Context,
+	mailbox string,
+	prior FolderState,
+	currentUIDNext uint32,
+	changedSet, vanishedSet map[imap.UID]struct{},
+) error {
+	priorUIDValidity := c.selectedUIDValidity
+	if currentUIDNext <= prior.UIDNext {
+		return nil
+	}
+	// Unsigned throughout: prior.UIDNext is below currentUIDNext here, so the
+	// difference is a real count, and int is 32 bits wide on a 32-bit build.
+	assigned := currentUIDNext - prior.UIDNext
+
+	// Only UIDs inside the assigned span count. A report about a UID at or
+	// above the current UIDNEXT names a message the server has not assigned
+	// yet, and letting it count would let one such report stand in for a real
+	// message the response left out.
+	inAssignedSpan := func(uid imap.UID) bool {
+		return uint32(uid) >= prior.UIDNext && uint32(uid) < currentUIDNext
+	}
+	// Count the union. The check runs before the caller removes vanished UIDs
+	// from the changed set, so a UID reported both ways is in both sets, and
+	// counting it twice lets one report account for two assigned UIDs.
+	accounted := uint32(0)
+	for uid := range changedSet {
+		if inAssignedSpan(uid) {
+			accounted++
+		}
+	}
+	for uid := range vanishedSet {
+		if _, alsoChanged := changedSet[uid]; alsoChanged {
+			continue
+		}
+		if inAssignedSpan(uid) {
+			accounted++
+		}
+	}
+	if accounted >= assigned {
+		return nil
+	}
+
+	present, err := c.enumerateMailbox(ctx, mailbox, imap.UID(prior.UIDNext))
+	if err != nil {
+		return fmt.Errorf("QRESYNC coverage search in %q: %w", mailbox, err)
+	}
+	// enumerateMailbox reconnects on a network error, and a reconnect clears
+	// the ENABLE. Every mailbox after this one would then ask for VANISHED on a
+	// connection that never enabled QRESYNC. This costs nothing when the
+	// connection survived, and fails the mailbox when the new one cannot enable
+	// it, which the caller answers with a full enumeration.
+	if !c.enableQresync() {
+		return fmt.Errorf(
+			"QRESYNC unavailable after the coverage search in %q", mailbox)
+	}
+	// The reconnect also reselects the mailbox, and the mailbox it selects may
+	// be a different one wearing the same name. A delta built under the old
+	// epoch describes UIDs that no longer mean what they meant, so the mailbox
+	// has to be enumerated in full instead.
+	if c.selectedUIDValidity != priorUIDValidity {
+		return fmt.Errorf(
+			"QRESYNC %q changed UIDVALIDITY from %d to %d during the coverage search",
+			mailbox, priorUIDValidity, c.selectedUIDValidity)
+	}
+	for _, uid := range present {
+		// "UID SEARCH UID n:*" returns the last message even when n is past
+		// it, so a UID below the high water mark here is an artefact of the
+		// search and not a new message. RFC 3501 6.4.8.
+		if uint32(uid) < prior.UIDNext {
+			continue
+		}
+		if _, changed := changedSet[uid]; changed {
+			continue
+		}
+		if _, vanished := vanishedSet[uid]; vanished {
+			continue
+		}
+		return fmt.Errorf(
+			"QRESYNC %q left UID %d out of the CHANGEDSINCE response", mailbox, uid)
+	}
+	return nil
 }

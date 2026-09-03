@@ -383,27 +383,32 @@ func writeScriptedRFC7162Fetch(
 	command string,
 	mailbox scriptedRFC7162Mailbox,
 ) {
-	headerOnly := strings.Contains(strings.ToUpper(command), "HEADER.FIELDS")
+	upper := strings.ToUpper(command)
+	headerOnly := strings.Contains(upper, "HEADER.FIELDS")
 	for _, uid := range parseScriptedRFC7162UIDSet(command) {
 		message, ok := scriptedRFC7162MessageByUID(mailbox.Messages, uid)
 		if !ok {
 			continue
 		}
 		sequence := scriptedRFC7162Sequence(mailbox.Messages, uid)
+		modSeq := ""
+		if strings.Contains(upper, "MODSEQ") {
+			modSeq = fmt.Sprintf(" MODSEQ (%d)", message.ModSeq)
+		}
 		if headerOnly {
 			body := "\r\n"
 			if message.MessageID != "" {
 				body = fmt.Sprintf("Message-ID: <%s>\r\n\r\n", message.MessageID)
 			}
 			_, _ = fmt.Fprintf(w,
-				"* %d FETCH (UID %d FLAGS (%s) BODY[HEADER.FIELDS (MESSAGE-ID)] {%d}\r\n%s)\r\n",
-				sequence, uid, formatScriptedRFC7162Flags(message.Flags), len(body), body)
+				"* %d FETCH (UID %d FLAGS (%s)%s BODY[HEADER.FIELDS (MESSAGE-ID)] {%d}\r\n%s)\r\n",
+				sequence, uid, formatScriptedRFC7162Flags(message.Flags), modSeq, len(body), body)
 			continue
 		}
 		raw := scriptedRFC7162RawMessage(message)
 		_, _ = fmt.Fprintf(w,
-			"* %d FETCH (UID %d FLAGS (%s) INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE %d BODY[] {%d}\r\n%s)\r\n",
-			sequence, uid, formatScriptedRFC7162Flags(message.Flags), len(raw), len(raw), raw)
+			"* %d FETCH (UID %d FLAGS (%s)%s INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE %d BODY[] {%d}\r\n%s)\r\n",
+			sequence, uid, formatScriptedRFC7162Flags(message.Flags), modSeq, len(raw), len(raw), raw)
 	}
 }
 
@@ -927,7 +932,13 @@ func TestIMAPQresyncEndToEndMoveAndFinalExpunge(t *testing.T) {
 			queryScriptedRFC7162Memberships(t, st, source.ID))
 		_, deleted, _ := queryScriptedRFC7162MessageState(t, st, source.ID, "move@example.test")
 		assertions.False(deleted)
-		assertions.NotContains(server.commandsFor(2), "UID SEARCH")
+		// The message left INBOX mid-run, so no FETCH returns UID 1 and the run
+		// confirms that with a UID SEARCH naming it. What QRESYNC must not do
+		// is enumerate the mailbox, which is an open-ended range search.
+		assertions.NotRegexp(`UID SEARCH UID \d+:\*`, server.commandsFor(2),
+			"valid QRESYNC must not fall back to enumerating a mailbox")
+		assertions.Contains(server.commandsFor(2), "UID SEARCH UID 1",
+			"a UID no FETCH returned is confirmed before it counts as gone")
 	})
 
 	t.Run("final expunge tombstones the archived message", func(t *testing.T) {

@@ -128,6 +128,12 @@ type missingUIDConfig struct {
 	// hideRemaining is negative to hide the UID from every FETCH, zero to hide
 	// it from none, and positive to hide it from that many more responses.
 	hideRemaining atomic.Int64
+	// expunged makes the message leave the mailbox for good the moment a FETCH
+	// first leaves it out, so SEARCH stops reporting it too. Until then SEARCH
+	// must still report the UID: a run has to enumerate a message before it can
+	// watch it vanish from the fetch it then asks for.
+	expunged     atomic.Bool
+	searchHidden atomic.Bool
 }
 
 // takeHide reports whether this FETCH response must leave the UID out, and
@@ -183,6 +189,9 @@ func (s *missingUIDSession) Fetch(
 	if !s.config.takeHide() {
 		return fetch(numSet)
 	}
+	if s.config.expunged.Load() {
+		s.config.searchHidden.Store(true)
+	}
 	kept := make([]imap.UID, 0, len(uids))
 	for _, uid := range uids {
 		if uid != s.config.uid {
@@ -196,10 +205,55 @@ func (s *missingUIDSession) Fetch(
 	return fetch(imap.UIDSetNum(kept...))
 }
 
+// Search drops the UID once a FETCH has reported the message gone, which is
+// what a real server does after an expunge. A server that answers a FETCH
+// without the UID and still lists it in every SEARCH is describing a live
+// message the fetch dropped, not one that left the mailbox --
+// StartIMAPMemServerOmittingUIDFromEveryFetch is that server.
+func (s *missingUIDSession) Search(
+	kind imapserver.NumKind,
+	criteria *imap.SearchCriteria,
+	options *imap.SearchOptions,
+) (*imap.SearchData, error) {
+	data, err := s.Session.Search(kind, criteria, options)
+	if err != nil {
+		return nil, fmt.Errorf("search %q: %w", s.selected, err)
+	}
+	if s.selected != s.config.mailbox || !s.config.searchHidden.Load() {
+		return data, nil
+	}
+	uidSet, ok := data.All.(imap.UIDSet)
+	if !ok || !uidSet.Contains(s.config.uid) {
+		return data, nil
+	}
+	uids, static := uidSet.Nums()
+	if !static {
+		return data, nil
+	}
+	var kept imap.UIDSet
+	filtered := imap.SearchData{ModSeq: data.ModSeq}
+	for _, uid := range uids {
+		if uid == s.config.uid {
+			continue
+		}
+		kept.AddNum(uid)
+		if filtered.Min == 0 || uint32(uid) < filtered.Min {
+			filtered.Min = uint32(uid)
+		}
+		if uint32(uid) > filtered.Max {
+			filtered.Max = uint32(uid)
+		}
+		filtered.Count++
+	}
+	filtered.All = kept
+	return &filtered, nil
+}
+
 // StartIMAPMemServerWithMissingUID runs an in-memory IMAP server that can
-// leave one UID out of every FETCH response for one mailbox. LIST, STATUS and
-// SEARCH still report it, so a run enumerates the UID and then cannot fetch
-// it. That is the expunge race as a real server presents it.
+// leave one UID out of every FETCH response for one mailbox. SEARCH reports
+// the UID until the first FETCH that omits it and never again, so a run
+// enumerates the message, cannot fetch it, and finds it gone when it asks.
+// That is the expunge race as a real server presents it.
 //
 // The returned function sets whether the UID is hidden. Call it between two
 // runs to make a message disappear, or to bring it back.
@@ -211,6 +265,7 @@ func StartIMAPMemServerWithMissingUID(
 ) (string, *imapmemserver.User, func(hidden bool)) {
 	t.Helper()
 	config := &missingUIDConfig{mailbox: mailbox, uid: uid}
+	config.expunged.Store(true)
 	addr, user := startIMAPMemServer(
 		t, messagesPerMailbox, nil, "", 0, "", config)
 	return addr, user, func(hidden bool) {
@@ -219,7 +274,30 @@ func StartIMAPMemServerWithMissingUID(
 			return
 		}
 		config.hideRemaining.Store(0)
+		config.searchHidden.Store(false)
 	}
+}
+
+// StartIMAPMemServerOmittingUIDFromEveryFetch runs an in-memory IMAP server
+// that never returns one UID from a FETCH of one mailbox and keeps reporting
+// it in every SEARCH.
+//
+// The message is still in the mailbox: the server drops it from the fetch for
+// its own reasons, and repeating the same fetch cannot tell the two apart.
+// StartIMAPMemServerWithMissingUID is the other shape, where the message
+// really left.
+func StartIMAPMemServerOmittingUIDFromEveryFetch(
+	t *testing.T,
+	messagesPerMailbox map[string]int,
+	mailbox string,
+	uid imap.UID,
+) (string, *imapmemserver.User) {
+	t.Helper()
+	config := &missingUIDConfig{mailbox: mailbox, uid: uid}
+	config.hideRemaining.Store(-1)
+	addr, user := startIMAPMemServer(
+		t, messagesPerMailbox, nil, "", 0, "", config)
+	return addr, user
 }
 
 // StartIMAPMemServerOmittingUIDOnce runs an in-memory IMAP server that leaves

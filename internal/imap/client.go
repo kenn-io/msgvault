@@ -621,66 +621,138 @@ func (c *Client) enumerateMailbox(
 // UIDs in the given mailbox. Returns the valid Message-IDs and the UIDs whose
 // header had no usable Message-ID, so callers can fetch those copies raw.
 // Caller must hold mu.
+// fetchMailboxMessageIDs reads the Message-ID header of every supplied UID and
+// returns the membership map for the mailbox, the UIDs whose header was empty,
+// and the UIDs the server never returned at all.
+//
+// The last of those three is not the same as the second. A UID with an empty
+// header is a live message this run could not identify. A UID left out of the
+// response is a message the run learned nothing about, and reading that
+// silence as absence removes the message from the published topology.
 func (c *Client) fetchMailboxMessageIDs(
 	ctx context.Context, mailbox string, uids []imap.UID,
-) (map[string]bool, []imap.UID, error) {
+) (map[string]bool, []imap.UID, []imap.UID, error) {
 	if len(uids) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	if err := c.selectMailbox(mailbox); err != nil {
 		if !isNetworkError(err) {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		c.logger.Warn("network error selecting mailbox for label map, reconnecting",
 			"mailbox", mailbox, "error", err)
 		if reconErr := c.reconnect(ctx); reconErr != nil {
-			return nil, nil, fmt.Errorf(
+			return nil, nil, nil, fmt.Errorf(
 				"reconnect failed building label map for %q: %w",
 				mailbox, reconErr)
 		}
 		if err := c.selectMailbox(mailbox); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
 	result := make(map[string]bool, len(uids))
 	var unidentified []imap.UID
+	var missing []imap.UID
 	fetchOpts := messageIDHeaderFetchOptions()
 
 	for chunkStart := 0; chunkStart < len(uids); chunkStart += fetchChunkSize {
 		if ctx.Err() != nil {
-			return result, unidentified, ctx.Err()
+			return result, unidentified, missing, ctx.Err()
 		}
 
 		end := min(chunkStart+fetchChunkSize, len(uids))
+		chunk := uids[chunkStart:end]
 
 		var uidSet imap.UIDSet
-		for _, uid := range uids[chunkStart:end] {
+		for _, uid := range chunk {
 			uidSet.AddNum(uid)
 		}
 
 		msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
 		if err != nil {
-			return result, unidentified, fmt.Errorf(
+			return result, unidentified, missing, fmt.Errorf(
 				"message-ID fetch failed in %q: %w", mailbox, err)
 		}
+		seen := c.recordMessageIDResults(mailbox, result, &unidentified, msgs)
 
-		for _, msg := range msgs {
-			var rfc822MessageID string
-			if len(msg.BodySection) > 0 {
-				rfc822MessageID = rawMIMEMessageID(msg.BodySection[0].Bytes)
-			}
-			c.recordMembershipLocked(
-				mailbox, msg.UID, "", rfc822MessageID, [32]byte{}, 0, msg.Flags)
-			if rfc822MessageID == "" {
-				unidentified = append(unidentified, msg.UID)
-			} else {
-				result[rfc822MessageID] = true
+		omitted := uidsNotIn(chunk, seen)
+		if len(omitted) == 0 {
+			continue
+		}
+		// The server left these out of a response it answered successfully.
+		// Ask once more before concluding anything: an omission is a fact
+		// about the response, not about the mailbox.
+		var recheckSet imap.UIDSet
+		for _, uid := range omitted {
+			recheckSet.AddNum(uid)
+		}
+		recheckMsgs, _, err := c.fetchChunk(ctx, mailbox, recheckSet, fetchOpts)
+		if err != nil {
+			return result, unidentified, missing, fmt.Errorf(
+				"message-ID recheck failed in %q: %w", mailbox, err)
+		}
+		seenAgain := c.recordMessageIDResults(mailbox, result, &unidentified, recheckMsgs)
+		withheld := uidsNotIn(omitted, seenAgain)
+		present, err := c.confirmOmittedPresent(mailbox, withheld)
+		if err != nil {
+			// The search proved nothing, so the map cannot claim to describe
+			// every message in the mailbox.
+			missing = append(missing, withheld...)
+			continue
+		}
+		// A UID the mailbox no longer reports left it, and deletion detection
+		// retires its stored membership. Only a UID the mailbox still holds is
+		// a hole in the map.
+		for _, uid := range withheld {
+			if present[uid] {
+				missing = append(missing, uid)
 			}
 		}
 	}
-	return result, unidentified, nil
+	if len(missing) > 0 {
+		c.logger.Warn("label map is missing UIDs the server did not return",
+			"mailbox", mailbox, "uids", len(missing))
+	}
+	return result, unidentified, missing, nil
+}
+
+// recordMessageIDResults records a membership for every message the server
+// returned and reports which UIDs those were.
+func (c *Client) recordMessageIDResults(
+	mailbox string,
+	result map[string]bool,
+	unidentified *[]imap.UID,
+	msgs []*imapclient.FetchMessageBuffer,
+) map[imap.UID]bool {
+	seen := make(map[imap.UID]bool, len(msgs))
+	for _, msg := range msgs {
+		seen[msg.UID] = true
+		var rfc822MessageID string
+		if len(msg.BodySection) > 0 {
+			rfc822MessageID = rawMIMEMessageID(msg.BodySection[0].Bytes)
+		}
+		c.recordMembershipLocked(
+			mailbox, msg.UID, "", rfc822MessageID, [32]byte{}, 0, msg.Flags)
+		if rfc822MessageID == "" {
+			*unidentified = append(*unidentified, msg.UID)
+		} else {
+			result[rfc822MessageID] = true
+		}
+	}
+	return seen
+}
+
+// uidsNotIn returns the UIDs of want that seen does not contain.
+func uidsNotIn(want []imap.UID, seen map[imap.UID]bool) []imap.UID {
+	var absent []imap.UID
+	for _, uid := range want {
+		if !seen[uid] {
+			absent = append(absent, uid)
+		}
+	}
+	return absent
 }
 
 // buildLabelMap enumerates every mailbox except \All (whose memberships come
@@ -731,12 +803,20 @@ func (c *Client) buildLabelMap(
 			continue
 		}
 
-		msgIDs, unidentifiedUIDs, err := c.fetchMailboxMessageIDs(ctx, mailbox, uids)
+		msgIDs, unidentifiedUIDs, missingUIDs, err := c.fetchMailboxMessageIDs(ctx, mailbox, uids)
 		if err != nil {
 			complete = false
 			c.logger.Warn("failed to fetch envelopes for label map",
 				"mailbox", mailbox, "error", err)
 			continue
+		}
+		if len(missingUIDs) > 0 {
+			// The map does not describe every message in this mailbox, so the
+			// topology built from it is not authoritative. Saying so is what
+			// stops a republish deleting the rows of the messages that are
+			// absent from it, which for a label-only mailbox is the only
+			// record of their membership.
+			complete = false
 		}
 		for _, uid := range unidentifiedUIDs {
 			unidentified = append(unidentified, gmailapi.MessageID{
@@ -996,10 +1076,12 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 		if observed != nil {
 			observed.KnownUIDs = knownUIDs
+			observed.UIDNext = baselineUIDNext(observed.UIDNext, knownUIDs)
 			c.observedFolderStates[mailbox] = *observed
 		}
 		if canTrackFolder {
 			trackState.KnownUIDs = knownUIDs
+			trackState.UIDNext = baselineUIDNext(trackState.UIDNext, knownUIDs)
 			c.trackFolderMessages(mailbox, trackState, uids)
 		}
 		for _, uid := range uids {
@@ -1071,10 +1153,10 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			}
 			for _, mailbox := range allMailboxes {
 				state := folderStatuses[mailbox]
-				if deltaIndex, ok := deltaByMailbox[mailbox]; ok {
+				deltaIndex, hasDelta := deltaByMailbox[mailbox]
+				if hasDelta {
 					state.KnownUIDs = append(
 						[]uint32(nil), c.observedMailboxDeltas[deltaIndex].State.KnownUIDs...)
-					c.observedMailboxDeltas[deltaIndex].State = state
 				} else {
 					state.KnownUIDs = make([]uint32, 0)
 					for _, observation := range c.observedMemberships {
@@ -1083,6 +1165,15 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 						}
 					}
 					slices.Sort(state.KnownUIDs)
+				}
+				// The snapshot rebuilds the state from STATUS, whose UIDNEXT was
+				// read before the enumeration that produced these UIDs. A message
+				// delivered in between belongs to the baseline and sits at or
+				// above that mark, so the saved UIDNEXT has to cover it.
+				state.UIDNext = baselineUIDNext(state.UIDNext, state.KnownUIDs)
+				if hasDelta {
+					c.observedMailboxDeltas[deltaIndex].State = state
+				} else {
 					c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
 						Mailbox: mailbox,
 						State:   state,
