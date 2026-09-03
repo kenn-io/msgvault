@@ -1217,6 +1217,7 @@ var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
 var _ api.PersonCompletionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
+var _ api.PersonNetworkStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
@@ -2309,6 +2310,12 @@ func (a *storeAPIAdapter) DirectoryPeoplePageContext(
 	ctx context.Context, query store.DirectoryPeopleQuery,
 ) (*store.DirectoryPeoplePage, error) {
 	return a.store.DirectoryPeoplePageContext(ctx, query)
+}
+
+func (a *storeAPIAdapter) GetPersonNetworkContext(
+	ctx context.Context, personID int64, opts store.PersonNetworkOptions,
+) (store.PersonNetwork, error) {
+	return a.store.GetPersonNetworkContext(ctx, personID, opts)
 }
 
 func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
