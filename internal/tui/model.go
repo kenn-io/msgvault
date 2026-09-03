@@ -699,6 +699,21 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 				}
 				err = fastErr
 			case searchModeDeep:
+				// A list drill is exact equality, while the list: search operator
+				// is intentionally a substring filter. Route this unsupported deep
+				// scope through Fast rather than widening its result set.
+				if searchFilter.ListID != "" {
+					result, fastErr := m.engine.SearchFastWithStats(ctx, q, queryStr, searchFilter, m.viewType, searchPageSize, offset)
+					if fastErr == nil {
+						results = result.Messages
+						totalCount = result.TotalCount
+						if !appendResults {
+							stats = result.Stats
+						}
+					}
+					err = fastErr
+					break
+				}
 				// Deep search: FTS5 body search
 				// Merge context filter into query to honor drill-down context
 				mergedQuery := query.MergeFilterIntoQuery(q, searchFilter)
@@ -849,6 +864,8 @@ func (m Model) buildMessageFilter() query.MessageFilter {
 			if m.filterKey == "" {
 				filter.SetEmptyTarget(query.ViewLabels)
 			}
+		case query.ViewLists:
+			filter.ListID = m.filterKey
 		case query.ViewTime:
 			filter.TimeRange.Period = m.filterKey
 			filter.TimeRange.Granularity = m.timeGranularity
@@ -922,6 +939,7 @@ func (m Model) hasDrillFilter() bool {
 		m.drillFilter.Domain != "" ||
 		m.drillFilter.Label != "" ||
 		m.drillFilter.ConversationID != nil ||
+		m.drillFilter.ListID != "" ||
 		m.drillFilter.TimeRange.Period != "" ||
 		m.drillFilter.HasEmptyTargets()
 }
@@ -944,6 +962,8 @@ func (m Model) drillFilterKey() string {
 		return m.drillFilter.Domain
 	case query.ViewLabels:
 		return m.drillFilter.Label
+	case query.ViewLists:
+		return m.drillFilter.ListID
 	case query.ViewTime:
 		return m.drillFilter.TimeRange.Period
 	default:

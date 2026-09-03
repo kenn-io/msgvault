@@ -54,8 +54,8 @@ func TestExploreFullTextHonorsDeletionScope(t *testing.T) {
 	requirements.Equal(int64(2), deletedID)
 
 	engine, _ := newExploreDuckDBFixtureWithMessages(t,
-		`(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'glacier match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', false, 2026, 7),
-		(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'glacier beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', NULL::BIGINT, NULL::BIGINT, 'email', false, 2026, 7)`,
+		`(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'glacier match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
+		(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'glacier beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`,
 		2)
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},

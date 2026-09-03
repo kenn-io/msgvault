@@ -75,6 +75,9 @@ type Store struct {
 	contentChangedBackfillBatchHook       func(fromID, toID int64) error
 	backfillFTSBatchErrHook               func(fromID, toID int64) error
 	attachmentRoleRepairPreparedHook      func()
+	listIDRepairBeforeApplyHook           func()
+	listIDRepairAfterScanHook             func(context.Context, *loggedTx, []listIDRepairUpdate) error
+	listIDRepairAfterFingerprintLockHook  func()
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	identityMatchAcceptBeforeDecisionHook func()

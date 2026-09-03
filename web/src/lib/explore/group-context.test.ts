@@ -5,7 +5,8 @@ import { filtersForGroup, parseGroupSelection } from './group-context';
 describe('group context', () => {
   it.each([
     ['source', '7'],
-    ['message_type', 'email']
+    ['message_type', 'email'],
+    ['mailing_list', '<dev_1@example.test>']
   ] as const)('constrains %s details by replacing the existing filter', (dimension, key) => {
     expect(filtersForGroup(
       [{ dimension: 'deletion', values: ['active'] }, { dimension, values: ['old'] }],

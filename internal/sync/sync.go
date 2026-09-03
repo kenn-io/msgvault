@@ -1369,11 +1369,16 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 			String: parsed.MessageID, Valid: true,
 		}
 	}
+	listID := sql.NullString{}
+	if parsed.ListID != "" {
+		listID = sql.NullString{String: parsed.ListID, Valid: true}
+	}
 	msg := &store.Message{
 		ConversationID:  conversationID,
 		SourceID:        sourceID,
 		SourceMessageID: raw.ID,
 		RFC822MessageID: rfc822ID,
+		ListID:          listID,
 		MessageType:     messageType,
 		SenderID:        senderID,
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},

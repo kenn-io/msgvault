@@ -1133,6 +1133,9 @@ CREATE TABLE IF NOT EXISTS messages (
     -- RFC822 Message-ID for cross-mailbox dedup (IMAP)
     rfc822_message_id TEXT,
 
+    -- RFC 2919 List-Id for email list membership
+    list_id TEXT,
+
     -- Message classification
     message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger', 'teams'
 

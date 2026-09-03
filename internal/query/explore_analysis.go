@@ -244,6 +244,11 @@ func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupE
 		}, nil
 	case messageTypeDimension:
 		return simple(sqlMessageTypeGroupExpr()), nil
+	case "mailing_list":
+		return groupExpressions{
+			key: "MIN(list_id)", label: "MIN(list_id)", groupBy: "LOWER(list_id)",
+			source: "logical_entries", whereSuffix: " WHERE list_id IS NOT NULL AND list_id <> ''",
+		}, nil
 	case "kind":
 		return simple("entry_kind"), nil
 	case "year":

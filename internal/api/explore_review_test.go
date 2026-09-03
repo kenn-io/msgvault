@@ -636,6 +636,70 @@ func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T
 	assertions.Equal(int64(1), *body.TotalCount)
 }
 
+func TestExploreFullTextMailingListFiltersFindMatchesBeyondUnfilteredCap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	requirements.NoError(err)
+
+	messages := []struct {
+		sourceMessageID string
+		listID          string
+		sentAt          time.Time
+	}{
+		{"m1", "<target.example.test>", time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC)},
+		{"m2", "<primary.example.test>", time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)},
+		{"m3", "<other.example.test>", time.Date(2026, 7, 18, 11, 0, 0, 0, time.UTC)},
+	}
+	const sharedBody = "alpha shared message body"
+	for i, message := range messages {
+		messageID, err := st.UpsertMessage(&store.Message{
+			ConversationID: conversationID, SourceID: source.ID,
+			SourceMessageID: message.sourceMessageID, MessageType: "email",
+			SentAt:  sql.NullTime{Time: message.sentAt, Valid: true},
+			Subject: sql.NullString{String: sharedBody, Valid: true},
+			ListID:  sql.NullString{String: message.listID, Valid: true}, SizeEstimate: 100,
+		})
+		requirements.NoError(err)
+		requirements.Equal(int64(i+1), messageID, "fixture IDs must align with committed analytical facts")
+		requirements.NoError(st.UpsertMessageBody(messageID,
+			sql.NullString{String: sharedBody, Valid: true}, sql.NullString{}))
+	}
+	_, err = st.BackfillFTS(nil)
+	requirements.NoError(err)
+
+	engine, _ := newExploreDuckDBFixtureWithMessages(t,
+		`(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Target', 'alpha', TIMESTAMP '2026-07-18 09:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', '<target.example.test>', false, 2026, 7),
+		(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Primary only', 'alpha', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', '<primary.example.test>', false, 2026, 7),
+		(3::BIGINT, 1::BIGINT, 'm3', 103::BIGINT, 'Other', 'alpha', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', '<other.example.test>', false, 2026, 7)`,
+		3)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st,
+		Engine: engine, Logger: testLogger(),
+	})
+	srv.lexicalCandidateCap = 2
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"full_text",
+		"filters":[
+			{"dimension":"mailing_list","values":["<target.example.test>","<primary.example.test>"]},
+			{"dimension":"mailing_list","values":["<target.example.test>","<secondary.example.test>"]}
+		]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.False(body.CandidatePoolSaturated, "the exact filtered population fits the cap")
+	requirements.Len(body.Rows, 1, "the matching list message ranked beyond the unfiltered cap must be found")
+	requirements.NotNil(body.Rows[0].AnchorMessageID)
+	assertions.Equal(int64(1), *body.Rows[0].AnchorMessageID)
+	requirements.NotNil(body.TotalCount)
+	assertions.Equal(int64(1), *body.TotalCount)
+}
+
 func TestApplyLexicalFilterPushdown(t *testing.T) {
 	afterFilter := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	beforeFilter := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
@@ -696,6 +760,22 @@ func TestApplyLexicalFilterPushdown(t *testing.T) {
 			want:      search.Query{AfterDate: &afterFilter, BeforeDate: &beforeFilter},
 		},
 		{
+			name:   "mailing list filters preserve exact repeated groups",
+			parsed: search.Query{ListIDs: []string{"target"}},
+			filters: query.Context{
+				MailingLists:                []string{"<target.example.test>", "<primary.example.test>"},
+				AdditionalMailingListGroups: [][]string{{"<target.example.test>", "<secondary.example.test>"}},
+			},
+			matchable: true,
+			want: search.Query{
+				ListIDs: []string{"target"},
+				ListIDExactGroups: [][]string{
+					{"<target.example.test>", "<primary.example.test>"},
+					{"<target.example.test>", "<secondary.example.test>"},
+				},
+			},
+		},
+		{
 			name:      "participant and domain filters stay analytical",
 			filters:   query.Context{ParticipantIDs: []int64{5}, Domains: []string{"example.com"}, Deletion: query.DeletionDeleted},
 			matchable: true,
@@ -729,6 +809,7 @@ func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
 		body             string
 		wantSourceIDs    []int64
 		wantMessageTypes []string
+		wantListIDGroups [][]string
 		wantAfter        *time.Time
 		wantBefore       *time.Time
 	}{
@@ -760,6 +841,16 @@ func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
 				{"dimension":"after","values":["2026-01-01T00:00:00Z"]}]}`,
 			wantAfter: utcDate(1, 1),
 		},
+		{
+			name: "mailing list filters preserve exact repeated groups",
+			body: `{"query":"alpha","search_mode":"semantic","filters":[
+				{"dimension":"mailing_list","values":["<target.example.test>","<primary.example.test>"]},
+				{"dimension":"mailing_list","values":["<target.example.test>","<secondary.example.test>"]}]}`,
+			wantListIDGroups: [][]string{
+				{"<primary.example.test>", "<target.example.test>"},
+				{"<secondary.example.test>", "<target.example.test>"},
+			},
+		},
 	}
 	assertBound := func(t *testing.T, want, got *time.Time, bound string) {
 		t.Helper()
@@ -789,6 +880,7 @@ func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 			assertions.Equal(tt.wantSourceIDs, backend.searchFilter.SourceIDs, "SourceIDs")
 			assertions.Equal(tt.wantMessageTypes, backend.searchFilter.MessageTypes, "MessageTypes")
+			assertions.Equal(tt.wantListIDGroups, backend.searchFilter.ListIDExactGroups, "ListIDExactGroups")
 			assertBound(t, tt.wantAfter, backend.searchFilter.After, "After")
 			assertBound(t, tt.wantBefore, backend.searchFilter.Before, "Before")
 		})

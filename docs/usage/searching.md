@@ -18,10 +18,7 @@ msgvault search <query>
 
 ## Search Operators
 
-msgvault supports a local subset of Gmail-like search syntax. Gmail-only
-operators that depend on fields msgvault does not index locally, such as
-`list:` / `List-ID`, are not available in local search or MCP search. Use a
-Gmail connector query when you need Gmail itself to evaluate those operators.
+msgvault supports a local subset of Gmail-like search syntax.
 
 | Operator | Description | Example |
 |---|---|---|
@@ -31,6 +28,7 @@ Gmail connector query when you need Gmail itself to evaluate those operators.
 | `bcc:` | BCC recipient | `bcc:admin@example.com` |
 | `subject:` | Subject text | `subject:meeting` |
 | `label:` | Gmail label | `label:INBOX`, `label:SENT` |
+| `list:` / `list-id:` | RFC 2919 List-Id literal substring | `list:announce.example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
@@ -41,6 +39,11 @@ Gmail connector query when you need Gmail itself to evaluate those operators.
 | `message_type:` | Stored message type | `message_type:teams`, `message_type=calendar_event` |
 
 Bare words and `"quoted phrases"` perform full-text search across message subjects and bodies.
+
+List-Id matching is case-insensitive and treats `%`, `_`, and `\` literally.
+Quote a value when it contains spaces, for example
+`list-id:"Example Announcements"`. Repeating `list:` or `list-id:` uses AND
+semantics: every supplied substring must occur in the stored List-Id.
 
 ### Domain Search
 
@@ -70,12 +73,30 @@ msgvault search has:attachment
 # By label
 msgvault search label:INBOX
 
+# By mailing list (both aliases are equivalent)
+msgvault search 'list:"<announce.example.org>"'
+msgvault search 'list-id:announce list-id:example.org'
+
 # Combined filters
 msgvault search "from:boss@company.com has:attachment after:2024-01-01"
 
 # Full-text search
 msgvault search "quarterly report"
 ```
+
+## Repairing Existing Archives
+
+Fresh email ingest indexes `List-Id` automatically. For messages archived by
+an older msgvault version, preview the offline backfill first, then apply it:
+
+```bash
+msgvault repair-list-ids
+msgvault repair-list-ids --apply
+```
+
+The default dry run reports what would change without modifying the archive.
+`--apply` writes the repaired values from stored raw MIME and marks derived
+analytics stale for the normal rebuild path; neither mode contacts the provider.
 
 ## Account and Collection Filters
 

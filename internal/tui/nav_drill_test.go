@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // =============================================================================
@@ -99,6 +100,56 @@ func TestSubAggregateDrillDown(t *testing.T) {
 	assert.Equal(t, "alice@example.com", m.drillFilter.Sender)
 	assert.Equal(t, "bob@example.com", m.drillFilter.Recipient)
 	assert.NotNil(t, cmd, "expected command to load messages")
+}
+
+// TestListDrillDownLoadsOnlyTheExactSelectedList verifies the real model
+// carries a selected list ID into the engine's exact scalar filter.
+func TestListDrillDownLoadsOnlyTheExactSelectedList(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	matchingID := tdb.AddMessage(dbtest.MessageOpts{Subject: "matching list"})
+	nonMatchingID := tdb.AddMessage(dbtest.MessageOpts{Subject: "other list"})
+	_, err := tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id = ?`, "<announce.example.test>", matchingID)
+	require.NoError(err)
+	_, err = tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id = ?`, "<digest.example.test>", nonMatchingID)
+	require.NoError(err)
+
+	model := New(query.NewSQLiteEngine(tdb.DB), Options{DataDir: t.TempDir(), Version: "test"})
+	model.rows = []query.AggregateRow{{Key: "<announce.example.test>", Count: 1}}
+	model.viewType = query.ViewLists
+
+	next, cmd := model.handleAggregateKeys(keyEnter())
+	drilled := asModel(t, next)
+	require.NotNil(cmd)
+	assert.Equal("<announce.example.test>", drilled.drillFilter.ListID)
+	assert.Equal("<announce.example.test>", drilled.drillFilterKey())
+
+	loaded, ok := cmd().(messagesLoadedMsg)
+	require.True(ok)
+	require.NoError(loaded.err)
+	require.Len(loaded.messages, 1)
+	assert.Equal(matchingID, loaded.messages[0].ID)
+	assert.NotEqual(nonMatchingID, loaded.messages[0].ID)
+}
+
+// TestSubAggregateListDrillDownPreservesParentScope verifies a list selected
+// under another dimension combines its exact list ID with the parent filter.
+func TestSubAggregateListDrillDownPreservesParentScope(t *testing.T) {
+	model := NewBuilder().
+		WithRows(query.AggregateRow{Key: "<announce.example.test>", Count: 1}).
+		WithLevel(levelDrillDown).WithViewType(query.ViewLists).
+		Build()
+	model.drillViewType = query.ViewLabels
+	model.drillFilter = query.MessageFilter{Label: "INBOX"}
+
+	next, _ := model.handleAggregateKeys(keyEnter())
+	drilled := asModel(t, next)
+
+	assert.Equal(t, levelMessageList, drilled.level)
+	assert.Equal(t, "INBOX", drilled.drillFilter.Label)
+	assert.Equal(t, "<announce.example.test>", drilled.drillFilter.ListID)
 }
 
 // =============================================================================

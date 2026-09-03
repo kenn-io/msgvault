@@ -118,6 +118,7 @@ const (
 	ViewRecipientNames
 	ViewDomains
 	ViewLabels
+	ViewLists
 	ViewTime
 
 	// ViewTypeCount is the total number of view types. Must be last.
@@ -138,6 +139,8 @@ func (v ViewType) String() string {
 		return "Domains"
 	case ViewLabels:
 		return "Labels"
+	case ViewLists:
+		return "Lists"
 	case ViewTime:
 		return "Time"
 	default:
@@ -221,6 +224,7 @@ type MessageFilter struct {
 	RecipientName string // filter by recipient display name (COALESCE(display_name, email))
 	Domain        string // filter by sender domain
 	Label         string // filter by label name
+	ListID        string // filter by exact RFC 2919 List-Id (case-insensitive)
 	MessageType   string // filter by messages.message_type
 
 	// Filter by conversation (thread)

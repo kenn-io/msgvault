@@ -149,6 +149,25 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 			`LOWER(m.subject) LIKE LOWER(%s) ESCAPE '\'`,
 			bind("%"+escapeLikeSubject(term)+"%")))
 	}
+	for _, term := range f.ListIDSubstrings {
+		clauses = append(clauses, fmt.Sprintf(
+			`LOWER(m.list_id) LIKE LOWER(%s) ESCAPE '\'`,
+			bind("%"+escapeLikeSubject(term)+"%")))
+	}
+	for _, group := range f.ListIDExactGroups {
+		if len(group) == 0 {
+			continue
+		}
+		parts := make([]string, len(group))
+		for i, listID := range group {
+			parts[i] = fmt.Sprintf("LOWER(m.list_id) = LOWER(%s)", bind(listID))
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	}
+	if f.ListID != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"LOWER(m.list_id) = LOWER(%s)", bind(f.ListID)))
+	}
 
 	return clauses
 }

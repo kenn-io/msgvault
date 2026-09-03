@@ -45,7 +45,10 @@ const (
 	// v9: the scope-entry seed revives a tombstoned publication back to
 	// stale (a scope exit tombstones it; DO NOTHING left re-entry
 	// unindexable until a full rebuild).
-	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v9"
+	// v10: List-ID became a message content column. Archives that recorded v9
+	// retain a trigger definition without list_id until this migration replaces
+	// it, leaving consumers on stale mailing-list routing data.
+	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v10"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	// v2: message updates share the content-column/value guard, participant
 	// scope mirrors personscope, and metadata-only edge edits are not identity

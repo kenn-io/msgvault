@@ -35,6 +35,7 @@ const FILTER_DIMENSIONS = new Set([
   'identity',
   'participant',
   'domain',
+  'mailing_list',
   'message_type',
   'after',
   'before',

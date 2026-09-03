@@ -815,10 +815,18 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
 		)
 	case "deepSearch":
+		filterParams := messageFilterParams()
+		for _, parameter := range filterParams {
+			switch parameter.Name {
+			case "sender_name", "recipient_name", "time_period", "conversation_id",
+				"empty_targets", "message_type", "list_id":
+				parameter.Description += "; not supported by deep search"
+			}
+		}
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
 			queryStringParam("scope", "Exact search scope: body; omit for composite full-text search", false),
-		}, messageFilterParams()...)
+		}, filterParams...)
 	case "listTextConversations":
 		return textFilterParams()
 	case "getTextAggregates":
@@ -902,6 +910,7 @@ func messageFilterParams() []*huma.Param {
 		queryStringParam("recipient_name", "Recipient display-name filter", false),
 		queryStringParam("domain", "Domain filter", false),
 		queryStringParam("label", "Label filter", false),
+		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter", false),
 		queryStringParam("message_type", "Message type filter", false),
 		queryStringParam("time_period", "Named time period", false),
 		queryStringParam("time_granularity", "Time bucket granularity", false),
@@ -926,6 +935,7 @@ func semanticMessageFilterParams() []*huma.Param {
 		queryStringParam(recipientParam, "Exact recipient email filter across to, cc, and bcc (vector or hybrid mode only)", false),
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
 		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
+		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)", false),
 		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
 		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),
 		queryIntegerParam("source_id", "Exact source ID (vector or hybrid mode only)"),

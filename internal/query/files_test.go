@@ -593,6 +593,38 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 	assertions.Equal(files.TotalCount, grouped.Rows[0].Count, "group count must equal filtered Files rows")
 }
 
+func TestGroupFilesByMailingList(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.test")
+	upper := "<Dev@Example.Test>"
+	lower := "<dev@example.test>"
+	digest := "<digest@example.test>"
+	first := b.AddMessage(MessageOpt{Subject: "First", ListID: &upper})
+	b.AddAttachmentWithMIME(201, first, 100, "first.pdf", "application/pdf")
+	second := b.AddMessage(MessageOpt{Subject: "Second", ListID: &lower})
+	b.AddAttachmentWithMIME(202, second, 25, "second.png", "image/png")
+	third := b.AddMessage(MessageOpt{Subject: "Third", ListID: &digest})
+	b.AddAttachmentWithMIME(203, third, 50, "third.txt", "text/plain")
+	withoutList := b.AddMessage(MessageOpt{Subject: "No list"})
+	b.AddAttachmentWithMIME(204, withoutList, 200, "fourth.pdf", "application/pdf")
+
+	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+		Dimension: "mailing_list",
+		Sort:      SortSpec{Field: "count", Direction: "desc"},
+		Page:      PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.Equal(int64(2), result.TotalCount)
+	assertions.Equal("<Dev@Example.Test>", result.Rows[0].Key)
+	assertions.Equal(int64(2), result.Rows[0].Count)
+	assertions.Equal(int64(125), result.Rows[0].EstimatedBytes)
+	assertions.Equal("<digest@example.test>", result.Rows[1].Key)
+	assertions.Equal(int64(1), result.Rows[1].Count)
+}
+
 // TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail pins the file-group
 // side of the legacy-row rule: attachments on rows imported before
 // message_type existed (blank value) are email files (see

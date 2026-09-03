@@ -329,6 +329,69 @@ func TestAggregateByTime(t *testing.T) {
 	})
 }
 
+// TestSQLiteEngine_ListsAggregateAndDrill catches a scalar list dimension
+// being treated like a label join, which would multiply its counts or apply a
+// substring drill predicate.
+func TestSQLiteEngine_ListsAggregateAndDrill(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<dev_1@example.test>'
+		WHEN 2 THEN '<DEV_1@EXAMPLE.TEST>'
+		WHEN 3 THEN '<devA1@example.test>'
+		WHEN 4 THEN ''
+		ELSE NULL END`)
+	require.NoError(err)
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewLists, DefaultAggregateOptions())
+	require.NoError(err)
+	assertAggregateCounts(t, rows, map[string]int64{
+		"<DEV_1@EXAMPLE.TEST>": 2,
+		"<devA1@example.test>": 1,
+	})
+	announceRow := requireAggregateRow(t, rows, "<DEV_1@EXAMPLE.TEST>")
+	assert.Equal(int64(3000), announceRow.TotalSize)
+	assert.Equal(int64(15000), announceRow.AttachmentSize)
+	assert.Equal(int64(2), announceRow.AttachmentCount)
+	assert.Equal(int64(2), announceRow.TotalUnique)
+
+	filter := MessageFilter{ListID: "<DEV_1@EXAMPLE.TEST>"}
+	messages, err := env.Engine.ListMessages(env.Ctx, filter)
+	require.NoError(err)
+	assert.Len(messages, 2)
+	assert.ElementsMatch([]int64{1, 2}, []int64{messages[0].ID, messages[1].ID})
+
+	labels, err := env.Engine.SubAggregate(env.Ctx, filter, ViewLabels, DefaultAggregateOptions())
+	require.NoError(err)
+	assertAggregateCounts(t, labels, map[string]int64{"INBOX": 2, "IMPORTANT": 1, "Work": 1})
+}
+
+// TestSQLiteEngine_ListsUnicodeCaseFold catches SQLite's built-in LOWER being
+// used for List-Id grouping or exact drill predicates. SQLite LOWER is ASCII
+// only, so the two spellings must be folded by the registered Unicode helper.
+func TestSQLiteEngine_ListsUnicodeCaseFold(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<ÉCOLE@example.test>'
+		WHEN 2 THEN '<école@example.test>'
+		ELSE NULL END`)
+	require.NoError(err)
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewLists, DefaultAggregateOptions())
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal(int64(2), rows[0].Count)
+
+	messages, err := env.Engine.ListMessages(
+		env.Ctx, MessageFilter{ListID: "<école@example.test>"})
+	require.NoError(err)
+	require.Len(messages, 2)
+	assert.ElementsMatch([]int64{1, 2}, []int64{messages[0].ID, messages[1].ID})
+}
+
 func TestAggregateWithDateFilter(t *testing.T) {
 	env := newTestEnv(t)
 

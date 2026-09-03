@@ -223,6 +223,10 @@ func TestStageForDeletion_ViewTypes(t *testing.T) {
 			t.Helper()
 			assert.Equal(t, []string{"INBOX"}, f.Labels)
 		}},
+		{"lists", query.ViewLists, "<announce.example.test>", func(t *testing.T, f deletion.Filters) {
+			t.Helper()
+			assert.Equal(t, []string{"<announce.example.test>"}, f.ListIDs)
+		}},
 	}
 
 	for _, tt := range tests {
@@ -236,6 +240,89 @@ func TestStageForDeletion_ViewTypes(t *testing.T) {
 			tt.check(t, manifest.Filters)
 		})
 	}
+}
+
+// TestStageForDeletion_ListSelectionUsesExactListID verifies the controller
+// resolves a list selection through the real query engine and preserves the
+// selected scalar as manifest provenance.
+func TestStageForDeletion_ListSelectionUsesExactListID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	matchingID := tdb.AddMessage(dbtest.MessageOpts{Subject: "matching list"})
+	nonMatchingID := tdb.AddMessage(dbtest.MessageOpts{Subject: "other list"})
+	_, err := tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id = ?`, "<announce.example.test>", matchingID)
+	require.NoError(err)
+	_, err = tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id = ?`, "<digest.example.test>", nonMatchingID)
+	require.NoError(err)
+
+	var matchingGmailID, nonMatchingGmailID string
+	err = tdb.DB.QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, matchingID).Scan(&matchingGmailID)
+	require.NoError(err)
+	err = tdb.DB.QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, nonMatchingID).Scan(&nonMatchingGmailID)
+	require.NoError(err)
+
+	controller := NewActionController(query.NewSQLiteEngine(tdb.DB), t.TempDir(), nil)
+	manifest, err := controller.StageForDeletion(DeletionContext{
+		AggregateSelection: map[string]bool{"<announce.example.test>": true},
+		AggregateViewType:  query.ViewLists,
+	})
+	require.NoError(err)
+	assert.Equal([]string{matchingGmailID}, manifest.GmailIDs)
+	assert.NotContains(manifest.GmailIDs, nonMatchingGmailID)
+	assert.Equal([]string{"<announce.example.test>"}, manifest.Filters.ListIDs)
+}
+
+// TestStageForDeletion_MultipleListSelectionsAreExactAndStable verifies that
+// aggregate list staging keeps each selected scalar population, sorts manifest
+// provenance, and emits deterministic message IDs despite map iteration.
+func TestStageForDeletion_MultipleListSelectionsAreExactAndStable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	announceFirstID := tdb.AddMessage(dbtest.MessageOpts{Subject: "announce first"})
+	digestID := tdb.AddMessage(dbtest.MessageOpts{Subject: "digest"})
+	announceSecondID := tdb.AddMessage(dbtest.MessageOpts{Subject: "announce second"})
+	unselectedID := tdb.AddMessage(dbtest.MessageOpts{Subject: "unselected"})
+	for _, update := range []struct {
+		messageID int64
+		listID    string
+	}{
+		{announceFirstID, "<announce.example.test>"},
+		{digestID, "<digest.example.test>"},
+		{announceSecondID, "<announce.example.test>"},
+		{unselectedID, "<unselected.example.test>"},
+	} {
+		_, err := tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id = ?`, update.listID, update.messageID)
+		require.NoError(err)
+	}
+
+	sourceMessageID := func(messageID int64) string {
+		var sourceMessageID string
+		err := tdb.DB.QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, messageID).Scan(&sourceMessageID)
+		require.NoError(err)
+		return sourceMessageID
+	}
+	wantGmailIDs := []string{
+		sourceMessageID(announceFirstID),
+		sourceMessageID(digestID),
+		sourceMessageID(announceSecondID),
+	}
+
+	controller := NewActionController(query.NewSQLiteEngine(tdb.DB), t.TempDir(), nil)
+	manifest, err := controller.StageForDeletion(DeletionContext{
+		AggregateSelection: map[string]bool{
+			"<digest.example.test>":   true,
+			"<announce.example.test>": true,
+		},
+		AggregateViewType: query.ViewLists,
+	})
+	require.NoError(err)
+	assert.Equal(wantGmailIDs, manifest.GmailIDs)
+	assert.Equal([]string{"<announce.example.test>", "<digest.example.test>"}, manifest.Filters.ListIDs)
+	assert.NotContains(manifest.GmailIDs, sourceMessageID(unselectedID))
 }
 
 func TestStageForDeletion_AccountFilter(t *testing.T) {

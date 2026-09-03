@@ -144,6 +144,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 | `bcc:`        | BCC recipient                        | `bcc:hr@company.com`       |
 | `subject:`    | Subject text                         | `subject:meeting`          |
 | `label:`      | Gmail label (or `l:`)                | `label:IMPORTANT`          |
+| `list:`       | List-Id substring (or `list-id:`)    | `list:announce.example`    |
 | `has:`        | `has:attachment`                     | `has:attachment`           |
 | `before:`     | Messages before date                 | `before:2024-06-01`        |
 | `after:`      | Messages after date                  | `after:2024-01-01`         |
@@ -153,7 +154,16 @@ msgvault search "quarterly report" --limit 100 --offset 50
 | `smaller:`    | Maximum size                         | `smaller:100K`             |
 | `message_type:` | Message type                       | `message_type:teams`       |
 
-Bare words and `"quoted phrases"` perform full-text search across subject and body.
+`list:` and `list-id:` match case-insensitive literal substrings. Quote values
+that contain spaces; repeat either operator to require every value. Bare words
+and `"quoted phrases"` perform full-text search across subject and body.
+
+Existing archives can backfill List-Id values without contacting providers:
+
+```bash
+msgvault repair-list-ids          # dry run
+msgvault repair-list-ids --apply  # write changes
+```
 
 ## View a single message
 

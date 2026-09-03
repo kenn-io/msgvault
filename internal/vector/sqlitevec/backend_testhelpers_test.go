@@ -12,6 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -79,7 +80,7 @@ func openFusedMainDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.db")
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open(sqliteutil.DriverName(), path)
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -91,6 +92,7 @@ func openFusedMainDB(t *testing.T) (*sql.DB, string) {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+	list_id TEXT,
     message_type TEXT NOT NULL DEFAULT 'email',
     source_id INTEGER,
     conversation_id INTEGER,

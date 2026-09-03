@@ -151,6 +151,33 @@ func TestStageDeletionLegacyFilterIsDryRunOnly(t *testing.T) {
 	assert.Contains(mutation.Body.String(), "preflight_required")
 }
 
+func TestStageDeletionListIDFilterIsForwardedAndRecorded(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := &deletionMockStore{}
+	var gotFilter query.MessageFilter
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
+			gotFilter = f
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 7, SourceType: "gmail",
+				SourceIdentifier: "user@example.com", SourceMessageID: "gm-1",
+			}}, nil
+		},
+	}
+	srv := newDeletionTestServer(t, st, engine)
+
+	w := postDeletions(t, srv, `{"filter":{"list_id":"announce.example.test"},"dry_run":true}`)
+
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Equal("announce.example.test", gotFilter.ListID)
+	assertions.Equal(
+		[]string{"announce.example.test"},
+		manifestFiltersFromRequest(&StageDeletionFilter{ListID: "announce.example.test"}).ListIDs,
+	)
+}
+
 func TestStageDeletionLegacyExplicitMessageIDsRemainCompatible(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

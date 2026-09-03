@@ -25,6 +25,7 @@ whole query is optional.
 | `from:` `to:` `cc:` `bcc:` | address filter | full email, or bare domain (`from:example.com`) |
 | `subject:` | subject substring | text |
 | `label:` (alias `l:`) | Gmail label | label name |
+| `list:` (alias `list-id:`) | List-Id literal substring | text; quote values containing spaces |
 | `has:attachment` | has ≥1 attachment | — |
 | `before:` `after:` | sent date | `YYYY-MM-DD` |
 | `older_than:` `newer_than:` | relative age | `7d`, `2w`, `1m`, `1y` |
@@ -34,6 +35,10 @@ whole query is optional.
 Bare words and `"quoted phrases"` are full-text terms, matched as
 prefixes and combined with AND (no OR/NEAR support). If a search
 returns nothing, retry with fewer terms or fewer filters.
+
+`list:` and `list-id:` are case-insensitive. Their values are literal, so
+`%`, `_`, and `\` are not wildcards. Repeating either alias requires every
+List-Id substring to match.
 
 ### Modes
 

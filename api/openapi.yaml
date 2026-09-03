@@ -1284,6 +1284,8 @@ components:
         internal_date:
           format: date-time
           type: string
+        list_id:
+          type: string
         message_type:
           type: string
         received_at:
@@ -3616,6 +3618,7 @@ components:
             - participant
             - domain
             - message_type
+            - mailing_list
             - after
             - before
             - deletion
@@ -3636,6 +3639,7 @@ components:
         - participant
         - domain
         - message_type
+        - mailing_list
         - kind
         - year
         - month
@@ -4305,6 +4309,12 @@ components:
         before:
           type: string
         labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        list_ids:
           items:
             type: string
           type:
@@ -10054,6 +10064,8 @@ components:
           type: string
         label:
           type: string
+        list_id:
+          type: string
         recipient:
           type: string
         recipient_name:
@@ -11251,7 +11263,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.13.0
+  version: 2.14.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -11559,6 +11571,11 @@ paths:
         - description: Label filter
           in: query
           name: label
+          schema:
+            type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter
+          in: query
+          name: list_id
           schema:
             type: string
         - description: Message type filter
@@ -16519,6 +16536,11 @@ paths:
           name: label
           schema:
             type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter
+          in: query
+          name: list_id
+          schema:
+            type: string
         - description: Message type filter
           in: query
           name: message_type
@@ -16643,6 +16665,11 @@ paths:
         - description: Label filter
           in: query
           name: label
+          schema:
+            type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter
+          in: query
+          name: list_id
           schema:
             type: string
         - description: Message type filter
@@ -21564,6 +21591,11 @@ paths:
           name: label
           schema:
             type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)
+          in: query
+          name: list_id
+          schema:
+            type: string
         - description: Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
           in: query
           name: time_period
@@ -21768,7 +21800,7 @@ paths:
           name: sender
           schema:
             type: string
-        - description: Sender display-name filter
+        - description: Sender display-name filter; not supported by deep search
           in: query
           name: sender_name
           schema:
@@ -21778,7 +21810,7 @@ paths:
           name: recipient
           schema:
             type: string
-        - description: Recipient display-name filter
+        - description: Recipient display-name filter; not supported by deep search
           in: query
           name: recipient_name
           schema:
@@ -21793,12 +21825,17 @@ paths:
           name: label
           schema:
             type: string
-        - description: Message type filter
+        - description: Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search
+          in: query
+          name: list_id
+          schema:
+            type: string
+        - description: Message type filter; not supported by deep search
           in: query
           name: message_type
           schema:
             type: string
-        - description: Named time period
+        - description: Named time period; not supported by deep search
           in: query
           name: time_period
           schema:
@@ -21808,7 +21845,7 @@ paths:
           name: time_granularity
           schema:
             type: string
-        - description: Conversation ID
+        - description: Conversation ID; not supported by deep search
           in: query
           name: conversation_id
           schema:
@@ -21840,7 +21877,7 @@ paths:
           name: before
           schema:
             type: string
-        - description: Comma-separated aggregate view names to match empty values
+        - description: Comma-separated aggregate view names to match empty values; not supported by deep search
           in: query
           name: empty_targets
           schema:
@@ -21978,6 +22015,11 @@ paths:
         - description: Label filter
           in: query
           name: label
+          schema:
+            type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter
+          in: query
+          name: list_id
           schema:
             type: string
         - description: Message type filter

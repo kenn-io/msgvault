@@ -195,6 +195,65 @@ func TestSearch_MessageTypeFilter(t *testing.T) {
 	assert.Equal("sms", results[0].MessageType)
 }
 
+// TestSearch_ListIDFilters catches Search dropping list: predicates after FTS
+// candidate selection. It exercises case folding, literal LIKE escaping, and
+// repeated-operator AND semantics against real message rows.
+func TestSearch_ListIDFilters(t *testing.T) {
+	env := newTestEnv(t)
+	aliceID := env.MustLookupParticipant("alice@example.com")
+	bobID := env.MustLookupParticipant("bob@company.org")
+	matchingID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "shared list announcement", SentAt: "2024-04-10 10:00:00", FromID: aliceID, ToIDs: []int64{bobID},
+	})
+	announceOnlyID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "shared list digest", SentAt: "2024-04-11 10:00:00", FromID: aliceID, ToIDs: []int64{bobID},
+	})
+	literalID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "literal list marker", SentAt: "2024-04-12 10:00:00", FromID: aliceID, ToIDs: []int64{bobID},
+	})
+	unicodeID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "unicode list marker", SentAt: "2024-04-13 10:00:00", FromID: aliceID, ToIDs: []int64{bobID},
+	})
+	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+		WHEN ? THEN '<Announce.Shared.example.org>'
+		WHEN ? THEN '<announce.example.net>'
+		WHEN ? THEN '<Ops%_Team\Archive.example.org>'
+		WHEN ? THEN '<ÉCOLE.example.org>'
+	END WHERE id IN (?, ?, ?, ?)`,
+		matchingID, announceOnlyID, literalID, unicodeID, matchingID, announceOnlyID, literalID, unicodeID)
+	require.NoError(t, err, "seed list ids")
+	env.EnableFTS()
+
+	assertIDs := func(q *search.Query, want ...int64) {
+		t.Helper()
+		results := env.MustSearch(q, 100, 0)
+		got := make([]int64, len(results))
+		for i, result := range results {
+			got[i] = result.ID
+		}
+		assert.ElementsMatch(t, want, got)
+	}
+
+	assertIDs(&search.Query{ListIDs: []string{"ANNOUNCE"}}, matchingID, announceOnlyID)
+	assertIDs(&search.Query{ListIDs: []string{"announce", "shared"}}, matchingID)
+	assertIDs(&search.Query{ListIDs: []string{"ops%_team"}}, literalID)
+	assertIDs(&search.Query{ListIDs: []string{"ops%_team\\archive"}}, literalID)
+	assertIDs(&search.Query{ListIDs: []string{"école"}}, unicodeID)
+
+	before := env.MustSearch(&search.Query{TextTerms: []string{"shared"}}, 100, 0)
+	after := env.MustSearch(&search.Query{TextTerms: []string{"shared"}, ListIDs: []string{"announce"}}, 100, 0)
+	beforeIDs := make([]int64, len(before))
+	afterIDs := make([]int64, len(after))
+	for i, result := range before {
+		beforeIDs[i] = result.ID
+	}
+	for i, result := range after {
+		afterIDs[i] = result.ID
+	}
+	assert.Equal(t, []int64{announceOnlyID, matchingID}, beforeIDs)
+	assert.Equal(t, beforeIDs, afterIDs, "List-Id narrowing preserves canonical search order")
+}
+
 // TestSearch_WithFTS_SpecialChars verifies that FTS5 special characters in
 // search terms don't cause syntax errors. Without quoting, these characters
 // are interpreted as FTS5 operators (- = NOT, : = column filter, () = grouping).

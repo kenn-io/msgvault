@@ -210,6 +210,8 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 		filter.Domain = key
 	case query.ViewLabels:
 		filter.Label = key
+	case query.ViewLists:
+		filter.ListID = key
 	case query.ViewTime:
 		filter.TimeRange.Period = key
 		filter.TimeRange.Granularity = dctx.TimeGranularity
@@ -270,6 +272,8 @@ func (c *ActionController) applyManifestFilters(m *deletion.Manifest, ctx Deleti
 			m.Filters.SenderDomains = keys
 		case query.ViewLabels:
 			m.Filters.Labels = keys
+		case query.ViewLists:
+			m.Filters.ListIDs = keys
 		default:
 			// SenderNames / RecipientNames / Time / Count don't map to manifest filters.
 		}

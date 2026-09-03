@@ -9,6 +9,7 @@ export type GroupingConcept =
   | 'time'
   | 'source'
   | 'modality'
+  | 'mailing_lists'
   | 'labels'
   | 'attachment_facts'
   | 'conversation';
@@ -79,6 +80,14 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     keywords: 'type email chat text calendar meeting note',
     requestable: true,
     requestDimensions: ['message_type']
+  },
+  {
+    concept: 'mailing_lists',
+    label: 'Lists',
+    family: 'mailing_lists',
+    keywords: 'mailing list newsletter list id list-id',
+    requestable: true,
+    requestDimensions: ['mailing_list']
   },
   {
     concept: 'labels',

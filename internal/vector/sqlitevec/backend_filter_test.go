@@ -38,7 +38,6 @@ func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 	})
 	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
 }
-
 func TestVectorFilterConversationIDsBeforeRanking(t *testing.T) {
 	b, ctx := newFusedBackendForTest(t)
 	gen := seedAndEmbed(t, b, map[int64][]float32{
@@ -63,4 +62,94 @@ func TestVectorFilterConversationIDsBeforeRanking(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, fused, 1)
 	assert.Equal(t, int64(2), fused[0].MessageID)
+}
+
+// TestVectorFilterListIDsBeforeRanking catches semantic and fused candidate
+// queries admitting messages whose List-Id does not satisfy every literal term.
+func TestVectorFilterListIDsBeforeRanking(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{
+		1: unitVec(768, 0), 2: unitVec(768, 0), 3: unitVec(768, 0), 4: unitVec(768, 0),
+	})
+	_, err := b.mainDB.ExecContext(ctx, `UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<Announce.Shared.example.org>'
+		WHEN 2 THEN '<announce.example.net>'
+		WHEN 3 THEN '<Ops%_Team\Archive.example.org>'
+		WHEN 4 THEN '<ÉCOLE.example.org>'
+	END WHERE id IN (1, 2, 3, 4)`)
+	require.NoError(t, err, "seed list ids")
+
+	filter := vector.Filter{ListIDSubstrings: []string{"ANNOUNCE", "shared"}}
+	hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(1), hits[0].MessageID)
+
+	fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter,
+	})
+	require.NoError(t, err)
+	require.Len(t, fused, 1)
+	assert.Equal(t, int64(1), fused[0].MessageID)
+
+	exactFilter := vector.Filter{ListID: "<ANNOUNCE.EXAMPLE.NET>"}
+	exactHits, err := b.Search(ctx, gen, unitVec(768, 0), 10, exactFilter)
+	require.NoError(t, err)
+	require.Len(t, exactHits, 1)
+	assert.Equal(t, int64(2), exactHits[0].MessageID)
+
+	exactFused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: exactFilter,
+	})
+	require.NoError(t, err)
+	require.Len(t, exactFused, 1)
+	assert.Equal(t, int64(2), exactFused[0].MessageID)
+
+	exactGroups := vector.Filter{ListIDExactGroups: [][]string{
+		{"<Announce.Shared.example.org>", "<announce.example.net>"},
+		{"<ANNOUNCE.SHARED.EXAMPLE.ORG>", "<missing.example.org>"},
+	}}
+	groupHits, err := b.Search(ctx, gen, unitVec(768, 0), 10, exactGroups)
+	require.NoError(t, err)
+	require.Len(t, groupHits, 1)
+	assert.Equal(t, int64(1), groupHits[0].MessageID)
+
+	groupFused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: exactGroups,
+	})
+	require.NoError(t, err)
+	require.Len(t, groupFused, 1)
+	assert.Equal(t, int64(1), groupFused[0].MessageID)
+
+	literalHits, err := b.Search(ctx, gen, unitVec(768, 0), 10,
+		vector.Filter{ListIDSubstrings: []string{"ops%_team"}})
+	require.NoError(t, err)
+	require.Len(t, literalHits, 1)
+	assert.Equal(t, int64(3), literalHits[0].MessageID)
+
+	backslashHits, err := b.Search(ctx, gen, unitVec(768, 0), 10,
+		vector.Filter{ListIDSubstrings: []string{"ops%_team\\archive"}})
+	require.NoError(t, err)
+	require.Len(t, backslashHits, 1)
+	assert.Equal(t, int64(3), backslashHits[0].MessageID)
+	backslashFused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60,
+		Filter: vector.Filter{ListIDSubstrings: []string{"ops%_team\\archive"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, backslashFused, 1)
+	assert.Equal(t, int64(3), backslashFused[0].MessageID)
+
+	unicodeFilter := vector.Filter{ListIDSubstrings: []string{"école"}}
+	unicodeHits, err := b.Search(ctx, gen, unitVec(768, 0), 10, unicodeFilter)
+	require.NoError(t, err)
+	require.Len(t, unicodeHits, 1)
+	assert.Equal(t, int64(4), unicodeHits[0].MessageID)
+
+	unicodeFused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: unicodeFilter,
+	})
+	require.NoError(t, err)
+	require.Len(t, unicodeFused, 1)
+	assert.Equal(t, int64(4), unicodeFused[0].MessageID)
 }

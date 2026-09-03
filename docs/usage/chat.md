@@ -122,9 +122,8 @@ Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
 cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_messages` use this
 `total = -1` shape because they do not run a separate count query.
-`search_metadata` accepts msgvault's local subset of Gmail-like syntax.
-Gmail-only operators such as `list:` are rejected because msgvault does
-not index `List-ID` locally; use Gmail-side validation for those checks.
+`search_metadata` accepts msgvault's local subset of Gmail-like syntax,
+including case-insensitive literal `list:` and `list-id:` List-Id filters.
 To restrict mixed archives to values such as `email`, `calendar_event`,
 `teams`, `discord`, `sms`, or `mms`, include a `message_type:` operator in the query
 (for example `message_type:teams incident review`). `find_similar_messages`
@@ -138,7 +137,7 @@ being returned in a single response.
 
 ### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 
-Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed.
+Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed; repeated List-Id operators require every literal substring.
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 

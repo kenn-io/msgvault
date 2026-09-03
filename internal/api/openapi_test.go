@@ -34,8 +34,8 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
-func TestOpenAPISchemaVersionDeduplicatePlanProtocolIs2130(t *testing.T) {
-	assert.Equal(t, "2.13.0", APISchemaVersion)
+func TestOpenAPISchemaVersionListIDFilteringIs2140(t *testing.T) {
+	assert.Equal(t, "2.14.0", APISchemaVersion)
 }
 
 func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
@@ -52,6 +52,18 @@ func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
 		}
 	}
 	assertions.Fail("deletion_scope query parameter is not documented")
+}
+
+func TestOpenAPIDeepSearchDocumentsUnsupportedListIDParameter(t *testing.T) {
+	operation := OpenAPIDocument().Paths["/api/v1/search/deep"].Get
+	require.NotNil(t, operation)
+	for _, parameter := range operation.Parameters {
+		if parameter.Name == "list_id" {
+			assert.Contains(t, parameter.Description, "not supported by deep search")
+			return
+		}
+	}
+	require.Fail(t, "list_id query parameter is not documented")
 }
 
 func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
@@ -133,7 +145,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.13.0", APISchemaVersion)
+	assert.Equal("2.14.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -155,11 +167,11 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.13.0", APISchemaVersion)
+	assert.Equal(t, "2.14.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.13.0", APISchemaVersion)
+	assert.Equal(t, "2.14.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -183,7 +195,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.13.0", APISchemaVersion,
+	assert.Equal(t, "2.14.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -507,7 +519,7 @@ func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	assert.Equal("2.13.0", APISchemaVersion,
+	assert.Equal("2.14.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -621,7 +633,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.13.0", APISchemaVersion,
+	assertions.Equal("2.14.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -641,7 +653,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.13.0", APISchemaVersion,
+	assert.Equal("2.14.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -669,7 +681,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.13.0", APISchemaVersion,
+	assertions.Equal("2.14.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -715,9 +727,10 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
 	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, CardDAV routes
 	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
-	// calendars in 2.10.0, person fact diagnostics in 2.11.0, and lexical
-	// deletion scope in 2.12.0 did not touch it.
-	assert.Equal("2.13.0", APISchemaVersion, "meeting import remains in the additive schema")
+	// calendars in 2.10.0, person fact diagnostics in 2.11.0, lexical deletion
+	// scope in 2.12.0, deduplicate planning in 2.13.0, and List-ID filtering in
+	// 2.14.0 did not touch it.
+	assert.Equal("2.14.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -919,15 +932,15 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
 	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "message_type", "after", "before", "deletion", "identity"},
+		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
 	requirements.NotNil(clientFilter)
 	requirements.NotNil(clientFilter.Properties["dimension"])
 	assertions.Equal([]any{
-		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain",
-		"ExploreFilterDimensionMessageType", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
+		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
+		"ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
 		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
@@ -1066,7 +1079,11 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	dimension := schemas["ExploreGroupDimension"]
 	requirements.NotNil(dimension)
-	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "kind", "year", "month"}, dimension.Enum)
+	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}, dimension.Enum)
+
+	filter := schemas["ExploreFilter"]
+	requirements.NotNil(filter)
+	assertions.Contains(filter.Properties["dimension"].Enum, any("mailing_list"))
 
 	for schemaName, properties := range map[string][]string{
 		"ExploreGroupsHTTPRequest":  {"grouping"},

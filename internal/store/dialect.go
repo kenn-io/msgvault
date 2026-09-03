@@ -90,6 +90,17 @@ type Dialect interface {
 	// for the database driver. No-op for SQLite; converts to $1, $2, ... for PostgreSQL.
 	Rebind(query string) string
 
+	// UnicodeLowerExpression returns a Unicode-aware lowercasing SQL expression.
+	// SQLite uses the deterministic scalar registered on every connection;
+	// PostgreSQL uses its collation-aware LOWER implementation.
+	UnicodeLowerExpression(expr string) string
+
+	// BlobPrefixSQL returns an expression that reads at most the bytes bound by
+	// its one placeholder from a BLOB/bytea column expression. The repair
+	// paths use it before scanning raw archive payloads so database/sql never
+	// materializes a whole MIME body merely to inspect its headers.
+	BlobPrefixSQL(column string) string
+
 	// Now returns the SQL expression for the current timestamp.
 	// SQLite: "datetime('now')"  PostgreSQL: "NOW()"
 	Now() string

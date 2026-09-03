@@ -48,6 +48,105 @@ func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
 }
 
+// TestVectorFilterListIDsBeforeRanking catches semantic and fused candidate
+// queries admitting messages whose List-Id does not satisfy every literal term.
+func TestVectorFilterListIDsBeforeRanking(t *testing.T) {
+	f := seedThree(t)
+	_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<Announce.Shared.example.org>'
+		WHEN 2 THEN '<ÉCOLE.example.org>'
+		WHEN 3 THEN '<Ops%_Team\Archive.example.org>'
+	END WHERE id IN (1, 2, 3)`)
+	require.NoError(t, err, "seed list ids")
+
+	filter := vector.Filter{ListIDSubstrings: []string{"ANNOUNCE", "shared"}}
+	pure, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
+	require.NoError(t, err)
+	require.Len(t, pure, 1)
+	assert.Equal(t, int64(1), pure[0].MessageID)
+
+	fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter,
+	})
+	require.NoError(t, err)
+	require.Len(t, fused, 1)
+	assert.Equal(t, int64(1), fused[0].MessageID)
+
+	exactFilter := vector.Filter{ListID: "<école.example.org>"}
+	exact, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, exactFilter)
+	require.NoError(t, err)
+	require.Len(t, exact, 1)
+	assert.Equal(t, int64(2), exact[0].MessageID)
+
+	exactFused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: exactFilter,
+	})
+	require.NoError(t, err)
+	require.Len(t, exactFused, 1)
+	assert.Equal(t, int64(2), exactFused[0].MessageID)
+
+	exactGroups := vector.Filter{ListIDExactGroups: [][]string{
+		{"<Announce.Shared.example.org>", "<ÉCOLE.example.org>"},
+		{"<ANNOUNCE.SHARED.EXAMPLE.ORG>", "<missing.example.org>"},
+	}}
+	groupHits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, exactGroups)
+	require.NoError(t, err)
+	require.Len(t, groupHits, 1)
+	assert.Equal(t, int64(1), groupHits[0].MessageID)
+
+	groupFused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: exactGroups,
+	})
+	require.NoError(t, err)
+	require.Len(t, groupFused, 1)
+	assert.Equal(t, int64(1), groupFused[0].MessageID)
+
+	literal, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10,
+		vector.Filter{ListIDSubstrings: []string{"ops%_team"}})
+	require.NoError(t, err)
+	require.Len(t, literal, 1)
+	assert.Equal(t, int64(3), literal[0].MessageID)
+
+	backslash, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10,
+		vector.Filter{ListIDSubstrings: []string{"ops%_team\\archive"}})
+	require.NoError(t, err)
+	require.Len(t, backslash, 1)
+	assert.Equal(t, int64(3), backslash[0].MessageID)
+	backslashFused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60,
+		Filter: vector.Filter{ListIDSubstrings: []string{"ops%_team\\archive"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, backslashFused, 1)
+	assert.Equal(t, int64(3), backslashFused[0].MessageID)
+
+	unicodeFilter := vector.Filter{ListIDSubstrings: []string{"école"}}
+	unicode, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, unicodeFilter)
+	require.NoError(t, err)
+	require.Len(t, unicode, 1)
+	assert.Equal(t, int64(2), unicode[0].MessageID)
+
+	unicodeFused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: unicodeFilter,
+	})
+	require.NoError(t, err)
+	require.Len(t, unicodeFused, 1)
+	assert.Equal(t, int64(2), unicodeFused[0].MessageID)
+}
+
+func TestBuildPGFilterClausesExactListID(t *testing.T) {
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	clauses := buildPGFilterClauses(vector.Filter{ListID: "<Dev@Example.Test>"}, bind)
+
+	require.Equal(t, []string{"LOWER(m.list_id) = LOWER($1)"}, clauses)
+	assert.Equal(t, []any{"<Dev@Example.Test>"}, args)
+}
+
 func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 	var args []any
 	bind := func(v any) string {

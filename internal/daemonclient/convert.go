@@ -158,6 +158,7 @@ func cliDeletionFiltersToGenerated(filters deletion.Filters) generated.Filters {
 		After:         optionalString(filters.After),
 		Before:        optionalString(filters.Before),
 		Labels:        append([]string(nil), filters.Labels...),
+		ListIds:       append([]string(nil), filters.ListIDs...),
 		Recipients:    append([]string(nil), filters.Recipients...),
 		SenderDomains: append([]string(nil), filters.SenderDomains...),
 		Senders:       append([]string(nil), filters.Senders...),

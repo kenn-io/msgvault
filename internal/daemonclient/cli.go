@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -830,6 +831,9 @@ func (c *Client) GetCLIStats(
 }
 
 func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISearch, error) {
+	if err := c.requireListIDCapability(ctx, search.Parse(req.Query), query.MessageFilter{}); err != nil {
+		return nil, err
+	}
 	if req.DeletionScope != "" {
 		version, err := c.daemonAPISchemaVersion(ctx)
 		if err != nil {
@@ -865,6 +869,9 @@ func (c *Client) GetCLIHybridSearch(
 	ctx context.Context,
 	req CLIHybridSearchRequest,
 ) (*CLIHybridSearch, error) {
+	if err := c.requireListIDCapability(ctx, search.Parse(req.Query), req.Filter); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMessagesResp, error) {
 		return client.SearchMessagesWithResponse(ctx, &generated.SearchMessagesRequestOptions{
 			Query: &generated.SearchMessagesQuery{
@@ -882,6 +889,7 @@ func (c *Client) GetCLIHybridSearch(
 				Recipient:       optionalString(req.Filter.Recipient),
 				Domain:          optionalString(req.Filter.Domain),
 				Label:           optionalString(req.Filter.Label),
+				ListID:          optionalString(req.Filter.ListID),
 				TimePeriod:      optionalString(req.Filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(req.Filter.TimeRange.Granularity)),
 				ConversationID:  req.Filter.ConversationID,

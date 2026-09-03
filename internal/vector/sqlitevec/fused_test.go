@@ -338,6 +338,7 @@ func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 	CREATE TABLE messages (
 	    id INTEGER PRIMARY KEY,
 	    subject TEXT,
+	    list_id TEXT,
 	    message_type TEXT DEFAULT 'email',
 	    source_id INTEGER,
     sender_id INTEGER,
@@ -373,6 +374,7 @@ func openFusedMainWithoutMessageType(t *testing.T, path string) *sql.DB {
 	CREATE TABLE messages (
 	    id INTEGER PRIMARY KEY,
 	    subject TEXT,
+	    list_id TEXT,
 	    source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,

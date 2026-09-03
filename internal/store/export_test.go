@@ -139,6 +139,50 @@ func (s *Store) SetAttachmentRoleRepairPreparedHookForTest(fn func()) func() {
 	return func() { s.attachmentRoleRepairPreparedHook = nil }
 }
 
+// SetListIDRepairBeforeApplyHookForTest installs a hook before List-Id repair
+// begins its maintenance transaction.
+// Tests use it to reproduce a concurrent raw-MIME resync without stubbing the
+// database writer or fighting a SQLite reader lock.
+func (s *Store) SetListIDRepairBeforeApplyHookForTest(fn func()) func() {
+	s.listIDRepairBeforeApplyHook = fn
+	return func() { s.listIDRepairBeforeApplyHook = nil }
+}
+
+// SetListIDRepairAfterScanMutationForTest runs a real raw-MIME and List-Id
+// replacement on the repair transaction after a candidate has been decoded and
+// before its conditional fingerprint update. It keeps SQLite race coverage in
+// one transaction, avoiding an impossible competing-writer lock interleaving.
+func (s *Store) SetListIDRepairAfterScanMutationForTest(
+	fn func(messageID int64, replaceRawAndListID func([]byte, string) error) error,
+) func() {
+	s.listIDRepairAfterScanHook = func(
+		ctx context.Context, tx *loggedTx, updates []listIDRepairUpdate,
+	) error {
+		for _, update := range updates {
+			if err := fn(update.row.id, func(rawData []byte, listID string) error {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`, rawData, update.row.id); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx,
+					`UPDATE messages SET list_id = ? WHERE id = ?`, listID, update.row.id)
+				return err
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return func() { s.listIDRepairAfterScanHook = nil }
+}
+
+// SetListIDRepairAfterFingerprintLockHookForTest pauses after PostgreSQL has
+// acquired the candidate's fingerprint lock and before its conditional update.
+func (s *Store) SetListIDRepairAfterFingerprintLockHookForTest(fn func()) func() {
+	s.listIDRepairAfterFingerprintLockHook = fn
+	return func() { s.listIDRepairAfterFingerprintLockHook = nil }
+}
+
 // SetIdentityMatchAcceptBeforeDecisionHookForTest pauses a user acceptance
 // after its initial read and before its locked decision transaction.
 func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func() {

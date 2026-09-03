@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestFormatShowingResults(t *testing.T) {
@@ -64,6 +65,19 @@ func TestOutputAggregateJSON_EmptyEmitsEmptyArray(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &rows),
 		"empty aggregate --json output must be valid JSON, got: %q", out)
 	assert.Empty(t, rows)
+}
+
+func TestOutputAggregateTableSanitizesTerminalControls(t *testing.T) {
+	done := captureStdout(t)
+	outputAggregateTable([]query.AggregateRow{{
+		Key:   "<a\x1b[2J@b.test>\nX\u009b",
+		Count: 1,
+	}}, "List ID")
+	out := done()
+
+	assert.NotContains(t, out, "\x1b[2J")
+	assert.NotContains(t, out, "\u009b")
+	assert.Contains(t, out, "<a@b.test> X")
 }
 
 func TestOutputAccountStats_JSONEmptyEmitsEmptyArray(t *testing.T) {

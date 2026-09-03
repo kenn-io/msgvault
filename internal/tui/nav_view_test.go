@@ -51,6 +51,7 @@ func TestGKeyCyclesViewTypeFullCycle(t *testing.T) {
 		query.ViewRecipientNames,
 		query.ViewDomains,
 		query.ViewLabels,
+		query.ViewLists,
 		query.ViewTime,
 		query.ViewSenders, // Cycles back
 	}
@@ -61,6 +62,38 @@ func TestGKeyCyclesViewTypeFullCycle(t *testing.T) {
 
 		assert.Equal(t, expected, model.viewType, "cycle %d", i+1)
 	}
+}
+
+// TestLKeyJumpsToListsView verifies that list aggregates have a direct view
+// shortcut distinct from Labels and Time.
+func TestLKeyJumpsToListsView(t *testing.T) {
+	model := NewBuilder().
+		WithRows(query.AggregateRow{Key: "test", Count: 10}).
+		WithPageSize(10).WithSize(100, 20).
+		WithViewType(query.ViewLabels).Build()
+
+	m := applyAggregateKey(t, model, key('l'))
+
+	assert.Equal(t, query.ViewLists, m.viewType)
+	assert.True(t, m.loading)
+}
+
+// TestLKeyEntersListsSubGroup verifies direct list navigation from a drilled
+// message population keeps the parent scope and switches to list aggregates.
+func TestLKeyEntersListsSubGroup(t *testing.T) {
+	model := NewBuilder().
+		WithMessages(query.MessageSummary{ID: 1, Subject: "Test"}).
+		WithPageSize(10).WithSize(100, 20).
+		WithLevel(levelMessageList).WithViewType(query.ViewLabels).
+		Build()
+	model.drillFilter = query.MessageFilter{Label: "INBOX"}
+	model.drillViewType = query.ViewLabels
+
+	m := applyMessageListKey(t, model, key('l'))
+
+	assert.Equal(t, levelDrillDown, m.level)
+	assert.Equal(t, query.ViewLists, m.viewType)
+	assert.Equal(t, "INBOX", m.drillFilter.Label)
 }
 
 // TestGKeyInSubAggregate verifies 'g' cycles view types in sub-aggregate view.
@@ -414,6 +447,38 @@ func TestNextSubGroupViewFromDomainsGoesToLabels(t *testing.T) {
 	m := applyMessageListKey(t, model, key('g'))
 
 	assert.Equal(t, query.ViewLabels, m.viewType, "sub-group from Domains")
+}
+
+// TestNextSubGroupViewFromLabelsGoesToLists verifies list IDs are the scalar
+// grouping immediately after Labels, before Time's special behavior.
+func TestNextSubGroupViewFromLabelsGoesToLists(t *testing.T) {
+	model := NewBuilder().
+		WithMessages(query.MessageSummary{ID: 1, Subject: "Test 1"}).
+		WithPageSize(10).WithSize(100, 20).
+		WithLevel(levelMessageList).WithViewType(query.ViewLabels).
+		Build()
+	model.drillFilter = query.MessageFilter{Label: "INBOX"}
+	model.drillViewType = query.ViewLabels
+
+	m := applyMessageListKey(t, model, key('g'))
+
+	assert.Equal(t, query.ViewLists, m.viewType, "sub-group from Labels")
+}
+
+// TestNextSubGroupViewFromListsGoesToTime verifies list IDs feed into the
+// existing Time view rather than changing its granularity semantics.
+func TestNextSubGroupViewFromListsGoesToTime(t *testing.T) {
+	model := NewBuilder().
+		WithMessages(query.MessageSummary{ID: 1, Subject: "Test 1"}).
+		WithPageSize(10).WithSize(100, 20).
+		WithLevel(levelMessageList).WithViewType(query.ViewLists).
+		Build()
+	model.drillFilter = query.MessageFilter{ListID: "<announce.example.test>"}
+	model.drillViewType = query.ViewLists
+
+	m := applyMessageListKey(t, model, key('g'))
+
+	assert.Equal(t, query.ViewTime, m.viewType, "sub-group from Lists")
 }
 
 // =============================================================================

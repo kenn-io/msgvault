@@ -1011,6 +1011,7 @@ type ChangedMessageJSON struct {
 	HasAttachments      bool       `json:"has_attachments"`
 	ID                  int64      `json:"id"`
 	InternalDate        *time.Time `json:"internal_date,omitempty"`
+	ListID              *string    `json:"list_id,omitempty"`
 	MessageType         *string    `json:"message_type,omitempty"`
 	ReceivedAt          *time.Time `json:"received_at,omitempty"`
 	SentAt              *time.Time `json:"sent_at,omitempty"`
@@ -3689,6 +3690,7 @@ type Filters struct {
 	After         *string  `json:"after,omitempty"`
 	Before        *string  `json:"before,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
+	ListIds       []string `json:"list_ids,omitempty"`
 	Recipients    []string `json:"recipients,omitempty"`
 	SenderDomains []string `json:"sender_domains,omitempty"`
 	Senders       []string `json:"senders,omitempty"`
@@ -9016,6 +9018,7 @@ type StageDeletionFilter struct {
 	Before        *string `json:"before,omitempty"`
 	Domain        *string `json:"domain,omitempty"`
 	Label         *string `json:"label,omitempty"`
+	ListID        *string `json:"list_id,omitempty"`
 	Recipient     *string `json:"recipient,omitempty"`
 	RecipientName *string `json:"recipient_name,omitempty"`
 	Sender        *string `json:"sender,omitempty"`

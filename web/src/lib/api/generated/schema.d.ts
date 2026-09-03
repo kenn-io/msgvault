@@ -3761,6 +3761,7 @@ export interface components {
             id: number;
             /** Format: date-time */
             internal_date?: string;
+            list_id?: string;
             message_type?: string;
             /** Format: date-time */
             received_at?: string;
@@ -4809,11 +4810,11 @@ export interface components {
         };
         ExploreFilter: {
             /** @enum {string} */
-            dimension: "source" | "participant" | "domain" | "message_type" | "after" | "before" | "deletion" | "identity";
+            dimension: "source" | "participant" | "domain" | "message_type" | "mailing_list" | "after" | "before" | "deletion" | "identity";
             values: string[];
         };
         /** @enum {string} */
-        ExploreGroupDimension: "source" | "participant" | "domain" | "message_type" | "kind" | "year" | "month";
+        ExploreGroupDimension: "source" | "participant" | "domain" | "message_type" | "mailing_list" | "kind" | "year" | "month";
         ExploreGroupRow: {
             /** Format: int64 */
             count: number;
@@ -5078,6 +5079,7 @@ export interface components {
             after?: string;
             before?: string;
             labels?: string[] | null;
+            list_ids?: string[] | null;
             recipients?: string[] | null;
             sender_domains?: string[] | null;
             senders?: string[] | null;
@@ -7431,6 +7433,7 @@ export interface components {
             before?: string;
             domain?: string;
             label?: string;
+            list_id?: string;
             recipient?: string;
             recipient_name?: string;
             sender?: string;
@@ -8266,6 +8269,8 @@ export interface operations {
                 domain?: string;
                 /** @description Label filter */
                 label?: string;
+                /** @description Exact case-insensitive RFC 2919 List-Id filter */
+                list_id?: string;
                 /** @description Message type filter */
                 message_type?: string;
                 /** @description Named time period */
@@ -14051,6 +14056,8 @@ export interface operations {
                 domain?: string;
                 /** @description Label filter */
                 label?: string;
+                /** @description Exact case-insensitive RFC 2919 List-Id filter */
+                list_id?: string;
                 /** @description Message type filter */
                 message_type?: string;
                 /** @description Named time period */
@@ -14121,6 +14128,8 @@ export interface operations {
                 domain?: string;
                 /** @description Label filter */
                 label?: string;
+                /** @description Exact case-insensitive RFC 2919 List-Id filter */
+                list_id?: string;
                 /** @description Message type filter */
                 message_type?: string;
                 /** @description Named time period */
@@ -19666,6 +19675,8 @@ export interface operations {
                 domain?: string;
                 /** @description Exact case-insensitive label filter (vector or hybrid mode only) */
                 label?: string;
+                /** @description Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only) */
+                list_id?: string;
                 /** @description Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only) */
                 time_period?: string;
                 /** @description Time bucket granularity (vector or hybrid mode only) */
@@ -19853,23 +19864,25 @@ export interface operations {
                 scope?: string;
                 /** @description Sender email/address filter */
                 sender?: string;
-                /** @description Sender display-name filter */
+                /** @description Sender display-name filter; not supported by deep search */
                 sender_name?: string;
                 /** @description Recipient email/address filter */
                 recipient?: string;
-                /** @description Recipient display-name filter */
+                /** @description Recipient display-name filter; not supported by deep search */
                 recipient_name?: string;
                 /** @description Domain filter */
                 domain?: string;
                 /** @description Label filter */
                 label?: string;
-                /** @description Message type filter */
+                /** @description Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search */
+                list_id?: string;
+                /** @description Message type filter; not supported by deep search */
                 message_type?: string;
-                /** @description Named time period */
+                /** @description Named time period; not supported by deep search */
                 time_period?: string;
                 /** @description Time bucket granularity */
                 time_granularity?: string;
-                /** @description Conversation ID */
+                /** @description Conversation ID; not supported by deep search */
                 conversation_id?: number;
                 /** @description Source ID */
                 source_id?: number;
@@ -19881,7 +19894,7 @@ export interface operations {
                 after?: string;
                 /** @description Upper date/time bound (RFC3339 or YYYY-MM-DD) */
                 before?: string;
-                /** @description Comma-separated aggregate view names to match empty values */
+                /** @description Comma-separated aggregate view names to match empty values; not supported by deep search */
                 empty_targets?: string;
                 /** @description Zero-based row offset */
                 offset?: number;
@@ -19977,6 +19990,8 @@ export interface operations {
                 domain?: string;
                 /** @description Label filter */
                 label?: string;
+                /** @description Exact case-insensitive RFC 2919 List-Id filter */
+                list_id?: string;
                 /** @description Message type filter */
                 message_type?: string;
                 /** @description Named time period */

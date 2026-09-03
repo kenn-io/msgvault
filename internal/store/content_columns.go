@@ -41,6 +41,7 @@ var MessagesContentColumns = []string{
 	// it when a message moves between source locations. The feed returns it, so
 	// leaving it untracked would strand a consumer on a stale source ID.
 	"source_message_id",
+	"list_id",                // mailing-list routing scope used by readers and caches
 	"conversation_id",        // message moved threads
 	"sender_id",              // sender re-resolved or corrected
 	"message_type",           // reclassified

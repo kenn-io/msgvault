@@ -124,7 +124,8 @@ func escapeSQLiteLike(s string) string {
 
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
 type aggDimension struct {
-	keyExpr   string // SQL expression for the grouping key
+	keyExpr   string // SQL expression returned as the grouping key
+	groupExpr string // SQL expression used to group key-equivalent rows
 	joins     string // JOIN clauses for the dimension table(s)
 	whereExpr string // additional WHERE condition (e.g., key IS NOT NULL)
 }
@@ -176,6 +177,15 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 				JOIN labels l ON l.id = ml.label_id`,
 			whereExpr: "",
 		}, nil
+	case ViewLists:
+		return aggDimension{
+			// List-Id drills compare case-insensitively. Group by that same
+			// equivalence relation, while MIN retains one unmodified stored
+			// spelling as the stable representative key.
+			keyExpr:   "MIN(m.list_id)",
+			groupExpr: d.UnicodeLowerExpression("COALESCE(m.list_id, '')"),
+			whereExpr: "m.list_id IS NOT NULL AND m.list_id != ''",
+		}, nil
 	case ViewTime:
 		var gran string
 		switch timeGranularity {
@@ -209,6 +219,10 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 	if dim.whereExpr != "" {
 		allWhere += " AND " + dim.whereExpr
 	}
+	groupExpr := dim.keyExpr
+	if dim.groupExpr != "" {
+		groupExpr = dim.groupExpr
+	}
 
 	// The outer derived table needs an explicit alias — PostgreSQL
 	// rejects subqueries in FROM without one ("syntax error at or near
@@ -231,11 +245,11 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 				GROUP BY message_id
 			) att ON att.message_id = m.id
 			WHERE %s
-			GROUP BY key
-		) AS agg
+		GROUP BY %s
+	) AS agg
 		%s
 		LIMIT ?
-	`, dim.keyExpr, allJoins, allWhere, sort)
+	`, dim.keyExpr, allJoins, allWhere, groupExpr, sort)
 }
 
 // optsToFilterConditions converts AggregateOptions into WHERE conditions and args.
@@ -349,6 +363,8 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			args = append(args, conditionArgs...)
 		}
 	}
+
+	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, tableAlias+".list_id", filter.ListID)
 
 	// Sender + sender-name filters — check both message_recipients (email)
 	// and direct sender_id (WhatsApp/chat). Also checks phone_number for
@@ -563,6 +579,19 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 	}
 
 	return "", conditions, args
+}
+
+// appendExactListIDCondition compares List-Ids literally and without case,
+// using the backend's Unicode-aware fold on both operands.
+func appendExactListIDCondition(
+	d Dialect, conditions []string, args []any, column, listID string,
+) ([]string, []any) {
+	if listID == "" {
+		return conditions, args
+	}
+	value := d.UnicodeLowerExpression("COALESCE(" + column + ", '')")
+	condition := value + " = " + d.UnicodeLowerExpression("?")
+	return append(conditions, condition), append(args, listID)
 }
 
 // SubAggregate performs aggregation on a filtered subset of messages.
@@ -1296,6 +1325,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 			args = append(args, conditionArgs...)
 		}
 	}
+	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, "m.list_id", filter.ListID)
 
 	// Scope to Gmail sources only — this function is used for
 	// Gmail-specific deletion/staging workflows and must not return
@@ -1667,6 +1697,16 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 		}
 	}
 
+	// List-Id filters use literal, case-insensitive substring matching.
+	// Keep one predicate per term so repeated list: operators are ANDed.
+	for _, listID := range q.ListIDs {
+		if strings.TrimSpace(listID) == "" {
+			continue
+		}
+		conditions = append(conditions, metadataContainsExpression(e.dialect, "m.list_id"))
+		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
+	}
+
 	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
 	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
 	// too, or `--mode=fts` search silently ignores message_type scoping for
@@ -1852,6 +1892,7 @@ func (e *SQLiteEngine) buildMetadataSearchQueryParts(ctx context.Context, q *sea
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	mergedQuery := MergeFilterIntoQuery(q, filter)
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
+	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, "m.list_id", filter.ListID)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2091,8 +2132,10 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Note: SenderName, RecipientName, and
-	// EmptyValueTargets cannot be represented in search.Query
+	// Note: SenderName, RecipientName, ListID, and
+	// EmptyValueTargets cannot be represented in search.Query.
+	// ListID scopes must use an exact-capable engine path rather than
+	// being translated to the substring list: search operator.
 	// and are not merged. Deep search within those drill-down
 	// contexts will not be scoped to the current view.
 
@@ -2131,6 +2174,7 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	mergedQuery := MergeFilterIntoQuery(q, filter)
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
+	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, "m.list_id", filter.ListID)
 	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
 }
 
@@ -2228,6 +2272,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
 	mergedQuery := MergeFilterIntoQuery(q, filter)
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
+	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, "m.list_id", filter.ListID)
 	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 	if err != nil {
 		return nil, err

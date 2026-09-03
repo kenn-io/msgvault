@@ -62,6 +62,16 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	if err != nil {
 		return nil, false, err
 	}
+	hasListID := false
+	if len(req.Filter.ListIDSubstrings) > 0 || len(req.Filter.ListIDExactGroups) > 0 || req.Filter.ListID != "" {
+		hasListID, err = sqliteColumnExists(ctx, conn, "messages", "list_id")
+		if err != nil {
+			return nil, false, err
+		}
+		if !hasListID {
+			return nil, false, errors.New(listIDSchemaRequiredErrorText)
+		}
+	}
 
 	messageIDs, err := idsToJSON(req.Filter.MessageIDs)
 	if err != nil {
@@ -157,6 +167,30 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		}
 		subjectPatterns = sql.NullString{Valid: true, String: string(buf)}
 	}
+	var listIDPatterns sql.NullString
+	if len(req.Filter.ListIDSubstrings) > 0 {
+		patterns := make([]string, len(req.Filter.ListIDSubstrings))
+		for i, term := range req.Filter.ListIDSubstrings {
+			patterns[i] = "%" + escapeLikeSubject(term) + "%"
+		}
+		buf, err := json.Marshal(patterns)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode list id patterns: %w", err)
+		}
+		listIDPatterns = sql.NullString{Valid: true, String: string(buf)}
+	}
+	var exactListID sql.NullString
+	if req.Filter.ListID != "" {
+		exactListID = sql.NullString{Valid: true, String: req.Filter.ListID}
+	}
+	var exactListIDGroups sql.NullString
+	if len(req.Filter.ListIDExactGroups) > 0 {
+		buf, err := json.Marshal(req.Filter.ListIDExactGroups)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode exact list id groups: %w", err)
+		}
+		exactListIDGroups = sql.NullString{Valid: true, String: string(buf)}
+	}
 
 	vecTable := "vec." + VectorTableName(dim)
 
@@ -192,6 +226,21 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			OR (:include_legacy_email = 1 AND (m.message_type = 'email' OR m.message_type IS NULL OR m.message_type = ''))
 		)`
 	}
+	listIDSQL := ""
+	if hasListID {
+		listIDSQL = fmt.Sprintf(`AND (:list_id IS NULL OR %s(m.list_id) = %s(:list_id))
+		AND (:list_id_patterns IS NULL OR NOT EXISTS (
+			SELECT 1 FROM json_each(:list_id_patterns) lp
+			 WHERE m.list_id IS NULL OR %s(m.list_id) NOT LIKE %s(lp.value) ESCAPE '\'))
+		AND (:list_id_exact_groups IS NULL OR NOT EXISTS (
+			SELECT 1 FROM json_each(:list_id_exact_groups) lg
+			 WHERE NOT EXISTS (
+				SELECT 1 FROM json_each(lg.value) lv
+				 WHERE %s(m.list_id) = %s(lv.value))))`,
+			sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction,
+			sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction,
+			sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction)
+	}
 
 	filterWhere := fmt.Sprintf(`%s
        AND (:message_ids IS NULL OR m.id IN (SELECT value FROM json_each(:message_ids)))
@@ -212,9 +261,10 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
        AND (:subject_patterns IS NULL OR NOT EXISTS (
              SELECT 1 FROM json_each(:subject_patterns) sp
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
-       %s`,
+	   %s
+	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
-		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
+		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL)
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -339,6 +389,13 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		sql.Named("subject_patterns", subjectPatterns),
 		sql.Named("gen", int64(req.Generation)),
 	)
+	if hasListID {
+		filterArgs = append(filterArgs,
+			sql.Named("list_id", exactListID),
+			sql.Named("list_id_patterns", listIDPatterns),
+			sql.Named("list_id_exact_groups", exactListIDGroups),
+		)
+	}
 	filterArgs = append(filterArgs, senderGroupArgs...)
 	filterArgs = append(filterArgs, senderExactGroupArgs...)
 	filterArgs = append(filterArgs, recipientAnyGroupArgs...)

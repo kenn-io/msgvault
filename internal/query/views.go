@@ -207,6 +207,11 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 						defaultExpr: "'' AS message_type",
 					},
 					{
+						name:        "list_id",
+						replaceExpr: "CAST(list_id AS VARCHAR) AS list_id",
+						defaultExpr: "NULL::VARCHAR AS list_id",
+					},
+					{
 						name:        "deleted_at",
 						replaceExpr: "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at",
 						defaultExpr: "NULL::TIMESTAMP AS deleted_at",
@@ -460,6 +465,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		COALESCE(c.conversation_type, '') AS conversation_type,
 		COALESCE(c.title, '') AS conversation_title,
 		COALESCE(m.message_type, '') AS message_type,
+		m.list_id,
 		m.sender_id,
 		COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
 		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
@@ -521,6 +527,7 @@ SELECT
     COALESCE(c.conversation_type, '') AS conversation_type,
     COALESCE(c.title, '') AS conversation_title,
     COALESCE(m.message_type, '') AS message_type,
+    m.list_id,
     m.sender_id,
     COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
     COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,

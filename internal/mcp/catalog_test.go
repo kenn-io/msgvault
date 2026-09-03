@@ -437,7 +437,7 @@ func TestCatalogSchemas(t *testing.T) {
 	checks.Equal([]any{"vector", "hybrid"}, toolInputProperty(t, tools[ToolSemanticSearchMessages], "mode")["enum"])
 	checks.Equal([]any{"keyword", "vector"}, toolInputProperty(t, tools[ToolSearchInMessage], "mode")["enum"])
 	checks.Equal([]any{"auto", "text", "html"}, toolInputProperty(t, tools[ToolGetMessage], "body_format")["enum"])
-	checks.Equal([]any{"sender", "recipient", "domain", "label", "time"}, toolInputProperty(t, tools[ToolAggregate], "group_by")["enum"])
+	checks.Equal([]any{"sender", "recipient", "domain", "label", "list", "time"}, toolInputProperty(t, tools[ToolAggregate], "group_by")["enum"])
 
 	t.Run("invalid arguments do not invoke handlers", func(t *testing.T) {
 		var calls atomic.Int64

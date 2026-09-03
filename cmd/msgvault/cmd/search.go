@@ -43,6 +43,7 @@ Supported operators:
   bcc:         BCC recipient
   subject:     Subject text search
   label:       Gmail label (or l: shorthand)
+  list:        List-Id literal substring (or list-id: alias)
   has:         has:attachment - messages with attachments
   before:      Messages before date (YYYY-MM-DD)
   after:       Messages after date (YYYY-MM-DD)
@@ -52,11 +53,14 @@ Supported operators:
   smaller:     Size filter
   message_type: Message type filter (sms, mms, whatsapp, teams, email, meeting_transcript)
 
+List-Id values are matched as case-insensitive literal substrings. Quote values
+that contain spaces. Repeating list: or list-id: requires every value to match.
 Bare words and "quoted phrases" perform full-text search.
 
 Examples:
   msgvault search from:alice@example.com has:attachment
   msgvault search subject:meeting after:2024-01-01
+  msgvault search 'list:"<announce.example.org>"'
   msgvault search project report newer_than:30d
   msgvault search '"exact phrase"' label:INBOX`,
 	Args: cobra.ArbitraryArgs,

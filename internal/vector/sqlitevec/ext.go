@@ -13,6 +13,7 @@ import (
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	sqlite3 "github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // driverName is the sql.Open driver name exposed by this package.
@@ -51,7 +52,7 @@ func RegisterExtension() error {
 				if _, err := conn.Exec(`PRAGMA foreign_keys = ON`, nil); err != nil {
 					return fmt.Errorf("enable foreign_keys: %w", err)
 				}
-				return nil
+				return sqliteutil.RegisterUnicodeLower(conn)
 			},
 		})
 	})

@@ -611,6 +611,11 @@ func fileGroupExpressions(
 		}, nil
 	case messageTypeDimension:
 		return simple(sqlMessageTypeGroupExpr()), nil
+	case "mailing_list":
+		return groupExpressions{
+			key: "MIN(list_id)", label: "MIN(list_id)", groupBy: "LOWER(list_id)",
+			source: "file_population", whereSuffix: " WHERE list_id IS NOT NULL AND list_id <> ''",
+		}, nil
 	case "kind":
 		return simple("'file'"), nil
 	case "year":

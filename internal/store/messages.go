@@ -104,6 +104,7 @@ type Message struct {
 	SourceID        int64
 	SourceMessageID string
 	RFC822MessageID sql.NullString // RFC822 Message-ID header for cross-mailbox dedup
+	ListID          sql.NullString // RFC 2919 List-Id header for email list membership
 	MessageType     string         // "email"
 	SentAt          sql.NullTime
 	ReceivedAt      sql.NullTime
@@ -836,13 +837,13 @@ func upsertMessageSQL(now string) string {
 	)
 	INSERT INTO messages (
 		conversation_id, source_id, source_message_id,
-		rfc822_message_id, message_type,
+		rfc822_message_id, list_id, message_type,
 		sent_at, received_at, internal_date, sender_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
 		has_attachments, attachment_count, archived_at
 	)
-	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?,
+	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
 	       ?, ?, ?, ?, ?, %s
@@ -857,6 +858,7 @@ func upsertMessageSQL(now string) string {
 		message_type = excluded.message_type,
 		conversation_id = excluded.conversation_id,
 		rfc822_message_id = excluded.rfc822_message_id,
+		list_id = excluded.list_id,
 		sent_at = excluded.sent_at,
 		received_at = excluded.received_at,
 		internal_date = excluded.internal_date,
@@ -960,7 +962,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.SenderID, msg.SourceID,
 		msg.SenderID, msg.SourceID,
 		msg.ConversationID, msg.SourceID, msg.SourceMessageID,
-		msg.RFC822MessageID, msg.MessageType,
+		msg.RFC822MessageID, msg.ListID, msg.MessageType,
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
 		msg.HasAttachments, msg.AttachmentCount,

@@ -47,6 +47,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -1743,6 +1744,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
+		{"repair list IDs apply allowed", []string{"repair-list-ids", "--apply"}, true},
 		{"repair-senders apply allowed", []string{"repair-senders", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
 		{"add-discord allowed", []string{"add-discord"}, true},
@@ -4207,6 +4209,39 @@ func TestHandleSearch(t *testing.T) {
 	assert.Equal(t, "Test", resp.Query, "query")
 }
 
+// TestHandleSearchListIDUsesStructuredStoreQuery catches list-only HTTP
+// searches being routed through the raw full-text path instead of the Store
+// predicate that owns List-Id matching.
+func TestHandleSearchListIDUsesStructuredStoreQuery(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "list-search@example.test")
+	require.NoError(err, "create source")
+	conversationID, err := st.EnsureConversation(source.ID, "list-search-thread", "List search")
+	require.NoError(err, "create conversation")
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID:        source.ID,
+		SourceMessageID: "list-search-message",
+		ConversationID:  conversationID,
+		MessageType:     store.MessageTypeEmail,
+		ListID:          sql.NullString{String: "<alerts.example.test>", Valid: true},
+	})
+	require.NoError(err, "create list message")
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q="+url.QueryEscape("list:alerts.example.test"), nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+
+	require.Equal(http.StatusOK, response.Code, "status: %s", response.Body.String())
+	var body SearchResult
+	require.NoError(json.NewDecoder(response.Body).Decode(&body), "decode response")
+	require.Equal(int64(1), body.Total, "total")
+	require.Len(body.Messages, 1, "messages")
+	assert.Equal(t, messageID, body.Messages[0].ID, "List-Id result")
+}
+
 func TestHandleSearchInvalidOperatorValueReturns400(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -4927,6 +4962,21 @@ func TestHandleAggregates(t *testing.T) {
 	assert.Equal("alice@example.com", resp.Rows[0].Key, "first row key")
 }
 
+// TestHandleAggregatesListsView catches API parsing or response conversion
+// that rejects the Lists view or reports it as another aggregate dimension.
+func TestHandleAggregatesListsView(t *testing.T) {
+	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w,
+		httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=lists", nil))
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp AggregateResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "lists", resp.ViewType)
+}
+
 func TestHandleAggregatesNoEngine(t *testing.T) {
 	// Server without engine
 	cfg := &config.Config{
@@ -4950,15 +5000,21 @@ func TestHandleAggregatesNoEngine(t *testing.T) {
 }
 
 func TestHandleAggregatesInvalidViewType(t *testing.T) {
-	engine := &querytest.MockEngine{}
-	srv := newTestServerWithEngine(t, engine)
+	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+	for _, path := range []string{
+		"/api/v1/aggregates?view_type=invalid",
+		"/api/v1/aggregates/sub?view_type=invalid",
+		"/api/v1/search/fast?q=test&view_type=invalid",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=invalid", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code, "status")
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), "lists",
+				"validation must advertise every supported aggregate view")
+		})
+	}
 }
 
 func TestHandleSubAggregates(t *testing.T) {
@@ -5006,7 +5062,7 @@ func TestHandleFilteredMessages(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?sender=alice@example.com&message_type=sms&limit=100", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?sender=alice@example.com&message_type=sms&list_id=%3Cdev_1%40example.test%3E&limit=100", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -5020,6 +5076,7 @@ func TestHandleFilteredMessages(t *testing.T) {
 	require.True(ok, "expected messages array in response")
 	assert.Len(messages, 1, "messages count")
 	require.Equal("sms", gotFilter.MessageType, "message_type filter")
+	require.Equal("<dev_1@example.test>", gotFilter.ListID, "list_id filter")
 	msg, ok := messages[0].(map[string]any)
 	require.True(ok, "message row = %#v, want object", messages[0])
 	require.Equal("sms", msg["message_type"], "response message_type")
@@ -5040,7 +5097,7 @@ func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?sender=alice@example.com&message_type=email", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?sender=alice@example.com&message_type=email&list_id=%3Cdev_1%40example.test%3E", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -5048,6 +5105,7 @@ func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal("alice@example.com", gotFilter.Sender, "sender filter")
 	assert.Equal("email", gotFilter.MessageType, "message type filter")
+	assert.Equal("<dev_1@example.test>", gotFilter.ListID, "list_id filter")
 
 	var resp struct {
 		GmailIDs []string `json:"gmail_ids"`
@@ -5411,10 +5469,11 @@ func TestHandleFastSearchForwardsSourceIDs(t *testing.T) {
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
-	w := doGet(srv, "/api/v1/search/fast?q=needle&source_ids=8&source_ids=7&source_ids=8")
+	w := doGet(srv, "/api/v1/search/fast?q=needle&source_ids=8&source_ids=7&source_ids=8&list_id=%3Cdev_1%40example.test%3E")
 
 	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Equal([]int64{7, 8}, gotFilter.SourceIDs)
+	assert.Equal("<dev_1@example.test>", gotFilter.ListID)
 	var response map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&response))
 	assert.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"])
@@ -5473,6 +5532,48 @@ func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
 			require.Equal(t, "unsupported_filter", errResp["error"], "error")
 		})
 	}
+}
+
+func TestDeepSearchRejectsListIDFilterParam(t *testing.T) {
+	engine := &querytest.MockEngine{}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=hello&list_id=%3Cdev%40example.test%3E", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	var errResp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode error")
+	require.Equal(t, "unsupported_filter", errResp["error"], "error")
+}
+
+func TestDaemonAdapterListIDScopeReachesServerQueryEngine(t *testing.T) {
+	require := require.New(t)
+	db := dbtest.NewTestDB(t, "../store/schema.sql")
+	db.SeedStandardDataSet()
+	_, err := db.DB.Exec(`UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<dev@example.test>'
+		WHEN 2 THEN '<other@example.test>'
+	END WHERE id IN (1, 2)`)
+	require.NoError(err, "seed list IDs")
+
+	srv := newTestServerWithEngine(t, query.NewSQLiteEngine(db.DB))
+	daemon := httptest.NewServer(srv.Router())
+	t.Cleanup(daemon.Close)
+	client, err := daemonclient.New(daemonclient.Config{
+		URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client(),
+	})
+	require.NoError(err, "create daemon client")
+
+	messages, err := daemonclient.NewEngineAdapter(client).ListMessages(t.Context(), query.MessageFilter{
+		ListID: "<DEV@EXAMPLE.TEST>",
+	})
+
+	require.NoError(err, "list remote messages")
+	require.Len(messages, 1, "exact list filter must exclude the decoy row")
+	assert.Equal(t, int64(1), messages[0].ID, "matching message")
 }
 
 func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
@@ -5551,8 +5652,10 @@ func TestFastDeepSearchRejectInvalidOperatorValue(t *testing.T) {
 	}{
 		{name: "fast_bad_date", path: "/api/v1/search/fast?q=" + url.QueryEscape("before:not-a-date")},
 		{name: "fast_bad_size", path: "/api/v1/search/fast?q=" + url.QueryEscape("larger:5X")},
+		{name: "fast_parenthesized_list", path: "/api/v1/search/fast?q=" + url.QueryEscape("list:(alerts.example.test)")},
 		{name: "deep_bad_date", path: "/api/v1/search/deep?q=" + url.QueryEscape("before:not-a-date")},
 		{name: "deep_bad_size", path: "/api/v1/search/deep?q=" + url.QueryEscape("larger:5X")},
+		{name: "deep_parenthesized_list", path: "/api/v1/search/deep?q=" + url.QueryEscape("list:(alerts.example.test)")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -6478,6 +6581,7 @@ func TestHandleSearch_FTSRejectsStructuredSemanticFilters(t *testing.T) {
 		"recipient=bob%40example.test",
 		"domain=example.test",
 		"label=work",
+		"list_id=%3Cdev%40example.test%3E",
 		"time_period=week",
 		"time_granularity=day",
 		"source_id=77",

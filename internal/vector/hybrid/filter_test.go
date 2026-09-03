@@ -124,6 +124,19 @@ func TestApplyMessageFilterIntersectsExistingScope(t *testing.T) {
 	assert.Equal([]string{"__msgvault_no_matching_message_type__"}, filter.MessageTypes)
 }
 
+func TestApplyMessageFilterListIDIsNotDropped(t *testing.T) {
+	db := newFilterTestDB(t)
+	filter := vector.Filter{}
+
+	err := ApplyMessageFilter(t.Context(), db, nil, &filter, query.MessageFilter{
+		ListID: "<Dev@Example.Test>",
+	})
+
+	require.NoError(t, err)
+	assert.False(t, filter.IsEmpty(), "the exact List-ID must restrict hybrid candidates")
+	assert.Equal(t, "<Dev@Example.Test>", filter.ListID)
+}
+
 func TestApplyMessageFilterRejectsInvalidTimePeriod(t *testing.T) {
 	db := newFilterTestDB(t)
 	filter := vector.Filter{}
@@ -202,6 +215,16 @@ func TestBuildFilter_MessageType(t *testing.T) {
 	require.NoError(t, err, "BuildFilter")
 
 	assert.Equal(t, []string{"sms", "mms"}, f.MessageTypes, "MessageTypes")
+}
+
+// TestBuildFilter_ListIDs catches hybrid search dropping repeated list:
+// operators before they reach the candidate backend.
+func TestBuildFilter_ListIDs(t *testing.T) {
+	db := newFilterTestDB(t)
+
+	f, err := BuildFilter(t.Context(), db, nil, search.Parse(`list:announce list-id:shared`))
+	require.NoError(t, err, "BuildFilter")
+	assert.Equal(t, []string{"announce", "shared"}, f.ListIDSubstrings)
 }
 
 func TestBuildFilter_SourceIDs(t *testing.T) {

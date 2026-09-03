@@ -757,6 +757,42 @@ func TestGetDeletionTargetsByFilter_ConversationID(t *testing.T) {
 	assert.ElementsMatch(t, []string{"msg1", "msg2"}, ids)
 }
 
+func TestSQLiteEngine_ListIDScopesFastSearchAndDeletionLiterally(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+		WHEN 1 THEN '<dev_1@example.test>'
+		WHEN 2 THEN '<DEV_1@EXAMPLE.TEST>'
+		WHEN 3 THEN '<devA1@example.test>'
+		ELSE NULL END`)
+	require.NoError(err)
+
+	filter := MessageFilter{ListID: "<DEV_1@EXAMPLE.TEST>"}
+	q := search.Parse("")
+
+	messages, err := env.Engine.SearchFast(env.Ctx, q, filter, 100, 0)
+	require.NoError(err)
+	require.Len(messages, 2)
+	assert.ElementsMatch([]int64{1, 2}, []int64{messages[0].ID, messages[1].ID})
+
+	count, err := env.Engine.SearchFastCount(env.Ctx, q, filter)
+	require.NoError(err)
+	assert.Equal(int64(2), count)
+
+	withStats, err := env.Engine.SearchFastWithStats(env.Ctx, q, "", filter, ViewLists, 100, 0)
+	require.NoError(err)
+	require.Len(withStats.Messages, 2)
+	assert.ElementsMatch([]int64{1, 2}, []int64{withStats.Messages[0].ID, withStats.Messages[1].ID})
+	assert.Equal(int64(2), withStats.TotalCount)
+	require.NotNil(withStats.Stats)
+	assert.Equal(int64(2), withStats.Stats.MessageCount)
+
+	targets, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, filter))
+	require.NoError(err)
+	assert.ElementsMatch([]string{"msg1", "msg2"}, targets)
+}
+
 func TestGetDeletionTargetsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 

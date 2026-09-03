@@ -112,9 +112,14 @@ func (m Model) semanticSearchAvailable() bool {
 		query.SemanticMessageSearchSupportsFilter(m.currentSearchFilter())
 }
 
+func (m Model) deepSearchAvailable() bool {
+	return m.currentSearchFilter().ListID == ""
+}
+
 func (m *Model) syncSearchScope() {
 	m.searchFilter = m.currentSearchFilter()
-	if m.searchMode == searchModeSemantic && !m.semanticSearchAvailable() {
+	if (m.searchMode == searchModeDeep && !m.deepSearchAvailable()) ||
+		(m.searchMode == searchModeSemantic && !m.semanticSearchAvailable()) {
 		m.searchMode = searchModeFast
 	}
 }
@@ -122,6 +127,9 @@ func (m *Model) syncSearchScope() {
 func (m Model) nextSearchMode() searchModeKind {
 	switch m.searchMode {
 	case searchModeFast:
+		if !m.deepSearchAvailable() {
+			return searchModeFast
+		}
 		return searchModeDeep
 	case searchModeDeep:
 		if m.semanticSearchAvailable() {
@@ -421,6 +429,18 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.aggregateRequestID++
 		return m, m.loadData()
 
+	// Lists view: jump directly to List ID aggregates.
+	case "l":
+		if isSub && m.drillViewType == query.ViewLists {
+			// Can't sub-aggregate by the same list dimension we drilled from.
+			return m, nil
+		}
+		m.viewType = query.ViewLists
+		m.resetViewState()
+		m.loading = true
+		m.aggregateRequestID++
+		return m, m.loadData()
+
 	// Time view: jump to Time view, or cycle granularity if already there
 	case "t":
 		if m.viewType == query.ViewTime {
@@ -474,6 +494,8 @@ func (m Model) nextSubGroupView(current query.ViewType) query.ViewType {
 	case query.ViewDomains:
 		return query.ViewLabels
 	case query.ViewLabels:
+		return query.ViewLists
+	case query.ViewLists:
 		return query.ViewTime
 	case query.ViewTime:
 		return query.ViewSenders
@@ -618,6 +640,27 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.err = nil         // Clear any previous error
 			m.detailRequestID++ // Increment to invalidate stale responses
 			return m, m.loadMessageDetail(m.messages[m.cursor].ID)
+		}
+
+	// Lists sub-grouping: jump directly to sub-aggregate List IDs.
+	case "l":
+		if m.hasActiveSemanticSearch() {
+			return m, nil
+		}
+		if m.hasDrillFilter() && m.drillViewType != query.ViewLists {
+			m.transitionBuffer = m.renderView()
+			m.pushBreadcrumb()
+			m.level = levelDrillDown
+			m.viewType = query.ViewLists
+			m.cursor = 0
+			m.scrollOffset = 0
+			m.rows = nil
+			m.loading = true
+			m.err = nil
+			m.selection.aggregateKeys = make(map[string]bool)
+			m.selection.aggregateViewType = m.viewType
+			m.aggregateRequestID++
+			return m, m.loadData()
 		}
 
 	// Time sub-grouping: jump directly to sub-aggregate Time view
@@ -1402,6 +1445,8 @@ func (m *Model) setDrillFilterForView(key string) {
 		if key == "" {
 			m.drillFilter.SetEmptyTarget(query.ViewLabels)
 		}
+	case query.ViewLists:
+		m.drillFilter.ListID = key
 	case query.ViewTime:
 		m.drillFilter.TimeRange.Period = key
 		m.drillFilter.TimeRange.Granularity = m.timeGranularity

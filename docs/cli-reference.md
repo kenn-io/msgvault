@@ -1062,7 +1062,25 @@ Ordinary aggregate views and statistics still default to email-only; use
 `--message-type` (or `message_type:` in the query) when you need an explicit
 search scope.
 
+The query accepts `list:` and `list-id:` as equivalent RFC 2919 List-Id
+filters. Values are case-insensitive literal substrings; quote values that
+contain spaces. Repeating either alias requires every value to match.
+
 `--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/usage/searching/) for the operator reference and [Vector Search](/usage/vector-search/) for semantic setup.
+
+---
+
+## repair-list-ids
+
+Re-derive archived email List-Id values from stored raw MIME without
+contacting a provider.
+
+```bash
+msgvault repair-list-ids [--apply]
+```
+
+The default is a dry run and does not modify the archive. Pass `--apply` to
+write changed values and mark derived analytics stale for the normal rebuild path.
 
 ---
 

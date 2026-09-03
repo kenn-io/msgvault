@@ -79,6 +79,18 @@ describe('Explore URL state', () => {
     expect(parseExploreURLState(serializeExploreURLState(state)).filters).toEqual(state.filters);
   });
 
+  it('restores mailing-list filters without dropping unrelated filters', () => {
+    const state: ExploreURLState = {
+      ...defaultExploreURLState,
+      filters: [
+        { dimension: 'mailing_list', values: ['<dev@example.test>'] },
+        { dimension: 'deletion', values: ['active'] }
+      ]
+    };
+
+    expect(parseExploreURLState(serializeExploreURLState(state)).filters).toEqual(state.filters);
+  });
+
   it('drops identity when its single parent source changes or is removed', () => {
     const withChangedSource = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,

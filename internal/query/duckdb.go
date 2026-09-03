@@ -239,6 +239,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		{datasetMessages, "sender_id"},
 		{datasetMessages, "owner_participant_id"},
 		{datasetMessages, messageTypeDimension},
+		{datasetMessages, "list_id"},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
@@ -583,7 +584,7 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 // and COALESCE expressions.
 //
 // Optional columns (phone_number, attachment_count, sender_id,
-// owner_participant_id, message_type)
+// owner_participant_id, message_type, list_id)
 // are handled gracefully: if the Parquet file predates their addition, they
 // are synthesised with sensible defaults instead of causing a binder error.
 // Every caller holds the shared cache read lock (via acquireQuerySlot or
@@ -621,6 +622,11 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		msgReplace = append(msgReplace, "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type")
 	} else {
 		msgExtra = append(msgExtra, "'' AS message_type")
+	}
+	if e.hasCol(datasetMessages, "list_id") {
+		msgReplace = append(msgReplace, "CAST(list_id AS VARCHAR) AS list_id")
+	} else {
+		msgExtra = append(msgExtra, "NULL::VARCHAR AS list_id")
 	}
 	if e.hasCol(datasetMessages, "deleted_at") {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
@@ -911,6 +917,16 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		args = append(args, subjPattern)
 	}
 
+	// List-Id filters use literal, case-insensitive substring matching.
+	// Keep one predicate per term so repeated list: operators are ANDed.
+	for _, listID := range q.ListIDs {
+		if strings.TrimSpace(listID) == "" {
+			continue
+		}
+		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeILIKE(listID)+"%")
+	}
+
 	// label: filter - case-insensitive substring match.
 	// In the Labels aggregate view (keyColumns includes the label column),
 	// filter the grouping column directly so only matching labels appear
@@ -1095,7 +1111,8 @@ func timeExpr(g TimeGranularity) string {
 
 // aggViewDef defines the varying parts of an aggregate query for each view type.
 type aggViewDef struct {
-	keyExpr    string // SQL expression for the grouping key (e.g. "p.email_address")
+	keyExpr    string // SQL expression returned as the grouping key (e.g. "p.email_address")
+	groupExpr  string // SQL expression used to group key-equivalent rows
 	joinClause string // JOIN clause specific to this view
 	nullGuard  string // WHERE condition to exclude NULL keys
 	// keyColumns for buildWhereClause search filtering (passed through to buildAggregateSearchConditions)
@@ -1162,6 +1179,15 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 			nullGuard:  lblAlias + ".name IS NOT NULL",
 			keyColumns: []string{lblAlias + ".name"},
 		}, nil
+	case ViewLists:
+		return aggViewDef{
+			// List-Id drills compare case-insensitively. Group by that same
+			// equivalence relation, while MIN retains one unmodified stored
+			// spelling as the stable representative key.
+			keyExpr:   "MIN(msg.list_id)",
+			groupExpr: "LOWER(msg.list_id)",
+			nullGuard: "msg.list_id IS NOT NULL AND msg.list_id != ''",
+		}, nil
 	case ViewTime:
 		return aggViewDef{
 			keyExpr:   timeExpr(granularity),
@@ -1183,6 +1209,10 @@ func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, where
 	if def.nullGuard != "" {
 		fullWhere += " AND " + def.nullGuard
 	}
+	groupExpr := def.keyExpr
+	if def.groupExpr != "" {
+		groupExpr = def.groupExpr
+	}
 
 	query := fmt.Sprintf(`
 		WITH %s
@@ -1203,7 +1233,7 @@ func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, where
 		)
 		%s
 		LIMIT ?
-	`, e.parquetCTEs(), def.keyExpr, def.joinClause, fullWhere, def.keyExpr, e.sortClause(opts))
+	`, e.parquetCTEs(), def.keyExpr, def.joinClause, fullWhere, groupExpr, e.sortClause(opts))
 
 	args = append(args, limit)
 	return e.executeAggregateQuery(ctx, query, args)
@@ -1286,6 +1316,11 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			conditions = append(conditions, condition)
 			args = append(args, conditionArgs...)
 		}
+	}
+
+	if filter.ListID != "" {
+		conditions = append(conditions, "LOWER(msg.list_id) = LOWER(?)")
+		args = append(args, filter.ListID)
 	}
 
 	// Sender + sender-name filters - check both message_recipients (email)
@@ -2088,6 +2123,16 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		}
 	}
 
+	// List-Id filters use literal, case-insensitive substring matching.
+	// Keep one predicate per term so repeated list: operators are ANDed.
+	for _, listID := range q.ListIDs {
+		if strings.TrimSpace(listID) == "" {
+			continue
+		}
+		conditions = append(conditions, "m.list_id ILIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
+	}
+
 	if len(q.MessageTypes) > 0 {
 		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
 		if condition != "" {
@@ -2280,6 +2325,10 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 			conditions = append(conditions, condition)
 			args = append(args, conditionArgs...)
 		}
+	}
+	if filter.ListID != "" {
+		conditions = append(conditions, "LOWER(msg.list_id) = LOWER(?)")
+		args = append(args, filter.ListID)
 	}
 
 	// Use EXISTS subqueries for filtering (becomes semi-joins, no duplicates).
@@ -3022,6 +3071,10 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	if filter.WithAttachmentsOnly {
 		conditions = append(conditions, "msg.has_attachments = true")
 	}
+	if filter.ListID != "" {
+		conditions = append(conditions, "LOWER(msg.list_id) = LOWER(?)")
+		args = append(args, filter.ListID)
+	}
 	// Sender filter - check both message_recipients (email/phone) and direct sender_id (WhatsApp/chat)
 	if filter.Sender != "" {
 		conditions = append(conditions, `(EXISTS (
@@ -3140,6 +3193,16 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 			conditions = append(conditions, "msg.subject ILIKE ? ESCAPE '\\'")
 			args = append(args, "%"+escapeILIKE(term)+"%")
 		}
+	}
+
+	// List-Id filters use literal, case-insensitive substring matching.
+	// Keep one predicate per term so repeated list: operators are ANDed.
+	for _, listID := range q.ListIDs {
+		if strings.TrimSpace(listID) == "" {
+			continue
+		}
+		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeILIKE(listID)+"%")
 	}
 
 	// Label filter - case-insensitive substring match
