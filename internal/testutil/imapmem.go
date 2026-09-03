@@ -64,6 +64,9 @@ func (l *droppingListener) Accept() (net.Conn, error) {
 		l.accepted.Add(1)
 		if l.remaining.Load() > 0 {
 			l.remaining.Add(-1)
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetLinger(0)
+			}
 			_ = conn.Close()
 			continue
 		}

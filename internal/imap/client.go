@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -195,9 +196,33 @@ func (e *retryableConnectError) Error() string { return e.err.Error() }
 
 func (e *retryableConnectError) Unwrap() error { return e.err }
 
+type observedConn struct {
+	net.Conn
+	mu        sync.Mutex
+	readBytes int64
+	readErr   error
+}
+
+func (c *observedConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.mu.Lock()
+	c.readBytes += int64(n)
+	if err != nil && c.readErr == nil {
+		c.readErr = err
+	}
+	c.mu.Unlock()
+	return n, err
+}
+
+func (c *observedConn) transientEmptyGreeting() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.readBytes == 0 &&
+		(errors.Is(c.readErr, io.EOF) || isTransientSocketError(c.readErr))
+}
+
 func isTransientConnectError(err error) bool {
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || isTransientSocketError(err) {
 		return true
 	}
 	var timeout interface{ Timeout() bool }
@@ -205,16 +230,26 @@ func isTransientConnectError(err error) bool {
 }
 
 func isTransientGreetingError(err error) bool {
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+	if isTransientSocketError(err) {
 		return true
 	}
 	var timeout interface{ Timeout() bool }
 	if errors.As(err, &timeout) && timeout.Timeout() {
 		return true
 	}
-	// The pinned go-imap release exposes a closed socket before greeting as this
-	// sentinel, while parser failures retain their wrapped decoder error.
-	return err.Error() == "connection closed before greeting"
+	return false
+}
+
+func isTransientSocketError(err error) bool {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	// Windows exposes WSA connection-reset codes through syscall.Errno.
+	return errno == syscall.Errno(10053) || errno == syscall.Errno(10054) || errno == syscall.Errno(64)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
@@ -269,19 +304,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 			Vanished: c.captureQresyncVanished,
 		},
 	}
-	var (
-		conn *imapclient.Client
-		err  error
-	)
-	if c.config.TLS {
-		conn, err = imapclient.DialTLS(addr, imapOpts)
-	} else if c.config.STARTTLS {
-		conn, err = imapclient.DialStartTLS(addr, imapOpts)
-	} else {
-		conn, err = imapclient.DialInsecure(addr, imapOpts)
-	}
+	conn, err, rawDial, observed := c.dialIMAP(ctx, addr, imapOpts)
 	if err != nil {
-		if !isTransientConnectError(err) {
+		if !rawDial || !isTransientConnectError(err) {
 			return fmt.Errorf("dial IMAP %s: %w", addr, err)
 		}
 		return &retryableConnectError{
@@ -295,7 +320,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		if errors.As(err, &protocolErr) {
 			return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
 		}
-		if !isTransientGreetingError(err) {
+		if !isTransientGreetingError(err) && !observed.transientEmptyGreeting() {
 			return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
 		}
 		return &retryableConnectError{
@@ -332,6 +357,35 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	c.qresyncEnabled = false
 	c.logger.Debug("connected and authenticated", "user", c.config.Username)
 	return nil
+}
+
+func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.Options) (*imapclient.Client, error, bool, *observedConn) {
+	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err, true, nil
+	}
+	observed := &observedConn{Conn: rawConn}
+	if c.config.TLS {
+		tlsConn := tls.Client(observed, &tls.Config{
+			ServerName: normalizeHost(c.config.Host),
+			NextProtos: []string{"imap"},
+		})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return nil, err, true, observed
+		}
+		return imapclient.New(tlsConn, options), nil, false, observed
+	}
+	if c.config.STARTTLS {
+		startTLSOptions := *options
+		startTLSOptions.TLSConfig = &tls.Config{ServerName: normalizeHost(c.config.Host)}
+		conn, err := imapclient.NewStartTLS(observed, &startTLSOptions)
+		if err != nil {
+			return nil, err, false, observed
+		}
+		return conn, nil, false, observed
+	}
+	return imapclient.New(observed, options), nil, false, observed
 }
 
 // reconnect closes the current connection and re-establishes it.
