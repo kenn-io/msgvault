@@ -210,14 +210,17 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 				}
 			}
 			diagnosticCode = capabilityCodeClass(profile.Protocol, rawJSONString(detail["reason"]))
-			diagnosticField = providerDiagnosticField(profile, parameter, parameterPresent, true)
+			diagnosticField = providerDiagnosticField(profile, parameter, parameterPresent)
 			if capabilityCodeMatchesProfile(profile, rawJSONString(detail["reason"]), parameter, parameterPresent) {
 				matched = true
 			}
 		}
-		if relevantDetails == 1 && matched {
-			return ProviderCapabilityUnsupportedRepresentation,
-				recognizedProviderDiagnostics(diagnosticCode, diagnosticField)
+		if relevantDetails == 1 {
+			diagnostics := recognizedProviderDiagnostics(diagnosticCode, diagnosticField)
+			if matched {
+				return ProviderCapabilityUnsupportedRepresentation, diagnostics
+			}
+			return "", diagnostics
 		}
 		return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)
 	case ProtocolCodexAppServer:
@@ -237,15 +240,12 @@ func diagnosticsForProviderError(profile ProviderProfile, errorObject map[string
 		return recognizedProviderDiagnostics(capabilityCodeClass(profile.Protocol, rawJSONString(errorObject["code"])), ProviderDiagnosticFieldMalformed)
 	}
 	return recognizedProviderDiagnostics(capabilityCodeClass(profile.Protocol, rawJSONString(errorObject["code"])),
-		providerDiagnosticField(profile, parameter, parameterPresent, true))
+		providerDiagnosticField(profile, parameter, parameterPresent))
 }
 
-func providerDiagnosticField(profile ProviderProfile, parameter string, parameterPresent, parameterValid bool) ProviderDiagnosticField {
+func providerDiagnosticField(profile ProviderProfile, parameter string, parameterPresent bool) ProviderDiagnosticField {
 	if !parameterPresent {
 		return ProviderDiagnosticFieldAbsent
-	}
-	if !parameterValid {
-		return ProviderDiagnosticFieldMalformed
 	}
 	if field := capabilityParameterClass(profile, parameter); field != "" {
 		return field
@@ -290,11 +290,18 @@ func capabilityCodeMatchesProfile(
 
 func capabilityCodeClass(protocol Protocol, code string) ProviderDiagnosticCode {
 	switch protocol {
-	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropicMessages:
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
 		if code == "unsupported_parameter" || code == "unsupported_value" {
 			return ProviderDiagnosticCodeRejectedField
 		}
 		if code == "unsupported_response_format" || code == "unsupported_json_schema" {
+			return ProviderDiagnosticCodeRejectedRepresentation
+		}
+	case ProtocolAnthropicMessages:
+		if code == "unsupported_parameter" || code == "unsupported_value" {
+			return ProviderDiagnosticCodeRejectedField
+		}
+		if code == "unsupported_json_schema" {
 			return ProviderDiagnosticCodeRejectedRepresentation
 		}
 	case ProtocolGoogleGenerateContent:
@@ -369,10 +376,6 @@ func capabilityRepresentationCodeMatchesProfile(profile ProviderProfile, code st
 		return false
 	}
 	return false
-}
-
-func capabilityRepresentationParameterMatchesProfile(profile ProviderProfile, parameter string) bool {
-	return capabilityRepresentationParameterClass(profile, parameter) != ""
 }
 
 func capabilityRepresentationParameterClass(profile ProviderProfile, parameter string) ProviderDiagnosticField {

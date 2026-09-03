@@ -856,6 +856,35 @@ func TestCapabilityNegotiationReportsDistinctProviderFailures(t *testing.T) {
 		!strings.Contains(messages[1], "unsupported_parameter"))
 }
 
+func TestCapabilityNegotiationPreservesGoogleForeignFieldDiagnostic(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"UNSUPPORTED_PARAMETER","domain":"generativelanguage.googleapis.com","metadata":{"parameter":"model"}}]}}`))
+		require.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	registry, err := NewDriverRegistry(server.Client(), nil, nil)
+	require.NoError(err)
+	_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+		capabilityTestCandidate(ProtocolGoogleGenerateContent, server.URL),
+		NewCredential(AuthGoogleAPIKey, capabilityCredentialValue))
+	require.Error(negotiationErr)
+	var typedErr *NegotiationError
+	require.ErrorAs(negotiationErr, &typedErr)
+	assert.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
+	assert.Equal(ProviderDiagnosticFieldForeign, typedErr.Diagnostics.Field)
+}
+
+func TestAnthropicForeignRepresentationCodeIsUnclassified(t *testing.T) {
+	profile := ProviderProfile{Protocol: ProtocolAnthropicMessages, OutputMode: OutputModeNativeJSONSchema}
+	capability, diagnostics := classifyProviderError(profile,
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_response_format"}}`))
+	assert.Empty(t, capability)
+	assert.Equal(t, recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent), diagnostics)
+}
+
 func TestCapabilityNegotiationKeepsClassifiedFallback(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
