@@ -42,6 +42,115 @@ func TestMarkMigrationApplied_Idempotent(t *testing.T) {
 	assert.True(t, applied, "migration should be marked as applied after two calls")
 }
 
+func TestMigrationLedgerVersionLifecycle(t *testing.T) {
+	f := storetest.New(t)
+
+	const name = "versioned_migration"
+	require.NoError(t, f.Store.MarkMigrationApplied(name, 3))
+
+	for _, tc := range []struct {
+		minimum int
+		want    bool
+	}{
+		{minimum: 1, want: true},
+		{minimum: 3, want: true},
+		{minimum: 4, want: false},
+	} {
+		applied, err := f.Store.IsMigrationApplied(name, tc.minimum)
+		require.NoError(t, err, "check minimum version %d", tc.minimum)
+		assert.Equal(t, tc.want, applied, "minimum version %d", tc.minimum)
+	}
+
+	var before string
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&before))
+	require.NoError(t, f.Store.MarkMigrationApplied(name, 3), "same-version mark")
+	var after string
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&after))
+	assert.Equal(t, before, after, "same-version mark must not rewrite applied_at")
+
+	require.NoError(t, f.Store.MarkMigrationApplied(name, 2), "lower-version mark")
+	var version int
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
+	assert.Equal(t, 3, version, "lower-version mark must not downgrade the ledger")
+}
+
+func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
+	f := storetest.New(t)
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "zero check", call: func() error {
+			_, err := f.Store.IsMigrationApplied("invalid_zero", 0)
+			return err
+		}},
+		{name: "negative mark", call: func() error {
+			return f.Store.MarkMigrationApplied("invalid_negative", -1)
+		}},
+		{name: "multiple versions", call: func() error {
+			return f.Store.MarkMigrationApplied("invalid_multiple", 1, 2)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Error(t, tc.call())
+		})
+	}
+
+	before, err := f.Store.DerivedDataRevision()
+	require.NoError(t, err)
+	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("invalid_revision", 0)
+	require.Error(t, err)
+	after, err := f.Store.DerivedDataRevision()
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "invalid version must not bump derived-data revision")
+}
+
+func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
+	f := storetest.New(t)
+	const name = "derived_versioned_migration"
+
+	before, err := f.Store.DerivedDataRevision()
+	require.NoError(t, err)
+	require.NoError(t, f.Store.MarkMigrationAppliedWithDerivedDataRevision(name, 4))
+	after, err := f.Store.DerivedDataRevision()
+	require.NoError(t, err)
+	assert.Equal(t, before+1, after, "successful derived-data mark must bump revision")
+
+	var version int
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
+	assert.Equal(t, 4, version)
+
+	// Force the ledger write to fail after the revision bump has run. The
+	// transaction must roll back both changes together.
+	_, err = f.Store.DB().Exec(`DROP TABLE applied_migrations`)
+	require.NoError(t, err)
+	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("atomic_failure", 2)
+	require.Error(t, err)
+	rolledBack, err := f.Store.DerivedDataRevision()
+	require.NoError(t, err)
+	assert.Equal(t, after, rolledBack, "failed ledger mark must roll back the revision bump")
+}
+
+func TestNameOnlyLedgerWriterDoesNotRegressVersion(t *testing.T) {
+	f := storetest.New(t)
+	const name = "direct_writer_migration"
+
+	require.NoError(t, f.Store.MarkMigrationApplied(name, 7))
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`INSERT INTO applied_migrations (name) VALUES (?) ON CONFLICT DO NOTHING`), name)
+	require.NoError(t, err, "direct version-1 writer")
+
+	var version int
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
+	assert.Equal(t, 7, version, "a name-only writer must not regress a higher version")
+}
+
 func TestArchiveIdentityMigrationIsRecorded(t *testing.T) {
 	f := storetest.New(t)
 

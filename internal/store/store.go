@@ -1197,6 +1197,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("create fresh-schema canonical RFC822 Message-ID index: %w", err)
 		}
 	}
+	if err := s.ensureMigrationLedgerVersionColumn(ctx); err != nil {
+		return fmt.Errorf("ensure migration ledger version column: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonInferenceProviderV2, false,
 		s.migratePersonInferenceProviderV2,
@@ -1300,6 +1303,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// content_changed_at itself arrives on an upgraded archive.
 	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
+		if m.Desc == migrationLedgerVersionColumnDesc {
+			continue
+		}
 		if _, err := s.db.ExecContext(ctx, m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
@@ -1896,8 +1902,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 // reintroducing a contextless pair.
 func (s *Store) runOnceMigration(
 	ctx context.Context, name string, force bool, fn func(ctx context.Context) error,
+	minimumVersion ...int,
 ) error {
-	applied, err := s.IsMigrationAppliedContext(ctx, name)
+	version, err := resolveMigrationVersion(minimumVersion)
+	if err != nil {
+		return err
+	}
+	applied, err := s.IsMigrationAppliedContext(ctx, name, version)
 	if err != nil {
 		return err
 	}
@@ -1907,7 +1918,7 @@ func (s *Store) runOnceMigration(
 	if err := fn(ctx); err != nil {
 		return err
 	}
-	return s.MarkMigrationAppliedContext(ctx, name)
+	return s.MarkMigrationAppliedContext(ctx, name, version)
 }
 
 // contentChangedBackfillBatchSize is how many ROWS one backfill batch stamps —
