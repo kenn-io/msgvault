@@ -214,10 +214,19 @@ func (c *observedConn) Read(p []byte) (int, error) {
 	c.readBytes += int64(n)
 	if c.startTLSCommandSent && !c.startTLSResponseReady && n > 0 {
 		c.startTLSResponse = append(c.startTLSResponse, p[:n]...)
-		if end := bytes.Index(c.startTLSResponse, []byte("\r\n")); end >= 0 {
+		for {
+			end := bytes.Index(c.startTLSResponse, []byte("\r\n"))
+			if end < 0 {
+				break
+			}
 			fields := strings.Fields(string(c.startTLSResponse[:end]))
+			if len(fields) > 0 && (fields[0] == "*" || fields[0] == "+") {
+				c.startTLSResponse = c.startTLSResponse[end+2:]
+				continue
+			}
 			c.startTLSResponseReady = true
 			c.startTLSResponseOK = len(fields) > 1 && strings.EqualFold(fields[1], "OK")
+			break
 		}
 	}
 	if err != nil && c.readErr == nil {
@@ -228,22 +237,28 @@ func (c *observedConn) Read(p []byte) (int, error) {
 }
 
 func (c *observedConn) Write(p []byte) (int, error) {
-	n, err := c.Conn.Write(p)
-	c.mu.Lock()
-	if strings.Contains(strings.ToUpper(string(p[:n])), "STARTTLS") {
+	if strings.Contains(strings.ToUpper(string(p)), "STARTTLS") {
+		c.mu.Lock()
 		c.startTLSCommandSent = true
 		c.startTLSResponse = nil
 		c.startTLSResponseReady = false
 		c.startTLSResponseOK = false
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
-	return n, err
+	return c.Conn.Write(p)
 }
 
 func (c *observedConn) hasReadBytes() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.readBytes > 0
+}
+
+func (c *observedConn) resetReadObservation() {
+	c.mu.Lock()
+	c.readBytes = 0
+	c.readErr = nil
+	c.mu.Unlock()
 }
 
 func (c *observedConn) transientEmptyGreeting() bool {
@@ -465,6 +480,7 @@ func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.
 			_ = rawConn.Close()
 			return nil, err, true, observed
 		}
+		observed.resetReadObservation()
 		return imapclient.New(tlsConn, options), nil, false, observed
 	}
 	if c.config.STARTTLS {
