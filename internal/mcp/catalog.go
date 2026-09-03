@@ -147,6 +147,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
 		getPersonNotesDefinition(nil),
+		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),

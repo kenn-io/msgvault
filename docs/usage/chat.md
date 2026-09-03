@@ -105,6 +105,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `get_person_profile` | One durable person's overview from local derived state: display name, tracking, contact state (first/last contact, last inbound and outbound, interaction count, inferred channel), the curated `primary_channel`, non-sensitive attributes, current employment, typed relationships, contact points, dates, and categories. Excludes sensitive attributes, private Notes, addresses, and media; makes no provider calls. | `person_id` (int, required) |
 
 `search_metadata`, `search_message_bodies`, `semantic_search_messages`, and `list_messages` return paginated JSON. `search_metadata` reports an exact `total`; `search_message_bodies`, `semantic_search_messages`, and `list_messages` return `total = -1` because they do not run a separate count query:
 

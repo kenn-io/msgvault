@@ -43,6 +43,7 @@ const (
 	ToolSearchPersonFiles       = "search_person_files"
 	ToolSearchPeople            = "search_people"
 	ToolGetPersonNotes          = "get_person_notes"
+	ToolGetPersonProfile        = "get_person_profile"
 	ToolGetPersonRelationship   = "get_person_relationship"
 	ToolPromotePerson           = "promote_person"
 	ToolUpdatePersonNotes       = "update_person_notes"
