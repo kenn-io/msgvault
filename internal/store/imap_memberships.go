@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -175,19 +176,29 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 		for _, normalized := range normalizedDeltas {
 			delta := normalized.delta
+			// A Reset delta is authoritative for the whole mailbox, but almost
+			// every row it republishes is identical to the saved one. Read the
+			// saved rows once and diff against them, so only real changes are
+			// written and only their messages have labels rebuilt below.
+			var stored map[imapMembershipUID]storedIMAPMembership
 			if delta.Reset {
-				if err := captureIMAPMembershipMessageIDs(
-					tx, affected,
-					`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ?`,
-					sourceID, normalized.mailbox,
-				); err != nil {
-					return fmt.Errorf("capture reset memberships for mailbox %q: %w", normalized.mailbox, err)
+				loaded, err := loadIMAPMailboxMemberships(tx, sourceID, normalized.mailbox)
+				if err != nil {
+					return fmt.Errorf("load memberships for mailbox %q: %w", normalized.mailbox, err)
 				}
-				if _, err := tx.Exec(`
-					DELETE FROM imap_message_memberships
-					WHERE source_id = ? AND mailbox = ?
-				`, sourceID, normalized.mailbox); err != nil {
-					return fmt.Errorf("reset IMAP memberships for mailbox %q: %w", normalized.mailbox, err)
+				stored = loaded
+				observed := make(map[imapMembershipUID]struct{}, len(delta.Memberships))
+				for _, observation := range delta.Memberships {
+					observed[imapMembershipUID{
+						uidValidity: normalized.uidValidity, uid: observation.UID,
+					}] = struct{}{}
+				}
+				// Whatever the reset does not republish is gone from the mailbox.
+				// This runs before any insert, as the wholesale delete did.
+				if err := deleteUnobservedIMAPMemberships(
+					tx, sourceID, normalized.mailbox, stored, observed, affected,
+				); err != nil {
+					return err
 				}
 			}
 
@@ -206,6 +217,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				`, sourceID, normalized.mailbox, normalized.uidValidity, uid); err != nil {
 					return fmt.Errorf("remove vanished UID %d in mailbox %q: %w", uid, normalized.mailbox, err)
 				}
+				delete(stored, imapMembershipUID{uidValidity: normalized.uidValidity, uid: uid})
 			}
 
 			for _, observation := range delta.Memberships {
@@ -214,6 +226,23 @@ func (s *Store) applyIMAPMailboxDeltas(
 				messageID, err := resolver.resolve(observation)
 				if err != nil {
 					return err
+				}
+				flags := observation.Flags
+				if flags == nil {
+					flags = []string{}
+				}
+				if delta.Reset {
+					key := imapMembershipUID{
+						uidValidity: observation.UIDValidity, uid: observation.UID,
+					}
+					prior, saved := stored[key]
+					delete(stored, key)
+					if saved && prior.flagsDecoded &&
+						prior.messageID == messageID && slices.Equal(prior.flags, flags) {
+						// Identical membership: writing it would only move
+						// updated_at and rebuild labels that cannot have changed.
+						continue
+					}
 				}
 				if observation.SourceMessageID != "" {
 					if err := captureIMAPMembershipMessageIDs(
@@ -234,10 +263,6 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("capture replaced IMAP membership: %w", err)
 				}
 
-				flags := observation.Flags
-				if flags == nil {
-					flags = []string{}
-				}
 				flagsJSON, err := json.Marshal(flags)
 				if err != nil {
 					return fmt.Errorf("marshal IMAP flags: %w", err)
@@ -311,6 +336,107 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 		return nil
 	})
+}
+
+// imapMembershipUID identifies one saved membership row within a mailbox.
+type imapMembershipUID struct {
+	uidValidity uint32
+	uid         uint32
+}
+
+type storedIMAPMembership struct {
+	messageID int64
+	flags     []string
+	// flagsDecoded is false when the saved flags JSON did not parse. Such a row
+	// cannot be compared, so it is always rewritten.
+	flagsDecoded bool
+}
+
+// loadIMAPMailboxMemberships reads every saved membership of one mailbox so a
+// Reset delta can diff against it. Flags are decoded rather than compared as
+// stored text: SQLite returns the JSON we wrote, PostgreSQL reformats it.
+func loadIMAPMailboxMemberships(
+	tx *loggedTx, sourceID int64, mailbox string,
+) (map[imapMembershipUID]storedIMAPMembership, error) {
+	rows, err := tx.Query(`
+		SELECT uidvalidity, uid, message_id, flags
+		FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ?
+	`, sourceID, mailbox)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	stored := make(map[imapMembershipUID]storedIMAPMembership)
+	for rows.Next() {
+		var (
+			key       imapMembershipUID
+			messageID int64
+			flagsJSON sql.NullString
+		)
+		if err := rows.Scan(&key.uidValidity, &key.uid, &messageID, &flagsJSON); err != nil {
+			return nil, err
+		}
+		saved := storedIMAPMembership{messageID: messageID, flags: []string{}, flagsDecoded: true}
+		if flagsJSON.Valid && flagsJSON.String != "" {
+			if err := json.Unmarshal([]byte(flagsJSON.String), &saved.flags); err != nil {
+				saved.flags, saved.flagsDecoded = nil, false
+			}
+		}
+		stored[key] = saved
+	}
+	return stored, rows.Err()
+}
+
+// deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a
+// Reset delta does not republish, drops them from stored, and marks their
+// messages for label reconciliation.
+func deleteUnobservedIMAPMemberships(
+	tx *loggedTx,
+	sourceID int64,
+	mailbox string,
+	stored map[imapMembershipUID]storedIMAPMembership,
+	observed map[imapMembershipUID]struct{},
+	affected map[int64]struct{},
+) error {
+	keys := make([]imapMembershipUID, 0, len(stored))
+	for key, prior := range stored {
+		if _, kept := observed[key]; kept {
+			continue
+		}
+		keys = append(keys, key)
+		affected[prior.messageID] = struct{}{}
+		delete(stored, key)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	if len(stored) == 0 {
+		// Nothing survived: an emptied mailbox, or a new UIDVALIDITY epoch.
+		// One statement instead of one per row.
+		if _, err := tx.Exec(`
+			DELETE FROM imap_message_memberships
+			WHERE source_id = ? AND mailbox = ?
+		`, sourceID, mailbox); err != nil {
+			return fmt.Errorf("reset IMAP memberships for mailbox %q: %w", mailbox, err)
+		}
+		return nil
+	}
+	slices.SortFunc(keys, func(a, b imapMembershipUID) int {
+		if a.uidValidity != b.uidValidity {
+			return cmp.Compare(a.uidValidity, b.uidValidity)
+		}
+		return cmp.Compare(a.uid, b.uid)
+	})
+	for _, key := range keys {
+		if _, err := tx.Exec(`
+			DELETE FROM imap_message_memberships
+			WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+		`, sourceID, mailbox, key.uidValidity, key.uid); err != nil {
+			return fmt.Errorf("remove absent UID %d in mailbox %q: %w", key.uid, mailbox, err)
+		}
+	}
+	return nil
 }
 
 func captureUntrackedIMAPMessageIDs(

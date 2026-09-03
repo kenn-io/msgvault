@@ -806,3 +806,145 @@ func TestApplyIMAPMailboxDeltas_ConflictingDeltaIdentityRollsBackEverything(t *t
 		})
 	}
 }
+
+const membershipStamp = "1999-01-01 00:00:00"
+
+// stampMemberships rewrites updated_at on every saved membership so a later
+// apply can be measured by which rows moved off the stamp.
+func stampMemberships(t *testing.T, st *store.Store, sourceID int64) {
+	t.Helper()
+	_, err := st.DB().Exec(st.Rebind(`
+		UPDATE imap_message_memberships SET updated_at = ? WHERE source_id = ?
+	`), membershipStamp, sourceID)
+	require.NoError(t, err)
+}
+
+// membershipsWritten counts the rows an apply inserted or updated since the
+// last stampMemberships call.
+func membershipsWritten(t *testing.T, st *store.Store, sourceID int64) int {
+	t.Helper()
+	var count int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM imap_message_memberships
+		WHERE source_id = ? AND updated_at <> ?
+	`), sourceID, membershipStamp).Scan(&count))
+	return count
+}
+
+func TestApplyIMAPMailboxDeltas_UnchangedResetWritesNothing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	firstID := f.createMessage(t, "reset-first", "<reset-first@example.com>")
+	secondID := f.createMessage(t, "reset-second", "<reset-second@example.com>")
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 3, HighestModSeq: 40},
+		Memberships: []store.IMAPMembershipObservation{
+			{
+				Mailbox: "INBOX", UIDValidity: 5, UID: 1,
+				SourceMessageID: "reset-first", Flags: []string{"\\Seen"},
+			},
+			{Mailbox: "INBOX", UIDValidity: 5, UID: 2, SourceMessageID: "reset-second"},
+		},
+	}
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	stampMemberships(t, f.store, f.source.ID)
+
+	delta.Reset = true
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+
+	assert.Equal(0, membershipsWritten(t, f.store, f.source.ID),
+		"a reset that observes the saved set must rewrite no membership")
+	assert.Equal(2, membershipCount(t, f.store, f.source.ID))
+	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, firstID))
+	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, secondID))
+	assert.False(messageTombstoned(t, f.store, firstID))
+	assert.False(messageTombstoned(t, f.store, secondID))
+}
+
+func TestApplyIMAPMailboxDeltas_ResetWritesOnlyChangedMemberships(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	expungedID := f.createMessage(t, "reset-expunged", "<reset-expunged@example.com>")
+	keptID := f.createMessage(t, "reset-kept", "<reset-kept@example.com>")
+	arrivedID := f.createMessage(t, "reset-arrived", "<reset-arrived@example.com>")
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 3, HighestModSeq: 40},
+		Memberships: []store.IMAPMembershipObservation{
+			{Mailbox: "INBOX", UIDValidity: 5, UID: 1, SourceMessageID: "reset-expunged"},
+			{Mailbox: "INBOX", UIDValidity: 5, UID: 2, SourceMessageID: "reset-kept"},
+		},
+	}}))
+	stampMemberships(t, f.store, f.source.ID)
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 4, HighestModSeq: 41},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{
+			{Mailbox: "INBOX", UIDValidity: 5, UID: 2, SourceMessageID: "reset-kept"},
+			{Mailbox: "INBOX", UIDValidity: 5, UID: 3, SourceMessageID: "reset-arrived"},
+		},
+	}}))
+
+	assert.Equal(1, membershipsWritten(t, f.store, f.source.ID),
+		"only the arrival is written; the kept UID keeps its stamp")
+	known, err := f.store.GetIMAPKnownUIDs(f.source.ID)
+	require.NoError(err)
+	assert.Equal(map[string][]uint32{"INBOX": {2, 3}}, known)
+	gotKeptID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 5, 2)
+	assert.Equal(keptID, gotKeptID)
+	assert.True(messageTombstoned(t, f.store, expungedID))
+	assert.Empty(messageLabels(t, f.store, expungedID))
+	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, arrivedID))
+	assert.False(messageTombstoned(t, f.store, keptID))
+}
+
+func TestApplyIMAPMailboxDeltas_ResetPersistsFlagChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	f.createMessage(t, "reset-flagged", "<reset-flagged@example.com>")
+	f.createMessage(t, "reset-steady", "<reset-steady@example.com>")
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 3, HighestModSeq: 40},
+		Memberships: []store.IMAPMembershipObservation{
+			{
+				Mailbox: "INBOX", UIDValidity: 5, UID: 1,
+				SourceMessageID: "reset-flagged", Flags: []string{"\\Seen"},
+			},
+			{
+				Mailbox: "INBOX", UIDValidity: 5, UID: 2,
+				SourceMessageID: "reset-steady", Flags: []string{"\\Seen"},
+			},
+		},
+	}}))
+	stampMemberships(t, f.store, f.source.ID)
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 3, HighestModSeq: 41},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{
+			{
+				Mailbox: "INBOX", UIDValidity: 5, UID: 1,
+				SourceMessageID: "reset-flagged", Flags: []string{"\\Seen", "\\Flagged"},
+			},
+			{
+				Mailbox: "INBOX", UIDValidity: 5, UID: 2,
+				SourceMessageID: "reset-steady", Flags: []string{"\\Seen"},
+			},
+		},
+	}}))
+
+	assert.Equal(1, membershipsWritten(t, f.store, f.source.ID),
+		"a flag change must still be written, and only it")
+	_, gotFlags := membershipMessageAndFlags(t, f.store, f.source.ID, 5, 1)
+	assert.JSONEq(`["\\Seen","\\Flagged"]`, gotFlags)
+	_, gotSteadyFlags := membershipMessageAndFlags(t, f.store, f.source.ID, 5, 2)
+	assert.JSONEq(`["\\Seen"]`, gotSteadyFlags)
+}
