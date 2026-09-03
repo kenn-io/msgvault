@@ -220,7 +220,7 @@ func (c *observedConn) Read(p []byte) (int, error) {
 				break
 			}
 			fields := strings.Fields(string(c.startTLSResponse[:end]))
-			if len(fields) > 0 && (fields[0] == "*" || fields[0] == "+") {
+			if len(fields) > 1 && fields[0] == "*" && strings.EqualFold(fields[1], "OK") {
 				c.startTLSResponse = c.startTLSResponse[end+2:]
 				continue
 			}

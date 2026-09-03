@@ -184,6 +184,27 @@ func TestRetryDoesNotClassifySTARTTLSProtocolFailure(t *testing.T) {
 	assert.Equal(t, int64(1), accepted())
 }
 
+func TestRetryDoesNotClassifySTARTTLSUntaggedRejection(t *testing.T) {
+	addr, accepted := startRejectedSTARTTLSServer(t)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{
+		Host: host, Port: port, STARTTLS: true, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
+}
+
 func TestRetryRetriesSTARTTLSConnectionFailure(t *testing.T) {
 	addr, accepted := startDroppedSTARTTLSServer(t, len(connectRetryDelays)+1)
 	host, portText, err := net.SplitHostPort(addr)
@@ -301,6 +322,28 @@ func startTruncatedSTARTTLSServer(t *testing.T) (string, func() int64) {
 			if tcpConn, ok := conn.(*net.TCPConn); ok {
 				_ = tcpConn.CloseWrite()
 			}
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startRejectedSTARTTLSServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+			buffer := make([]byte, 128)
+			_, _ = conn.Read(buffer)
+			_, _ = conn.Write([]byte("* NO STARTTLS rejected\r\n"))
 			_ = conn.Close()
 		}
 	}()
