@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -147,6 +148,50 @@ func TestRetryDoesNotClassifyMalformedGreeting(t *testing.T) {
 	assert.Equal(t, int64(1), accepted())
 }
 
+func TestRetryDoesNotClassifyTruncatedGreeting(t *testing.T) {
+	addr, accepted := startTruncatedGreetingServer(t)
+	client := newTestClient(t, addr)
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	_, err := client.ListMessages(t.Context(), "", "")
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
+}
+
+func TestRetryPropagatesCancellationDuringBackoff(t *testing.T) {
+	addr, _, accepted := testutil.StartIMAPMemServerWithDroppedConnections(
+		t, map[string]int{"INBOX": 1}, 1)
+	client := newTestClient(t, addr)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.sleep = func(ctx context.Context, _ time.Duration) error {
+		cancel()
+		return sleepContext(ctx, time.Hour)
+	}
+
+	err := client.connect(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int64(1), accepted())
+}
+
+func TestRetryExhaustionReturnsUnderlyingConnectionError(t *testing.T) {
+	addr, _, accepted := testutil.StartIMAPMemServerWithDroppedConnections(
+		t, map[string]int{"INBOX": 1}, len(connectRetryDelays)+1)
+	client := newTestClient(t, addr)
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	err := client.connect(t.Context())
+	assert.Error(t, err)
+	var retryErr *retryableConnectError
+	assert.False(t, errors.As(err, &retryErr))
+	assert.Equal(t, int64(len(connectRetryDelays)+1), accepted())
+}
+
 func startMalformedGreetingServer(t *testing.T) (string, func() int64) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -159,6 +204,25 @@ func startMalformedGreetingServer(t *testing.T) (string, func() int64) {
 				return
 			}
 			_, _ = conn.Write([]byte("not an IMAP greeting\\r\\n"))
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startTruncatedGreetingServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("* OK truncated"))
 			_ = conn.Close()
 		}
 	}()

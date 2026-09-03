@@ -205,7 +205,11 @@ func isTransientConnectError(err error) bool {
 }
 
 func isTransientGreetingError(err error) bool {
-	if isTransientConnectError(err) {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
 		return true
 	}
 	// The pinned go-imap release exposes a closed socket before greeting as this
