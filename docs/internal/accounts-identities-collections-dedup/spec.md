@@ -645,13 +645,19 @@ predicate combines them.
 ```sql
 CREATE TABLE IF NOT EXISTS applied_migrations (
     name       TEXT PRIMARY KEY,
+    version    INTEGER NOT NULL DEFAULT 1,
     applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 DDL changes use `IF NOT EXISTS`. This table records *data*
-migrations that must run exactly once (e.g.
-`legacy_identity_to_per_account`).
+migrations by name and the highest successfully applied implementation
+version (e.g. `legacy_identity_to_per_account`). Existing rows upgraded
+from the legacy schema receive version 1. Callers that omit a version
+request version 1; a migration is applied when the recorded version is
+below the requested minimum, and successful runs advance the recorded
+version monotonically. A failed or cancelled run leaves the previous
+version unchanged.
 
 ## CLI surface
 
@@ -867,16 +873,18 @@ runs the one-time data migration `legacy_identity_to_per_account`:
      identifiers, insert a confirmed identity record with
      `source_signal = manual` if the address is not already
      confirmed.
-2. Insert a row into `applied_migrations` with
-   `name = 'legacy_identity_to_per_account'`.
+2. Insert or advance the `applied_migrations` row with
+   `name = 'legacy_identity_to_per_account'` and `version = 1`.
 3. Log a warning naming the migration and the number of records
    inserted.
 4. Print a one-time CLI notice asking the user to review per-account
    identities via `msgvault identity list`.
 
-After migration, the `[identity]` block is no longer read. The
-migration runs exactly once: subsequent startups see the
-`applied_migrations` row and skip.
+After migration, the `[identity]` block is no longer read. Once the
+version-1 run succeeds, subsequent startups see the
+`applied_migrations` row and skip it. A future reshaped implementation
+can request a higher minimum version and rerun the migration; the ledger
+retains the highest successful version.
 
 If startup happens before any source exists, the migration defers
 until the first source is created, then runs against that source
