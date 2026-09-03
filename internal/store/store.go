@@ -1886,11 +1886,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	return nil
 }
 
-// runOnceMigration runs fn at most once per archive, gated on the
-// applied_migrations ledger: fn runs when the ledger has no entry for name (or
-// when force overrides that), and the entry is written only after fn returns
-// successfully, so a migration that failed or was cancelled runs again on the
-// next open.
+// runOnceMigration runs fn when the applied_migrations ledger has no entry for
+// name or records a version below the requested minimum (or when force
+// overrides that), and writes the entry only after fn returns successfully, so
+// a migration that failed or was cancelled runs again on the next open.
 //
 // It is the single owner of the ledger statements for every one-time step in
 // InitSchemaContext, and both of them carry ctx. That is not incidental. The

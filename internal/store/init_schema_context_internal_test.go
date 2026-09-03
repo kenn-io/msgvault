@@ -46,6 +46,7 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 	require.NoError(st.InitSchema(), "initialize schema")
 
 	const name = "retryable_migration"
+	require.NoError(st.MarkMigrationApplied(name, 1), "seed the prior migration version")
 	failure := errors.New("migration body failed")
 	err = st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
 		return failure
@@ -54,6 +55,9 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 	applied, err := st.IsMigrationApplied(name, 2)
 	require.NoError(err)
 	assert.False(applied, "a failed body must not be marked")
+	applied, err = st.IsMigrationApplied(name, 1)
+	require.NoError(err)
+	assert.True(applied, "a failed higher-version body must preserve version 1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	err = st.runOnceMigration(ctx, name, false, func(ctx context.Context) error {
@@ -65,6 +69,9 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 	applied, err = st.IsMigrationApplied(name, 2)
 	require.NoError(err)
 	assert.False(applied, "a cancelled body must not be marked")
+	applied, err = st.IsMigrationApplied(name, 1)
+	require.NoError(err)
+	assert.True(applied, "a cancelled higher-version body must preserve version 1")
 
 	require.NoError(st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
 		return nil
