@@ -188,20 +188,22 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 }
 
 func TestPeopleBrowserGetPersonProfilePropagatesPersonNotFound(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writePeopleBrowserJSON(t, w, http.StatusNotFound, `{"error":"person_profile_not_found","message":"Person profile not found"}`)
 	}))
 
 	profile, err := engine.GetPersonProfile(t.Context(), 404)
-	require.Error(t, err)
-	assert.Nil(t, profile)
+	require.Error(err)
+	assert.Nil(profile)
 	var apiErr *APIError
-	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, http.StatusNotFound, apiErr.Status)
-	assert.Equal(t, "person_profile_not_found", apiErr.APIErrorCode())
+	require.ErrorAs(err, &apiErr)
+	assert.Equal(http.StatusNotFound, apiErr.Status)
+	assert.Equal("person_profile_not_found", apiErr.APIErrorCode())
 
 	_, err = engine.GetPersonProfile(t.Context(), 0)
-	assert.Error(t, err, "a non-positive ID never reaches the daemon")
+	require.Error(err, "a non-positive ID never reaches the daemon")
 }
 
 func TestDaemonPeopleBrowserImplementsProfileReader(t *testing.T) {
