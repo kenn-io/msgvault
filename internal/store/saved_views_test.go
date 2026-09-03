@@ -166,7 +166,7 @@ func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
 	requirements := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
-	supported := []string{"source", "participant", "domain", "message_type", "kind", "year", "month"}
+	supported := []string{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}
 
 	for _, dimension := range supported {
 		t.Run("accept "+dimension, func(t *testing.T) {

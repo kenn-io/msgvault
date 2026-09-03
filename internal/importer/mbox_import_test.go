@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -166,6 +167,42 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE subject = 'Hello' LIMIT 1`).Scan(&hasAttachments, &attachmentCount), "select message attachment metadata")
 	require.True(hasAttachments, "has_attachments")
 	require.Equal(1, attachmentCount, "attachment_count")
+}
+
+// TestImportMboxPersistsListID catches an offline MIME import that parses the
+// List-Id header but drops it before the shared message persistence boundary.
+func TestImportMboxPersistsListID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tmp := t.TempDir()
+	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "initialize schema")
+
+	raw := email.NewMessage().
+		From("Alice <alice@example.com>").
+		To("Bob <bob@example.com>").
+		Subject("List announcement").
+		Header("List-Id", "Example <announce.example.org>").
+		Body("Body text.\n").
+		Bytes()
+	mboxPath := filepath.Join(tmp, "list-id.mbox")
+	mboxData := "From alice@example.com Mon Jan 1 12:00:00 2024\n" + string(raw)
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
+
+	_, err = ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
+		SourceType: "mbox",
+		Identifier: "owner@example.com",
+		NoResume:   true,
+	})
+	require.NoError(err, "import mbox")
+
+	var listID sql.NullString
+	require.NoError(st.DB().QueryRow(`SELECT list_id FROM messages`).Scan(&listID),
+		"read imported list ID")
+	assert.True(listID.Valid, "list ID should be present")
+	assert.Equal("<announce.example.org>", listID.String, "list ID")
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {

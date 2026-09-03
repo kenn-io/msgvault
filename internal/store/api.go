@@ -619,6 +619,33 @@ func (s *Store) searchMessagesQueryImpl(
 		args = append(args, "%"+escapeLike(strings.ToLower(term))+"%")
 	}
 
+	// list: / list-id: filters. Each predicate is separate so repeated
+	// operators are ANDed. list_id being NULL naturally excludes rows.
+	for _, listID := range q.ListIDs {
+		if strings.TrimSpace(listID) == "" {
+			continue
+		}
+		conditions = append(conditions, fmt.Sprintf(`%s LIKE %s ESCAPE '\'`,
+			s.dialect.UnicodeLowerExpression("COALESCE(m.list_id, '')"),
+			s.dialect.UnicodeLowerExpression("?")))
+		args = append(args, "%"+escapeLike(strings.ToLower(listID))+"%")
+	}
+	// Structured Explore mailing-list filters use exact membership. Each
+	// request filter is an OR group, and repeated filters are ANDed.
+	for _, group := range q.ListIDExactGroups {
+		if len(group) == 0 {
+			continue
+		}
+		parts := make([]string, len(group))
+		for i, listID := range group {
+			parts[i] = fmt.Sprintf(`%s = %s`,
+				s.dialect.UnicodeLowerExpression("COALESCE(m.list_id, '')"),
+				s.dialect.UnicodeLowerExpression("?"))
+			args = append(args, listID)
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+	}
+
 	// message_type: / message_type= filter.
 	if len(q.MessageTypes) > 0 {
 		placeholders := make([]string, len(q.MessageTypes))
@@ -1167,6 +1194,7 @@ type ChangedMessage struct {
 	SourceMessageID     string
 	ConversationID      int64
 	MessageType         string
+	ListID              *string
 	Subject             string
 	Snippet             string
 	SentAt              *time.Time
@@ -1294,7 +1322,7 @@ func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.aft
 // passed it is indistinguishable from the end of a page.
 const changedMessagesSelect = `
 	SELECT id, source_id, COALESCE(source_message_id,''), COALESCE(conversation_id,0),
-	       COALESCE(message_type,''), COALESCE(subject,''), COALESCE(snippet,''),
+	       COALESCE(message_type,''), list_id, COALESCE(subject,''), COALESCE(snippet,''),
 	       sent_at, received_at, internal_date, COALESCE(size_estimate,0),
 	       COALESCE(has_attachments,FALSE), COALESCE(attachment_count,0),
 	       deleted_at, deleted_from_source_at, content_changed_at
@@ -1424,6 +1452,7 @@ func (s *Store) ListChangedMessages(
 		// strings.
 		var sentAt, receivedAt, internalDate nullableTimestamp
 		var deletedAt, deletedFromSourceAt nullableTimestamp
+		var listID sql.NullString
 		var contentChangedAt requiredTimestamp
 		if err := rows.Scan(
 			&m.ID,
@@ -1431,6 +1460,7 @@ func (s *Store) ListChangedMessages(
 			&m.SourceMessageID,
 			&m.ConversationID,
 			&m.MessageType,
+			&listID,
 			&m.Subject,
 			&m.Snippet,
 			&sentAt,
@@ -1447,6 +1477,9 @@ func (s *Store) ListChangedMessages(
 		}
 		m.SentAt = optionalTimestamp(sentAt)
 		m.ReceivedAt = optionalTimestamp(receivedAt)
+		if listID.Valid {
+			m.ListID = new(listID.String)
+		}
 		m.InternalDate = optionalTimestamp(internalDate)
 		m.DeletedAt = optionalTimestamp(deletedAt)
 		m.DeletedFromSourceAt = optionalTimestamp(deletedFromSourceAt)

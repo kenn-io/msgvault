@@ -152,6 +152,10 @@ func TestInspectCacheReadiness(t *testing.T) {
 	}
 }
 
+func TestCacheSchemaVersionIncludesListID(t *testing.T) {
+	assert.Equal(t, 25, CacheSchemaVersion)
+}
+
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

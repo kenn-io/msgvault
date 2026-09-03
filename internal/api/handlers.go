@@ -935,6 +935,7 @@ var semanticSearchStructuredFilterParamNames = []string{
 	recipientParam,
 	"domain",
 	"label",
+	"list_id",
 	"time_period",
 	"time_granularity",
 	"source_id",
@@ -2080,10 +2081,17 @@ type TextSearchResponse struct {
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
 var aggregateViewTypes = []string{
 	"senders", "sender_names", "recipients", "recipient_names",
-	"domains", aggregateViewLabels, "time",
+	"domains", aggregateViewLabels, aggregateViewLists, "time",
 }
 
-const aggregateViewLabels = "labels"
+func invalidAggregateViewTypeMessage() string {
+	return "Invalid view_type. Must be one of: " + strings.Join(aggregateViewTypes, ", ")
+}
+
+const (
+	aggregateViewLabels = "labels"
+	aggregateViewLists  = "lists"
+)
 
 // parseViewType parses a view type string into query.ViewType.
 func parseViewType(s string) (query.ViewType, bool) {
@@ -2100,6 +2108,8 @@ func parseViewType(s string) (query.ViewType, bool) {
 		return query.ViewDomains, true
 	case aggregateViewLabels:
 		return query.ViewLabels, true
+	case aggregateViewLists:
+		return query.ViewLists, true
 	case "time":
 		return query.ViewTime, true
 	default:
@@ -2122,6 +2132,8 @@ func viewTypeString(v query.ViewType) string {
 		return "domains"
 	case query.ViewLabels:
 		return aggregateViewLabels
+	case query.ViewLists:
+		return aggregateViewLists
 	case query.ViewTime:
 		return "time"
 	default:
@@ -2322,6 +2334,7 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	filter.RecipientName = r.URL.Query().Get("recipient_name")
 	filter.Domain = r.URL.Query().Get("domain")
 	filter.Label = r.URL.Query().Get("label")
+	filter.ListID = r.URL.Query().Get("list_id")
 	filter.MessageType = r.URL.Query().Get("message_type")
 
 	if v := r.URL.Query().Get("time_period"); v != "" {
@@ -2711,7 +2724,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 	viewType, ok := parseViewType(viewTypeStr)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_view_type",
-			"Invalid view_type. Must be one of: senders, sender_names, recipients, recipient_names, domains, labels, time")
+			invalidAggregateViewTypeMessage())
 		return
 	}
 
@@ -2762,7 +2775,7 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 	viewType, ok := parseViewType(viewTypeStr)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_view_type",
-			"Invalid view_type. Must be one of: senders, sender_names, recipients, recipient_names, domains, labels, time")
+			invalidAggregateViewTypeMessage())
 		return
 	}
 
@@ -2887,6 +2900,7 @@ type ChangedMessageJSON struct {
 	SourceMessageID     string  `json:"source_message_id,omitempty"`
 	ConversationID      int64   `json:"conversation_id"`
 	MessageType         string  `json:"message_type,omitempty"`
+	ListID              *string `json:"list_id,omitempty"`
 	Subject             string  `json:"subject,omitempty"`
 	Snippet             string  `json:"snippet,omitempty"`
 	SentAt              *string `json:"sent_at,omitempty" format:"date-time"`
@@ -3113,6 +3127,7 @@ func toChangedMessageJSON(m store.ChangedMessage) ChangedMessageJSON {
 		SourceMessageID:     m.SourceMessageID,
 		ConversationID:      m.ConversationID,
 		MessageType:         m.MessageType,
+		ListID:              m.ListID,
 		Subject:             m.Subject,
 		Snippet:             m.Snippet,
 		SentAt:              changesTimePtr(m.SentAt),
@@ -3589,7 +3604,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		statsGroupBy, ok = parseViewType(v)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid_view_type",
-				"Invalid view_type. Must be one of: senders, sender_names, recipients, recipient_names, domains, labels, time")
+				invalidAggregateViewTypeMessage())
 			return
 		}
 	}
@@ -3670,10 +3685,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// escape the current drill-down scope.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
-		filter.MessageType != "" {
+		filter.MessageType != "" || filter.ListID != "" {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Deep search does not support sender_name, recipient_name, "+
-				"time_period, empty_targets, or message_type filters")
+				"time_period, empty_targets, message_type, "+
+				"or list_id filters")
 		return
 	}
 

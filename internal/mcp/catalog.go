@@ -604,10 +604,10 @@ func getStatsDefinition(_ *handlers) toolDefinition {
 func aggregateDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolAggregate,
-		"Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
+		"Get grouped statistics (top senders, recipients, domains, labels, mailing lists, or message volume by calendar year). "+
 			"Returns an object with a data array containing objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
 		closedObject(map[string]*jsonschema.Schema{
-			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", "time"),
+			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", toolArgList, "time"),
 			toolArgAccount: accountProperty(),
 			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 50)", 50),
 			toolArgAfter:   afterProperty(),

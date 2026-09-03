@@ -3,6 +3,10 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -103,6 +107,68 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 	).Scan(&attachmentMetadata)
 	require.NoError(err, "legacy attachment cache must expose attachment_metadata")
 	assert.False(attachmentMetadata.Valid, "legacy attachment rows default to unclassified")
+}
+
+func TestRegisterViews_ListsCompatibility(t *testing.T) {
+	require := require.New(t)
+	listID := "<announce.example.test>"
+	builder := NewTestDataBuilder(t)
+	builder.AddSource("test@example.com")
+	builder.AddMessage(MessageOpt{Subject: "Current cache", ListID: &listID})
+	dir, cleanup := builder.Build()
+	defer cleanup()
+
+	engine, err := NewDuckDBEngine("", "", nil)
+	require.NoError(err)
+	defer func() { _ = engine.Close() }()
+
+	require.NoError(RegisterViews(engine.db, dir))
+	var got string
+	require.NoError(engine.db.QueryRow("SELECT list_id FROM messages").Scan(&got))
+	assert.Equal(t, listID, got)
+}
+
+func TestRegisterViews_OldMessagesCacheDefaultsListIDToNull(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	builder := NewTestDataBuilder(t)
+	builder.AddSource("test@example.com")
+	builder.AddMessage(MessageOpt{Subject: "Old cache"})
+	dir, cleanup := builder.Build()
+	defer cleanup()
+
+	engine := builder.BuildEngine()
+	defer func() { _ = engine.Close() }()
+
+	messageFile := filepath.Join(dir, "messages", "year=2024", "data.parquet")
+	oldMessageFile := filepath.Join(dir, "messages", "year=2024", "old.parquet")
+	_, err := engine.db.Exec(fmt.Sprintf(
+		"COPY (SELECT * EXCLUDE (list_id) FROM read_parquet('%s')) TO '%s' (FORMAT PARQUET)",
+		escapePath(messageFile), escapePath(oldMessageFile),
+	))
+	require.NoError(err)
+	require.NoError(os.Remove(messageFile))
+	require.NoError(os.Rename(oldMessageFile, messageFile))
+	fingerprint, err := CacheDatasetFingerprint(dir)
+	require.NoError(err)
+	state, err := ReadCacheSyncState(dir)
+	require.NoError(err)
+	state.DatasetFingerprint = fingerprint
+	stateData, err := json.Marshal(state)
+	require.NoError(err)
+	require.NoError(os.WriteFile(CacheStatePath(dir), stateData, 0o600))
+
+	require.NoError(RegisterViews(engine.db, dir))
+	var listID sql.NullString
+	require.NoError(engine.db.QueryRow("SELECT list_id FROM messages").Scan(&listID))
+	assert.False(listID.Valid)
+
+	oldEngine, err := NewDuckDBEngine(dir, "", nil)
+	require.NoError(err)
+	defer func() { _ = oldEngine.Close() }()
+	rows, err := oldEngine.Aggregate(context.Background(), ViewLists, DefaultAggregateOptions())
+	require.NoError(err)
+	assert.Empty(rows)
 }
 
 func TestRegisterViews_ConvenienceViews(t *testing.T) {

@@ -12,12 +12,45 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type failingMessageIDReader struct{}
 
 func (failingMessageIDReader) Read([]byte) (int, error) {
 	return 0, errors.New("synthetic staged-ID read failure")
+}
+
+// TestUpsertMessagePersistsListID catches a missing list_id column or an
+// upsert that omits the parsed email list identifier.
+func TestUpsertMessagePersistsListID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	conversationID, err := f.Store.EnsureConversation(f.Source.ID, "list-thread", "List announcement")
+	require.NoError(err, "ensure conversation")
+
+	message := &store.Message{
+		SourceID:        f.Source.ID,
+		SourceMessageID: "list-message",
+		ConversationID:  conversationID,
+		MessageType:     store.MessageTypeEmail,
+		ListID:          sql.NullString{String: "<announce.example.org>", Valid: true},
+	}
+	_, err = f.Store.UpsertMessage(message)
+	require.NoError(err, "insert message")
+
+	_, err = f.Store.UpsertMessage(message)
+	require.NoError(err, "upsert message")
+
+	var listID sql.NullString
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT list_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		f.Source.ID, message.SourceMessageID,
+	).Scan(&listID), "read persisted list ID")
+	assert.True(listID.Valid, "list ID should be present")
+	assert.Equal("<announce.example.org>", listID.String, "list ID")
 }
 
 func TestRecomputeConversationStats(t *testing.T) {

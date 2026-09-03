@@ -20,7 +20,7 @@ export function filtersForGroup(
   dimension: ExploreGroupDimension,
   key: string
 ): ExploreFilter[] | undefined {
-  if (dimension === 'source' || dimension === 'message_type') {
+  if (dimension === 'source' || dimension === 'message_type' || dimension === 'mailing_list') {
     return [
       ...filters.filter((filter) => filter.dimension !== dimension),
       { dimension, values: [key] }

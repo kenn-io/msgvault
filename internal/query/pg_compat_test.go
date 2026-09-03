@@ -308,6 +308,61 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 	})
 }
 
+// TestQueryEngine_ListIDCaseInsensitiveParity runs on the selected test store;
+// MSGVAULT_TEST_DB selects PostgreSQL, while the default SQLite path provides
+// the same behavior check without requiring a local PostgreSQL service.
+func TestQueryEngine_ListIDCaseInsensitiveParity(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "list-parity@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(src.ID, "list-parity-thread", "List parity")
+	require.NoError(err)
+
+	addMessage := func(sourceMessageID, listID string) int64 {
+		messageID, upsertErr := st.UpsertMessage(&store.Message{
+			ConversationID:  conversationID,
+			SourceID:        src.ID,
+			SourceMessageID: sourceMessageID,
+			MessageType:     "email",
+			ListID:          sql.NullString{String: listID, Valid: true},
+			SentAt:          sql.NullTime{Time: time.Date(2024, 7, 1, 9, 0, 0, 0, time.UTC), Valid: true},
+			Subject:         sql.NullString{String: sourceMessageID, Valid: true},
+			SizeEstimate:    100,
+		})
+		require.NoError(upsertErr)
+		return messageID
+	}
+
+	first := addMessage("list-lower", "<dev_1@example.test>")
+	second := addMessage("list-upper", "<DEV_1@EXAMPLE.TEST>")
+	addMessage("list-decoy", "<devA1@example.test>")
+
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	ctx := context.Background()
+	filter := query.MessageFilter{ListID: "<DEV_1@EXAMPLE.TEST>"}
+
+	rows, err := engine.Aggregate(ctx, query.ViewLists, query.DefaultAggregateOptions())
+	require.NoError(err)
+	require.Len(rows, 2)
+	assert.Equal(t, int64(2), rows[0].Count)
+
+	messages, err := engine.ListMessages(ctx, filter)
+	require.NoError(err)
+	require.Len(messages, 2)
+	assert.ElementsMatch(t, []int64{first, second}, []int64{messages[0].ID, messages[1].ID})
+
+	subRows, err := engine.SubAggregate(ctx, filter, query.ViewTime, query.AggregateOptions{
+		TimeGranularity: query.TimeYear,
+		SortField:       query.SortByCount,
+		SortDirection:   query.SortDesc,
+		Limit:           10,
+	})
+	require.NoError(err)
+	require.Len(subRows, 1)
+	assert.Equal(t, int64(2), subRows[0].Count)
+}
+
 // TestQueryEngine_FTSBodySearch is the regression guard for cf-4: on
 // PostgreSQL, query.Engine.Search must take the tsvector FTS path
 // (search_fts @@ to_tsquery), not the subject/snippet LIKE fallback. The bug

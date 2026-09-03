@@ -33,6 +33,69 @@ func parseEmail(t *testing.T, opts emailOptions) *Message {
 	return mustParse(t, makeRawEmail(opts))
 }
 
+// TestNormalizeListID catches removal or regression of the List-Id normalizer.
+func TestNormalizeListID(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "display name plus bracketed identifier",
+			input: "Example List <list.example.org>",
+			want:  "<list.example.org>",
+		},
+		{
+			name:  "angle bracket in decoded display name",
+			input: `"Weekly <News>" <news.vendor.example>`,
+			want:  "<news.vendor.example>",
+		},
+		{
+			name:  "bare bracketed identifier",
+			input: "<list.example.org>",
+			want:  "<list.example.org>",
+		},
+		{
+			name:  "folded whitespace around bracketed identifier",
+			input: "\r\n\t <list.example.org> \r\n",
+			want:  "<list.example.org>",
+		},
+		{
+			name:  "internal token whitespace preserved",
+			input: "Example List < list.example.org >",
+			want:  "< list.example.org >",
+		},
+		{
+			name:  "raw identifier fallback",
+			input: "  list.example.org  ",
+			want:  "list.example.org",
+		},
+		{
+			name:  "empty identifier",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, NormalizeListID(tc.input))
+		})
+	}
+}
+
+// TestParseListID catches removal of ListID from the parsed message or its
+// assignment from the List-Id header.
+func TestParseListID(t *testing.T) {
+	msg := mustParse(t, []byte("From: sender@example.com\r\n"+
+		"To: recipient@example.com\r\n"+
+		"Subject: mailing list\r\n"+
+		"List-Id: Example List <list.example.org>\r\n"+
+		"\r\nbody\r\n"))
+
+	assert.Equal(t, "<list.example.org>", msg.ListID)
+}
+
 func TestParsePreservesAuthoritativeAttachmentEvidence(t *testing.T) {
 	assert := assert.New(t)
 	raw := []byte("From: sender@example.com\r\n" +
@@ -180,6 +243,7 @@ func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
 		"Received: from sender.example.test by relay.example.test; Tue, 02 Jan 2024 15:04:05 +0000\r\n" +
 		"Message-ID: <message@example.test>\r\n" +
 		"In-Reply-To: <parent@example.test>\r\n" +
+		"List-Id: Project Updates <updates.example.test>\r\n" +
 		"References: <root@example.test>\r\n" +
 		"\t<parent@example.test>\r\n" +
 		"MIME-Version: 1.0\r\n" +
@@ -208,6 +272,7 @@ func TestParseWithRecovery_FatalMultipartSalvagesHeaders(t *testing.T) {
 	}}, msg.Cc)
 	assert.Equal("<message@example.test>", msg.MessageID)
 	assert.Equal("<parent@example.test>", msg.InReplyTo)
+	assert.Equal("<updates.example.test>", msg.ListID)
 	assert.Equal([]string{"root@example.test", "parent@example.test"}, msg.References)
 	assert.Contains(msg.BodyText, "MIME parsing failed")
 	assert.Contains(msg.BodyText, "Raw MIME data is preserved")

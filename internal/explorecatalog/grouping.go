@@ -7,6 +7,7 @@ const (
 	GroupParticipant = "participant"
 	GroupDomain      = "domain"
 	GroupMessageType = "message_type"
+	GroupMailingList = "mailing_list"
 	GroupKind        = "kind"
 	GroupYear        = "year"
 	GroupMonth       = "month"
@@ -17,6 +18,7 @@ var groupingDimensions = [...]string{
 	GroupParticipant,
 	GroupDomain,
 	GroupMessageType,
+	GroupMailingList,
 	GroupKind,
 	GroupYear,
 	GroupMonth,

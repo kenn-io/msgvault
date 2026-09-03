@@ -12,7 +12,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.13.0. The
+  current unreleased API schema is 2.14.0. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -42,6 +42,12 @@ All notable changes to msgvault, grouped by release.
 
 - Import Slackdump directories and ZIPs without a Slack token, preserving
   conversations, threads, reactions, identities, raw JSON, and exported files.
+
+- Mailing-list traffic is indexed from RFC 2919 `List-Id` headers on new
+  email and can be backfilled offline with `msgvault repair-list-ids` (dry run
+  by default, `--apply` to write). `list:` and `list-id:` now work across
+  local search backends, while the TUI and web analytical workspace expose a
+  Lists grouping with exact case-insensitive drill-down.
 
 - Exact source selection is available through `--source-id` on `sync`,
   `sync-full`, `update-account`, `remove-account`, and `delete-staged`.

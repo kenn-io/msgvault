@@ -18,17 +18,21 @@ const (
 
 var registerDriverOnce sync.Once
 
+// RegisterUnicodeLower adds the deterministic Unicode-aware lowercasing
+// function used by metadata search to a SQLite connection.
+func RegisterUnicodeLower(conn *sqlite3.SQLiteConn) error {
+	if err := conn.RegisterFunc(UnicodeLowerFunction, strings.ToLower, true); err != nil {
+		return fmt.Errorf("register %s: %w", UnicodeLowerFunction, err)
+	}
+	return nil
+}
+
 // DriverName returns a go-sqlite3 driver whose every connection exposes the
 // deterministic Unicode-aware lowercasing function used by metadata search.
 func DriverName() string {
 	registerDriverOnce.Do(func() {
 		sql.Register(driverName, &sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				if err := conn.RegisterFunc(UnicodeLowerFunction, strings.ToLower, true); err != nil {
-					return fmt.Errorf("register %s: %w", UnicodeLowerFunction, err)
-				}
-				return nil
-			},
+			ConnectHook: RegisterUnicodeLower,
 		})
 	})
 	return driverName

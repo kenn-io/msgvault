@@ -28,9 +28,10 @@ import (
 // version 23 adds typed search primitives to relationship people for bounded,
 // explainable contact completion without reopening archive tables; version 24
 // adds graph-relative current and annual relationship temperature summaries to
-// the compact relationship people dataset.
+// the compact relationship people dataset; version 25 adds the scalar list_id
+// message dimension.
 // Schema bumps force a full rebuild before readers use an older publication.
-const CacheSchemaVersion = 24
+const CacheSchemaVersion = 25
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

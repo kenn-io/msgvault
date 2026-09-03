@@ -15,6 +15,7 @@ import (
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -23,7 +24,10 @@ import (
 // else in the repository (see internal/query/sqlite.go). Bind date
 // bounds with this format so boundary comparisons are consistent
 // with the existing query paths.
-const sqliteDatetimeFormat = "2006-01-02 15:04:05"
+const (
+	sqliteDatetimeFormat          = "2006-01-02 15:04:05"
+	listIDSchemaRequiredErrorText = "List-Id filter requires messages.list_id; open the archive with a writable msgvault version first"
+)
 
 // Compile-time check that *Backend satisfies the vector.Backend interface.
 var _ vector.Backend = (*Backend)(nil)
@@ -1305,6 +1309,15 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 // filteredMessageIDs runs the filter against the main DB and returns
 // matching message IDs. See spec §5.3.
 func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]int64, error) {
+	if len(f.ListIDSubstrings) > 0 || len(f.ListIDExactGroups) > 0 || f.ListID != "" {
+		hasListID, err := sqliteColumnExists(ctx, b.mainDB, "messages", "list_id")
+		if err != nil {
+			return nil, err
+		}
+		if !hasListID {
+			return nil, errors.New(listIDSchemaRequiredErrorText)
+		}
+	}
 	clauses := []string{store.LiveMessagesWhere("m", true)}
 	var args []any
 	if len(f.MessageIDs) > 0 {
@@ -1458,6 +1471,25 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 	for _, term := range f.SubjectSubstrings {
 		clauses = append(clauses, `m.subject LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLikeSubject(term)+"%")
+	}
+	for _, term := range f.ListIDSubstrings {
+		clauses = append(clauses, sqliteutil.UnicodeLowerFunction+`(m.list_id) LIKE `+sqliteutil.UnicodeLowerFunction+`(?) ESCAPE '\'`)
+		args = append(args, "%"+escapeLikeSubject(term)+"%")
+	}
+	for _, group := range f.ListIDExactGroups {
+		if len(group) == 0 {
+			continue
+		}
+		parts := make([]string, len(group))
+		for i, listID := range group {
+			parts[i] = sqliteutil.UnicodeLowerFunction + `(m.list_id) = ` + sqliteutil.UnicodeLowerFunction + `(?)`
+			args = append(args, listID)
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	}
+	if f.ListID != "" {
+		clauses = append(clauses, sqliteutil.UnicodeLowerFunction+`(m.list_id) = `+sqliteutil.UnicodeLowerFunction+`(?)`)
+		args = append(args, f.ListID)
 	}
 	// Label filters: one EXISTS per group, AND'd across groups so that
 	// `label:promo label:billing` requires both labels to be present.

@@ -928,6 +928,34 @@ func TestManifestRawFilterRoundTrip(t *testing.T) {
 	assert.Nil(loadedOld.RawFilter, "absent field stays nil")
 }
 
+// TestManifestListIDsRoundTripAndOmitWhenEmpty verifies list IDs remain
+// durable deletion provenance without changing older manifests' JSON shape.
+func TestManifestListIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err)
+	manifest := NewManifest("list filter", []string{"gm-1"})
+	manifest.Filters.ListIDs = []string{"<announce.example.test>"}
+	require.NoError(mgr.SaveManifest(manifest))
+
+	claimed, err := mgr.ClaimManifest(manifest.ID, MethodTrash)
+	require.NoError(err)
+	require.NotNil(claimed.Execution)
+	claimed.Execution.LastProcessedIndex = 1
+	require.NoError(mgr.WriteInProgressCheckpoint(claimed, manifest.ID))
+
+	loaded, status, err := mgr.GetManifestWithStatus(manifest.ID)
+	require.NoError(err)
+	assert.Equal(StatusInProgress, status)
+	assert.Equal([]string{"<announce.example.test>"}, loaded.Filters.ListIDs)
+
+	data, err := json.Marshal(NewManifest("no list filter", []string{"gm-2"}))
+	require.NoError(err)
+	assert.NotContains(string(data), "list_ids")
+}
+
 func TestGetManifestWithStatus(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

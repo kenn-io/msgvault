@@ -534,10 +534,11 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 		ID: 42, Type: "gmail", Identifier: "account@example.invalid",
 	})
 	manifest.CreatedBy = "tui"
+	manifest.Filters.ListIDs = []string{"announce.example.org"}
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.4.0"})
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
 			return
 		}
 		assert.Equal(http.MethodPost, r.Method, "method")
@@ -550,6 +551,7 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal(manifest.ID, body.ID, "manifest id")
 		assert.Equal("tui", body.CreatedBy, "created by")
 		assert.Equal([]string{"gid1", "gid2"}, body.GmailIDs, "gmail ids")
+		assert.Equal([]string{"announce.example.org"}, body.Filters.ListIDs, "list ids")
 		if !assert.NotNil(body.Source) {
 			http.Error(w, "missing source", http.StatusBadRequest)
 			return
@@ -1210,10 +1212,39 @@ func TestGetCLISearch_DeletionScopeRequiresCompatibleDaemon(t *testing.T) {
 	}
 }
 
+func TestGetCLISearchRejectsListIDAgainstOlderDaemonBeforeRequest(t *testing.T) {
+	var searchRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{
+				"status":             "ok",
+				"api_schema_version": "2.13.0",
+			})
+			return
+		}
+		searchRequests++
+		http.Error(w, "unexpected search request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := newTestStore(srv, "").GetCLISearch(t.Context(), CLISearchRequest{
+		Query: "needle list:dev@example.test",
+	})
+	require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
+	assert.Zero(t, searchRequests, "List-ID CLI search must not reach an older daemon")
+}
+
 func TestGetCLIHybridSearch_Success(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{
+				"status":             "ok",
+				"api_schema_version": "2.14.0",
+			})
+			return
+		}
 		assert.Equal("/api/v1/search", r.URL.Path, "path")
 		assert.Equal("lunch", r.URL.Query().Get("q"), "query")
 		assert.Equal("vector", r.URL.Query().Get("mode"), "mode query")
@@ -1228,6 +1259,7 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 		assert.Equal("bob@example.com", r.URL.Query().Get("recipient"), "recipient query")
 		assert.Equal("example.com", r.URL.Query().Get("domain"), "domain query")
 		assert.Equal("Work", r.URL.Query().Get("label"), "label query")
+		assert.Equal("<dev@example.test>", r.URL.Query().Get("list_id"), "list_id query")
 		assert.Equal("2025-02", r.URL.Query().Get("time_period"), "time_period query")
 		assert.Equal("month", r.URL.Query().Get("time_granularity"), "time_granularity query")
 		assert.Equal("77", r.URL.Query().Get("source_id"), "source_id query")
@@ -1300,6 +1332,7 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 				Recipient:           "bob@example.com",
 				Domain:              "example.com",
 				Label:               "Work",
+				ListID:              "<dev@example.test>",
 				TimeRange:           query.TimeRange{Period: "2025-02", Granularity: query.TimeMonth},
 				SourceID:            &sourceID,
 				WithAttachmentsOnly: true,
@@ -1394,6 +1427,29 @@ func TestGetCLIHybridSearchUsesGeneratedClientAdapter(t *testing.T) {
 	require.NoError(err, "GetCLIHybridSearch")
 	require.Len(resp.Results, 1, "Results")
 	assert.Equal("alice@example.com", resp.Results[0].FromEmail, "result FromEmail")
+}
+
+func TestGetCLIHybridSearchRejectsListIDAgainstOlderDaemonBeforeRequest(t *testing.T) {
+	var searchRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{
+				"status":             "ok",
+				"api_schema_version": "2.13.0",
+			})
+			return
+		}
+		searchRequests++
+		http.Error(w, "unexpected search request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := newTestStore(srv, "").GetCLIHybridSearch(t.Context(), CLIHybridSearchRequest{
+		Query: "needle list:dev@example.test",
+		Mode:  "hybrid",
+	})
+	require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
+	assert.Zero(t, searchRequests, "List-ID hybrid search must not reach an older daemon")
 }
 
 func TestGetCLIAccounts_Success(t *testing.T) {

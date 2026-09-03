@@ -1488,6 +1488,22 @@ func TestChangesResponseFieldsAreAllTracked(t *testing.T) {
 	}
 }
 
+func TestChangesEndpointIncludesListID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newChangesServer(t)
+	messageID := seedChangedMessages(t, st, 1)[0]
+	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
+		"<changes.example.test>", messageID)
+	require.NoError(err)
+	settleChangesClock(t, srv)
+
+	page := decodeGeneratedChangesPage(t, srv, changesTarget("", 10))
+	require.Len(page.Messages, 1)
+	require.NotNil(page.Messages[0].ListID)
+	assert.Equal("<changes.example.test>", *page.Messages[0].ListID)
+}
+
 // TestChangesEndpoint_PublishesHowFarItIsComplete covers the field a consumer
 // needs to tell a quiet archive from a blocked feed.
 //

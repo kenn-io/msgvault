@@ -125,6 +125,7 @@ func IngestRawMessage(
 		ConversationID:  conversationID,
 		SourceID:        sourceID,
 		SourceMessageID: sourceMsgID,
+		ListID:          sql.NullString{String: parsed.ListID, Valid: parsed.ListID != ""},
 		MessageType:     "email",
 		SentAt:          sentAt,
 		InternalDate:    internalDate,

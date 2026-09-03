@@ -59,6 +59,11 @@ func TestMessagesColumnClassificationIsExhaustive(t *testing.T) {
 	}
 }
 
+func TestMessagesContentColumns_IncludeListID(t *testing.T) {
+	assert.Contains(t, store.MessagesContentColumns, "list_id",
+		"changing a List-Id must make consumers re-read the message")
+}
+
 // contentChangedPast is the fixed far-past watermark the helpers stamp before
 // exercising a write, so "did the trigger fire?" is an exact string comparison
 // instead of a sleep long enough for the clock to tick. It is written in a form
@@ -189,6 +194,8 @@ func updateMessageColumn(t *testing.T, st *store.Store, id int64, col string) er
 	switch col {
 	case "source_message_id":
 		value = fmt.Sprintf("changed-src-%d", id)
+	case "list_id":
+		value = fmt.Sprintf("<changed-list-%d.example.test>", id)
 	case "conversation_id":
 		value = altConversationID(t, st, id)
 	case "sender_id":
@@ -474,7 +481,7 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 // contentChangedBackfillMigration is the ledger name InitSchema records once the
 // content_changed_at backfill has run.
 const contentChangedBackfillMigration = "messages_content_changed_at_backfill"
-const messageWatermarkTriggersMigration = "message_and_attachment_triggers_v9"
+const messageWatermarkTriggersMigration = "message_and_attachment_triggers_v10"
 
 // clearContentChangedBackfillLedger deletes that row from applied_migrations so
 // InitSchema treats the migration as never having run -- the ledger state of

@@ -93,6 +93,15 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if len(q.SubjectTerms) > 0 {
 		f.SubjectSubstrings = append([]string(nil), q.SubjectTerms...)
 	}
+	if len(q.ListIDs) > 0 {
+		f.ListIDSubstrings = append([]string(nil), q.ListIDs...)
+	}
+	if len(q.ListIDExactGroups) > 0 {
+		f.ListIDExactGroups = make([][]string, len(q.ListIDExactGroups))
+		for i, group := range q.ListIDExactGroups {
+			f.ListIDExactGroups[i] = append([]string(nil), group...)
+		}
+	}
 	if len(q.MessageTypes) > 0 {
 		f.MessageTypes = append([]string(nil), q.MessageTypes...)
 	}
@@ -149,6 +158,9 @@ func ApplyMessageFilter(
 	}
 	if len(derived.MessageTypes) > 0 {
 		f.MessageTypes = intersectMessageTypes(f.MessageTypes, derived.MessageTypes)
+	}
+	if structured.ListID != "" {
+		f.ListID = structured.ListID
 	}
 
 	if structured.Sender != "" {

@@ -1858,3 +1858,21 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 	assert.False(got[2], "msg 2 (deleted_at, must be excluded)")
 	assert.False(got[3], "msg 3 (deleted_from_source_at, must be excluded)")
 }
+
+func TestFilteredMessageIDsRejectsLegacyListIDSchemaWithUpgradeGuidance(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err, "open legacy main db")
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`)
+	require.NoError(t, err, "create legacy messages table")
+
+	b := &Backend{mainDB: db}
+	_, err = b.filteredMessageIDs(ctx, vector.Filter{ListIDSubstrings: []string{"dev"}})
+	require.EqualError(t, err,
+		"List-Id filter requires messages.list_id; open the archive with a writable msgvault version first")
+}

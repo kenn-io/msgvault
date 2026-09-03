@@ -131,6 +131,8 @@ func viewTypeAbbrev(vt query.ViewType) string {
 		return "Domain"
 	case query.ViewLabels:
 		return "Label"
+	case query.ViewLists:
+		return "List ID"
 	case query.ViewTime:
 		return "Time"
 	default:
@@ -153,6 +155,8 @@ func viewTypePrefix(vt query.ViewType) string {
 		return "D"
 	case query.ViewLabels:
 		return "L"
+	case query.ViewLists:
+		return "LI"
 	case query.ViewTime:
 		return "T"
 	default:
@@ -232,7 +236,7 @@ func (m Model) buildBreadcrumb() string {
 		return breadcrumb
 	case levelDrillDown:
 		// Show drill context: "S: foo@example.com (by To)"
-		drillKey := m.drillFilterKey()
+		drillKey := textutil.SanitizeTerminal(m.drillFilterKey())
 		breadcrumb := fmt.Sprintf("%s: %s (by %s)", viewTypePrefix(m.drillViewType), truncateRunes(drillKey, 30), viewTypeAbbrev(m.viewType))
 		if m.viewType == query.ViewTime {
 			breadcrumb += " " + m.timeGranularity.String()
@@ -246,19 +250,21 @@ func (m Model) buildBreadcrumb() string {
 			return "All Messages"
 		}
 		if m.hasDrillFilter() {
-			drillKey := m.drillFilterKey()
-			if m.filterKey != "" && m.filterKey != drillKey {
-				return fmt.Sprintf("%s: %s > %s: %s", viewTypePrefix(m.drillViewType), truncateRunes(drillKey, 20), viewTypePrefix(m.viewType), truncateRunes(m.filterKey, 20))
+			rawDrillKey := m.drillFilterKey()
+			drillKey := textutil.SanitizeTerminal(rawDrillKey)
+			if m.filterKey != "" && m.filterKey != rawDrillKey {
+				filterKey := textutil.SanitizeTerminal(m.filterKey)
+				return fmt.Sprintf("%s: %s > %s: %s", viewTypePrefix(m.drillViewType), truncateRunes(drillKey, 20), viewTypePrefix(m.viewType), truncateRunes(filterKey, 20))
 			}
 			return fmt.Sprintf("%s: %s", viewTypePrefix(m.drillViewType), truncateRunes(drillKey, 40))
 		}
-		return fmt.Sprintf("%s: %s", viewTypePrefix(m.viewType), truncateRunes(m.filterKey, 40))
+		return fmt.Sprintf("%s: %s", viewTypePrefix(m.viewType), truncateRunes(textutil.SanitizeTerminal(m.filterKey), 40))
 	case levelMessageDetail:
 		subject := m.pendingDetailSubject
 		if m.messageDetail != nil {
 			subject = m.messageDetail.Subject
 		}
-		return "Message: " + truncateRunes(subject, 50)
+		return "Message: " + truncateRunes(textutil.SanitizeTerminal(subject), 50)
 	case levelThreadView:
 		if m.threadTruncated {
 			return fmt.Sprintf("Thread (showing %d of %d+ messages)", len(m.threadMessages), len(m.threadMessages))
@@ -411,7 +417,7 @@ func (m Model) aggregateTableView() string {
 
 		// Pad key to fixed width first, then highlight — so ANSI codes
 		// don't affect column alignment.
-		key := truncateRunes(row.Key, keyWidth)
+		key := truncateRunes(textutil.SanitizeTerminal(row.Key), keyWidth)
 		key = fmt.Sprintf("%-*s", keyWidth, key)
 		key = highlightTerms(key, m.searchQuery)
 
@@ -1200,6 +1206,7 @@ var rawHelpLines = []string{
 	"",
 	"Views & Sorting",
 	"  g/Tab       Cycle view types",
+	"  l           Jump to Lists view",
 	"  t           Jump to Time view (cycle granularity when in Time)",
 	"  s           Cycle sort field",
 	"  v/r         Reverse sort order",

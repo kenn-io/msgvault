@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 type recordingSemanticSearcher struct {
@@ -211,6 +212,77 @@ func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
 			assertions.NotNil(cmd)
 		})
 	}
+}
+
+func TestListIDScopeForcesDeepSearchToFast(t *testing.T) {
+	var deepCalls int
+	var fastFilter query.MessageFilter
+	engine := newMockEngine(MockConfig{})
+	engine.SearchFunc = func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+		deepCalls++
+		return nil, nil
+	}
+	engine.SearchFastWithStatsFunc = func(
+		_ context.Context,
+		_ *search.Query,
+		_ string,
+		filter query.MessageFilter,
+		_ query.ViewType,
+		_, _ int,
+	) (*query.SearchFastResult, error) {
+		fastFilter = filter
+		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+	}
+
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.level = levelMessageList
+	model.searchMode = searchModeDeep
+	model.drillFilter = query.MessageFilter{ListID: "<dev_1@example.test>"}
+	model.syncSearchScope()
+
+	{
+		assert := assert.New(t)
+		require := require.New(t)
+		assert.Equal(searchModeFast, model.searchMode)
+		msg, ok := model.loadSearch("find the invoice")().(searchResultsMsg)
+		require.True(ok)
+		require.NoError(msg.err)
+		assert.Zero(deepCalls, "List-Id drills must not use deep substring search")
+		assert.Equal("<dev_1@example.test>", fastFilter.ListID)
+	}
+
+	t.Run("execution fallback when synchronization is bypassed", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var bypassDeepCalls int
+		var bypassFastFilter query.MessageFilter
+		bypassEngine := newMockEngine(MockConfig{})
+		bypassEngine.SearchFunc = func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			bypassDeepCalls++
+			return nil, nil
+		}
+		bypassEngine.SearchFastWithStatsFunc = func(
+			_ context.Context,
+			_ *search.Query,
+			_ string,
+			filter query.MessageFilter,
+			_ query.ViewType,
+			_, _ int,
+		) (*query.SearchFastResult, error) {
+			bypassFastFilter = filter
+			return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+		}
+
+		bypassModel := New(bypassEngine, Options{DataDir: t.TempDir(), Version: "test"})
+		bypassModel.searchMode = searchModeDeep
+		bypassModel.searchFilter = query.MessageFilter{ListID: "<dev_1@example.test>"}
+
+		msg, ok := bypassModel.loadSearch("find the invoice")().(searchResultsMsg)
+		require.True(ok)
+		require.NoError(msg.err)
+		assert.Zero(bypassDeepCalls, "runtime List-Id fallback must not use deep search")
+		assert.Equal("<dev_1@example.test>", bypassFastFilter.ListID)
+	})
 }
 
 func TestInheritedSemanticSearchFallsBackInUnsupportedScope(t *testing.T) {

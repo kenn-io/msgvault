@@ -23,6 +23,10 @@ const (
 	apiValueCount   = "count"
 	apiValueLabels  = "labels"
 	apiValueSubject = "subject"
+
+	// listIDMinAPISchemaVersion is the first daemon contract that guarantees
+	// exact List-ID filtering on every MessageFilter endpoint.
+	listIDMinAPISchemaVersion = "2.14.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
@@ -131,6 +135,8 @@ func viewTypeToString(v query.ViewType) string {
 		return "domains"
 	case query.ViewLabels:
 		return apiValueLabels
+	case query.ViewLists:
+		return "lists"
 	case query.ViewTime:
 		return "time"
 	default:
@@ -278,6 +284,7 @@ func generatedFilterMessagesQuery(filter query.MessageFilter, paginated bool) ge
 		RecipientName:   optionalString(filter.RecipientName),
 		Domain:          optionalString(filter.Domain),
 		Label:           optionalString(filter.Label),
+		ListID:          optionalString(filter.ListID),
 		MessageType:     optionalString(filter.MessageType),
 		TimePeriod:      optionalString(filter.TimeRange.Period),
 		TimeGranularity: optionalString(timeGranularityToString(filter.TimeRange.Granularity)),
@@ -382,6 +389,7 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		RecipientName:   fields.RecipientName,
 		Domain:          fields.Domain,
 		Label:           fields.Label,
+		ListID:          fields.ListID,
 		TimePeriod:      fields.TimePeriod,
 		TimeGranularity: fields.TimeGranularity,
 		ConversationID:  fields.ConversationID,
@@ -607,6 +615,9 @@ func queryMessageSummariesFromCLIGenerated(msgs []generated.CLIQueryMessageSumma
 
 // Aggregate performs grouping based on the provided ViewType.
 func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
+	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{}, groupBy); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetAggregatesResp, error) {
 		return client.GetAggregatesWithResponse(ctx, &generated.GetAggregatesRequestOptions{
 			Query: &generated.GetAggregatesQuery{
@@ -633,6 +644,9 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 
 // SubAggregate performs aggregation on a filtered subset of messages.
 func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, groupBy query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
+	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, groupBy); err != nil {
+		return nil, err
+	}
 	limit := optionalPositiveInt64(filter.Pagination.Limit)
 	if opts.Limit > 0 {
 		limit = optionalPositiveInt64(opts.Limit)
@@ -647,6 +661,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 				RecipientName:   optionalString(filter.RecipientName),
 				Domain:          optionalString(filter.Domain),
 				Label:           optionalString(filter.Label),
+				ListID:          optionalString(filter.ListID),
 				MessageType:     optionalString(filter.MessageType),
 				TimePeriod:      optionalString(filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
@@ -674,6 +689,9 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 
 // ListMessages returns messages matching the filter criteria.
 func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.FilterMessagesResp, error) {
 		return client.FilterMessagesWithResponse(ctx, &generated.FilterMessagesRequestOptions{
 			Query: filterMessagesQuery(filter),
@@ -855,6 +873,9 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	if err := validateParsedSearchQuery(q); err != nil {
 		return nil, err
 	}
+	if err := e.requireListIDCapability(ctx, q, query.MessageFilter{}); err != nil {
+		return nil, err
+	}
 	if hasExplicitEmptyAccountScope(q) {
 		return []query.MessageSummary{}, nil
 	}
@@ -885,6 +906,9 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 // otherwise return generic composite-search false positives.
 func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
 	if err := validateParsedSearchQuery(q); err != nil {
+		return nil, err
+	}
+	if err := e.requireListIDCapability(ctx, q, query.MessageFilter{}); err != nil {
 		return nil, err
 	}
 	if q == nil || len(q.TextTerms) == 0 {
@@ -935,6 +959,9 @@ func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter qu
 // total count, and aggregate stats in a single operation.
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
+	if err := e.requireListIDCapability(ctx, q, filter, statsGroupBy); err != nil {
+		return nil, err
+	}
 	if err := validateParsedSearchQuery(q); err != nil {
 		return nil, err
 	}
@@ -966,6 +993,9 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 }
 
 func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetGmailIDsByFilterResp, error) {
 		return client.GetGmailIDsByFilterWithResponse(ctx, &generated.GetGmailIDsByFilterRequestOptions{
 			Query: gmailIDsFilterQuery(filter),
@@ -986,6 +1016,29 @@ func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.Me
 		}
 	}
 	return targets, nil
+}
+
+func (e *Engine) requireListIDCapability(
+	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
+) error {
+	return e.store.requireListIDCapability(ctx, q, filter, groupBy...)
+}
+
+func (c *Client) requireListIDCapability(
+	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
+) error {
+	if filter.ListID == "" && (q == nil || len(q.ListIDs) == 0) &&
+		!slices.Contains(groupBy, query.ViewLists) {
+		return nil
+	}
+	supported, err := c.SupportsAPISchemaVersion(ctx, listIDMinAPISchemaVersion)
+	if err != nil {
+		return fmt.Errorf("check daemon List-ID filter capability: %w", err)
+	}
+	if !supported {
+		return fmt.Errorf("List-ID filter requires daemon API schema %s or newer", listIDMinAPISchemaVersion)
+	}
+	return nil
 }
 
 func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
@@ -1100,6 +1153,9 @@ func (e *Engine) GetTextStats(ctx context.Context, opts query.TextStatsOptions) 
 func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*query.TotalStats, error) {
 	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
 		return &query.TotalStats{}, nil
+	}
+	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{}, opts.GroupBy); err != nil {
+		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetTotalStatsResp, error) {
 		return client.GetTotalStatsWithResponse(ctx, &generated.GetTotalStatsRequestOptions{

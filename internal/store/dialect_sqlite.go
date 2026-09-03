@@ -36,6 +36,14 @@ func (d *SQLiteDialect) DriverName() string { return sqliteutil.DriverName() }
 // Rebind is a no-op for SQLite — it uses ? placeholders natively.
 func (d *SQLiteDialect) Rebind(query string) string { return query }
 
+func (d *SQLiteDialect) UnicodeLowerExpression(expr string) string {
+	return sqliteutil.UnicodeLowerFunction + "(" + expr + ")"
+}
+
+func (d *SQLiteDialect) BlobPrefixSQL(column string) string {
+	return "SUBSTR(" + column + ", 1, ?)"
+}
+
 // Now returns the SQLite expression for the current UTC timestamp.
 func (d *SQLiteDialect) Now() string { return "datetime('now')" }
 
@@ -1930,6 +1938,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE sync_runs ADD COLUMN sync_type TEXT NOT NULL DEFAULT ''`, "sync_runs.sync_type"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
+		{`ALTER TABLE messages ADD COLUMN list_id TEXT`, "list_id"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},

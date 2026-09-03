@@ -143,10 +143,11 @@ make lint                     # Run linter
 - `j/k` or `↑/↓` - Navigate rows
 - `Enter` - Drill down into selection
 - `Esc` or `Backspace` - Go back
-- `Tab` - Cycle views (Senders → Sender Names → Recipients → Recipient Names → Domains → Labels → Time)
+- `Tab` - Cycle views (Senders → Sender Names → Recipients → Recipient Names → Domains → Labels → Lists → Time)
 - `s` - Cycle sort field (Name → Count → Size)
 - `r` - Reverse sort direction
 - `t` - Jump to Time view (cycle granularity when already in Time)
+- `l` - Jump to Lists view
 - `a` - Filter by account
 - `f` - Filter by attachments
 - `Space` - Toggle selection

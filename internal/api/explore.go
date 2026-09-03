@@ -37,7 +37,7 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,after,before,deletion,identity"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
@@ -47,6 +47,7 @@ const (
 	exploreFilterParticipant = "participant"
 	exploreFilterDomain      = "domain"
 	exploreFilterMessageType = "message_type"
+	exploreFilterMailingList = "mailing_list"
 	exploreFilterAfter       = "after"
 	exploreFilterBefore      = "before"
 	exploreFilterDeletion    = "deletion"
@@ -76,6 +77,7 @@ const (
 	ExploreGroupParticipant ExploreGroupDimension = explorecatalog.GroupParticipant
 	ExploreGroupDomain      ExploreGroupDimension = explorecatalog.GroupDomain
 	ExploreGroupMessageType ExploreGroupDimension = explorecatalog.GroupMessageType
+	ExploreGroupMailingList ExploreGroupDimension = explorecatalog.GroupMailingList
 	ExploreGroupKind        ExploreGroupDimension = explorecatalog.GroupKind
 	ExploreGroupYear        ExploreGroupDimension = explorecatalog.GroupYear
 	ExploreGroupMonth       ExploreGroupDimension = explorecatalog.GroupMonth
@@ -979,7 +981,8 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 	}
 	seen := map[string]struct{}{}
 	for _, filter := range filters {
-		conjunctive := filter.Dimension == exploreFilterParticipant || filter.Dimension == exploreFilterDomain
+		conjunctive := filter.Dimension == exploreFilterParticipant || filter.Dimension == exploreFilterDomain ||
+			filter.Dimension == exploreFilterMailingList
 		if !conjunctive {
 			if _, ok := seen[filter.Dimension]; ok {
 				return result, fmt.Errorf("filter dimension %q may appear only once", filter.Dimension)
@@ -1023,6 +1026,13 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			}
 		case exploreFilterMessageType:
 			result.MessageTypes = append([]string(nil), filter.Values...)
+		case exploreFilterMailingList:
+			values := append([]string(nil), filter.Values...)
+			if len(result.MailingLists) == 0 {
+				result.MailingLists = values
+			} else {
+				result.AdditionalMailingListGroups = append(result.AdditionalMailingListGroups, values)
+			}
 		case exploreFilterAfter, exploreFilterBefore:
 			if len(filter.Values) != 1 {
 				return result, fmt.Errorf("filter dimension %q requires exactly one timestamp", filter.Dimension)
@@ -1356,7 +1366,8 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 
 // applyLexicalFilterPushdown narrows the parsed search query with the
 // request filters the candidate resolvers evaluate natively — source,
-// message_type, after, and before — so the bounded candidate cap applies
+// message_type, mailing_list, after, and before — so the bounded candidate
+// cap applies
 // to the filtered population instead of truncating it before the filters
 // run. Both resolvers share it: the lexical resolver pushes the narrowed
 // query into SQLite FTS5, and the vector resolver builds its backend
@@ -1368,8 +1379,8 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 // never widens results).
 //
 // Pushed dimensions intersect with any equivalent operator already present
-// in the query text (in:, message_type:, after:, before:) so the candidate
-// set never grows beyond what the parsed query alone would match. The
+// in the query text (in:, message_type:, list:, after:, before:). The candidate
+// set therefore never grows beyond what the parsed query alone would match. The
 // returned bool is false when such an intersection is empty, meaning the
 // combined predicate can match no messages and the resolver should skip
 // the index entirely.
@@ -1402,6 +1413,15 @@ func applyLexicalFilterPushdown(parsed *search.Query, filters query.Context) boo
 			}
 		}
 		parsed.MessageTypes = types
+	}
+	appendListGroup := func(values []string) {
+		if len(values) > 0 {
+			parsed.ListIDExactGroups = append(parsed.ListIDExactGroups, slices.Clone(values))
+		}
+	}
+	appendListGroup(filters.MailingLists)
+	for _, group := range filters.AdditionalMailingListGroups {
+		appendListGroup(group)
 	}
 	if filters.After != nil && (parsed.AfterDate == nil || filters.After.After(*parsed.AfterDate)) {
 		bound := *filters.After
@@ -1741,6 +1761,11 @@ func canonicalParsedExploreQuery(parsed *search.Query) string {
 	canonical.BccAddrs = canonicalStrings(parsed.BccAddrs)
 	canonical.SubjectTerms = canonicalStrings(parsed.SubjectTerms)
 	canonical.Labels = canonicalStrings(parsed.Labels)
+	canonical.ListIDExactGroups = make([][]string, len(parsed.ListIDExactGroups))
+	for i, group := range parsed.ListIDExactGroups {
+		canonical.ListIDExactGroups[i] = canonicalStrings(group)
+	}
+	slices.SortFunc(canonical.ListIDExactGroups, slices.Compare)
 	canonical.MessageTypes = canonicalStrings(parsed.MessageTypes)
 	canonical.AccountIDs = slices.Clone(parsed.AccountIDs)
 	slices.Sort(canonical.AccountIDs)

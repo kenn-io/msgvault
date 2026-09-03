@@ -220,8 +220,13 @@ func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
+			return
+		}
 		assert.Equal("/api/v1/messages/filter", r.URL.Path, "path")
 		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
+		assert.Equal("<dev_1@example.test>", r.URL.Query().Get("list_id"), "list_id")
 		assert.Equal("sms", r.URL.Query().Get("message_type"), "message_type")
 		assert.Equal("true", r.URL.Query().Get("hide_deleted"), "hide_deleted")
 		assert.Equal("25", r.URL.Query().Get("limit"), "limit")
@@ -262,6 +267,7 @@ func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 		context.Background(),
 		query.MessageFilter{
 			Sender:                "alice@example.com",
+			ListID:                "<dev_1@example.test>",
 			MessageType:           "sms",
 			HideDeletedFromSource: true,
 			Pagination:            query.Pagination{Limit: 25},
@@ -786,6 +792,11 @@ func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 
 func TestEngineGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
+			return
+		}
+		assert.Equal(t, "<dev_1@example.test>", r.URL.Query().Get("list_id"), "list_id")
 		writeJSONResponse(t, w, map[string]any{
 			"gmail_ids": []string{"shared-id"},
 			"targets": []map[string]any{{
@@ -794,12 +805,116 @@ func TestEngineGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 			}},
 		})
 	})
-	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{})
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
+		ListID: "<dev_1@example.test>",
+	})
 	require.NoError(t, err)
 	assert.Equal(t, []query.DeletionTarget{{
 		MessageID: 7, SourceID: 42, SourceType: "gmail",
 		SourceIdentifier: "account@example.invalid", SourceMessageID: "shared-id",
 	}}, targets)
+}
+
+func TestEngineRejectsListIDFilterAgainstOlderDaemonBeforeScopedRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*Engine) error
+	}{
+		{name: "list messages", call: func(engine *Engine) error {
+			_, err := engine.ListMessages(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"})
+			return err
+		}},
+		{name: "sub aggregate", call: func(engine *Engine) error {
+			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"}, query.ViewLabels, query.DefaultAggregateOptions())
+			return err
+		}},
+		{name: "list aggregate view", call: func(engine *Engine) error {
+			_, err := engine.Aggregate(t.Context(), query.ViewLists, query.DefaultAggregateOptions())
+			return err
+		}},
+		{name: "list sub-aggregate view", call: func(engine *Engine) error {
+			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{}, query.ViewLists, query.DefaultAggregateOptions())
+			return err
+		}},
+		{name: "list fast-stats view", call: func(engine *Engine) error {
+			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{TextTerms: []string{"needle"}}, "needle", query.MessageFilter{}, query.ViewLists, 50, 0)
+			return err
+		}},
+		{name: "list total-stats view", call: func(engine *Engine) error {
+			_, err := engine.GetTotalStats(t.Context(), query.StatsOptions{GroupBy: query.ViewLists})
+			return err
+		}},
+		{name: "aggregate search query", call: func(engine *Engine) error {
+			opts := query.DefaultAggregateOptions()
+			opts.SearchQuery = "list:dev@example.test"
+			_, err := engine.Aggregate(t.Context(), query.ViewLabels, opts)
+			return err
+		}},
+		{name: "sub aggregate search query", call: func(engine *Engine) error {
+			opts := query.DefaultAggregateOptions()
+			opts.SearchQuery = "list:dev@example.test"
+			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{}, query.ViewLabels, opts)
+			return err
+		}},
+		{name: "total stats search query", call: func(engine *Engine) error {
+			_, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
+				SearchQuery: "list:dev@example.test",
+			})
+			return err
+		}},
+		{name: "fast search", call: func(engine *Engine) error {
+			_, err := engine.SearchFast(t.Context(), &search.Query{TextTerms: []string{"needle"}}, query.MessageFilter{ListID: "<dev@example.test>"}, 50, 0)
+			return err
+		}},
+		{name: "fast count", call: func(engine *Engine) error {
+			_, err := engine.SearchFastCount(t.Context(), &search.Query{TextTerms: []string{"needle"}}, query.MessageFilter{ListID: "<dev@example.test>"})
+			return err
+		}},
+		{name: "fast search with stats", call: func(engine *Engine) error {
+			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{TextTerms: []string{"needle"}}, "needle", query.MessageFilter{ListID: "<dev@example.test>"}, query.ViewLabels, 50, 0)
+			return err
+		}},
+		{name: "deletion targets", call: func(engine *Engine) error {
+			_, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"})
+			return err
+		}},
+		{name: "deep search query", call: func(engine *Engine) error {
+			_, err := engine.Search(t.Context(), &search.Query{
+				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
+			}, 50, 0)
+			return err
+		}},
+		{name: "body search query", call: func(engine *Engine) error {
+			_, err := engine.SearchMessageBodies(t.Context(), &search.Query{
+				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
+			}, 50, 0)
+			return err
+		}},
+		{name: "fast search query", call: func(engine *Engine) error {
+			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{
+				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
+			}, "", query.MessageFilter{}, query.ViewSenders, 50, 0)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var scopedRequests int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.13.0"})
+					return
+				}
+				scopedRequests++
+				http.Error(w, "unexpected scoped request", http.StatusInternalServerError)
+			}))
+			t.Cleanup(srv.Close)
+
+			err := tc.call(NewEngineAdapter(newTestStore(srv, "")))
+
+			require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
+			assert.Zero(t, scopedRequests, "old daemon must not receive an exact list-ID request")
+		})
+	}
 }
 
 func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
@@ -993,14 +1108,40 @@ func TestEngineAggregateUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(11), rows[0].AttachmentSize)
 }
 
+// TestEngineAggregatePreservesListsViewAcrossDaemonBoundary catches a missing
+// ViewLists mapping that silently turns remote list aggregation into senders.
+func TestEngineAggregatePreservesListsViewAcrossDaemonBoundary(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
+			return
+		}
+		assert.Equal(t, "/api/v1/aggregates", r.URL.Path)
+		assert.Equal(t, "lists", r.URL.Query().Get("view_type"))
+		writeJSONResponse(t, w, map[string]any{
+			"view_type": "lists",
+			"rows":      []map[string]any{},
+		})
+	})
+
+	_, err := NewEngineAdapter(store).Aggregate(
+		t.Context(), query.ViewLists, query.DefaultAggregateOptions())
+	require.NoError(t, err)
+}
+
 func TestEngineSubAggregateUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
+			return
+		}
 		assert.Equal("/api/v1/aggregates/sub", r.URL.Path, "path")
 		assert.Equal("labels", r.URL.Query().Get("view_type"), "view_type")
 		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
+		assert.Equal("<dev_1@example.test>", r.URL.Query().Get("list_id"), "list_id")
 		assert.Equal("count", r.URL.Query().Get("sort"), "sort")
 		assert.Equal("desc", r.URL.Query().Get("direction"), "direction")
 		assert.Equal("10", r.URL.Query().Get("limit"), "limit")
@@ -1022,7 +1163,7 @@ func TestEngineSubAggregateUsesGeneratedClientAdapter(t *testing.T) {
 
 	rows, err := engine.SubAggregate(
 		context.Background(),
-		query.MessageFilter{Sender: "alice@example.com"},
+		query.MessageFilter{Sender: "alice@example.com", ListID: "<dev_1@example.test>"},
 		query.ViewLabels,
 		query.AggregateOptions{
 			SortField:       query.SortByCount,
@@ -1739,11 +1880,16 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.14.0"})
+			return
+		}
 		assert.Equal("/api/v1/search/fast", r.URL.Path, "path")
 		gotQuery := r.URL.Query().Get("q")
 		assert.Contains(gotQuery, "lunch", "q should preserve text terms")
 		assert.Contains(gotQuery, "message_type:sms", "q should preserve message type filters")
 		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
+		assert.Equal("<dev_1@example.test>", r.URL.Query().Get("list_id"), "list_id")
 		assert.Empty(r.URL.Query()["message_type"], "message_type filter param is unsupported by fast search")
 		assert.Equal("true", r.URL.Query().Get("hide_deleted"), "hide_deleted")
 		assert.Equal("5", r.URL.Query().Get("offset"), "offset")
@@ -1786,6 +1932,7 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 		"message_type:sms lunch",
 		query.MessageFilter{
 			Sender:                "alice@example.com",
+			ListID:                "<dev_1@example.test>",
 			HideDeletedFromSource: true,
 		},
 		query.ViewDomains,

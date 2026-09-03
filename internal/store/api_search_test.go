@@ -185,3 +185,55 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 	assert.Equal("sms", msgs[0].MessageType, "MessageType")
 	assert.Equal(smsMsg, msgs[0].ID, "ID")
 }
+
+// TestSearchMessagesQuery_ListIDFilters catches Store searches that treat
+// List-Id substrings as wildcard patterns, skip case folding, or OR repeated
+// filters instead of requiring every requested literal substring.
+func TestSearchMessagesQuery_ListIDFilters(t *testing.T) {
+	f := storetest.New(t)
+
+	create := func(sourceMessageID, listID string) int64 {
+		message := f.NewMessage().WithSourceMessageID(sourceMessageID).Build()
+		if listID != "" {
+			message.ListID = sql.NullString{String: listID, Valid: true}
+		}
+		id, err := f.Store.UpsertMessage(message)
+		require.NoError(t, err, "insert %s", sourceMessageID)
+		return id
+	}
+
+	alerts := create("list-alerts", "<Alerts.EXAMPLE.test>")
+	unicode := create("list-unicode", "<ÉCOLE.example.test>")
+	literal := create("list-literal", `<token%_\literal.example.test>`)
+	_ = create("list-percent-decoy", `<tokenAA_\literal.example.test>`)
+	_ = create("list-underscore-decoy", `<token%AA\literal.example.test>`)
+	_ = create("list-escape-decoy", "<token%_AAliteral.example.test>")
+	_ = create("list-and-decoy", "<alerts.invalid.test>")
+	_ = create("list-null", "")
+
+	cases := []struct {
+		name  string
+		query string
+		want  []int64
+	}{
+		{name: "case insensitive substring", query: "list:alerts.example", want: []int64{alerts}},
+		{name: "Unicode case insensitive substring", query: "list:école", want: []int64{unicode}},
+		{name: "literal wildcards and escape character", query: `list:%_\literal`, want: []int64{literal}},
+		{name: "repeated aliases are ANDed", query: "list:alerts list-id:example.test", want: []int64{alerts}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			msgs, total, err := f.Store.SearchMessagesQuery(search.Parse(tc.query), 0, 50)
+			require.NoError(err, "SearchMessagesQuery")
+			require.Equal(int64(len(tc.want)), total, "total")
+			require.Len(msgs, len(tc.want), "messages")
+			got := make([]int64, len(msgs))
+			for i, msg := range msgs {
+				got[i] = msg.ID
+			}
+			assert.ElementsMatch(t, tc.want, got, "matching message IDs")
+		})
+	}
+}

@@ -26,6 +26,7 @@ func Format(q *Query) string {
 	parts = appendSearchOperators(parts, "bcc", q.BccAddrs)
 	parts = appendSearchOperators(parts, "subject", q.SubjectTerms)
 	parts = appendSearchOperators(parts, "label", q.Labels)
+	parts = appendSearchOperators(parts, "list", q.ListIDs)
 	parts = appendSearchOperators(parts, "message_type", q.MessageTypes)
 	if q.ConversationIDs != nil && len(q.ConversationIDs) == 0 {
 		parts = append(parts, "conversation_id:"+conversationIDMatchNone)

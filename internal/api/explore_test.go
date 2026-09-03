@@ -21,6 +21,24 @@ func TestExploreRejectsUnknownFilterDimension(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "unknown filter dimension")
 }
 
+func TestExploreMailingListFilterAcceptsValuesAndConjoinsRepeats(t *testing.T) {
+	context, err := exploreContext([]ExploreFilter{
+		{Dimension: "mailing_list", Values: []string{"<one@example.test>", "<two@example.test>"}},
+		{Dimension: "mailing_list", Values: []string{"<ONE@EXAMPLE.TEST>"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"<one@example.test>", "<two@example.test>"}, context.MailingLists)
+	assert.Equal(t, [][]string{{"<ONE@EXAMPLE.TEST>"}}, context.AdditionalMailingListGroups)
+}
+
+func TestParseMessageFilterPreservesExactListID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/messages/filter?list_id=%3CDev_1%40Example.Test%3E", nil)
+	filter, err := parseMessageFilter(request)
+	require.NoError(t, err)
+	assert.Equal(t, "<Dev_1@Example.Test>", filter.ListID)
+}
+
 func TestExploreCursorAcceptsCanonicalFilterValueOrdering(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

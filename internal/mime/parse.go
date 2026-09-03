@@ -44,6 +44,7 @@ type Message struct {
 	ReplyTo       []Address
 	MessageID     string
 	InReplyTo     string
+	ListID        string
 	References    []string
 	BodyText      string
 	BodyHTML      string
@@ -91,6 +92,7 @@ func Parse(raw []byte) (*Message, error) {
 		Subject:   env.GetHeader("Subject"),
 		MessageID: env.GetHeader("Message-ID"),
 		InReplyTo: env.GetHeader("In-Reply-To"),
+		ListID:    NormalizeListID(env.GetHeader("List-Id")),
 		BodyText:  env.Text,
 		BodyHTML:  env.HTML,
 	}
@@ -160,6 +162,7 @@ func salvageHeaders(raw []byte) *Message {
 		ReceivedDates: ParseReceivedChain(headers["received"]),
 		MessageID:     strings.ToValidUTF8(firstHeader(headers, "message-id"), "\uFFFD"),
 		InReplyTo:     strings.ToValidUTF8(firstHeader(headers, "in-reply-to"), "\uFFFD"),
+		ListID:        NormalizeListID(firstHeader(headers, "list-id")),
 	}
 
 	if dateHeader := firstHeader(headers, "date"); dateHeader != "" {
@@ -366,6 +369,24 @@ func processMalformedOtherParts(parts []*enmime.Part) []Attachment {
 		result = append(result, makeAttachment(part, part.ContentID != ""))
 	}
 	return result
+}
+
+// NormalizeListID extracts the complete angle-bracketed token from a List-Id
+// header. When the header is malformed or unbracketed, it preserves the
+// trimmed raw value.
+func NormalizeListID(value string) string {
+	value = strings.TrimSpace(value)
+	start := strings.LastIndex(value, "<")
+	if start < 0 {
+		return value
+	}
+
+	end := strings.Index(value[start+1:], ">")
+	if end < 0 {
+		return value
+	}
+
+	return value[start : start+2+end]
 }
 
 // parseAddressList parses an address header using enmime's AddressList method.

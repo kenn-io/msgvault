@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // Common flag variables used across aggregate commands.
@@ -83,7 +84,7 @@ func outputAggregateTable(
 
 	for _, row := range rows {
 		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%s\n",
-			truncate(row.Key, 40),
+			truncate(textutil.SanitizeTerminal(row.Key), 40),
 			row.Count,
 			formatSize(row.TotalSize),
 			formatSize(row.AttachmentSize),

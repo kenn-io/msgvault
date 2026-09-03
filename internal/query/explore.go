@@ -337,6 +337,18 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 			args = append(args, value, value, value)
 		}
 	}
+	appendMailingListGroup := func(values []string) {
+		if len(values) == 0 {
+			return
+		}
+		parts := make([]string, len(values))
+		for i, value := range values {
+			parts[i] = "LOWER(list_id) = LOWER(?)"
+			args = append(args, value)
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+	}
+	appendMailingListGroup(request.Context.MailingLists)
 	// AdditionalParticipantGroups/AdditionalDomainGroups implement a
 	// drill-down conjunction (A∩B): each group is its own parenthesized OR
 	// using the same predicate shape as the primary group above, and every
@@ -366,6 +378,9 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		for _, value := range group {
 			args = append(args, value, value, value)
 		}
+	}
+	for _, group := range request.Context.AdditionalMailingListGroups {
+		appendMailingListGroup(group)
 	}
 	// duckDBMessageTypeCondition treats "email" as also matching NULL/empty
 	// message_type: legacy rows imported before message_type existed are email.
@@ -847,6 +862,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
         source_type,
         source_identifier,
         message_type,
+		list_id,
         conversation_type,
         COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, '') AS title,
         snippet AS preview,` + messageLists + `
@@ -875,6 +891,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
         arg_max(source_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS source_type,
         arg_max(source_identifier, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS source_identifier,
         arg_max(message_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS message_type,
+		arg_max(list_id, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS list_id,
         arg_max(conversation_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS conversation_type,
         COALESCE(NULLIF(MAX(conversation_title), ''), 'Conversation') AS title,
         arg_max(snippet, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS preview,` + conversationLists + `

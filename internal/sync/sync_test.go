@@ -1920,6 +1920,32 @@ func TestFullSyncWithAttachment(t *testing.T) {
 	assertAttachmentCount(t, env.Store, 1)
 }
 
+// TestFullSyncPersistsListID catches an email sync path that parses List-Id
+// but drops it before the shared message persistence boundary.
+func TestFullSyncPersistsListID(t *testing.T) {
+	env := newTestEnv(t)
+	raw := testemail.NewMessage().
+		From("Alice <alice@example.com>").
+		To("Bob <bob@example.com>").
+		Subject("List announcement").
+		Header("List-Id", "Example <announce.example.org>").
+		Body("Body text.").
+		Bytes()
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.AddMessage("list-id-message", raw, []string{"INBOX"})
+
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
+
+	var listID sql.NullString
+	require.NoError(t, env.Store.DB().QueryRow(`
+		SELECT list_id FROM messages WHERE source_message_id = ?`, "list-id-message",
+	).Scan(&listID), "read synced list ID")
+	assert.True(t, listID.Valid, "list ID should be present")
+	assert.Equal(t, "<announce.example.org>", listID.String, "list ID")
+}
+
 func TestFullSyncWithEmptyAttachment(t *testing.T) {
 	env := newTestEnv(t)
 

@@ -63,6 +63,7 @@ type Filters struct {
 	SenderDomains []string `json:"sender_domains,omitempty"`
 	Recipients    []string `json:"recipients,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
+	ListIDs       []string `json:"list_ids,omitempty"`
 	After         string   `json:"after,omitempty"`  // ISO date
 	Before        string   `json:"before,omitempty"` // ISO date
 	Account       string   `json:"account,omitempty"`

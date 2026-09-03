@@ -17,18 +17,20 @@ describe('universal grouping catalog', () => {
       'time',
       'source',
       'modality',
+      'mailing_lists',
       'labels',
       'attachment_facts',
       'conversation'
     ]);
     expect(groupingOptions().map((entry) => entry.value)).toEqual(
-      ['participant', 'domain', 'year', 'month', 'source', 'message_type']
+      ['participant', 'domain', 'year', 'month', 'source', 'message_type', 'mailing_list']
     );
     expect(groupingByDimension('participant')).toMatchObject({
       label: 'People',
       family: 'people'
     });
     expect(groupingByDimension('year')).toMatchObject({ family: 'time' });
+    expect(groupingByDimension('mailing_list')).toMatchObject({ label: 'Lists', family: 'mailing_lists' });
   });
 
   it('keeps unsupported concepts visible but incapable of forming API requests', () => {
@@ -55,6 +57,7 @@ describe('universal grouping catalog', () => {
     expect(validateGroupingChain(['participant', 'year'])).toEqual(['participant', 'year']);
     expect(validateGroupingChain(['domain', 'message_type'])).toEqual(['domain', 'message_type']);
     expect(validateGroupingChain(['source', 'month'])).toEqual(['source', 'month']);
+    expect(validateGroupingChain(['mailing_list', 'source'])).toEqual(['mailing_list', 'source']);
     expect(validateGroupingChain(['source', 'kind'])).toEqual([]);
   });
 });

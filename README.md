@@ -45,9 +45,9 @@ common chat/text export formats.
 - **Provider-neutral people sweeps**: maintain consented profile fields through explicit OpenAI Chat, OpenAI Responses, Anthropic Messages, or Gemini protocol profiles
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats
-- **First-party web UI**: dense, keyboard-driven search, grouping, people/domain, file, source, and deletion workspaces served directly by the daemon
+- **First-party web UI**: dense, keyboard-driven search and grouping across people, domains, mailing lists, time, source, and modality, plus file, source, and deletion workspaces served directly by the daemon
 - **Interactive TUI**: drill-down analytics over your entire message history, powered by DuckDB over Parquet — connects to a remote `msgvault serve` instance or runs locally
-- **Full-text search**: FTS5 with Gmail-like query syntax (`from:`, `has:attachment`, date ranges)
+- **Full-text search**: FTS5 with Gmail-like query syntax (`from:`, `list:` / `list-id:`, `has:attachment`, date ranges)
 - **MCP server**: access your full archive at the speed of thought in Claude Desktop and other MCP-capable AI agents
 - **DuckDB analytics**: millisecond aggregate queries across hundreds of thousands of messages in the TUI, CLI, and MCP server
 - **Incremental sync**: History API picks up only new and changed messages

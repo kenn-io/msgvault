@@ -93,6 +93,9 @@ type GetSubAggregatesQuery struct {
 	// Label Label filter
 	Label *string `json:"label,omitempty"`
 
+	// ListID Exact case-insensitive RFC 2919 List-Id filter
+	ListID *string `json:"list_id,omitempty"`
+
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`
 
@@ -464,6 +467,9 @@ type FilterMessagesQuery struct {
 	// Label Label filter
 	Label *string `json:"label,omitempty"`
 
+	// ListID Exact case-insensitive RFC 2919 List-Id filter
+	ListID *string `json:"list_id,omitempty"`
+
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`
 
@@ -525,6 +531,9 @@ type GetGmailIDsByFilterQuery struct {
 
 	// Label Label filter
 	Label *string `json:"label,omitempty"`
+
+	// ListID Exact case-insensitive RFC 2919 List-Id filter
+	ListID *string `json:"list_id,omitempty"`
 
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`
@@ -834,6 +843,9 @@ type SearchMessagesQuery struct {
 	// Label Exact case-insensitive label filter (vector or hybrid mode only)
 	Label *string `json:"label,omitempty"`
 
+	// ListID Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)
+	ListID *string `json:"list_id,omitempty"`
+
 	// TimePeriod Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
 	TimePeriod *string `json:"time_period,omitempty"`
 
@@ -867,13 +879,13 @@ type DeepSearchQuery struct {
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
-	// SenderName Sender display-name filter
+	// SenderName Sender display-name filter; not supported by deep search
 	SenderName *string `json:"sender_name,omitempty"`
 
 	// Recipient Recipient email/address filter
 	Recipient *string `json:"recipient,omitempty"`
 
-	// RecipientName Recipient display-name filter
+	// RecipientName Recipient display-name filter; not supported by deep search
 	RecipientName *string `json:"recipient_name,omitempty"`
 
 	// Domain Domain filter
@@ -882,16 +894,19 @@ type DeepSearchQuery struct {
 	// Label Label filter
 	Label *string `json:"label,omitempty"`
 
-	// MessageType Message type filter
+	// ListID Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search
+	ListID *string `json:"list_id,omitempty"`
+
+	// MessageType Message type filter; not supported by deep search
 	MessageType *string `json:"message_type,omitempty"`
 
-	// TimePeriod Named time period
+	// TimePeriod Named time period; not supported by deep search
 	TimePeriod *string `json:"time_period,omitempty"`
 
 	// TimeGranularity Time bucket granularity
 	TimeGranularity *string `json:"time_granularity,omitempty"`
 
-	// ConversationID Conversation ID
+	// ConversationID Conversation ID; not supported by deep search
 	ConversationID *int64 `json:"conversation_id,omitempty"`
 
 	// SourceID Source ID
@@ -909,7 +924,7 @@ type DeepSearchQuery struct {
 	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
 	Before *string `json:"before,omitempty"`
 
-	// EmptyTargets Comma-separated aggregate view names to match empty values
+	// EmptyTargets Comma-separated aggregate view names to match empty values; not supported by deep search
 	EmptyTargets *string `json:"empty_targets,omitempty"`
 
 	// Offset Zero-based row offset
@@ -974,6 +989,9 @@ type FastSearchQuery struct {
 
 	// Label Label filter
 	Label *string `json:"label,omitempty"`
+
+	// ListID Exact case-insensitive RFC 2919 List-Id filter
+	ListID *string `json:"list_id,omitempty"`
 
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`

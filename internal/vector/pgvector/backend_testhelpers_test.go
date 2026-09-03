@@ -93,6 +93,7 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 		CREATE TABLE messages (
 			id BIGINT PRIMARY KEY,
 			message_type TEXT NOT NULL DEFAULT 'email',
+			list_id TEXT,
 			source_id BIGINT,
 			sender_id BIGINT,
 			subject TEXT,

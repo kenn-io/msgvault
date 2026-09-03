@@ -60,6 +60,7 @@ const (
 	toolArgGroupBy       = "group_by"
 	toolArgDomains       = "domains"
 	toolArgSender        = "sender"
+	toolArgList          = "list"
 	// maxBodyChars caps the body slice returned by get_message regardless of what
 	// the caller requests via max_chars. Prevents a single tool call from flooding
 	// the context window; callers page forward using offset.
@@ -654,10 +655,6 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	if err := q.Err(); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return toolErrorResult(msg), nil
-	}
-
 	limit := searchLimitArg(args)
 	offset := limitArg(args, toolArgOffset, 0)
 
@@ -802,28 +799,6 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 	return jsonResult(response)
 }
 
-func unsupportedSearchOperatorMessage(q *search.Query) string {
-	if len(q.UnsupportedOperators) == 0 {
-		return ""
-	}
-
-	names := make([]string, 0, len(q.UnsupportedOperators))
-	seen := make(map[string]bool, len(q.UnsupportedOperators))
-	for _, op := range q.UnsupportedOperators {
-		name := op.Name + ":"
-		if !seen[name] {
-			names = append(names, name)
-			seen[name] = true
-		}
-	}
-
-	return fmt.Sprintf(
-		"unsupported_search_operator: %s is Gmail-only syntax; msgvault does not index List-ID locally. "+
-			"Use the Gmail connector for List-ID validation, or use msgvault-supported operators.",
-		strings.Join(names, ", "),
-	)
-}
-
 // searchMessageBodies searches message bodies by keyword, vector, or hybrid.
 // It returns messages whose body matches the query, plus matches — short
 // excerpts centered on each matched term. Requires at least one free-text term
@@ -857,10 +832,6 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	if err := q.Err(); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return toolErrorResult(msg), nil
-	}
-
 	limit := searchLimitArg(args)
 	offset := limitArg(args, toolArgOffset, 0)
 
@@ -950,10 +921,6 @@ func (h *handlers) semanticSearchMessages(ctx context.Context, req toolRequest) 
 	if err := q.Err(); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return toolErrorResult(msg), nil
-	}
-
 	return h.searchMessageBodiesHybrid(ctx, args, queryStr, q, mode, explain)
 }
 
@@ -2052,6 +2019,7 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 		"recipient":   query.ViewRecipients,
 		"domain":      query.ViewDomains,
 		"label":       query.ViewLabels,
+		toolArgList:   query.ViewLists,
 		"time":        query.ViewTime,
 	}
 
@@ -2217,8 +2185,11 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	if hasQuery {
 		// Query-based search
 		q := search.Parse(queryStr)
-		if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-			return toolErrorResult(msg), nil
+		if err := q.Err(); err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+		if q.IsEmpty() {
+			return toolErrorResult("query must contain at least one search term or filter"), nil
 		}
 		if sourceID != nil {
 			q.AccountIDs = []int64{*sourceID}

@@ -47,6 +47,7 @@ type StageDeletionFilter struct {
 	RecipientName string `json:"recipient_name,omitempty"`
 	Domain        string `json:"domain,omitempty"`
 	Label         string `json:"label,omitempty"`
+	ListID        string `json:"list_id,omitempty"`
 	SourceID      *int64 `json:"source_id,omitempty"`
 	After         string `json:"after,omitempty"`
 	Before        string `json:"before,omitempty"`
@@ -54,7 +55,7 @@ type StageDeletionFilter struct {
 
 func (f *StageDeletionFilter) isEmpty() bool {
 	return f == nil || (f.Sender == "" && f.SenderName == "" && f.Recipient == "" &&
-		f.RecipientName == "" && f.Domain == "" && f.Label == "" &&
+		f.RecipientName == "" && f.Domain == "" && f.Label == "" && f.ListID == "" &&
 		f.SourceID == nil && f.After == "" && f.Before == "")
 }
 
@@ -66,6 +67,7 @@ func (f *StageDeletionFilter) toMessageFilter() (query.MessageFilter, *apiHTTPEr
 	mf.RecipientName = f.RecipientName
 	mf.Domain = f.Domain
 	mf.Label = f.Label
+	mf.ListID = f.ListID
 	mf.SourceID = f.SourceID
 	if f.After != "" {
 		ts, err := parseAPITime(f.After)
@@ -588,6 +590,9 @@ func manifestFiltersFromRequest(f *StageDeletionFilter) deletion.Filters {
 	}
 	if f.Label != "" {
 		out.Labels = []string{f.Label}
+	}
+	if f.ListID != "" {
+		out.ListIDs = []string{f.ListID}
 	}
 	out.After = f.After
 	out.Before = f.Before

@@ -19,6 +19,7 @@ type Query struct {
 	BccAddrs        []string   // bcc: filters
 	SubjectTerms    []string   // subject: filters
 	Labels          []string   // label: filters
+	ListIDs         []string   // list: or list-id: filters
 	HasAttachment   *bool      // has:attachment
 	BeforeDate      *time.Time // before: filter
 	AfterDate       *time.Time // after: filter
@@ -28,6 +29,10 @@ type Query struct {
 	ConversationIDs []int64    // conversation_id: local conversation filter
 	MessageTypes    []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted     bool       // exclude messages where deleted_from_source_at IS NOT NULL
+
+	// ListIDExactGroups carries structured exact List-Id filters. Values in
+	// each group are OR'd; groups are AND'd. The parser never populates it.
+	ListIDExactGroups [][]string
 
 	// DeletionScope selects which messages the Store and query-engine
 	// lexical search paths cover relative to source deletion
@@ -117,6 +122,8 @@ func (q *Query) IsEmpty() bool {
 		len(q.BccAddrs) == 0 &&
 		len(q.SubjectTerms) == 0 &&
 		len(q.Labels) == 0 &&
+		len(q.ListIDs) == 0 &&
+		len(q.ListIDExactGroups) == 0 &&
 		q.HasAttachment == nil &&
 		q.BeforeDate == nil &&
 		q.AfterDate == nil &&
@@ -249,6 +256,8 @@ var operators = map[string]operatorFn{
 		}
 		return nil
 	},
+	"list":    listIDOperator("list"),
+	"list-id": listIDOperator("list-id"),
 	"has": func(q *Query, v string, _ time.Time) error {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "attachment", "attachments":
@@ -330,9 +339,18 @@ var operators = map[string]operatorFn{
 	},
 }
 
-var unsupportedOperators = map[string]bool{
-	"list":    true,
-	"list-id": true,
+func listIDOperator(name string) operatorFn {
+	return func(q *Query, value string, _ time.Time) error {
+		value = strings.TrimSpace(value)
+		if strings.HasPrefix(value, "(") || strings.HasSuffix(value, ")") {
+			return operatorValueError(name, value,
+				"parenthesized values are not supported; repeat the operator for multiple values")
+		}
+		if value != "" {
+			q.ListIDs = append(q.ListIDs, value)
+		}
+		return nil
+	}
 }
 
 // Parser holds configuration for query parsing.
@@ -351,6 +369,7 @@ func NewParser() *Parser {
 //   - from:, to:, cc:, bcc: - address filters
 //   - subject: - subject text search
 //   - label: or l: - label filter
+//   - list: or list-id: - mailing list identifier filter
 //   - has:attachment - attachment filter
 //   - before:, after: - date filters (YYYY-MM-DD)
 //   - older_than:, newer_than: - relative date filters (e.g., 7d, 2w, 1m, 1y)
@@ -379,12 +398,6 @@ func (p *Parser) Parse(queryStr string) *Query {
 					q.parseErrs = append(q.parseErrs, err)
 				}
 			} else {
-				if unsupportedOperators[op] {
-					q.UnsupportedOperators = append(q.UnsupportedOperators, UnsupportedOperator{
-						Name:  op,
-						Token: token,
-					})
-				}
 				q.TextTerms = append(q.TextTerms, token)
 			}
 			continue
@@ -584,6 +597,7 @@ func (q *Query) HasOperators() bool {
 		len(q.BccAddrs) > 0 ||
 		len(q.SubjectTerms) > 0 ||
 		len(q.Labels) > 0 ||
+		len(q.ListIDs) > 0 ||
 		q.HasAttachment != nil ||
 		q.BeforeDate != nil ||
 		q.AfterDate != nil ||
