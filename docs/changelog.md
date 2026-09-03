@@ -49,6 +49,10 @@ All notable changes to msgvault, grouped by release.
   local search backends, while the TUI and web analytical workspace expose a
   Lists grouping with exact case-insensitive drill-down.
 
+- Native read-only Notion AI Meeting Notes sync, including sanitized access
+  probing, changed-meeting refresh, verified attendee resolution, bounded late
+  transcript retries, raw evidence, daemon scheduling, and Meetings TUI support.
+
 - Exact source selection is available through `--source-id` on `sync`,
   `sync-full`, `update-account`, `remove-account`, and `delete-staged`.
   Account arguments continue to accept identifiers and display names, while

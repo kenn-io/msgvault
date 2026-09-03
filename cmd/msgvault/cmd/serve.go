@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -532,6 +533,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled circleback source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.NotionMeetings {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("notion meeting source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[notion_meetings]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledNotionMeetingsSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(notionmeetings.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for notion meeting source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredNotionMeetingsSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule notion meeting source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled notion meeting source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 

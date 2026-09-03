@@ -98,15 +98,17 @@ func TestMeetingAccountsExcludeUnrelatedSources(t *testing.T) {
 		query.AccountInfo{ID: 3, SourceType: meetingSourceCircleback, Identifier: "team-meetings"},
 		query.AccountInfo{ID: 4, SourceType: "teams", Identifier: "team-chat"},
 		query.AccountInfo{ID: 5, SourceType: meetingSourceImported, Identifier: "local-meetings"},
+		query.AccountInfo{ID: 6, SourceType: meetingSourceNotion, Identifier: "notion-notes"},
 	).Build()
 
 	accounts := model.meetingAccounts()
 
-	require.Len(t, accounts, 3)
-	assert.Equal(t, []string{"work-notes", "team-meetings", "local-meetings"}, []string{
+	require.Len(t, accounts, 4)
+	assert.Equal(t, []string{"work-notes", "team-meetings", "local-meetings", "notion-notes"}, []string{
 		accounts[0].Identifier,
 		accounts[1].Identifier,
 		accounts[2].Identifier,
+		accounts[3].Identifier,
 	})
 }
 

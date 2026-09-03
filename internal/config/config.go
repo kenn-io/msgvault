@@ -396,35 +396,36 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	Data         DataConfig                      `toml:"data"`
-	Log          LogConfig                       `toml:"log"`
-	OAuth        OAuthConfig                     `toml:"oauth"`
-	Microsoft    MicrosoftConfig                 `toml:"microsoft"`
-	Sync         SyncConfig                      `toml:"sync"`
-	Chat         ChatConfig                      `toml:"chat"`
-	Server       ServerConfig                    `toml:"server"`
-	Analytics    AnalyticsConfig                 `toml:"analytics"`
-	Web          WebConfig                       `toml:"web"`
-	Integrations IntegrationsConfig              `toml:"integrations"`
-	Remote       RemoteConfig                    `toml:"remote"`
-	Vector       vector.Config                   `toml:"vector"`
-	Identity     IdentityConfig                  `toml:"identity"`
-	Fastmail     []FastmailSource                `toml:"fastmail"`
-	CardDAV      CardDAVConfig                   `toml:"carddav"`
-	Accounts     []AccountSchedule               `toml:"accounts"`
-	SynctechSMS  SynctechSMSConfig               `toml:"synctech_sms"`
-	GCal         []GCalSource                    `toml:"gcal"`
-	Beeper       BeeperConfig                    `toml:"beeper"`
-	Slack        SlackConfig                     `toml:"slack"`
-	Granola      []GranolaSource                 `toml:"granola"`
-	Circleback   []CirclebackSource              `toml:"circleback"`
-	Backup       BackupConfig                    `toml:"backup"`
-	Discord      DiscordConfig                   `toml:"discord"`
-	Attachments  documentindex.AttachmentsConfig `toml:"attachments"`
-	Activity     ActivityConfig                  `toml:"activity"`
-	People       PeopleConfig                    `toml:"people"`
-	Teams        TeamsConfig                     `toml:"teams"`
-	Deletion     DeletionConfig                  `toml:"deletion"`
+	Data           DataConfig                      `toml:"data"`
+	Log            LogConfig                       `toml:"log"`
+	OAuth          OAuthConfig                     `toml:"oauth"`
+	Microsoft      MicrosoftConfig                 `toml:"microsoft"`
+	Sync           SyncConfig                      `toml:"sync"`
+	Chat           ChatConfig                      `toml:"chat"`
+	Server         ServerConfig                    `toml:"server"`
+	Analytics      AnalyticsConfig                 `toml:"analytics"`
+	Web            WebConfig                       `toml:"web"`
+	Integrations   IntegrationsConfig              `toml:"integrations"`
+	Remote         RemoteConfig                    `toml:"remote"`
+	Vector         vector.Config                   `toml:"vector"`
+	Identity       IdentityConfig                  `toml:"identity"`
+	Fastmail       []FastmailSource                `toml:"fastmail"`
+	CardDAV        CardDAVConfig                   `toml:"carddav"`
+	Accounts       []AccountSchedule               `toml:"accounts"`
+	SynctechSMS    SynctechSMSConfig               `toml:"synctech_sms"`
+	GCal           []GCalSource                    `toml:"gcal"`
+	Beeper         BeeperConfig                    `toml:"beeper"`
+	Slack          SlackConfig                     `toml:"slack"`
+	Granola        []GranolaSource                 `toml:"granola"`
+	Circleback     []CirclebackSource              `toml:"circleback"`
+	NotionMeetings []NotionMeetingsSource          `toml:"notion_meetings"`
+	Backup         BackupConfig                    `toml:"backup"`
+	Discord        DiscordConfig                   `toml:"discord"`
+	Attachments    documentindex.AttachmentsConfig `toml:"attachments"`
+	Activity       ActivityConfig                  `toml:"activity"`
+	People         PeopleConfig                    `toml:"people"`
+	Teams          TeamsConfig                     `toml:"teams"`
+	Deletion       DeletionConfig                  `toml:"deletion"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -1497,6 +1498,22 @@ type CirclebackSource struct {
 	Enabled      bool   `toml:"enabled"`
 }
 
+// NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
+// Authentication uses a read-only integration token stored in config.toml.
+type NotionMeetingsSource struct {
+	Identifier   string `toml:"identifier"`
+	AccountEmail string `toml:"account_email"`
+	Token        string `toml:"token"`
+	Schedule     string `toml:"schedule"`
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source.
+func (s NotionMeetingsSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("notion_meetings", s.Identifier, s.AccountEmail)
+}
+
 // EffectiveAccountEmail returns the normalized primary identity configured
 // for this source.
 func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
@@ -1528,7 +1545,7 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
-// applyMeetingSourceDefaults normalizes [[granola]]/[[circleback]] entries: a
+// applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
@@ -1538,9 +1555,12 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
 		c.Circleback[0].Identifier = "default"
 	}
+	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
+		c.NotionMeetings[0].Identifier = "default"
+	}
 }
 
-// validateMeetingSources rejects [[granola]]/[[circleback]] lists with empty
+// validateMeetingSources rejects native meeting-source lists with empty
 // or duplicate identifiers — the identifier keys the source row and token
 // file, so a collision would silently merge two accounts.
 func (c *Config) validateMeetingSources() error {
@@ -1590,6 +1610,22 @@ func (c *Config) validateMeetingSources() error {
 			c.Circleback[i].AccountEmail = email
 		}
 	}
+	notionIDs := make([]string, len(c.NotionMeetings))
+	for i, s := range c.NotionMeetings {
+		notionIDs[i] = s.Identifier
+	}
+	if err := check("notion_meetings", notionIDs); err != nil {
+		return err
+	}
+	for i := range c.NotionMeetings {
+		email, err := c.NotionMeetings[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.NotionMeetings[i].AccountEmail) != "" {
+			c.NotionMeetings[i].AccountEmail = email
+		}
+	}
 	return nil
 }
 
@@ -1632,6 +1668,30 @@ func (c *Config) GetCirclebackSource(identifier string) *CirclebackSource {
 func (c *Config) ScheduledCirclebackSources() []CirclebackSource {
 	var out []CirclebackSource
 	for _, src := range c.Circleback {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GetNotionMeetingsSource returns the configured Notion meeting source
+// matching identifier (case-insensitive), or nil.
+func (c *Config) GetNotionMeetingsSource(identifier string) *NotionMeetingsSource {
+	for _, src := range c.NotionMeetings {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledNotionMeetingsSources returns enabled Notion meeting sources with
+// a cron schedule.
+func (c *Config) ScheduledNotionMeetingsSources() []NotionMeetingsSource {
+	var out []NotionMeetingsSource
+	for _, src := range c.NotionMeetings {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

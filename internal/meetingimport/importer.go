@@ -1,15 +1,13 @@
 package meetingimport
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/meetingidentity"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -119,167 +117,52 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		}
 	}()
 
-	existing, err := i.store.MessageExistsBatch(source.ID, []string{snapshot.SourceMessageID})
-	if err != nil {
-		return result, fmt.Errorf("lookup existing meeting: %w", err)
-	}
-	identities, err := meetingidentity.ForSource(i.store, source.ID, snapshot.AccountEmail)
-	if err != nil {
-		return result, err
-	}
-
-	organizerEmail := ""
-	organizerName := ""
+	var organizer *meetingarchive.Person
 	if snapshot.Organizer != nil {
-		organizerEmail = snapshot.Organizer.Email
-		organizerName = snapshot.Organizer.Name
-	}
-	expectedIsFromMe := organizerEmail != "" && identities.Contains(organizerEmail)
-
-	existingMessageID, existed := existing[snapshot.SourceMessageID]
-	if existed {
-		result.Status = StatusUpdated
-		result.MessageID = existingMessageID
-
-		storedRaw, rawErr := i.store.GetMessageRaw(existingMessageID)
-		if rawErr == nil && bytes.Equal(storedRaw, snapshot.Raw) {
-			storedIsFromMe, attributionErr := i.store.GetMessageIsFromMe(existingMessageID)
-			if attributionErr == nil && storedIsFromMe == expectedIsFromMe {
-				if err := ctx.Err(); err != nil {
-					return result, err
-				}
-				checkpoint.MessagesProcessed = 1
-				if i.beforeCheckpointForTest != nil {
-					i.beforeCheckpointForTest()
-				}
-				if err := i.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
-					return result, fmt.Errorf("checkpoint meeting import sync: %w", err)
-				}
-				if err := i.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
-					return result, fmt.Errorf("recompute meeting conversation stats: %w", err)
-				}
-				if err := i.store.CompleteSyncContext(ctx, syncID, ""); err != nil {
-					return result, fmt.Errorf("complete meeting import sync: %w", err)
-				}
-				i.refreshCache(ctx, SourceType+":"+snapshot.SourceIdentifier,
-					source.ID, snapshot.SourceMessageID)
-				return result, nil
-			}
+		organizer = &meetingarchive.Person{
+			Name:  snapshot.Organizer.Name,
+			Email: snapshot.Organizer.Email,
 		}
-		// Missing or unreadable canonical data, or mismatched derived
-		// attribution, is not a match. Continue through the transactional
-		// persistence path so a valid retry repairs the message; genuine
-		// storage failures surface from that rewrite.
 	}
-
-	participants := make(
-		[]store.ParticipantPersistData,
-		0,
-		len(snapshot.Attendees)+1,
-	)
-	hasOrganizer := snapshot.Organizer != nil
-	if hasOrganizer {
-		participants = append(participants, store.ParticipantPersistData{
-			EmailAddress: organizerEmail,
-			DisplayName:  organizerName,
-			Domain:       emailDomain(organizerEmail),
-		})
-	}
-
-	attendeeNames := make([]string, 0, len(snapshot.Attendees))
-	attendeeEmails := make([]string, 0, len(snapshot.Attendees))
+	attendees := make([]meetingarchive.Person, 0, len(snapshot.Attendees))
 	for _, attendee := range snapshot.Attendees {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		participants = append(participants, store.ParticipantPersistData{
-			EmailAddress: attendee.Email,
-			DisplayName:  attendee.Name,
-			Domain:       emailDomain(attendee.Email),
+		attendees = append(attendees, meetingarchive.Person{
+			Name:  attendee.Name,
+			Email: attendee.Email,
 		})
-		attendeeNames = append(attendeeNames, attendee.Name)
-		attendeeEmails = append(attendeeEmails, attendee.Email)
 	}
-
-	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
-	messageID, err := i.store.PersistMessageWithParticipantsContext(
-		ctx,
-		participants,
-		func(participantIDs []int64) *store.MessagePersistData {
-			attendeeOffset := 0
-			var senderID int64
-			var fromIDs []int64
-			var fromNames []string
-			if hasOrganizer {
-				senderID = participantIDs[0]
-				attendeeOffset = 1
-				fromIDs = []int64{senderID}
-				fromNames = []string{organizerName}
-			}
-			attendeeIDs := participantIDs[attendeeOffset:]
-			conversationParticipants := make(
-				[]store.ConversationParticipantRef,
-				0,
-				len(attendeeIDs),
-			)
-			for _, participantID := range attendeeIDs {
-				conversationParticipants = append(
-					conversationParticipants,
-					store.ConversationParticipantRef{
-						ParticipantID: participantID,
-						Role:          "member",
-					},
-				)
-			}
-
-			return &store.MessagePersistData{
-				Message: &store.Message{
-					SourceID:                source.ID,
-					SourceMessageID:         snapshot.SourceMessageID,
-					MessageType:             MessageType,
-					SentAt:                  sql.NullTime{Time: snapshot.StartedAt, Valid: true},
-					SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-					IsFromMe:                expectedIsFromMe,
-					IdentityDerivedIsFromMe: expectedIsFromMe,
-					Subject:                 sql.NullString{String: snapshot.Title, Valid: snapshot.Title != ""},
-					Snippet:                 sql.NullString{String: snapshot.Snippet, Valid: snapshot.Snippet != ""},
-					SizeEstimate:            int64(len(snapshot.Body)),
-				},
-				Conversation: &store.ConversationPersistData{
-					SourceConversationID: snapshot.SourceMessageID,
-					ConversationType:     ConversationType,
-					Title:                snapshot.Title,
-					Participants:         conversationParticipants,
-				},
-				Metadata:  &metadata,
-				BodyText:  sql.NullString{String: snapshot.Body, Valid: snapshot.Body != ""},
-				RawMIME:   snapshot.Raw,
-				RawFormat: RawFormat,
-				Recipients: []store.RecipientSet{
-					{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames},
-					{Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames},
-				},
-				PreserveLabels: true,
-				FTS: &store.FTSDoc{
-					Subject:  snapshot.Title,
-					Body:     snapshot.Body,
-					FromAddr: organizerEmail,
-					ToAddrs:  strings.Join(attendeeEmails, " "),
-				},
-			}
-		},
-	)
-	if err != nil {
-		return result, fmt.Errorf("persist meeting: %w", err)
-	}
-	result.MessageID = messageID
-	result.Status = StatusCreated
-	checkpoint.MessagesProcessed = 1
-	checkpoint.MessagesAdded = 1
-	if existed {
+	archiveResult, archiveErr := meetingarchive.New(i.store).Upsert(ctx, meetingarchive.Snapshot{
+		SourceID:             source.ID,
+		AccountEmail:         snapshot.AccountEmail,
+		SourceMessageID:      snapshot.SourceMessageID,
+		SourceConversationID: snapshot.SourceMessageID,
+		Title:                snapshot.Title,
+		StartedAt:            snapshot.StartedAt,
+		Body:                 snapshot.Body,
+		Snippet:              snapshot.Snippet,
+		Metadata:             snapshot.Metadata,
+		Raw:                  snapshot.Raw,
+		RawFormat:            RawFormat,
+		Organizer:            organizer,
+		Attendees:            attendees,
+	}, meetingarchive.UpsertOptions{})
+	if archiveResult.MessageID != 0 {
+		result.MessageID = archiveResult.MessageID
 		result.Status = StatusUpdated
-		checkpoint.MessagesAdded = 0
-		checkpoint.MessagesUpdated = 1
+		checkpoint.MessagesProcessed = 1
+		if archiveResult.Created {
+			result.Status = StatusCreated
+			checkpoint.MessagesAdded = 1
+		} else if archiveResult.Changed {
+			checkpoint.MessagesUpdated = 1
+		}
+	}
+	if archiveErr != nil {
+		if archiveResult.Changed {
+			i.refreshCache(context.WithoutCancel(ctx), SourceType+":"+snapshot.SourceIdentifier,
+				source.ID, snapshot.SourceMessageID)
+		}
+		return result, archiveErr
 	}
 
 	if i.beforeCheckpointForTest != nil {
@@ -287,9 +170,6 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 	}
 	if err := i.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 		return result, fmt.Errorf("checkpoint meeting import sync: %w", err)
-	}
-	if err := i.store.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
-		return result, fmt.Errorf("recompute meeting conversation stats: %w", err)
 	}
 	if err := i.store.CompleteSyncContext(ctx, syncID, ""); err != nil {
 		return result, fmt.Errorf("complete meeting import sync: %w", err)
@@ -319,12 +199,4 @@ func (i *Importer) refreshCache(ctx context.Context, label string, sourceID int6
 			"error", err,
 		)
 	}
-}
-
-func emailDomain(email string) string {
-	at := strings.LastIndexByte(email, '@')
-	if at < 0 || at == len(email)-1 {
-		return ""
-	}
-	return strings.ToLower(email[at+1:])
 }

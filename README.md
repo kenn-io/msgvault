@@ -1,3 +1,7 @@
+---
+last_edited: "2026-08-30"
+---
+
 <p align="center">
   <img src=".github/assets/msgvault-mark.svg" width="160" height="160" alt="msgvault logo">
 </p>
@@ -26,9 +30,9 @@ Archive a lifetime of email, messages, meetings. Analytics and search in millise
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
 Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, CardDAV,
-Granola, Circleback, Beeper Desktop, and IMAP sync, plus offline imports from
-Slackdump, MBOX exports, Apple Mail (`.emlx`) directories, PST archives, and
-common chat/text export formats.
+Granola, Circleback, Notion AI Meeting Notes, Beeper Desktop, and IMAP sync,
+plus offline imports from Slackdump, MBOX exports, Apple Mail (`.emlx`)
+directories, PST archives, and common chat/text export formats.
 
 ## Features
 
@@ -38,7 +42,7 @@ common chat/text export formats.
 - **Discord sync**: archive guild channels, threads, forum posts, and attachments through a read-only bot with `message_type = discord`
 - **Slack sync**: archive joined channels, group DMs, direct messages, threads, reactions, and files with `message_type = slack`
 - **Slackdump import**: archive a Slackdump directory or ZIP without a Slack token or network access
-- **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
+- **Meeting notes**: sync Granola, Circleback, and Notion AI Meeting Notes, then browse them in the TUI
 - **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
 - **CardDAV contacts**: pull address books, explicitly publish curated people, and resolve conflicts without losing remote card data
@@ -134,6 +138,7 @@ available with `msgvault tui`.
 | `backfill-discord-media` | Retry incomplete Discord attachment downloads |
 | `add-granola` / `sync-granola` | Register and sync Granola meeting notes and transcripts |
 | `add-circleback` / `sync-circleback` | Authorize and sync Circleback meetings, notes, and transcripts |
+| `add-notion-meetings` / `sync-notion-meetings` | Register and sync Notion AI Meeting Notes |
 | `add-beeper` / `sync-beeper` | Register and sync Beeper Desktop chats and media |
 | `backup` | Initialize, create, list, verify, and restore backup snapshots |
 | `pack-attachments` | Migrate all eligible loose attachment files into immutable packs |

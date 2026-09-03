@@ -1537,6 +1537,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-discord",
 		"add-granola",
 		"add-imap",
+		"add-notion-meetings",
 		"add-o365",
 		"add-slack",
 		"add-synctech-sms-drive",
@@ -1583,6 +1584,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-circleback",
 		"sync-discord",
 		"sync-granola",
+		"sync-notion-meetings",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams":

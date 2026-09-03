@@ -35,7 +35,8 @@ func registerMeetingSource(
 		return nil, fmt.Errorf("confirm meeting account identity: %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "Confirmed identity %s on %s (signal: account-email).\n", primary, identifier)
+	commandSource := strings.ReplaceAll(sourceType, "_", "-")
 	_, _ = fmt.Fprintf(out, "After identity changes, run msgvault sync-%s %s --full to refresh existing meeting attribution.\n",
-		sourceType, identifier)
+		commandSource, identifier)
 	return source, nil
 }
