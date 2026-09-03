@@ -266,7 +266,7 @@ jobs:
           - goarch: amd64
             runner: windows-latest
           - goarch: arm64
-            runner: windows-11-arm
+            runner: windows-11-vs2026-arm
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
