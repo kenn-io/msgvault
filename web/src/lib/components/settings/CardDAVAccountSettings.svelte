@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, SettingsSection, TextInput, Toggle } from '@kenn-io/kit-ui';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { components } from '../../api/generated/schema';
@@ -8,6 +8,13 @@
 
   type CardDAVAccountRequest = components['schemas']['CardDAVAccountRequest'];
   type Action = 'test' | 'save';
+  interface AccountSettingsSnapshot {
+    baseURL: string;
+    username: string;
+    passwordConfigured: boolean;
+    enabled: boolean;
+    schedule: string;
+  }
 
   let {
     client,
@@ -27,6 +34,8 @@
   let persistedPasswordConfigured = $state(settingSecretConfigured('carddav.password'));
   let enabled = $state(settingBoolean('carddav.enabled'));
   let schedule = $state(settingString('carddav.schedule'));
+  let persistedEnabled = $state(settingBoolean('carddav.enabled'));
+  let persistedSchedule = $state(settingString('carddav.schedule'));
   let activeAction = $state<Action | undefined>();
   let error = $state('');
   let status = $state('');
@@ -34,6 +43,11 @@
   let requestController: AbortController | undefined;
   let actionGeneration = 0;
   let disposed = false;
+
+  $effect(() => {
+    const snapshot = settingsSnapshot(settings);
+    untrack(() => reconcileSettings(snapshot));
+  });
 
   $effect(() => {
     const tuple = identityTuple();
@@ -51,18 +65,41 @@
     requestController = undefined;
   });
 
-  function settingString(key: string): string {
-    const value = settings.find((setting) => setting.key === key)?.value;
+  function settingString(key: string, source: SettingState[] = settings): string {
+    const value = source.find((setting) => setting.key === key)?.value;
     return value && 'string' in value ? value.string : '';
   }
 
-  function settingBoolean(key: string): boolean {
-    const value = settings.find((setting) => setting.key === key)?.value;
+  function settingBoolean(key: string, source: SettingState[] = settings): boolean {
+    const value = source.find((setting) => setting.key === key)?.value;
     return Boolean(value && 'boolean' in value && value.boolean);
   }
 
-  function settingSecretConfigured(key: string): boolean {
-    return settings.find((setting) => setting.key === key)?.secret?.configured === true;
+  function settingSecretConfigured(key: string, source: SettingState[] = settings): boolean {
+    return source.find((setting) => setting.key === key)?.secret?.configured === true;
+  }
+
+  function settingsSnapshot(source: SettingState[]): AccountSettingsSnapshot {
+    return {
+      baseURL: settingString('carddav.base_url', source),
+      username: settingString('carddav.username', source),
+      passwordConfigured: settingSecretConfigured('carddav.password', source),
+      enabled: settingBoolean('carddav.enabled', source),
+      schedule: settingString('carddav.schedule', source)
+    };
+  }
+
+  function reconcileSettings(next: AccountSettingsSnapshot) {
+    if (baseURL === persistedBaseURL) baseURL = next.baseURL;
+    if (username === persistedUsername) username = next.username;
+    if (enabled === persistedEnabled) enabled = next.enabled;
+    if (schedule === persistedSchedule) schedule = next.schedule;
+
+    persistedBaseURL = next.baseURL;
+    persistedUsername = next.username;
+    persistedPasswordConfigured = next.passwordConfigured;
+    persistedEnabled = next.enabled;
+    persistedSchedule = next.schedule;
   }
 
   function requestBody(): CardDAVAccountRequest {
@@ -147,6 +184,8 @@
       persistedBaseURL = data.base_url;
       persistedUsername = data.username;
       persistedPasswordConfigured = true;
+      persistedEnabled = data.enabled;
+      persistedSchedule = data.schedule ?? '';
       password = '';
       testedTuple = '';
       status = `CardDAV account saved. Found ${data.books} address ${data.books === 1 ? 'book' : 'books'}.`;

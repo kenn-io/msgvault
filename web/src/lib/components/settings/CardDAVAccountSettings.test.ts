@@ -13,6 +13,14 @@ const settings: SettingState[] = [
   accountSetting('carddav.schedule', 'string', { value: { string: '0 2 * * *' } })
 ];
 
+const refreshedSettings: SettingState[] = [
+  accountSetting('carddav.base_url', 'string', { value: { string: 'https://fresh.example.test/' } }),
+  accountSetting('carddav.username', 'string', { value: { string: 'bob' } }),
+  accountSetting('carddav.password', 'secret', { secret: { configured: false } }),
+  accountSetting('carddav.enabled', 'boolean', { value: { boolean: true } }),
+  accountSetting('carddav.schedule', 'string', { value: { string: '0 4 * * *' } })
+];
+
 function accountSetting(
   key: string,
   kind: SettingState['kind'],
@@ -36,6 +44,32 @@ function deferredResponse() {
 }
 
 describe('CardDAVAccountSettings', () => {
+  it('refreshes a clean account form when settings props change', async () => {
+    const client = createAPIClient(async () => Response.json({}));
+    const rendered = render(CardDAVAccountSettings, { client, settings });
+
+    await rendered.rerender({ client, settings: refreshedSettings });
+
+    await waitFor(() => expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe('https://fresh.example.test/'));
+    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('bob');
+    expect((screen.getByRole('switch', { name: 'Enabled' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Schedule') as HTMLInputElement).value).toBe('0 4 * * *');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
+  });
+
+  it('preserves an intentional local edit while refreshing untouched fields', async () => {
+    const client = createAPIClient(async () => Response.json({}));
+    const rendered = render(CardDAVAccountSettings, { client, settings });
+    await fireEvent.input(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://draft.example.test/' }
+    });
+
+    await rendered.rerender({ client, settings: refreshedSettings });
+
+    await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('bob'));
+    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe('https://draft.example.test/');
+  });
+
   it('locks the complete account tuple while a connection test is pending', async () => {
     const deferred = deferredResponse();
     let requestFacts: { baseURL: string; username: string; enabled: boolean; schedule: string; passwordMatched: boolean } | undefined;
