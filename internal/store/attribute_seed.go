@@ -121,7 +121,7 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			IsSearchable: true,
 			IsAudited:    true,
 			IsDeletable:  false,
-			Options:      &AttributeOptions{MaxLength: 120},
+			Options:      &AttributeOptions{MaxLength: 280},
 		},
 		{
 			UniversalID:   AttributeUniversalIDLastContacted,
@@ -172,7 +172,7 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 			Ownership: AttributeOwnershipSystem, UICreatable: true,
 			UIEditable: true, APIMutable: true, IsSearchable: searchable,
 			IsSensitive: sensitive, IsAudited: true, IsDeletable: false,
-			Options: &AttributeOptions{MaxLength: 120},
+			Options: &AttributeOptions{MaxLength: 280},
 		}
 	}
 	return append(definitions,
@@ -204,8 +204,6 @@ func SeededAttributeDefinitions() []AttributeDefinitionInput {
 
 // howWeMetDefinition is the one relationship-scoped seed: it describes how the
 // archive owner and this person first met, not a fact about the person alone.
-// It carries a longer cap than the profile seeds because it is usually a
-// sentence rather than a label.
 func howWeMetDefinition() AttributeDefinitionInput {
 	description := "How you and this person first met"
 	return AttributeDefinitionInput{
@@ -226,7 +224,7 @@ func howWeMetDefinition() AttributeDefinitionInput {
 		IsSensitive:  false,
 		IsAudited:    true,
 		IsDeletable:  false,
-		Options:      &AttributeOptions{MaxLength: 240},
+		Options:      &AttributeOptions{MaxLength: 280},
 	}
 }
 

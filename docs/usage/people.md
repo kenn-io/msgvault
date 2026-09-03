@@ -281,7 +281,10 @@ personal data.
 Every archive starts with the same seeded person-field catalog. The
 definitions are system-owned and cannot be deleted; labels, descriptions, and
 display order can be edited. Sensitive fields are not searchable and stay out
-of provider inference unless a provider profile opts in.
+of provider inference unless a provider profile opts in. Every seeded text
+field accepts up to 280 characters per value; earlier archives that were
+seeded with the old 120-character cap are widened in place on the next store
+open.
 
 | Slug | Label | Type | Cardinality | Sensitive | Behavior |
 |---|---|---|---|---|---|

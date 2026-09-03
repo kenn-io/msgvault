@@ -68,9 +68,11 @@ All notable changes to msgvault, grouped by release.
   maintenance.
 
 - The seeded person catalog gains `how_we_met`, a searchable single-value
-  text field for how you and a person first met. It is seeded on store open
-  for SQLite and PostgreSQL alike, so a fresh archive has the field before
-  anyone types, and it joins the inference target catalog for tracked people.
+  text field for how you and a person first met, and every seeded text field
+  now accepts 280 characters instead of 120. Both changes apply on store open
+  for SQLite and PostgreSQL alike: a fresh archive has the field before anyone
+  types, an existing archive is widened in place, and tracked people pick up
+  the changed target catalog on their next sweep.
 
 - Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
   keeps the daemon's scheduled embeds within the listed accounts, and

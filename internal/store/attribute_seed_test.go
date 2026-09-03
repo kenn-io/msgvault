@@ -94,7 +94,7 @@ func TestSeededAttributeDefinitionsIncludeExpandedPersonCatalog(t *testing.T) {
 			assert.False(definition.IsDeletable)
 			assert.True(definition.IsActive)
 			require.NotNil(definition.Options)
-			assert.Equal(120, definition.Options.MaxLength)
+			assert.Equal(280, definition.Options.MaxLength)
 			_, duplicate := seenIDs[definition.UniversalID]
 			assert.False(duplicate)
 			seenIDs[definition.UniversalID] = struct{}{}
@@ -130,7 +130,7 @@ func TestSeededAttributeDefinitionsIncludeHowWeMet(t *testing.T) {
 	assert.True(definition.IsActive)
 	assert.Nil(definition.DerivedSource)
 	require.NotNil(definition.Options)
-	assert.Equal(240, definition.Options.MaxLength)
+	assert.Equal(280, definition.Options.MaxLength)
 }
 
 func TestSeededAttributeDefinitionsIncludeNotes(t *testing.T) {
@@ -200,7 +200,7 @@ func TestSeededDefinitionsCarryTheirDocumentedShape(t *testing.T) {
 	assert.Equal(store.AttributeCardinalityMulti, askMeAbout.Cardinality)
 	assert.True(askMeAbout.IsSearchable)
 	require.NotNil(askMeAbout.Options)
-	assert.Equal(120, askMeAbout.Options.MaxLength)
+	assert.Equal(280, askMeAbout.Options.MaxLength)
 }
 
 func TestSeededLastContactedIsReadOnlyAndDerived(t *testing.T) {
@@ -274,6 +274,65 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 		store.AttributeDefinitionFilter{ObjectType: store.AttributeObjectPerson})
 	require.NoError(err)
 	assert.Len(all, len(store.SeededAttributeDefinitions()))
+}
+
+func TestReSeedingWidensTextCapsOnExistingArchives(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+
+	// Archives seeded by earlier releases carry the old 120-character cap;
+	// reseeding must widen every text seed in place without touching the
+	// user's presentation fields, and a second pass must change nothing.
+	narrowed := []string{
+		store.AttributeSlugAskMeAbout,
+		store.AttributeSlugLocation,
+		store.AttributeSlugPersonality,
+		store.AttributeSlugHowWeMet,
+	}
+	before := make(map[string]int64, len(narrowed))
+	for _, slug := range narrowed {
+		definition, err := st.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, slug)
+		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`
+			UPDATE attribute_definitions
+			SET options = '{"max_length":120}'
+			WHERE universal_id = ?
+		`), definition.UniversalID)
+		require.NoError(err)
+		narrowedDefinition, err := st.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, slug)
+		require.NoError(err)
+		require.NotNil(narrowedDefinition.Options)
+		require.Equal(120, narrowedDefinition.Options.MaxLength)
+		before[slug] = narrowedDefinition.Revision
+	}
+
+	require.NoError(st.EnsureSeededAttributeDefinitionsContext(ctx))
+
+	after := make(map[string]int64, len(narrowed))
+	for _, slug := range narrowed {
+		definition, err := st.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, slug)
+		require.NoError(err)
+		require.NotNil(definition.Options)
+		assert.Equal(280, definition.Options.MaxLength, "seed %s must widen to 280", slug)
+		assert.Greater(definition.Revision, before[slug], "seed %s must bump its revision", slug)
+		after[slug] = definition.Revision
+	}
+
+	require.NoError(st.EnsureSeededAttributeDefinitionsContext(ctx))
+	for _, slug := range narrowed {
+		definition, err := st.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, slug)
+		require.NoError(err)
+		assert.Equal(280, definition.Options.MaxLength)
+		assert.Equal(after[slug], definition.Revision, "second reseed of %s must be a no-op", slug)
+	}
+	for _, seed := range store.SeededAttributeDefinitions() {
+		if seed.ValueType != store.AttributeValueText || seed.Options == nil || seed.Options.MaxLength == 0 {
+			continue
+		}
+		assert.Equal(280, seed.Options.MaxLength, "seed %s text cap", seed.Slug)
+	}
 }
 
 func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
