@@ -1,6 +1,7 @@
 package carddav
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 )
 
 const cardDAVTokenFilename = "carddav.json" // #nosec G101 -- This is a credential filename, not a credential value.
+
+const maximumCredentialFileBytes = 1 << 20
 
 var ErrCredentialNotBound = errors.New("CardDAV credential is not bound to a connection")
 
@@ -22,6 +25,14 @@ type Credential struct {
 	BaseURL              string `json:"base_url,omitempty"`
 	Username             string `json:"username,omitempty"`
 	ConnectionGeneration int64  `json:"connection_generation,omitempty"`
+}
+
+// CredentialFileSnapshot retains the exact published credential bytes long
+// enough for an account-save rollback. It deliberately does not decode or
+// verify the file, so an explicit password can repair a malformed credential.
+type CredentialFileSnapshot struct {
+	contents []byte
+	exists   bool
 }
 
 type credentialPermissionBackend interface {
@@ -48,6 +59,37 @@ func SaveCredential(tokenDir string, credential Credential) error {
 	return saveCredentialWithPermissions(tokenDir, credential, nativeCredentialPermissions{})
 }
 
+// CaptureCredentialFile snapshots the current credential without requiring it
+// to be valid. A missing credential is a valid empty snapshot.
+func CaptureCredentialFile(tokenDir string) (CredentialFileSnapshot, error) {
+	path := filepath.Join(tokenDir, cardDAVTokenFilename)
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return CredentialFileSnapshot{}, nil
+	}
+	if err != nil {
+		return CredentialFileSnapshot{}, fmt.Errorf("open CardDAV token file for rollback: %w", err)
+	}
+	defer file.Close() //nolint:errcheck // read-only file
+	contents, err := io.ReadAll(io.LimitReader(file, maximumCredentialFileBytes+1))
+	if err != nil {
+		return CredentialFileSnapshot{}, fmt.Errorf("read CardDAV token file for rollback: %w", err)
+	}
+	if len(contents) > maximumCredentialFileBytes {
+		return CredentialFileSnapshot{}, errors.New("CardDAV token file exceeds rollback size limit")
+	}
+	return CredentialFileSnapshot{contents: contents, exists: true}, nil
+}
+
+// Restore atomically restores the captured credential bytes, or removes a
+// newly published credential when the snapshot represented a missing file.
+func (s CredentialFileSnapshot) Restore(tokenDir string) error {
+	if !s.exists {
+		return RemoveCredential(tokenDir)
+	}
+	return saveCredentialBytesWithPermissions(tokenDir, s.contents, nativeCredentialPermissions{})
+}
+
 // RemoveCredential removes a published CardDAV credential. Missing files are
 // already the desired state and therefore succeed.
 func RemoveCredential(tokenDir string) error {
@@ -59,6 +101,15 @@ func RemoveCredential(tokenDir string) error {
 }
 
 func saveCredentialWithPermissions(tokenDir string, credential Credential, permissions credentialPermissionBackend) error {
+	var encoded bytes.Buffer
+	// #nosec G117 -- The credential is intentionally marshaled only into the private token-file buffer.
+	if err := json.NewEncoder(&encoded).Encode(credential); err != nil {
+		return fmt.Errorf("encode CardDAV token file: %w", err)
+	}
+	return saveCredentialBytesWithPermissions(tokenDir, encoded.Bytes(), permissions)
+}
+
+func saveCredentialBytesWithPermissions(tokenDir string, contents []byte, permissions credentialPermissionBackend) error {
 	if err := permissions.secureDirectory(tokenDir); err != nil {
 		return fmt.Errorf("secure CardDAV token directory: %w", err)
 	}
@@ -78,9 +129,8 @@ func saveCredentialWithPermissions(tokenDir string, credential Credential, permi
 	if err := permissions.secureFile(temporary); err != nil {
 		return fmt.Errorf("secure CardDAV token file: %w", err)
 	}
-	// #nosec G117 -- The credential is intentionally marshaled only into the already-hardened private token file.
-	if err := json.NewEncoder(temporary).Encode(credential); err != nil {
-		return fmt.Errorf("encode CardDAV token file: %w", err)
+	if _, err := temporary.Write(contents); err != nil {
+		return fmt.Errorf("write CardDAV token file: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("sync CardDAV token file: %w", err)
@@ -150,7 +200,7 @@ func loadCredentialWithPermissions(tokenDir string, permissions credentialPermis
 	if err := permissions.verifyFile(file); err != nil {
 		return Credential{}, fmt.Errorf("verify CardDAV token file permissions: %w", err)
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+	decoder := json.NewDecoder(io.LimitReader(file, maximumCredentialFileBytes))
 	decoder.DisallowUnknownFields()
 	var saved Credential
 	if err := decoder.Decode(&saved); err != nil {

@@ -108,6 +108,27 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
+func TestEmbeddingsConfigValidateRejectsCredentialBearingEndpointComponents(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "userinfo", endpoint: "https://user:password@host.example/v1"},
+		{name: "query", endpoint: "https://host.example/v1?api_key=secret"},
+		{name: "fragment", endpoint: "https://host.example/v1#secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig().Embeddings
+			cfg.Endpoint = tt.endpoint
+			err := cfg.Validate()
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "password")
+			assert.NotContains(t, err.Error(), "secret")
+		})
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		Enabled: true,
@@ -689,11 +710,10 @@ func TestMultimodalFingerprintChangesForPolicyAndScope(t *testing.T) {
 
 func TestVoyageKeyDoesNotEnableMultimodal(t *testing.T) {
 	assert := assert.New(t)
-	t.Setenv("VOYAGE_API_KEY", "synthetic-key")
 	var cfg Config
 	cfg.ApplyDefaults()
 
-	assert.NotEmpty(cfg.Multimodal.APIKey())
+	assert.Equal("VOYAGE_API_KEY", cfg.Multimodal.APIKeyEnv)
 	assert.False(cfg.Multimodal.Enabled)
 	assert.False(cfg.AnyLaneEnabled())
 	assert.False(cfg.Multimodal.ImagesEnabled())

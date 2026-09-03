@@ -728,8 +728,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, CardDAV routes
 	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
 	// calendars in 2.10.0, person fact diagnostics in 2.11.0, lexical deletion
-	// scope in 2.12.0, deduplicate planning in 2.13.0, List-ID filtering in
-	// 2.14.0, and Gmail repair in 2.15.0 did not touch it.
+	// scope in 2.12.0, Directory people and deduplicate planning in 2.13.0,
+	// CardDAV status and run history plus List-ID filtering in 2.14.0, and Gmail
+	// repair in 2.15.0 did not touch it.
 	assert.Equal("2.15.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
@@ -944,6 +945,8 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
+		"DirectoryPeopleResponse":    {"people"},
+		"DirectoryPersonSummary":     {"categories", "organizations"},
 		"ExploreFilter":              {"values"},
 		"ExploreHTTPResponse":        {"rows"},
 		"EntryRow":                   {"matched_sender_identities", "matched_recipient_identities"},
@@ -956,8 +959,59 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 		requirements.NotNil(schema, schemaName)
 		for _, property := range properties {
 			requirements.NotNil(schema.Properties[property], "%s.%s", schemaName, property)
+			assertions.Contains(schema.Required, property, "%s.%s must be required", schemaName, property)
 			assertions.False(schema.Properties[property].Nullable, "%s.%s must not be nullable", schemaName, property)
 		}
+	}
+}
+
+func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	doc := OpenAPIDocument()
+	operation := doc.Paths["/api/v1/people/directory"].Get
+	require.NotNil(operation)
+	parameters := make(map[string]*huma.Param, len(operation.Parameters))
+	for _, parameter := range operation.Parameters {
+		parameters[parameter.Name] = parameter
+	}
+	require.Contains(parameters, "last_contact_after")
+	require.Contains(parameters, "last_contact_before")
+	require.Contains(parameters, "sort")
+	assert.Equal("date-time", parameters["last_contact_after"].Schema.Format)
+	assert.Equal("date-time", parameters["last_contact_before"].Schema.Format)
+	assert.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc"}, parameters["sort"].Schema.Enum)
+}
+
+func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
+	tests := []struct {
+		schema   string
+		property string
+	}{
+		{schema: "CardDAVContactSummaryResponse", property: "emails"},
+		{schema: "CardDAVContactSummaryResponse", property: "phones"},
+		{schema: "CardDAVConflictResponse", property: "allowed_resolutions"},
+		{schema: "CardDAVConflictDetailResponse", property: "allowed_resolutions"},
+		{schema: "CardDAVConflictsResponse", property: "conflicts"},
+	}
+	for documentName, document := range map[string]*huma.OpenAPI{
+		"server": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(documentName, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.schema+"/"+tt.property, func(t *testing.T) {
+					require := require.New(t)
+					assert := assert.New(t)
+					schema := document.Components.Schemas.Map()[tt.schema]
+					require.NotNil(schema)
+					property := schema.Properties[tt.property]
+					require.NotNil(property)
+					assert.Contains(schema.Required, tt.property)
+					assert.False(property.Nullable)
+				})
+			}
+		})
 	}
 }
 
@@ -1002,6 +1056,34 @@ func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing
 		"AppendPersonNoteRequestSourceEnrichment",
 		"AppendPersonNoteRequestSourceSystem",
 	}, schema.Properties["source"].Extensions["x-enum-names"])
+}
+
+func TestOpenAPIClientCardDAVEnumsDoNotRenameExistingConstants(t *testing.T) {
+	schemas := openAPIClientDocument().Components.Schemas.Map()
+	tests := []struct {
+		schema, property string
+		want             []any
+	}{
+		{schema: "CardDAVPublicationResponse", property: "state", want: []any{
+			"CardDAVPublicationResponseStateUnpublished", "CardDAVPublicationResponseStatePublished",
+			"CardDAVPublicationResponseStatePending", "CardDAVPublicationResponseStateConflict",
+		}},
+		{schema: "CardDAVPublicationResponse", property: "pending_operation", want: []any{
+			"CardDAVPublicationResponsePendingOperationCreate", "CardDAVPublicationResponsePendingOperationUpdate",
+			"CardDAVPublicationResponsePendingOperationDelete",
+		}},
+		{schema: "CardDAVContactSummaryResponse", property: "state", want: []any{
+			"CardDAVContactSummaryResponseStatePresent", "CardDAVContactSummaryResponseStateDeleted",
+			"CardDAVContactSummaryResponseStateUnavailable",
+		}},
+	}
+	for _, tt := range tests {
+		schema := schemas[tt.schema]
+		require.NotNil(t, schema, tt.schema)
+		property := schema.Properties[tt.property]
+		require.NotNil(t, property, tt.schema+"."+tt.property)
+		assert.Equal(t, tt.want, property.Extensions["x-enum-names"], tt.schema+"."+tt.property)
+	}
 }
 
 func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
@@ -1145,6 +1227,43 @@ func TestOpenAPIArtifactUpToDate(t *testing.T) {
 	assert.Equal(t, normalizeGeneratedArtifact(want), normalizeGeneratedArtifact(got), "api/openapi.yaml is stale; run `make api-generate`")
 }
 
+func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testing.T) {
+	for _, version := range []string{"3.1", "3.0"} {
+		t.Run(version, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			raw, err := OpenAPIJSONVersion(version)
+			require.NoError(err)
+			var document struct {
+				Components struct {
+					Schemas map[string]struct {
+						Required   []string `json:"required"`
+						Properties map[string]struct {
+							Type     any  `json:"type"`
+							Nullable bool `json:"nullable"`
+						} `json:"properties"`
+					} `json:"schemas"`
+				} `json:"components"`
+			}
+			require.NoError(json.Unmarshal(raw, &document))
+			for schemaName, properties := range map[string][]string{
+				"DirectoryPeopleResponse": {"people"},
+				"DirectoryPersonSummary":  {"categories", "organizations"},
+			} {
+				schema, ok := document.Components.Schemas[schemaName]
+				require.True(ok, schemaName)
+				for _, propertyName := range properties {
+					property, ok := schema.Properties[propertyName]
+					require.True(ok, "%s.%s", schemaName, propertyName)
+					assert.Contains(schema.Required, propertyName)
+					assert.Equal("array", property.Type, "%s.%s", schemaName, propertyName)
+					assert.False(property.Nullable, "%s.%s", schemaName, propertyName)
+				}
+			}
+		})
+	}
+}
+
 func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1185,6 +1304,222 @@ func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 			assert.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
 		}
 	}
+}
+
+func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	doc := OpenAPIDocument()
+	status := doc.Paths["/api/v1/carddav/status"]
+	require.NotNil(status)
+	require.NotNil(status.Get)
+	assert.Equal("getCardDAVStatus", status.Get.OperationID)
+	runs := doc.Paths["/api/v1/carddav/runs"]
+	require.NotNil(runs)
+	require.NotNil(runs.Get)
+	assert.Equal("listCardDAVRuns", runs.Get.OperationID)
+	require.Len(runs.Get.Parameters, 2)
+	assert.Equal("limit", runs.Get.Parameters[0].Name)
+	require.NotNil(runs.Get.Parameters[0].Schema.Minimum)
+	require.NotNil(runs.Get.Parameters[0].Schema.Maximum)
+	assert.InDelta(1, *runs.Get.Parameters[0].Schema.Minimum, 0)
+	assert.InDelta(100, *runs.Get.Parameters[0].Schema.Maximum, 0)
+	assert.Equal("before_id", runs.Get.Parameters[1].Name)
+	require.NotNil(runs.Get.Parameters[1].Schema.Minimum)
+	assert.InDelta(1, *runs.Get.Parameters[1].Schema.Minimum, 0)
+
+	run := doc.Components.Schemas.Map()["CardDAVRunResponse"]
+	require.NotNil(run)
+	assert.Equal([]any{"manual", "scheduled"}, run.Properties["trigger"].Enum)
+	assert.Equal([]any{"running", "succeeded", "failed", "cancelled", "partial"}, run.Properties["state"].Enum)
+	assert.Equal([]any{"cancelled", "retry_after", "authentication_failed", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
+	page := doc.Components.Schemas.Map()["CardDAVRunsResponse"]
+	require.NotNil(page)
+	assert.Contains(page.Required, "runs")
+	assert.False(page.Properties["runs"].Nullable)
+	statusSchema := doc.Components.Schemas.Map()["CardDAVStatusResponse"]
+	require.NotNil(statusSchema)
+	assert.NotContains(statusSchema.Required, "repair_reason")
+	assert.NotContains(statusSchema.Required, "next_scheduled_at")
+	assert.NotContains(statusSchema.Required, "active")
+	assert.Equal([]any{"account_missing", "credential_missing", "credential_mismatch", "credential_unavailable", "runtime_unavailable"}, statusSchema.Properties["repair_reason"].Enum)
+}
+
+func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
+	for documentName, document := range map[string]*huma.OpenAPI{
+		"server": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(documentName, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			list := document.Paths["/api/v1/operations/runs"]
+			require.NotNil(list)
+			require.NotNil(list.Get)
+			assert.Equal("listOperationRuns", list.Get.OperationID)
+			for _, status := range []string{"200", "400", "500", "503", "default"} {
+				assert.Contains(list.Get.Responses, status)
+			}
+			require.Len(list.Get.Parameters, 5)
+			parameters := make(map[string]*huma.Param, len(list.Get.Parameters))
+			for _, parameter := range list.Get.Parameters {
+				parameters[parameter.Name] = parameter
+			}
+			assert.ElementsMatch(operationKindValues(), anyToStrings(t, parameters["kind"].Schema.Enum))
+			assert.ElementsMatch(operationLaneValues(), anyToStrings(t, parameters["lane"].Schema.Enum))
+			assert.ElementsMatch(operationStateValues(), anyToStrings(t, parameters["state"].Schema.Enum))
+			require.NotNil(parameters["limit"].Schema.Minimum)
+			require.NotNil(parameters["limit"].Schema.Maximum)
+			assert.InDelta(1, *parameters["limit"].Schema.Minimum, 0)
+			assert.InDelta(100, *parameters["limit"].Schema.Maximum, 0)
+			assert.Contains(parameters["limit"].Description, "default 25")
+			assert.Contains(parameters["cursor"].Description, "Opaque")
+			assert.Contains(parameters["cursor"].Description, "archive")
+			assert.Contains(parameters["cursor"].Description, "exact kind, lane, and state filters")
+
+			detail := document.Paths["/api/v1/operations/runs/{id}"]
+			require.NotNil(detail)
+			require.NotNil(detail.Get)
+			assert.Equal("getOperationRun", detail.Get.OperationID)
+			for _, status := range []string{"200", "400", "404", "500", "503", "default"} {
+				assert.Contains(detail.Get.Responses, status)
+			}
+			require.Len(detail.Get.Parameters, 1)
+			assert.Equal("id", detail.Get.Parameters[0].Name)
+			assert.Contains(detail.Get.Parameters[0].Description, "Opaque")
+			assert.Contains(detail.Get.Parameters[0].Description, "archive-bound")
+
+			status := document.Paths["/api/v1/operations/status"]
+			require.NotNil(status)
+			require.NotNil(status.Get)
+			assert.Equal("getOperationStatus", status.Get.OperationID)
+			assert.Contains(status.Get.Responses, "200")
+			assert.Contains(status.Get.Responses, "default")
+		})
+	}
+}
+
+func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
+	enums := map[string]map[string][]string{
+		"OperationPublicCounter": {
+			"name": {"processed", "added", "updated", "item_errors", "attempted", "succeeded", "failed", "projected_writes", "books", "created", "removed"},
+			"unit": {"messages", "people", "writes", "books", "contacts"},
+		},
+		"OperationPublicError": {
+			"code": {
+				"source_sync_failed", "person_sweep_failed", "policy", "budget", "lease_lost",
+				"rate_limited", "timeout", "provider_http", "invalid_output", "archive_gap",
+				"internal", "cancelled", "retry_after", "authentication_failed", "upstream_failed",
+				"safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted", "carddav_sync_failed",
+			},
+		},
+		"OperationRunSummary": {
+			"kind":    operationKindValues(),
+			"lane":    operationLaneValues(),
+			"state":   operationStateValues(),
+			"trigger": {"manual", "scheduled"},
+		},
+		"OperationUnavailableKind": {
+			"kind": operationKindValues(),
+			"lane": operationLaneValues(),
+		},
+		"OperationLaneStatus": {
+			"kind":                 operationKindValues(),
+			"lane":                 operationLaneValues(),
+			"history_availability": {"available", "unavailable"},
+			"related_status": {
+				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"getVisualAttachmentStatus", "getCardDAVStatus",
+			},
+			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},
+		},
+	}
+	collections := map[string][]string{
+		"OperationRunSummary":     {"counters"},
+		"OperationRunDetail":      {"counters"},
+		"OperationRunsResponse":   {"runs", "unavailable_kinds"},
+		"OperationLaneStatus":     {"supported_actions"},
+		"OperationStatusResponse": {"lanes"},
+	}
+	for documentName, document := range map[string]*huma.OpenAPI{
+		"server": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(documentName, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			schemas := document.Components.Schemas.Map()
+			for schemaName, properties := range enums {
+				schema := schemas[schemaName]
+				require.NotNil(schema, schemaName)
+				for propertyName, want := range properties {
+					property := schema.Properties[propertyName]
+					require.NotNil(property, schemaName+"."+propertyName)
+					enumSchema := property
+					if len(enumSchema.Enum) == 0 && property.Items != nil {
+						enumSchema = property.Items
+					}
+					assert.ElementsMatch(want, anyToStrings(t, enumSchema.Enum), schemaName+"."+propertyName)
+				}
+			}
+			for schemaName, properties := range collections {
+				schema := schemas[schemaName]
+				require.NotNil(schema, schemaName)
+				for _, propertyName := range properties {
+					property := schema.Properties[propertyName]
+					require.NotNil(property, schemaName+"."+propertyName)
+					assert.Contains(schema.Required, propertyName, schemaName+"."+propertyName)
+					assert.False(property.Nullable, schemaName+"."+propertyName)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := OpenAPIDocument().Components.Schemas.Map()
+	client := openAPIClientDocument().Components.Schemas.Map()
+	wantProperties := map[string][]string{
+		"OperationPublicCounter":   {"name", "unit", "value"},
+		"OperationPublicError":     {"code", "message"},
+		"OperationRunSummary":      {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error"},
+		"OperationRunDetail":       {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error"},
+		"OperationUnavailableKind": {"kind", "lane", "unavailable_code"},
+		"OperationRunsResponse":    {"runs", "next_cursor", "unavailable_kinds"},
+		"OperationLaneStatus": {
+			"kind", "lane", "configured", "history_availability", "unavailable_code",
+			"active", "latest", "latest_successful", "related_status", "supported_actions",
+		},
+		"OperationStatusResponse": {"lanes"},
+	}
+	for schemaName, want := range wantProperties {
+		require.NotNil(server[schemaName], schemaName)
+		require.NotNil(client[schemaName], schemaName)
+		assert.ElementsMatch(want, operationSchemaPropertyNames(server[schemaName].Properties), "server "+schemaName)
+		assert.ElementsMatch(want, operationSchemaPropertyNames(client[schemaName].Properties), "client "+schemaName)
+		assert.ElementsMatch(server[schemaName].Required, client[schemaName].Required, schemaName)
+	}
+}
+
+func anyToStrings(t *testing.T, values []any) []string {
+	t.Helper()
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text, ok := value.(string)
+		require.True(t, ok, "OpenAPI enum value must be a string")
+		result = append(result, text)
+	}
+	return result
+}
+
+func operationSchemaPropertyNames(values map[string]*huma.Schema) []string {
+	result := make([]string, 0, len(values))
+	for key := range values {
+		result = append(result, key)
+	}
+	return result
 }
 
 func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {

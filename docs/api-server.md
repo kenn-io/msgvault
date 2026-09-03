@@ -13,7 +13,7 @@ background sync scheduler to keep accounts up to date on a cron-based schedule.
 The complete UI is embedded in the release binary; see [Web UI](/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.14.0. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.15.0. Within the unreleased 2.x line, 2.14.0 replaces the CardDAV publication and conflict response shapes with bounded projections that omit raw vCards and resource hrefs. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
@@ -76,6 +76,41 @@ is required. Three API-key authentication methods are supported:
 If no `api_key` is configured, authentication is not required regardless of bind address. The separate `allow_insecure` / security validation prevents starting without an API key on non-loopback addresses.
 
 ## API Endpoints
+
+### Curated person network {#get-apiv1peopleidnetwork}
+
+**Endpoint:** `GET /api/v1/people/{id}/network`
+
+Returns a read-only, person-centred projection built only from durable typed
+relationships and employments. It never derives nodes or edges from messages,
+conversations, participant co-occurrence, or the analytical cache.
+
+`depth` defaults to `1` and accepts `1`, `2`, or `3`. `include_ended` defaults
+to `false`; set it to `true` to admit ended relationships and employment
+records. The deterministic breadth-first response contains at most 250 nodes
+and 500 edges. `truncated: true` means the response is a bounded prefix and can
+contain fewer than either maximum. The root durable person is returned even
+when it has no qualifying connections.
+
+```json
+{
+  "root_person_id": 42,
+  "depth": 2,
+  "truncated": false,
+  "nodes": [
+    {"id": "person:42", "kind": "person", "entity_id": 42, "label": "Example Person", "hop": 0},
+    {"id": "organization:21", "kind": "organization", "entity_id": 21, "label": "Example Organization", "hop": 1}
+  ],
+  "edges": [
+    {"id": "employment:7", "kind": "employment", "source_node_id": "person:42", "target_node_id": "organization:21", "label": "Engineer"}
+  ]
+}
+```
+
+Invalid depths return `400`; an unknown durable person returns `404`. The
+projection has no ETag because it is not a mutation resource.
+
+---
 
 ### Health check {#get-health}
 

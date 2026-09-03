@@ -1679,6 +1679,64 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
     });
   });
 
+  it('returns a strictly validated merge-required outcome without replaying the link', async () => {
+    const conflict = {
+      error: 'person_merge_required', message: 'Choose a survivor', profiles: [
+        { etag: '"person-7-r4"', person: { id: 7, revision: 4 } },
+        { etag: '"person-9-r2"', person: { id: 9, revision: 2 } }
+      ]
+    };
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(conflict, { status: 409 }));
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await expect(controller.linkParticipants(1, 2)).resolves.toEqual({
+      ok: false, code: 'merge_required', message: 'Choose a survivor', conflict
+    });
+    expect(fetchFn).toHaveBeenCalledOnce();
+
+    const malformed = vi.fn<typeof fetch>(async () => Response.json({
+      ...conflict, profiles: [conflict.profiles[0], conflict.profiles[0]]
+    }, { status: 409 }));
+    const malformedController = new RelationshipsController(createAPIClient(malformed), () => 'UTC');
+    await expect(malformedController.linkParticipants(1, 2)).resolves.toEqual({
+      ok: false, code: 'error', message: 'Choose a survivor'
+    });
+  });
+
+  it('reconciles only the captured target and list context without replaying identity linking', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') return Response.json({ rows: [], total_count: 0 });
+      if (path === '/api/v1/participants/1') return Response.json(person(1));
+      if (path === '/api/v1/relationships/1/timeline') return Response.json({
+        canonical_id: 1, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel'
+      });
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const predicate = { filters: [], presentation: 'table' as const };
+    await controller.loadList(predicate);
+    await controller.openTarget('cluster:1', predicate);
+    const context = controller.personMergeContextSnapshot();
+    requests.length = 0;
+
+    await controller.reconcilePersonMerge(context);
+
+    expect(requests.some((request) => pathOf(request) === '/api/v1/identity/links')).toBe(false);
+    expect(requests.filter((request) => pathOf(request) === '/api/v1/participants/1')).toHaveLength(1);
+    expect(requests.filter((request) => pathOf(request) === '/api/v1/relationships')).toHaveLength(1);
+
+    const staleContext = controller.personMergeContextSnapshot();
+    controller.target = 'cluster:2';
+    controller.query = 'different list';
+    requests.length = 0;
+    await controller.reconcilePersonMerge(staleContext);
+    expect(requests).toHaveLength(0);
+  });
+
   it('maps a 400 body to code invalid', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(
       { error: 'invalid_participant_id', message: 'participant_a and participant_b must be distinct positive participant IDs' },

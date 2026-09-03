@@ -76,8 +76,13 @@
   <Login {session} />
 {:else if shellMounted}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
-    {#snippet settings()}
-      <SettingsWorkspace client={session.client} plainHTTPWarning={session.status?.plain_http_warning ?? false} />
+    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed)}
+      <SettingsWorkspace
+        client={session.client}
+        plainHTTPWarning={session.status?.plain_http_warning ?? false}
+        {cardDAVRequest}
+        {onCardDAVRequestConsumed}
+      />
     {/snippet}
   </AppShell>
 {:else if session.error !== undefined}

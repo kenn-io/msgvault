@@ -15,6 +15,9 @@ import type {
   PersonFileDirection,
   ExploreURLState,
   ExploreWorkspace,
+  DirectoryReviewKind,
+  IdentityReviewState,
+  RelationshipReviewState,
   RelationshipFacet
 } from './models';
 import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
@@ -50,6 +53,18 @@ const TRANSIENT_HISTORY_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'workspace',
+  'directoryQuery',
+  'directoryContactState',
+  'directoryCategory',
+  'directoryOrganization',
+  'directoryPrimaryChannel',
+  'directoryLastContactAfter',
+  'directoryLastContactBefore',
+  'directorySort',
+  'directoryPersonID',
+  'reviewKind',
+  'identityState',
+  'relationshipReviewState',
   'query',
   'searchMode',
   'filters',
@@ -76,6 +91,18 @@ const PERSON_FILE_DIRECTIONS = new Set<PersonFileDirection>(['from_person', 'to_
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
   workspace: 'relationships',
+  directoryQuery: '',
+  directoryContactState: '',
+  directoryCategory: '',
+  directoryOrganization: '',
+  directoryPrimaryChannel: '',
+  directoryLastContactAfter: '',
+  directoryLastContactBefore: '',
+  directorySort: 'name',
+  directoryPersonID: null,
+  reviewKind: 'identity',
+  identityState: 'candidate',
+  relationshipReviewState: 'pending',
   query: '',
   searchMode: 'full_text',
   filters: [],
@@ -236,6 +263,10 @@ function relationshipTargetValue(value: unknown): string | null {
     : null;
 }
 
+function directoryPersonID(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 function legacyRelationshipTarget(
   analysisTarget: string | null,
   facet: RelationshipFacet
@@ -252,7 +283,11 @@ function legacyRelationshipTarget(
 
 function normalize(value: unknown): ExploreURLState {
   if (!isRecord(value)) return freshDefaults();
-  const { selection: _selection, bulkSelection: _bulkSelection, ...knownAndFuture } = value;
+  const {
+    selection: _selection,
+    bulkSelection: _bulkSelection,
+    ...knownAndFuture
+  } = value;
   const searchMode =
     value.searchMode === 'full_text' ||
     value.searchMode === 'semantic' ||
@@ -267,7 +302,7 @@ function normalize(value: unknown): ExploreURLState {
       : defaultExploreURLState.presentation;
   const legacyFacet: RelationshipFacet | undefined =
     value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
-  const workspace = value.workspace === 'everything' || value.workspace === 'settings' ||
+  const workspace = value.workspace === 'everything' || value.workspace === 'directory' || value.workspace === 'directory_review' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
     value.workspace === 'saved_views' || value.workspace === 'sources' ||
     value.workspace === 'deletions'
@@ -283,6 +318,17 @@ function normalize(value: unknown): ExploreURLState {
   const relationshipTarget = legacyFacet
     ? legacyRelationshipTarget(analysisTarget, legacyFacet)
     : relationshipTargetValue(value.relationshipTarget);
+  const reviewKind: DirectoryReviewKind = value.reviewKind === 'fact' || value.reviewKind === 'relationship'
+    ? value.reviewKind
+    : 'identity';
+  const identityState: IdentityReviewState =
+    value.identityState === 'conflict' || value.identityState === 'accepted' || value.identityState === 'rejected'
+      ? value.identityState
+      : 'candidate';
+  const relationshipReviewState: RelationshipReviewState =
+    value.relationshipReviewState === 'accepted' || value.relationshipReviewState === 'rejected'
+      ? value.relationshipReviewState
+      : 'pending';
 
   return {
     ...knownAndFuture,
@@ -292,6 +338,18 @@ function normalize(value: unknown): ExploreURLState {
         ? value.schemaVersion
         : defaultExploreURLState.schemaVersion,
     workspace,
+    directoryQuery: typeof value.directoryQuery === 'string' ? value.directoryQuery : '',
+    directoryContactState: typeof value.directoryContactState === 'string' ? value.directoryContactState : '',
+    directoryCategory: typeof value.directoryCategory === 'string' ? value.directoryCategory : '',
+    directoryOrganization: typeof value.directoryOrganization === 'string' ? value.directoryOrganization : '',
+    directoryPrimaryChannel: typeof value.directoryPrimaryChannel === 'string' ? value.directoryPrimaryChannel : '',
+    directoryLastContactAfter: typeof value.directoryLastContactAfter === 'string' ? value.directoryLastContactAfter : '',
+    directoryLastContactBefore: typeof value.directoryLastContactBefore === 'string' ? value.directoryLastContactBefore : '',
+    directorySort: value.directorySort === 'last_contact_desc' || value.directorySort === 'last_contact_asc' ? value.directorySort : 'name',
+    directoryPersonID: directoryPersonID(value.directoryPersonID),
+    reviewKind,
+    identityState,
+    relationshipReviewState,
     query: typeof value.query === 'string' ? value.query : '',
     searchMode,
     filters: filters(value.filters),

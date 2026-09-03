@@ -11,7 +11,7 @@ describe('settings catalog', () => {
     ]);
     expect(settingsCatalog['server.trusted_proxies'].group).toBe('server');
     expect(settingsCatalog['analytics.auto_build_cache'].group).toBe('archive');
-    expect(settingsCatalog['vector.embeddings.endpoint'].testable).toBe(true);
+    expect(settingsCatalog['vector.embeddings.endpoint'].testable).toBeUndefined();
     expect(settingsCatalog['vector.embeddings.api_format'].options).toEqual([
       'openai',
       'voyage-contextual'
@@ -47,12 +47,43 @@ describe('settings catalog', () => {
       'unsupported.private_value'
     );
   });
+
+
+  it('uses daemon groups, ordering and metadata as the authoritative catalog', () => {
+    const settings = [
+      {
+        ...setting('beeper.max_media_mb', 0),
+        group: 'attachments',
+        label: 'Daemon attachment limit',
+        description: 'Future downloads only.'
+      },
+      {
+        ...setting('activity.batch_size', 500),
+        group: 'activity',
+        label: 'Daemon activity batch',
+        description: 'Bounded batch.',
+        validation: { minimum: 1, maximum: 10_000 }
+      }
+    ] as SettingState[];
+    const groups = [
+      { id: 'activity', label: 'Activity from daemon', description: 'Projection controls.' },
+      { id: 'attachments', label: 'Attachment downloads', description: 'Future downloads only.' }
+    ];
+
+    const grouped = groupSettings(settings, groups);
+    expect(grouped.map((group) => group.id)).toEqual(['activity', 'attachments']);
+    expect(grouped.map((group) => group.label)).toEqual(['Activity from daemon', 'Attachment downloads']);
+    expect(grouped[0]?.settings[0]?.label).toBe('Daemon activity batch');
+    expect(grouped[1]?.settings[0]?.key).toBe('beeper.max_media_mb');
+  });
 });
 
 function setting(key: string, value: unknown): SettingState {
   return {
     key,
     group: 'browser',
+    label: key,
+    description: `Test fixture for ${key}.`,
     kind: typeof value === 'boolean' ? 'boolean' : 'string',
     value: typeof value === 'boolean' ? { boolean: value } : { string: String(value) },
     restart_required: true

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/store"
@@ -29,6 +31,7 @@ type PersonProfileStore interface {
 	CreatePersonFromParticipantContext(ctx context.Context, participantID int64) (*store.Person, bool, error)
 	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
 	ListPersonsContext(ctx context.Context) ([]store.Person, error)
+	DirectoryPeoplePageContext(ctx context.Context, query store.DirectoryPeopleQuery) (*store.DirectoryPeoplePage, error)
 	UpdatePersonDisplayNameContext(
 		ctx context.Context, id, expectedRevision int64, displayName *string,
 	) (*store.Person, error)
@@ -56,6 +59,13 @@ type PatchPersonRequest struct {
 
 type PeopleResponse struct {
 	People []store.Person `json:"people"`
+}
+
+// DirectoryPeopleResponse is the non-sensitive, paginated Directory view of
+// durable person roots.
+type DirectoryPeopleResponse struct {
+	People     []store.DirectoryPersonSummary `json:"people" nullable:"false"`
+	NextCursor string                         `json:"next_cursor,omitempty"`
 }
 
 // PersonSearchEngine is the semantic people service consumed by the HTTP
@@ -94,6 +104,14 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	list.Responses = jsonResponsesFor[PeopleResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListPeople)
+
+	directory := rawAPIV1Operation("listDirectoryPeople", http.MethodGet, "/people/directory",
+		"Query durable people for the Directory")
+	directory.Description = "Returns one stable, non-sensitive page of promoted durable people."
+	addDirectoryPeopleParameters(&directory)
+	directory.Responses = jsonResponsesFor[DirectoryPeopleResponse](api)
+	addErrorResponses(api, directory.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, directory, s.handleDirectoryPeople)
 
 	create := rawAPIV1Operation("createPerson", http.MethodPost, "/people", "Promote a participant cluster to a durable person")
 	create.Description = "Returns 201 when a new person is created, or 200 when the cluster is already " +
@@ -296,6 +314,85 @@ func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, PeopleResponse{People: persons})
 }
 
+func (s *Server) handleDirectoryPeople(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	query, err := directoryPeopleQuery(r.URL.Query())
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	profiles, ok := s.personProfileStore(w)
+	if !ok {
+		return
+	}
+	page, err := profiles.DirectoryPeoplePageContext(r.Context(), query)
+	if err != nil {
+		s.writeDirectoryPeopleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DirectoryPeopleResponse{People: page.People, NextCursor: page.NextCursor})
+}
+
+// directoryPeopleQuery reads each Directory query parameter once so the route
+// has one canonical request representation for validation and pagination.
+func directoryPeopleQuery(values url.Values) (store.DirectoryPeopleQuery, error) {
+	query := store.DirectoryPeopleQuery{
+		Query:          values.Get("q"),
+		Cursor:         values.Get("cursor"),
+		ContactState:   values.Get("contact_state"),
+		Category:       values.Get("category"),
+		Organization:   values.Get("organization"),
+		PrimaryChannel: values.Get("primary_channel"),
+		Sort:           values.Get("sort"),
+	}
+	for _, field := range []struct {
+		name   string
+		target **time.Time
+	}{
+		{name: "last_contact_after", target: &query.LastContactAfter},
+		{name: "last_contact_before", target: &query.LastContactBefore},
+	} {
+		value := strings.TrimSpace(values.Get(field.name))
+		if value == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return store.DirectoryPeopleQuery{}, fmt.Errorf("%w: %s must be RFC3339", store.ErrInvalidDirectoryQuery, field.name)
+		}
+		*field.target = &parsed
+	}
+	limit := strings.TrimSpace(values.Get("limit"))
+	if limit == "" {
+		return query, nil
+	}
+	parsed, err := strconv.Atoi(limit)
+	if err != nil {
+		return store.DirectoryPeopleQuery{}, newParamError("limit",
+			fmt.Sprintf("query parameter %q must be an integer, got %q", "limit", limit))
+	}
+	query.Limit = parsed
+	return query, nil
+}
+
+func (s *Server) writeDirectoryPeopleError(w http.ResponseWriter, err error) {
+	if s.writeIfContextError(w, err) {
+		return
+	}
+	switch {
+	case errors.Is(err, store.ErrInvalidDirectoryCursor):
+		writeError(w, http.StatusBadRequest, "invalid_cursor", "Directory cursor is invalid")
+	case errors.Is(err, store.ErrInvalidDirectoryQuery):
+		writeError(w, http.StatusBadRequest, "invalid_query", "Directory query is invalid")
+	case errors.Is(err, store.ErrDirectoryProjectionStale):
+		writeError(w, http.StatusServiceUnavailable, "directory_projection_stale",
+			"Directory data is refreshing; retry shortly")
+	default:
+		s.logger.Error("directory people query failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "directory_unavailable", "Directory is unavailable")
+	}
+}
+
 func (s *Server) handlePatchPerson(w http.ResponseWriter, r *http.Request) {
 	profiles, ok := s.personProfileStore(w)
 	if !ok {
@@ -384,6 +481,31 @@ func addPersonIDParameter(operation *huma.Operation) {
 		Name: "id", In: pathKey, Required: true, Description: "Durable person ID",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
+}
+
+func addDirectoryPeopleParameters(operation *huma.Operation) {
+	lastContactAfter := queryStringParam("last_contact_after", "Return people contacted at or after this RFC3339 timestamp", false)
+	lastContactAfter.Schema.Format = "date-time"
+	lastContactBefore := queryStringParam("last_contact_before", "Return people contacted at or before this RFC3339 timestamp", false)
+	lastContactBefore.Schema.Format = "date-time"
+	sortParam := queryStringParam("sort", "Directory order: name, last_contact_desc, or last_contact_asc", false)
+	sortParam.Schema.Enum = []any{
+		store.DirectoryPeopleSortName,
+		store.DirectoryPeopleSortLastContactDesc,
+		store.DirectoryPeopleSortLastContactAsc,
+	}
+	operation.Parameters = append(operation.Parameters,
+		queryStringParam("q", "Lexical query over person names, contact points, and organizations", false),
+		queryStringParam("cursor", "Opaque cursor returned by the previous Directory page", false),
+		queryIntegerParam("limit", "Maximum rows to return (default 50, max 100)"),
+		queryStringParam("contact_state", "Current contact state: active or inactive", false),
+		queryStringParam("category", "Current person category", false),
+		queryStringParam("organization", "Current organization", false),
+		queryStringParam("primary_channel", "Primary communication channel", false),
+		lastContactAfter,
+		lastContactBefore,
+		sortParam,
+	)
 }
 
 func addPersonIfMatchParameter(operation *huma.Operation) {

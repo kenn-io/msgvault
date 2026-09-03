@@ -58,12 +58,17 @@ export type IdentitySearchSort = components['schemas']['IdentitySearchSort'];
 
 export type ExploreWorkspace =
   | 'everything'
+  | 'directory'
+  | 'directory_review'
   | 'files'
   | 'relationships'
   | 'saved_views'
   | 'sources'
   | 'deletions'
   | 'settings';
+export type DirectoryReviewKind = 'identity' | 'fact' | 'relationship';
+export type IdentityReviewState = 'candidate' | 'conflict' | 'accepted' | 'rejected';
+export type RelationshipReviewState = 'pending' | 'accepted' | 'rejected';
 export type RelationshipFacet = 'people' | 'domains';
 export type ExploreColumn =
   | 'kind'
@@ -92,6 +97,18 @@ export interface ExploreScrollAnchor {
 export interface ExploreURLState {
   schemaVersion: number;
   workspace: ExploreWorkspace;
+  directoryQuery: string;
+  directoryContactState: string;
+  directoryCategory: string;
+  directoryOrganization: string;
+  directoryPrimaryChannel: string;
+  directoryLastContactAfter: string;
+  directoryLastContactBefore: string;
+  directorySort: 'name' | 'last_contact_desc' | 'last_contact_asc';
+  directoryPersonID: number | null;
+  reviewKind: DirectoryReviewKind;
+  identityState: IdentityReviewState;
+  relationshipReviewState: RelationshipReviewState;
   query: string;
   searchMode: ExploreSearchMode;
   filters: ExploreFilter[];

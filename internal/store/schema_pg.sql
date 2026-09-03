@@ -107,6 +107,33 @@ CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
 );
 INSERT INTO carddav_discovery_lock(singleton) VALUES (1) ON CONFLICT DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS carddav_sync_runs (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    trigger       TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    full_sync     BOOLEAN NOT NULL DEFAULT FALSE,
+    state         TEXT NOT NULL CHECK (state IN ('running', 'succeeded', 'failed', 'cancelled', 'partial')),
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at   TIMESTAMPTZ,
+    books         BIGINT NOT NULL DEFAULT 0 CHECK (books >= 0),
+    created       BIGINT NOT NULL DEFAULT 0 CHECK (created >= 0),
+    updated       BIGINT NOT NULL DEFAULT 0 CHECK (updated >= 0),
+    removed       BIGINT NOT NULL DEFAULT 0 CHECK (removed >= 0),
+    error_code    TEXT NOT NULL DEFAULT '' CHECK (
+        error_code = '' OR error_code ~ '^[a-z][a-z0-9_]{0,63}$'
+    ),
+    error_message TEXT NOT NULL DEFAULT '' CHECK (octet_length(error_message) <= 2000),
+    CHECK ((state = 'running' AND finished_at IS NULL) OR
+           (state <> 'running' AND finished_at IS NOT NULL)),
+    CHECK ((state IN ('running', 'succeeded') AND error_code = '' AND error_message = '') OR
+           (state IN ('failed', 'cancelled', 'partial') AND error_code <> ''))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_sync_runs_one_active
+    ON carddav_sync_runs((1)) WHERE state = 'running';
+CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
+    ON carddav_sync_runs(state, id DESC);
+CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
+    ON carddav_sync_runs(started_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS carddav_accounts (
     id                    SMALLINT PRIMARY KEY CHECK (id = 1),
     base_url              TEXT NOT NULL,
@@ -706,6 +733,14 @@ CREATE TABLE IF NOT EXISTS person_sweep_runs (
     started_at                  TIMESTAMPTZ NOT NULL,
     completed_at                TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_person_sweep_runs_operations_order
+    ON person_sweep_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_runs_operations_bytewise_order
+    ON person_sweep_runs(started_at DESC, id COLLATE "C" DESC);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_runs_operations_running
+    ON person_sweep_runs(started_at DESC, id COLLATE "C" DESC) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_person_sweep_runs_operations_succeeded
+    ON person_sweep_runs(started_at DESC, id COLLATE "C" DESC) WHERE status = 'succeeded';
 
 CREATE TABLE IF NOT EXISTS person_sweep_attempts (
     id                          TEXT PRIMARY KEY,
@@ -745,6 +780,12 @@ CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_person_started
     ON person_sweep_attempts(person_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_run
     ON person_sweep_attempts(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_operations_failure
+    ON person_sweep_attempts(
+        run_id,
+        (COALESCE(completed_at, started_at)) DESC,
+        id COLLATE "C" DESC
+    ) WHERE failure_class <> '';
 CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_generation
     ON person_sweep_attempts(generation_id);
 
@@ -1778,6 +1819,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_employments_active_person_org_title
 CREATE INDEX IF NOT EXISTS idx_employments_person ON employments(person_id);
 CREATE INDEX IF NOT EXISTS idx_employments_organization ON employments(organization_id);
 CREATE INDEX IF NOT EXISTS idx_employments_person_current ON employments(person_id) WHERE is_current;
+CREATE INDEX IF NOT EXISTS idx_employments_person_edge ON employments(person_id, id);
+CREATE INDEX IF NOT EXISTS idx_employments_organization_edge ON employments(organization_id, id);
+CREATE INDEX IF NOT EXISTS idx_employments_person_current_edge
+    ON employments(person_id, id) WHERE is_current;
+CREATE INDEX IF NOT EXISTS idx_employments_organization_current_edge
+    ON employments(organization_id, id) WHERE is_current;
 CREATE INDEX IF NOT EXISTS idx_employments_address ON employments(address_id) WHERE address_id IS NOT NULL;
 
 -- Daemon-owned analytical Saved Views. Canonical state contains only the
@@ -1968,6 +2015,14 @@ CREATE INDEX IF NOT EXISTS idx_person_relationships_target
 CREATE INDEX IF NOT EXISTS idx_person_relationships_target_active
     ON person_relationships(target_person_id, relationship_type_id)
     WHERE end_year IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_relationships_source_edge
+    ON person_relationships(source_person_id, id);
+CREATE INDEX IF NOT EXISTS idx_person_relationships_target_edge
+    ON person_relationships(target_person_id, id);
+CREATE INDEX IF NOT EXISTS idx_person_relationships_source_current_edge
+    ON person_relationships(source_person_id, id) WHERE end_year IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_relationships_target_current_edge
+    ON person_relationships(target_person_id, id) WHERE end_year IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_relationships_type
     ON person_relationships(relationship_type_id);
 
@@ -3340,6 +3395,12 @@ CREATE INDEX IF NOT EXISTS idx_labels_source ON labels(source_id);
 CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_order
+    ON sync_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_running
+    ON sync_runs(started_at DESC, id DESC) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_succeeded
+    ON sync_runs(started_at DESC, id DESC) WHERE status = 'completed' AND errors_count = 0;
 CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
     ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider

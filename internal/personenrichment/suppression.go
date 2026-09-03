@@ -361,6 +361,11 @@ func cloneTimePointer(value *time.Time) *time.Time {
 
 type CredentialLookup func(string) (string, bool)
 
+// ProviderCredentialLookup resolves a credential from the complete immutable
+// provider profile. Stable names and canonical endpoints remain available to
+// credential stores that bind secrets more narrowly than an environment name.
+type ProviderCredentialLookup func(ProviderProfile) (string, bool, error)
+
 type EgressInput struct {
 	Request                Request
 	Profile                ProviderProfile
@@ -374,10 +379,30 @@ type Authorization struct {
 }
 
 type EgressGate struct {
-	Consent          ConsentChecker
-	Suppressions     SuppressionChecker
-	Hasher           *SuppressionHasher
-	LookupCredential CredentialLookup
+	Consent                  ConsentChecker
+	Suppressions             SuppressionChecker
+	Hasher                   *SuppressionHasher
+	LookupCredential         CredentialLookup
+	LookupProviderCredential ProviderCredentialLookup
+}
+
+// NewProviderBoundEgressGate constructs a gate whose late credential lookup
+// receives the consented provider profile. Resolution still happens only
+// after consent and every suppression check succeeds.
+func NewProviderBoundEgressGate(
+	consent ConsentChecker,
+	suppressions SuppressionChecker,
+	hasher *SuppressionHasher,
+	lookupProviderCredential ProviderCredentialLookup,
+) (*EgressGate, error) {
+	gate := &EgressGate{
+		Consent: consent, Suppressions: suppressions,
+		Hasher: hasher, LookupProviderCredential: lookupProviderCredential,
+	}
+	if err := gate.validate(); err != nil {
+		return nil, err
+	}
+	return gate, nil
 }
 
 func NewEgressGate(
@@ -409,7 +434,7 @@ func (g EgressGate) validate() error {
 	if err := g.Hasher.validate(); err != nil {
 		return err
 	}
-	if g.LookupCredential == nil {
+	if g.LookupCredential == nil && g.LookupProviderCredential == nil {
 		return errors.New("credential lookup is required")
 	}
 	return nil
@@ -453,7 +478,16 @@ func (g EgressGate) Authorize(ctx context.Context, input EgressInput) (Authoriza
 		}
 	}
 
-	credential, ok := g.LookupCredential(input.Profile.APIKeyEnv)
+	var credential string
+	var ok bool
+	if g.LookupProviderCredential != nil {
+		credential, ok, err = g.LookupProviderCredential(input.Profile)
+		if err != nil {
+			return Authorization{}, fmt.Errorf("resolve person enrichment provider credential: %w", err)
+		}
+	} else {
+		credential, ok = g.LookupCredential(input.Profile.APIKeyEnv)
+	}
 	if !ok || credential == "" {
 		return Authorization{}, ErrCredentialUnavailable
 	}

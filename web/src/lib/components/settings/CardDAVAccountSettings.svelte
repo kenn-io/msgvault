@@ -1,15 +1,23 @@
 <script lang="ts">
   import { Button, SettingsSection, TextInput, Toggle } from '@kenn-io/kit-ui';
+  import { onDestroy } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { components } from '../../api/generated/schema';
   import type { SettingState } from '../../settings/catalog';
 
   type CardDAVAccountRequest = components['schemas']['CardDAVAccountRequest'];
-  type CardDAVAccountPayload = Omit<CardDAVAccountRequest, 'password'> & { password?: string };
   type Action = 'test' | 'save';
 
-  let { client, settings }: { client: APIClient; settings: SettingState[] } = $props();
+  let {
+    client,
+    settings,
+    onSaved = () => undefined
+  }: {
+    client: APIClient;
+    settings: SettingState[];
+    onSaved?: () => void | Promise<void>;
+  } = $props();
 
   let baseURL = $state(settingString('carddav.base_url'));
   let username = $state(settingString('carddav.username'));
@@ -22,6 +30,26 @@
   let activeAction = $state<Action | undefined>();
   let error = $state('');
   let status = $state('');
+  let testedTuple = $state('');
+  let requestController: AbortController | undefined;
+  let actionGeneration = 0;
+  let disposed = false;
+
+  $effect(() => {
+    const tuple = identityTuple();
+    if (testedTuple !== '' && tuple !== testedTuple) {
+      testedTuple = '';
+      status = '';
+    }
+  });
+
+  onDestroy(() => {
+    disposed = true;
+    actionGeneration += 1;
+    password = '';
+    requestController?.abort();
+    requestController = undefined;
+  });
 
   function settingString(key: string): string {
     const value = settings.find((setting) => setting.key === key)?.value;
@@ -37,8 +65,8 @@
     return settings.find((setting) => setting.key === key)?.secret?.configured === true;
   }
 
-  function requestBody(): CardDAVAccountPayload {
-    const body: CardDAVAccountPayload = {
+  function requestBody(): CardDAVAccountRequest {
+    const body: CardDAVAccountRequest = {
       base_url: baseURL,
       username,
       enabled,
@@ -46,6 +74,10 @@
     };
     if (password !== '') body.password = password;
     return body;
+  }
+
+  function identityTuple(): string {
+    return `${baseURL}\u0000${username}`;
   }
 
   function canReusePersistedPassword(): boolean {
@@ -64,34 +96,49 @@
   }
 
   async function testConnection() {
-    if (!validatePassword()) return;
+    if (activeAction !== undefined || !validatePassword()) return;
+    requestController?.abort();
+    const controller = new AbortController();
+    requestController = controller;
+    const generation = ++actionGeneration;
     activeAction = 'test';
     error = '';
     status = '';
     try {
       const { data, error: responseError } = await client.POST('/api/v1/carddav/account/test', {
-        // The server keeps the stored credential when password is omitted; generated types may lag that contract.
-        body: requestBody() as CardDAVAccountRequest
+        body: requestBody(),
+        signal: controller.signal
       });
+      if (!current(generation, controller.signal)) return;
       if (!data) throw new Error(apiErrorMessage(responseError, 'Unable to test the CardDAV connection.'));
+      testedTuple = identityTuple();
       status = `Connection successful. Found ${data.books} address ${data.books === 1 ? 'book' : 'books'}.`;
     } catch (cause) {
+      if (!current(generation, controller.signal)) return;
       error = cause instanceof Error ? cause.message : 'Unable to test the CardDAV connection.';
     } finally {
-      activeAction = undefined;
+      if (current(generation)) {
+        if (requestController === controller) requestController = undefined;
+        activeAction = undefined;
+      }
     }
   }
 
   async function saveAccount() {
-    if (!validatePassword()) return;
+    if (activeAction !== undefined || !validatePassword()) return;
+    requestController?.abort();
+    const controller = new AbortController();
+    requestController = controller;
+    const generation = ++actionGeneration;
     activeAction = 'save';
     error = '';
     status = '';
     try {
       const { data, error: responseError } = await client.PUT('/api/v1/carddav/account', {
-        // The server keeps the stored credential when password is omitted; generated types may lag that contract.
-        body: requestBody() as CardDAVAccountRequest
+        body: requestBody(),
+        signal: controller.signal
       });
+      if (!current(generation, controller.signal)) return;
       if (!data) throw new Error(apiErrorMessage(responseError, 'Unable to save the CardDAV account.'));
       baseURL = data.base_url;
       username = data.username;
@@ -101,11 +148,17 @@
       persistedUsername = data.username;
       persistedPasswordConfigured = true;
       password = '';
+      testedTuple = '';
       status = `CardDAV account saved. Found ${data.books} address ${data.books === 1 ? 'book' : 'books'}.`;
+      void onSaved();
     } catch (cause) {
+      if (!current(generation, controller.signal)) return;
       error = cause instanceof Error ? cause.message : 'Unable to save the CardDAV account.';
     } finally {
-      activeAction = undefined;
+      if (current(generation)) {
+        if (requestController === controller) requestController = undefined;
+        activeAction = undefined;
+      }
     }
   }
 
@@ -115,6 +168,10 @@
       if (typeof message === 'string' && message) return message;
     }
     return fallback;
+  }
+
+  function current(generation: number, signal: AbortSignal | undefined = undefined): boolean {
+    return !disposed && generation === actionGeneration && !signal?.aborted;
   }
 </script>
 
@@ -130,11 +187,11 @@
   <form onsubmit={(event) => { event.preventDefault(); void saveAccount(); }}>
     <label>
       Base URL
-      <TextInput type="url" bind:value={baseURL} required block />
+      <TextInput type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
     </label>
     <label>
       Username
-      <TextInput autocomplete="username" bind:value={username} required block />
+      <TextInput autocomplete="username" bind:value={username} disabled={activeAction !== undefined} required block />
     </label>
     <label>
       Password
@@ -142,15 +199,16 @@
         type="password"
         autocomplete="current-password"
         bind:value={password}
+        disabled={activeAction !== undefined}
         required={!canReusePersistedPassword()}
         placeholder={canReusePersistedPassword() ? 'Leave blank to keep current password' : ''}
         block
       />
     </label>
-    <Toggle bind:checked={enabled} label="Enabled" />
+    <Toggle bind:checked={enabled} disabled={activeAction !== undefined} label="Enabled" />
     <label>
       Schedule
-      <TextInput bind:value={schedule} placeholder="0 2 * * *" block />
+      <TextInput bind:value={schedule} disabled={activeAction !== undefined} placeholder="0 2 * * *" block />
     </label>
 
     <div class="actions">

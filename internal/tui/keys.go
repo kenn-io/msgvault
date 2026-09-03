@@ -19,6 +19,8 @@ const (
 	keyNameBackspace = "backspace"
 	keyNameCtrlU     = "ctrl+u"
 	keyNameCtrlD     = "ctrl+d"
+	keyNameCtrlC     = "ctrl+c"
+	keyNameRight     = "right"
 	keyNamePageUp    = "pgup"
 	keyNamePageDown  = "pgdown"
 	keyNameHome      = "home"
@@ -42,7 +44,7 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case keyNameEsc:
 		return m.cancelInlineSearch()
 
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 
@@ -162,7 +164,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "q":
 		m.modal = modalQuitConfirm
 		return m, nil, true
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit, true
 	case "?":
@@ -951,7 +953,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		return m.navigateDetailPrev()
 
 	// Navigate to next message in list (right = towards last)
-	case "right", "l":
+	case keyNameRight, "l":
 		return m.navigateDetailNext()
 
 	// Scroll content

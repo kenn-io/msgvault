@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -248,8 +249,8 @@ func TestPersonEnrichmentSuppressPersonPersistsCurrentIdentityDigests(t *testing
 	key := strings.Repeat("s", 32)
 	hasher, err := personenrichment.NewSuppressionHasher([]byte(key))
 	requirements.NoError(err)
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
-	deps.lookupEnv = func(string) (string, bool) { return key, true }
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
+	t.Setenv("TEST_SUPPRESSION_KEY", key)
 
 	stdout, stderr, err := executePersonEnrichmentCommand(t, deps, "",
 		"suppress", "--person", strconv.FormatInt(person.ID, 10), "--reason", "opt_out")
@@ -319,8 +320,8 @@ func TestPersonEnrichmentSuppressDaemonRejectsMismatchedDurableKey(t *testing.T)
 	requirements.NoError(err)
 	newDigest := newHasher.Digest(namespace, personenrichment.SuppressionEmail,
 		personenrichment.EmailNormalizationV1, "new@example.test")
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
-	deps.lookupEnv = func(string) (string, bool) { return strings.Repeat("n", 32), true }
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
+	t.Setenv("TEST_SUPPRESSION_KEY", strings.Repeat("n", 32))
 	_, _, err = executePersonEnrichmentCommand(t, deps, "",
 		"suppress", "--provider-namespace", namespace, "--identifier-class", "email",
 		"--normalization-version", personenrichment.EmailNormalizationV1,
@@ -344,8 +345,8 @@ func TestPersonEnrichmentSuppressDaemonRejectsWrongConfiguredKeyOnEmptyLedger(t 
 	requirements.NoError(err)
 	wrong := wrongHasher.Digest(namespace, personenrichment.SuppressionEmail,
 		personenrichment.EmailNormalizationV1, "wrong@example.test")
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
-	deps.lookupEnv = func(string) (string, bool) { return strings.Repeat("c", 32), true }
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
+	t.Setenv("TEST_SUPPRESSION_KEY", strings.Repeat("c", 32))
 	_, _, err = executePersonEnrichmentCommand(t, deps, "",
 		"suppress", "--provider-namespace", namespace, "--identifier-class", "email",
 		"--normalization-version", personenrichment.EmailNormalizationV1,
@@ -374,8 +375,8 @@ func TestPersonEnrichmentSuppressDaemonConcurrentDifferingKeysPersistOnlyConfigu
 		personenrichment.EmailNormalizationV1, "configured@example.test")
 	wrong := wrongHasher.Digest(namespace, personenrichment.SuppressionEmail,
 		personenrichment.EmailNormalizationV1, "wrong@example.test")
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
-	deps.lookupEnv = func(string) (string, bool) { return configuredKey, true }
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
+	t.Setenv("TEST_SUPPRESSION_KEY", configuredKey)
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	for _, digest := range []personenrichment.SuppressionDigest{configured, wrong} {
@@ -426,7 +427,7 @@ func TestPersonEnrichmentConsentProfilesStatusAndRevoke(t *testing.T) {
 	f := storetest.New(t)
 	provider, profile, _ := scheduleWorkerProfile(t, f, "cli-controls", "TEST_CLI_PROVIDER_KEY")
 	config := personenrichment.Config{Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY", Providers: []personenrichment.ProviderConfig{provider}}
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
 
 	profiles, _, err := executePersonEnrichmentCommand(t, deps, "", "profiles", "--json")
 	requirements.NoError(err)
@@ -457,7 +458,7 @@ func TestPersonEnrichmentManualRunPersistsAndReusesRunIDBeforeWork(t *testing.T)
 	requirements.NoError(err)
 	config := personenrichment.Config{Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY", Providers: []personenrichment.ProviderConfig{provider}}
 	var observed []int64
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
 	now := time.Date(2026, 8, 23, 20, 0, 0, 0, time.UTC)
 	deps.clock = func() time.Time { return now }
 	deps.newManualWorker = func(_ context.Context, st *store.Store, _ personenrichment.Config) (personEnrichmentScheduleWorker, error) {
@@ -510,7 +511,7 @@ func TestPersonEnrichmentManualRunRejectsUntrackedPersonWithoutRunOrWork(t *test
 	_, _, err = f.Store.GrantPersonEnrichmentConsent(t.Context(), profile.Fingerprint, "test")
 	requirements.NoError(err)
 	config := personenrichment.Config{Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY", Providers: []personenrichment.ProviderConfig{provider}}
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
 	deps.newManualWorker = func(context.Context, *store.Store, personenrichment.Config) (personEnrichmentScheduleWorker, error) {
 		require.FailNow(t, "untracked manual run must not construct a worker")
 		return nil, errors.New("unreachable test worker construction")
@@ -547,7 +548,7 @@ func TestPersonEnrichmentManualRunRejectsGloballyDisabledEnrichment(t *testing.T
 	var workBefore int64
 	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM person_enrichment_work WHERE person_id = ?`), person.ID).Scan(&workBefore))
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
 	deps.newManualWorker = func(context.Context, *store.Store, personenrichment.Config) (personEnrichmentScheduleWorker, error) {
 		require.FailNow(t, "disabled manual enrichment must not construct a worker")
 		return nil, errors.New("unreachable test worker construction")
@@ -580,7 +581,7 @@ func TestPersonEnrichmentManualRunKeepsRunIDOnLeaseAndAttemptAndReportsFinalCoun
 	config := personenrichment.Config{Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY", Providers: []personenrichment.ProviderConfig{provider}}
 	now := time.Date(2026, 8, 23, 21, 0, 0, 0, time.UTC)
 	completionClock := now
-	deps := localPersonEnrichmentCommandDeps(config, f.Store)
+	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
 	deps.clock = func() time.Time {
 		current := completionClock
 		completionClock = completionClock.Add(time.Minute)
@@ -666,4 +667,41 @@ func personEnrichmentCLIConfig(suppressionEnv string) personenrichment.Config {
 		MaxRetries: 2, MaxRequestsPerRun: 10, MaxRequestsPerDay: 100,
 	}
 	return personenrichment.Config{Enabled: true, SuppressionKeyEnv: suppressionEnv, Providers: []personenrichment.ProviderConfig{provider}}
+}
+
+// providerCredentialTestConfig returns a config whose data directory is a
+// private temporary tree, so the daemon's credential lookups read a throwaway
+// provider credential store and fall back to the test environment.
+func providerCredentialTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+	testConfig := config.NewDefaultConfig()
+	testConfig.Data.DataDir = t.TempDir()
+	return testConfig
+}
+
+func testPersonEnrichmentRuntimeCredentials(t *testing.T) personEnrichmentRuntimeCredentials {
+	t.Helper()
+	testConfig := providerCredentialTestConfig(t)
+	return personEnrichmentRuntimeCredentials{
+		Suppression: personEnrichmentEnvironmentLookup(testConfig),
+		Provider:    personEnrichmentProviderCredentialLookup(testConfig),
+	}
+}
+
+// testPersonEnrichmentCommandDeps composes the production command
+// dependencies against an already open store. Credential lookups are the ones
+// the daemon builds; only the store, config source, and daemon-subprocess
+// detection are replaced.
+func testPersonEnrichmentCommandDeps(
+	t *testing.T, enrichment personenrichment.Config, st *store.Store,
+) personEnrichmentCommandDeps {
+	t.Helper()
+	saved := cfg
+	t.Cleanup(func() { cfg = saved })
+	cfg = providerCredentialTestConfig(t)
+	deps := defaultPersonEnrichmentCommandDeps()
+	deps.config = func() personenrichment.Config { return enrichment }
+	deps.openStore = func() (*store.Store, func(), error) { return st, func() {}, nil }
+	deps.isDaemonSubprocess = func() bool { return true }
+	return deps
 }

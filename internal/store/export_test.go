@@ -288,3 +288,10 @@ func RollbackPersonEnrichmentAttemptCompletionForTest(
 	}
 	return err
 }
+
+// SetPersonNetworkSourceReadHookForTest records the finite layer budget and
+// raw adjacency rows consumed before edge deduplication or hydration.
+func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int)) func() {
+	s.personNetworkSourceReadHook = fn
+	return func() { s.personNetworkSourceReadHook = nil }
+}

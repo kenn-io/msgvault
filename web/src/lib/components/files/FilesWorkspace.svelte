@@ -15,6 +15,8 @@
 
   type IdentityFileScope =
     | { kind: 'person'; id: number }
+    /** A durable Directory person; unlike analytical participants it uses the People API. */
+    | { kind: 'durable-person'; id: number }
     | { kind: 'domain'; domain: string };
 
   interface PendingRestoration {
@@ -141,7 +143,7 @@
   let previousSelectedKey = untrack(() => selectedKey);
   let personPresentation = $state<'media' | 'files'>(untrack(() => providedPersonPresentation));
   let personDirections = $state<PersonFileDirection[]>(untrack(() => providedPersonDirections));
-  const personScoped = $derived(identityScope?.kind === 'person');
+  const personScoped = $derived(identityScope?.kind === 'person' || identityScope?.kind === 'durable-person');
   const visibleMIMEFamilies = $derived(personScoped
     ? (personPresentation === 'media' ? PERSON_MEDIA_FAMILIES : PERSON_FILE_FAMILIES)
     : ALL_MIME_FAMILIES);
@@ -337,7 +339,12 @@
     };
     let searchResponse;
     try {
-      searchResponse = identityScope?.kind === 'person'
+      searchResponse = identityScope?.kind === 'durable-person'
+        ? await client.POST('/api/v1/people/{id}/files/search', {
+            params: { path: { id: identityScope.id } },
+            body: { ...body, directions: personDirections }, signal
+          })
+        : identityScope?.kind === 'person'
         ? await client.POST('/api/v1/participants/{id}/files/search', {
             params: { path: { id: identityScope.id } },
             body: { ...body, directions: personDirections }, signal

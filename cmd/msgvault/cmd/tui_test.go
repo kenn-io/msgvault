@@ -52,6 +52,7 @@ func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
 		"TUI backend should expose daemon-backed text queries")
 	assert.Implements((*peoplebrowser.Backend)(nil), daemonclient.NewPeopleBrowser(backend.engine),
 		"TUI backend should expose the daemon-backed People wrapper")
+	assert.NotNil(backend.settings, "TUI backend should expose daemon-backed settings")
 	assert.Equal("remote@example.com", accounts[0].Identifier)
 	assert.Equal("gmail", accounts[0].SourceType)
 	assert.Equal(int32(1), requests.Load())

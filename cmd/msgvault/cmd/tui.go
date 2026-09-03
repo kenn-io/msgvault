@@ -48,6 +48,7 @@ Navigation:
   Enter       Drill down / view message
   Esc         Go back
   m           Cycle Email / Texts / Meetings / People
+  ,           Open Settings
   g           Cycle aggregate view (Email and Texts)
   /           Search; Tab adds active-message-only Semantic mode when enabled
   A           Filter by account, or meeting source in Meetings mode
@@ -103,6 +104,7 @@ HTTP Mode:
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
 			SemanticSearch:   semanticSearch,
 			AnalyticsNotice:  notice,
+			SettingsBackend:  backend.settings,
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -186,10 +188,11 @@ func (o tuiAttachmentOpener) OpenAttachment(ctx context.Context, contentHash str
 }
 
 type tuiBackend struct {
-	engine  *daemonclient.Engine
-	client  *daemonclient.Client
-	info    HTTPStoreInfo
-	cleanup func()
+	engine   *daemonclient.Engine
+	client   *daemonclient.Client
+	settings tui.SettingsBackend
+	info     HTTPStoreInfo
+	cleanup  func()
 }
 
 const (
@@ -270,10 +273,11 @@ func openTUIBackend(ctx context.Context) (*tuiBackend, error) {
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	return &tuiBackend{
-		engine:  engine,
-		client:  st,
-		info:    info,
-		cleanup: func() { _ = engine.Close() },
+		engine:   engine,
+		client:   st,
+		settings: newTUISettingsBackend(st),
+		info:     info,
+		cleanup:  func() { _ = engine.Close() },
 	}, nil
 }
 

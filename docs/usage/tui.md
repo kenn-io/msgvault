@@ -223,6 +223,7 @@ Press `Esc` to return to the message list.
 | `d` | Stage selected for deletion |
 | `D` | Stage all matching current filter |
 | `/` | Search |
+| `,` | Open Settings (keyboard-only; unavailable while a search box or modal is open) |
 | `?` | Help |
 | `q` | Quit |
 

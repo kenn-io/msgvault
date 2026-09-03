@@ -8,6 +8,9 @@ import SavedViewsWorkspace from './SavedViewsWorkspace.svelte';
 const currentState: ExploreURLState = {
   schemaVersion: 2,
   workspace: 'everything',
+  directoryQuery: '', directoryContactState: '', directoryCategory: '', directoryOrganization: '',
+  directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '', directorySort: 'name', directoryPersonID: null,
+  reviewKind: 'identity', identityState: 'candidate', relationshipReviewState: 'pending',
   query: 'invoice',
   searchMode: 'full_text',
   filters: [{ dimension: 'source', values: ['1'] }],

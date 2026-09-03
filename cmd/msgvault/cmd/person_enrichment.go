@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -31,6 +32,7 @@ type personEnrichmentCommandDeps struct {
 	config             func() personenrichment.Config
 	openStore          func() (*store.Store, func(), error)
 	lookupEnv          personenrichment.CredentialLookup
+	proxyLookupEnv     personenrichment.CredentialLookup
 	isDaemonSubprocess func() bool
 	proxyArgs          func(*cobra.Command, []string, map[string]string) error
 	newManualWorker    func(context.Context, *store.Store, personenrichment.Config) (personEnrichmentScheduleWorker, error)
@@ -46,24 +48,23 @@ func defaultPersonEnrichmentCommandDeps() personEnrichmentCommandDeps {
 			return cfg.People.Enrichment
 		},
 		openStore:          openWritableStoreAndInit,
-		lookupEnv:          os.LookupEnv,
+		lookupEnv:          personEnrichmentEnvironmentLookup(cfg),
+		proxyLookupEnv:     os.LookupEnv,
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		proxyArgs: func(command *cobra.Command, args []string, env map[string]string) error {
 			return runDaemonCLICommandHTTPWithEnv(command, args, env, false, false)
 		},
-		newManualWorker: newPersonEnrichmentCLIWorker,
-		clock:           time.Now,
+		newManualWorker: func(
+			ctx context.Context, st *store.Store, enrichmentConfig personenrichment.Config,
+		) (personEnrichmentScheduleWorker, error) {
+			return newPersonEnrichmentCLIWorker(
+				ctx, st, enrichmentConfig,
+				personEnrichmentEnvironmentLookup(cfg),
+				personEnrichmentProviderCredentialLookup(cfg),
+			)
+		},
+		clock: time.Now,
 	}
-}
-
-func localPersonEnrichmentCommandDeps(
-	config personenrichment.Config, st *store.Store,
-) personEnrichmentCommandDeps {
-	deps := defaultPersonEnrichmentCommandDeps()
-	deps.config = func() personenrichment.Config { return config }
-	deps.openStore = func() (*store.Store, func(), error) { return st, func() {}, nil }
-	deps.isDaemonSubprocess = func() bool { return true }
-	return deps
 }
 
 func newPersonEnrichmentCommand(deps personEnrichmentCommandDeps) *cobra.Command {
@@ -95,11 +96,15 @@ func proxyPersonEnrichmentCommandWithEnv(
 		return err
 	}
 	env := make(map[string]string, len(names))
+	lookup := deps.proxyLookupEnv
+	if lookup == nil {
+		lookup = deps.lookupEnv
+	}
 	for _, name := range names {
-		if name == "" {
+		if name == "" || name == providercredentials.StoredSuppressionEnvironment {
 			continue
 		}
-		if value, ok := deps.lookupEnv(name); ok && value != "" {
+		if value, ok := lookup(name); ok && value != "" {
 			env[name] = value
 		}
 	}
@@ -688,8 +693,13 @@ func personEnrichmentProviderConfig(
 
 func newPersonEnrichmentCLIWorker(
 	ctx context.Context, st *store.Store, config personenrichment.Config,
+	suppressionLookup personenrichment.CredentialLookup,
+	providerLookup personenrichment.ProviderCredentialLookup,
 ) (personEnrichmentScheduleWorker, error) {
-	hasher, err := loadPersonEnrichmentSuppressionHasher(ctx, st, config, os.LookupEnv)
+	if suppressionLookup == nil || providerLookup == nil {
+		return nil, errors.New("person enrichment worker requires suppression and provider credential lookups")
+	}
+	hasher, err := loadPersonEnrichmentSuppressionHasher(ctx, st, config, suppressionLookup)
 	if err != nil {
 		return nil, err
 	}
@@ -723,7 +733,7 @@ func newPersonEnrichmentCLIWorker(
 			}
 		}
 	}
-	gate, err := personenrichment.NewEgressGate(st, st, hasher, os.LookupEnv)
+	gate, err := personenrichment.NewProviderBoundEgressGate(st, st, hasher, providerLookup)
 	if err != nil {
 		return nil, err
 	}

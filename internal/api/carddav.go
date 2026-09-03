@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,20 +24,21 @@ import (
 )
 
 var (
-	errCardDAVValidation = errors.New("invalid CardDAV request")
-	errCardDAVUpstream   = errors.New("CardDAV upstream failure")
-	errCardDAVStorage    = errors.New("CardDAV storage failure")
+	errCardDAVValidation  = errors.New("invalid CardDAV request")
+	errCardDAVUpstream    = errors.New("CardDAV upstream failure")
+	errCardDAVStorage     = errors.New("CardDAV storage failure")
+	errCardDAVUnavailable = errors.New("CardDAV status unavailable")
 )
 
 type CardDAVOperations interface {
 	Sync(ctx context.Context, options carddav.SyncOptions) (carddav.SyncResult, error)
 	ListBooks(ctx context.Context) ([]store.CardDAVAddressBook, error)
 	SetBookRoles(ctx context.Context, bookID int64, roles carddav.BookRoles) error
-	Publication(ctx context.Context, personID int64) (*store.CardDAVPublication, error)
+	PublicationView(ctx context.Context, personID int64) (*carddav.PublicationView, error)
 	PublishPerson(ctx context.Context, personID int64) error
 	UnpublishPerson(ctx context.Context, personID int64) error
-	ListConflicts(ctx context.Context) ([]store.CardDAVConflict, error)
-	GetConflict(ctx context.Context, conflictID int64) (*store.CardDAVConflict, error)
+	ListConflictViews(ctx context.Context) ([]carddav.ConflictListItem, error)
+	GetConflictView(ctx context.Context, conflictID int64) (*carddav.ConflictDetail, error)
 	ResolveConflict(ctx context.Context, conflictID int64, choice carddav.ResolutionChoice) error
 }
 
@@ -50,20 +53,18 @@ type cardDAVServiceFactory func(*store.Store, string, string, string) (cardDAVCa
 // CardDAVController owns the currently configured shared service and the
 // discovery-first account setup transaction.
 type CardDAVController struct {
-	mu                 sync.RWMutex
-	saveMu             sync.Mutex
-	cfg                *config.Config
-	store              *store.Store
-	service            CardDAVOperations
-	factory            cardDAVServiceFactory
-	persistDiscovery   func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error
-	saveConfig         func(*config.CardDAVConfig, config.CardDAVConfig) (config.CardDAVConfig, error)
-	saveCredential     func(string, carddav.Credential) error
-	loadCredential     func(string) (carddav.Credential, error)
-	saveLegacyPassword func(string, string) error
-	loadLegacyPassword func(string) (string, error)
-	removeCredential   func(string) error
-	reconcileSchedule  func(config.CardDAVConfig, CardDAVOperations) error
+	mu                sync.RWMutex
+	saveMu            sync.Mutex
+	cfg               *config.Config
+	store             *store.Store
+	service           CardDAVOperations
+	factory           cardDAVServiceFactory
+	persistDiscovery  func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error
+	saveConfig        func(*config.CardDAVConfig, config.CardDAVConfig) (config.CardDAVConfig, error)
+	saveCredential    func(string, carddav.Credential) error
+	loadCredential    func(string) (carddav.Credential, error)
+	removeCredential  func(string) error
+	reconcileSchedule func(config.CardDAVConfig, CardDAVOperations) error
 }
 
 // SetScheduleReconciler wires the daemon's live scheduler into successful
@@ -74,12 +75,16 @@ func (c *CardDAVController) SetScheduleReconciler(reconcile func(config.CardDAVC
 	c.reconcileSchedule = reconcile
 }
 
-func NewCardDAVController(cfg *config.Config, st *store.Store) (*CardDAVController, error) {
+// NewCardDAVController loads the saved account and credential. A credential
+// that cannot be read leaves CardDAV unavailable for repair rather than
+// failing daemon startup; the cause is logged so the operator can see why.
+func NewCardDAVController(cfg *config.Config, st *store.Store, logger *slog.Logger) (*CardDAVController, error) {
+	if logger == nil {
+		return nil, errors.New("CardDAV controller requires a logger")
+	}
 	c := &CardDAVController{cfg: cfg, store: st, factory: newCardDAVService}
 	c.saveCredential = carddav.SaveCredential
 	c.loadCredential = carddav.LoadCredential
-	c.saveLegacyPassword = carddav.SavePassword
-	c.loadLegacyPassword = carddav.LoadLegacyPassword
 	c.removeCredential = carddav.RemoveCredential
 	c.persistDiscovery = func(ctx context.Context, service cardDAVCandidate, baseURL, username string, discovery carddav.Discovery, credentialsChanged bool) error {
 		return service.PersistDiscovery(ctx, baseURL, username, discovery, credentialsChanged)
@@ -103,7 +108,9 @@ func NewCardDAVController(cfg *config.Config, st *store.Store) (*CardDAVControll
 			return c, nil
 		}
 		if legacyErr != nil {
-			return nil, legacyErr
+			logger.Warn("CardDAV legacy credential is unreadable; CardDAV stays unavailable until the account is repaired",
+				"error", legacyErr)
+			return c, nil
 		}
 		if account == nil || account.ConnectionGeneration <= 0 ||
 			configured.BaseURL != account.BaseURL || configured.Username != account.Username {
@@ -119,7 +126,9 @@ func NewCardDAVController(cfg *config.Config, st *store.Store) (*CardDAVControll
 	} else if errors.Is(err, os.ErrNotExist) {
 		return c, nil
 	} else if err != nil {
-		return nil, err
+		logger.Warn("CardDAV credential is unreadable; CardDAV stays unavailable until the account is repaired",
+			"error", err)
+		return c, nil
 	}
 	if account == nil || credential.BaseURL != configured.BaseURL || credential.Username != configured.Username ||
 		credential.BaseURL != account.BaseURL || credential.Username != account.Username ||
@@ -187,12 +196,6 @@ func (c *CardDAVController) ensureDependencies() {
 	if c.loadCredential == nil {
 		c.loadCredential = carddav.LoadCredential
 	}
-	if c.saveLegacyPassword == nil {
-		c.saveLegacyPassword = carddav.SavePassword
-	}
-	if c.loadLegacyPassword == nil {
-		c.loadLegacyPassword = carddav.LoadLegacyPassword
-	}
 	if c.removeCredential == nil {
 		c.removeCredential = carddav.RemoveCredential
 	}
@@ -259,6 +262,15 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}
+	next := config.CardDAVConfig{
+		BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,
+	}
+	current := c.cardDAVConfigSnapshot()
+	identityChanged := current.BaseURL != next.BaseURL || current.Username != next.Username
+	enabling := !current.Enabled && next.Enabled
+	if req.Password == "" && !identityChanged && !enabling {
+		return c.saveCardDAVConfigOnly(ctx, next)
+	}
 	password, err := c.passwordForRequest(ctx, req)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
@@ -270,14 +282,14 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	tokenDir := c.cfg.TokensDir()
 	previousCredential, previousCredentialErr := c.loadCredential(tokenDir)
 	hadPreviousCredential := previousCredentialErr == nil
-	previousLegacyPassword := ""
-	hadPreviousLegacyCredential := false
-	if req.Password != "" && errors.Is(previousCredentialErr, carddav.ErrCredentialNotBound) {
-		previousLegacyPassword, err = c.loadLegacyPassword(tokenDir)
+	var previousCredentialFile carddav.CredentialFileSnapshot
+	hadPreviousCredentialFile := false
+	if req.Password != "" && previousCredentialErr != nil {
+		previousCredentialFile, err = carddav.CaptureCredentialFile(tokenDir)
 		if err != nil {
 			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 		}
-		hadPreviousLegacyCredential = true
+		hadPreviousCredentialFile = true
 	} else if previousCredentialErr != nil && !errors.Is(previousCredentialErr, os.ErrNotExist) {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, previousCredentialErr)
 	}
@@ -287,43 +299,6 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		ctx, req.BaseURL, req.Username, credentialsChanged,
 	); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
-	}
-	next := config.CardDAVConfig{
-		BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,
-	}
-	connectionUnchanged := account != nil && account.BaseURL == req.BaseURL &&
-		account.Username == req.Username && !credentialsChanged && req.Password == ""
-	if connectionUnchanged {
-		books, err := c.store.ListCardDAVAddressBooksContext(ctx)
-		if err != nil {
-			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
-		}
-		c.mu.RLock()
-		service := c.service
-		reconcileSchedule := c.reconcileSchedule
-		c.mu.RUnlock()
-		if service == nil {
-			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
-				errors.New("CardDAV service is unavailable for saved account"))
-		}
-		previous, err := c.saveConfig(nil, next)
-		if err != nil {
-			var rollbackConfigErr error
-			if errors.Is(err, config.ErrConfigChanged) {
-				_, rollbackConfigErr = c.saveConfig(&next, previous)
-			}
-			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, rollbackConfigErr)
-		}
-		if reconcileSchedule != nil {
-			if err := reconcileSchedule(next, service); err != nil {
-				return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
-					fmt.Errorf("reconcile CardDAV schedule: %w", err))
-			}
-		}
-		return CardDAVAccountResponse{
-			BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled,
-			Schedule: req.Schedule, Books: len(books),
-		}, nil
 	}
 	service, err := c.factory(c.store, req.BaseURL, req.Username, password)
 	if err != nil {
@@ -344,8 +319,8 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		if hadPreviousCredential {
 			return c.saveCredential(tokenDir, previousCredential)
 		}
-		if hadPreviousLegacyCredential {
-			return c.saveLegacyPassword(tokenDir, previousLegacyPassword)
+		if hadPreviousCredentialFile {
+			return previousCredentialFile.Restore(tokenDir)
 		}
 		return c.removeCredential(tokenDir)
 	}
@@ -376,6 +351,37 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		}
 	}
 	return CardDAVAccountResponse{BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
+}
+
+func (c *CardDAVController) saveCardDAVConfigOnly(
+	ctx context.Context, next config.CardDAVConfig,
+) (CardDAVAccountResponse, error) {
+	books, err := c.store.ListCardDAVAddressBooksContext(ctx)
+	if err != nil {
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
+	}
+	c.mu.RLock()
+	service := c.service
+	reconcileSchedule := c.reconcileSchedule
+	c.mu.RUnlock()
+	previous, err := c.saveConfig(nil, next)
+	if err != nil {
+		var rollbackConfigErr error
+		if errors.Is(err, config.ErrConfigChanged) {
+			_, rollbackConfigErr = c.saveConfig(&next, previous)
+		}
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, rollbackConfigErr)
+	}
+	if reconcileSchedule != nil {
+		if err := reconcileSchedule(next, service); err != nil {
+			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
+				fmt.Errorf("reconcile CardDAV schedule: %w", err))
+		}
+	}
+	return CardDAVAccountResponse{
+		BaseURL: next.BaseURL, Username: next.Username, Enabled: next.Enabled,
+		Schedule: next.Schedule, Books: len(books),
+	}, nil
 }
 
 func (c *CardDAVController) passwordForRequest(ctx context.Context, req CardDAVAccountRequest) (string, error) {
@@ -481,35 +487,53 @@ type CardDAVBookRolesRequest struct {
 	LookupSource *bool `json:"lookup_source" nullable:"false"`
 }
 type CardDAVPublicationResponse struct {
-	PersonID         int64  `json:"person_id"`
-	Desired          bool   `json:"desired"`
-	PendingOperation string `json:"pending_operation,omitempty"`
-	Href             string `json:"href,omitempty"`
+	PersonID         int64                               `json:"person_id" minimum:"1"`
+	State            carddav.PublicationState            `json:"state" enum:"unpublished,published,pending,conflict"`
+	Desired          bool                                `json:"desired"`
+	PendingOperation store.CardDAVMutationOperation      `json:"pending_operation,omitempty" enum:"create,update,delete"`
+	AddressBook      *CardDAVAddressBookIdentityResponse `json:"address_book,omitempty"`
+	ConflictID       *int64                              `json:"conflict_id,omitempty" minimum:"1"`
+}
+type CardDAVAddressBookIdentityResponse struct {
+	ID   int64  `json:"id" minimum:"1"`
+	Name string `json:"name"`
+}
+type CardDAVContactSummaryResponse struct {
+	State       carddav.ConflictSideState `json:"state" enum:"present,deleted,unavailable"`
+	DisplayName string                    `json:"display_name,omitempty"`
+	Emails      []string                  `json:"emails" nullable:"false"`
+	Phones      []string                  `json:"phones" nullable:"false"`
+	Truncated   bool                      `json:"truncated,omitempty"`
 }
 type CardDAVConflictResponse struct {
-	ID              int64  `json:"id"`
-	AddressBookID   int64  `json:"address_book_id"`
-	Href            string `json:"href"`
-	LocalTombstone  bool   `json:"local_tombstone"`
-	RemoteTombstone bool   `json:"remote_tombstone"`
-	Status          string `json:"status"`
+	ID                 int64                              `json:"id" minimum:"1"`
+	AddressBook        CardDAVAddressBookIdentityResponse `json:"address_book"`
+	Status             store.CardDAVConflictStatus        `json:"status" enum:"unresolved,resolved"`
+	LocalState         carddav.ConflictSideState          `json:"local_state" enum:"present,deleted,unavailable"`
+	RemoteState        carddav.ConflictSideState          `json:"remote_state" enum:"present,deleted,unavailable"`
+	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote" nullable:"false"`
+	UpdatedAt          time.Time                          `json:"updated_at"`
 }
 type CardDAVConflictDetailResponse struct {
-	ID              int64  `json:"id"`
-	AddressBookID   int64  `json:"address_book_id"`
-	Href            string `json:"href"`
-	LocalVCard      string `json:"local_vcard,omitempty"`
-	RemoteVCard     string `json:"remote_vcard,omitempty"`
-	LocalTombstone  bool   `json:"local_tombstone"`
-	RemoteTombstone bool   `json:"remote_tombstone"`
-	Status          string `json:"status"`
+	ID                 int64                              `json:"id" minimum:"1"`
+	AddressBook        CardDAVAddressBookIdentityResponse `json:"address_book"`
+	Status             store.CardDAVConflictStatus        `json:"status" enum:"unresolved,resolved"`
+	Resolution         store.CardDAVConflictResolution    `json:"resolution,omitempty" enum:"keep_local,keep_remote"`
+	Base               CardDAVContactSummaryResponse      `json:"base"`
+	Local              CardDAVContactSummaryResponse      `json:"local"`
+	Remote             CardDAVContactSummaryResponse      `json:"remote"`
+	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote" nullable:"false"`
+	CreatedAt          time.Time                          `json:"created_at"`
+	UpdatedAt          time.Time                          `json:"updated_at"`
+	ResolvedAt         *time.Time                         `json:"resolved_at,omitempty"`
 }
 type CardDAVConflictResolutionResponse struct {
-	ID     int64  `json:"id"`
-	Status string `json:"status"`
+	ID         int64                       `json:"id" minimum:"1"`
+	Status     store.CardDAVConflictStatus `json:"status" enum:"resolved"`
+	Resolution carddav.ResolutionChoice    `json:"resolution" enum:"keep_local,keep_remote"`
 }
 type CardDAVConflictsResponse struct {
-	Conflicts []CardDAVConflictResponse `json:"conflicts"`
+	Conflicts []CardDAVConflictResponse `json:"conflicts" nullable:"false"`
 }
 type CardDAVResolveRequest struct {
 	Choice carddav.ResolutionChoice `json:"choice" enum:"keep_local,keep_remote"`
@@ -518,7 +542,185 @@ type CardDAVSyncRequest struct {
 	Full bool `json:"full,omitempty"`
 }
 
+type CardDAVRunResponse struct {
+	ID           int64      `json:"id"`
+	Trigger      string     `json:"trigger" enum:"manual,scheduled"`
+	Full         bool       `json:"full"`
+	State        string     `json:"state" enum:"running,succeeded,failed,cancelled,partial"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	Books        int64      `json:"books"`
+	Created      int64      `json:"created"`
+	Updated      int64      `json:"updated"`
+	Removed      int64      `json:"removed"`
+	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+}
+
+type CardDAVStatusAccount struct {
+	BaseURL  string `json:"base_url"`
+	Username string `json:"username"`
+}
+
+type CardDAVStatusResponse struct {
+	Configured           bool                  `json:"configured"`
+	Available            bool                  `json:"available"`
+	CredentialConfigured bool                  `json:"credential_configured"`
+	Enabled              bool                  `json:"enabled"`
+	Scheduled            bool                  `json:"scheduled"`
+	Schedule             string                `json:"schedule"`
+	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
+	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,runtime_unavailable"`
+	Account              *CardDAVStatusAccount `json:"account,omitempty"`
+	Active               *CardDAVRunResponse   `json:"active,omitempty"`
+	Latest               *CardDAVRunResponse   `json:"latest,omitempty"`
+	LatestSuccessful     *CardDAVRunResponse   `json:"latest_successful,omitempty"`
+}
+
+type CardDAVRunsResponse struct {
+	Runs         []CardDAVRunResponse `json:"runs" nullable:"false"`
+	NextBeforeID *int64               `json:"next_before_id,omitempty"`
+}
+
+func cardDAVRunResponse(run *store.CardDAVSyncRun) *CardDAVRunResponse {
+	if run == nil {
+		return nil
+	}
+	errorCode, errorMessage := cardDAVRunPublicFailure(run.ErrorCode)
+	return &CardDAVRunResponse{
+		ID: run.ID, Trigger: string(run.Trigger), Full: run.Full, State: string(run.State),
+		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
+		Books: run.Books, Created: run.Created, Updated: run.Updated, Removed: run.Removed,
+		ErrorCode: errorCode, ErrorMessage: errorMessage,
+	}
+}
+
+func cardDAVRunPublicFailure(code string) (string, string) {
+	switch code {
+	case "":
+		return "", ""
+	case "cancelled":
+		return code, "CardDAV sync was cancelled."
+	case "retry_after":
+		return code, "CardDAV sync is temporarily paused."
+	case "authentication_failed":
+		return code, "CardDAV authentication failed."
+	case "upstream_failed":
+		return code, "CardDAV server request failed."
+	case "safety_limit":
+		return code, "CardDAV sync exceeded its safety limits."
+	case "sync_failed":
+		return code, "CardDAV sync failed."
+	case "unsafe_error_redacted":
+		return code, "CardDAV sync failed; sensitive details were removed."
+	case "daemon_restarted":
+		return code, "CardDAV sync stopped because the daemon restarted."
+	default:
+		return "sync_failed", "CardDAV sync failed."
+	}
+}
+
+func (c *CardDAVController) Status(ctx context.Context) (CardDAVStatusResponse, error) {
+	if c == nil || c.store == nil || c.cfg == nil {
+		return CardDAVStatusResponse{}, errCardDAVUnavailable
+	}
+	c.mu.RLock()
+	cfg := c.cfg.CardDAV
+	service := c.service
+	loadCredential := c.loadCredential
+	c.mu.RUnlock()
+	status := CardDAVStatusResponse{Schedule: cfg.Schedule}
+	status.Enabled = cfg.Enabled
+	status.Available = service != nil
+	status.Configured = strings.TrimSpace(cfg.BaseURL) != "" && strings.TrimSpace(cfg.Username) != ""
+	if status.Configured {
+		status.Account = &CardDAVStatusAccount{BaseURL: cardDAVStatusBaseURL(cfg.BaseURL), Username: cfg.Username}
+	}
+	runs, err := c.store.CardDAVSyncStatusContext(ctx)
+	if err != nil {
+		return CardDAVStatusResponse{}, errors.Join(errCardDAVStorage, err)
+	}
+	status.Active = cardDAVRunResponse(runs.Active)
+	status.Latest = cardDAVRunResponse(runs.Latest)
+	status.LatestSuccessful = cardDAVRunResponse(runs.LatestSuccessful)
+	if !status.Configured {
+		return status, nil
+	}
+	account, err := c.store.GetCardDAVAccountContext(ctx)
+	if err != nil {
+		return CardDAVStatusResponse{}, errors.Join(errCardDAVStorage, err)
+	}
+	if account == nil {
+		status.RepairReason = "account_missing"
+		return status, nil
+	}
+	if loadCredential == nil {
+		loadCredential = carddav.LoadCredential
+	}
+	credential, err := loadCredential(c.cfg.TokensDir())
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, carddav.ErrCredentialNotBound) {
+		status.RepairReason = "credential_missing"
+		return status, nil
+	}
+	if err != nil {
+		status.RepairReason = "credential_unavailable"
+		return status, nil //nolint:nilerr // Status reports the recoverable credential condition.
+	}
+	status.CredentialConfigured = credential.BaseURL == cfg.BaseURL && credential.Username == cfg.Username &&
+		credential.BaseURL == account.BaseURL && credential.Username == account.Username &&
+		credential.ConnectionGeneration == account.ConnectionGeneration
+	if !status.CredentialConfigured {
+		status.RepairReason = "credential_mismatch"
+	} else if !status.Available {
+		status.RepairReason = "runtime_unavailable"
+	}
+	return status, nil
+}
+
+func cardDAVStatusBaseURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	return parsed.String()
+}
+
+func (c *CardDAVController) Runs(ctx context.Context, limit int, beforeID *int64) (CardDAVRunsResponse, error) {
+	if c == nil || c.store == nil {
+		return CardDAVRunsResponse{}, errCardDAVUnavailable
+	}
+	runs, err := c.store.ListCardDAVSyncRunsContext(ctx, limit, beforeID)
+	if err != nil {
+		return CardDAVRunsResponse{}, errors.Join(errCardDAVStorage, err)
+	}
+	result := CardDAVRunsResponse{Runs: make([]CardDAVRunResponse, 0, len(runs))}
+	for i := range runs {
+		result.Runs = append(result.Runs, *cardDAVRunResponse(&runs[i]))
+	}
+	if len(runs) == limit && len(runs) > 0 {
+		next := runs[len(runs)-1].ID
+		result.NextBeforeID = &next
+	}
+	return result, nil
+}
+
 func (s *Server) registerCardDAVRoutes(api huma.API) {
+	registerCardDAVJSONRoute[CardDAVStatusResponse](api, "getCardDAVStatus", http.MethodGet, "/carddav/status", "Get CardDAV synchronization status", s.handleCardDAVStatus, http.StatusInternalServerError, http.StatusServiceUnavailable)
+	runs := rawAPIV1Operation("listCardDAVRuns", http.MethodGet, "/carddav/runs", "List CardDAV synchronization runs")
+	limit := queryIntegerParam("limit", "Maximum runs to return (default 25, max 100)")
+	minimum, maximum := float64(1), float64(100)
+	limit.Schema.Minimum, limit.Schema.Maximum = &minimum, &maximum
+	before := queryIntegerParam("before_id", "Return runs with IDs lower than this cursor")
+	before.Schema.Minimum = &minimum
+	runs.Parameters = append(runs.Parameters, limit, before)
+	runs.Responses = jsonResponsesFor[CardDAVRunsResponse](api)
+	addErrorResponses(api, runs.Responses, http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, runs, s.handleCardDAVRuns)
 	registerCardDAVJSONRouteWithRequest[CardDAVAccountRequest, CardDAVAccountResponse](api, "testCardDAVAccount", http.MethodPost, "/carddav/account/test", "Test a CardDAV account", s.handleCardDAVAccountTest, http.StatusBadRequest, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVJSONRouteWithRequest[CardDAVAccountRequest, CardDAVAccountResponse](api, "saveCardDAVAccount", http.MethodPut, "/carddav/account", "Discover and save a CardDAV account", s.handleCardDAVAccountSave, http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVJSONRoute[CardDAVBooksResponse](api, "listCardDAVBooks", http.MethodGet, "/carddav/books", "List CardDAV address books", s.handleCardDAVBooks, http.StatusInternalServerError, http.StatusServiceUnavailable)
@@ -530,6 +732,75 @@ func (s *Server) registerCardDAVRoutes(api huma.API) {
 	registerCardDAVIDJSONRoute[CardDAVConflictDetailResponse](api, "getCardDAVConflict", http.MethodGet, "/carddav/conflicts/{id}", "id", "Inspect a CardDAV conflict", s.handleCardDAVConflict, http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRouteWithRequest[CardDAVResolveRequest, CardDAVConflictResolutionResponse](api, "resolveCardDAVConflict", http.MethodPost, "/carddav/conflicts/{id}/resolve", "id", "Resolve a CardDAV conflict", s.handleCardDAVResolve, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVJSONRouteWithRequest[CardDAVSyncRequest, carddav.SyncResult](api, "syncCardDAV", http.MethodPost, "/carddav/sync", "Trigger CardDAV synchronization", s.handleCardDAVSync, http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+}
+
+func (s *Server) handleCardDAVStatus(w http.ResponseWriter, r *http.Request) {
+	if s.cardDAV == nil {
+		writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV status is unavailable")
+		return
+	}
+	status, err := s.cardDAV.Status(r.Context())
+	if err != nil {
+		if errors.Is(err, errCardDAVUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV status is unavailable")
+		} else {
+			writeError(w, http.StatusInternalServerError, "carddav_storage_failed", "CardDAV status lookup failed")
+		}
+		return
+	}
+	if s.scheduler != nil && s.scheduler.IsRunning() {
+		for _, job := range s.scheduler.JobStatus() {
+			if job.Name != CardDAVJobName {
+				continue
+			}
+			status.Scheduled = true
+			if !job.NextRun.IsZero() {
+				next := job.NextRun
+				status.NextScheduledAt = &next
+			}
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleCardDAVRuns(w http.ResponseWriter, r *http.Request) {
+	if s.cardDAV == nil {
+		writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV run history is unavailable")
+		return
+	}
+	limit := 25
+	if parsed, present, err := queryInt(r, "limit"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if present {
+		if parsed < 1 || parsed > 100 {
+			s.rejectBadParam(w, newParamError("limit", "query parameter \"limit\" must be between 1 and 100"))
+			return
+		}
+		limit = parsed
+	}
+	var beforeID *int64
+	if parsed, present, err := queryInt64(r, "before_id"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if present {
+		if parsed <= 0 {
+			s.rejectBadParam(w, newParamError("before_id", "query parameter \"before_id\" must be positive"))
+			return
+		}
+		beforeID = &parsed
+	}
+	result, err := s.cardDAV.Runs(r.Context(), limit, beforeID)
+	if err != nil {
+		if errors.Is(err, errCardDAVUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV run history is unavailable")
+		} else {
+			writeError(w, http.StatusInternalServerError, "carddav_storage_failed", "CardDAV run history lookup failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func registerCardDAVJSONRoute[Resp any](api huma.API, operationID, method, path, summary string, handler http.HandlerFunc, errorStatuses ...int) {
@@ -595,6 +866,10 @@ func decodeCardDAV(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		writeError(w, 400, "bad_request", "Invalid JSON request")
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, 400, "bad_request", "Invalid JSON request")
 		return false
 	}
@@ -678,16 +953,20 @@ func (s *Server) writeCardDAVOperationError(
 		errors.Is(err, store.ErrCardDAVConflictNotFound),
 		errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "not_found", message)
+	case errors.Is(err, store.ErrCardDAVConflictStale):
+		writeError(w, http.StatusConflict, "carddav_conflict_stale", "CardDAV conflict changed; refresh before trying again")
+	case errors.Is(err, carddav.ErrCardDAVConflictPending):
+		writeError(w, http.StatusConflict, "carddav_conflict_pending", "Resolve the existing CardDAV conflict before trying again")
+	case errors.Is(err, store.ErrCardDAVPublicationPending):
+		writeError(w, http.StatusConflict, "carddav_publication_pending", "CardDAV publication is pending; refresh before trying again")
 	case errors.Is(err, store.ErrCardDAVStalePlan),
-		errors.Is(err, store.ErrCardDAVConflictStale),
+		errors.Is(err, store.ErrCardDAVSyncActive),
 		errors.Is(err, store.ErrCardDAVWriteTargetSubscribed),
 		errors.Is(err, store.ErrCardDAVReadOnlyAddressBook),
 		errors.Is(err, store.ErrCardDAVRoleChangePending),
-		errors.Is(err, store.ErrCardDAVPublicationPending),
 		errors.Is(err, store.ErrCardDAVPublicationMismatch),
 		errors.Is(err, store.ErrCardDAVResourceAmbiguous),
-		errors.Is(err, store.ErrCardDAVNoWriteTarget),
-		errors.Is(err, carddav.ErrCardDAVConflictPending):
+		errors.Is(err, store.ErrCardDAVNoWriteTarget):
 		writeError(w, http.StatusConflict, "conflict", message)
 	case errors.Is(err, store.ErrCardDAVRetryAfter):
 		s.setCardDAVRetryAfterHeader(ctx, w, 0)
@@ -774,11 +1053,19 @@ func (s *Server) handleCardDAVBookRoles(w http.ResponseWriter, r *http.Request) 
 	}
 	writeError(w, 404, "not_found", "CardDAV book not found")
 }
-func publicationResponse(p *store.CardDAVPublication, id int64) CardDAVPublicationResponse {
-	if p == nil {
-		return CardDAVPublicationResponse{PersonID: id}
+func addressBookIdentityResponse(book carddav.AddressBookIdentity) CardDAVAddressBookIdentityResponse {
+	return CardDAVAddressBookIdentityResponse{ID: book.ID, Name: book.Name}
+}
+func publicationResponse(view *carddav.PublicationView) CardDAVPublicationResponse {
+	response := CardDAVPublicationResponse{
+		PersonID: view.PersonID, State: view.State, Desired: view.Desired,
+		PendingOperation: view.PendingOperation, ConflictID: view.ConflictID,
 	}
-	return CardDAVPublicationResponse{PersonID: id, Desired: p.Desired, PendingOperation: string(p.PendingOperation), Href: p.Href}
+	if view.AddressBook != nil {
+		book := addressBookIdentityResponse(*view.AddressBook)
+		response.AddressBook = &book
+	}
+	return response
 }
 func (s *Server) handleCardDAVPublication(w http.ResponseWriter, r *http.Request) {
 	svc := s.cardDAVService(w)
@@ -790,16 +1077,12 @@ func (s *Server) handleCardDAVPublication(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, "bad_request", err.Error())
 		return
 	}
-	p, err := svc.Publication(r.Context(), id)
-	if errors.Is(err, store.ErrCardDAVPublicationNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "CardDAV publication not found")
-		return
-	}
+	p, err := svc.PublicationView(r.Context(), id)
 	if err != nil {
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV publication lookup failed")
 		return
 	}
-	writeJSON(w, 200, publicationResponse(p, id))
+	writeJSON(w, 200, publicationResponse(p))
 }
 func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, publish bool) {
 	svc := s.cardDAVService(w)
@@ -820,16 +1103,12 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, publi
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV publication failed")
 		return
 	}
-	p, err := svc.Publication(r.Context(), id)
-	if !publish && errors.Is(err, store.ErrCardDAVPublicationNotFound) {
-		writeJSON(w, http.StatusOK, CardDAVPublicationResponse{PersonID: id, Desired: false})
-		return
-	}
+	p, err := svc.PublicationView(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "carddav_failed", "CardDAV publication lookup failed")
 		return
 	}
-	writeJSON(w, 200, publicationResponse(p, id))
+	writeJSON(w, 200, publicationResponse(p))
 }
 func (s *Server) handleCardDAVPublish(w http.ResponseWriter, r *http.Request) {
 	s.mutatePublication(w, r, true)
@@ -837,15 +1116,26 @@ func (s *Server) handleCardDAVPublish(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCardDAVUnpublish(w http.ResponseWriter, r *http.Request) {
 	s.mutatePublication(w, r, false)
 }
-func conflictResponse(c store.CardDAVConflict) CardDAVConflictResponse {
-	return CardDAVConflictResponse{ID: c.ID, AddressBookID: c.AddressBookID, Href: c.Href, LocalTombstone: c.LocalTombstone, RemoteTombstone: c.RemoteTombstone, Status: string(c.Status)}
+func conflictResponse(c carddav.ConflictListItem) CardDAVConflictResponse {
+	return CardDAVConflictResponse{
+		ID: c.ID, AddressBook: addressBookIdentityResponse(c.AddressBook), Status: c.Status,
+		LocalState: c.LocalState, RemoteState: c.RemoteState,
+		AllowedResolutions: c.AllowedResolutions, UpdatedAt: c.UpdatedAt,
+	}
 }
-func conflictDetailResponse(c store.CardDAVConflict) CardDAVConflictDetailResponse {
+func contactSummaryResponse(summary carddav.ContactSummary) CardDAVContactSummaryResponse {
+	return CardDAVContactSummaryResponse{
+		State: summary.State, DisplayName: summary.DisplayName, Emails: summary.Emails,
+		Phones: summary.Phones, Truncated: summary.Truncated,
+	}
+}
+func conflictDetailResponse(c carddav.ConflictDetail) CardDAVConflictDetailResponse {
 	return CardDAVConflictDetailResponse{
-		ID: c.ID, AddressBookID: c.AddressBookID, Href: c.Href,
-		LocalVCard: string(c.LocalBody), RemoteVCard: string(c.RemoteBody),
-		LocalTombstone: c.LocalTombstone, RemoteTombstone: c.RemoteTombstone,
-		Status: string(c.Status),
+		ID: c.ID, AddressBook: addressBookIdentityResponse(c.AddressBook), Status: c.Status,
+		Resolution: c.Resolution, Base: contactSummaryResponse(c.Base),
+		Local: contactSummaryResponse(c.Local), Remote: contactSummaryResponse(c.Remote),
+		AllowedResolutions: c.AllowedResolutions, CreatedAt: c.CreatedAt,
+		UpdatedAt: c.UpdatedAt, ResolvedAt: c.ResolvedAt,
 	}
 }
 func (s *Server) handleCardDAVConflicts(w http.ResponseWriter, r *http.Request) {
@@ -853,7 +1143,7 @@ func (s *Server) handleCardDAVConflicts(w http.ResponseWriter, r *http.Request) 
 	if svc == nil {
 		return
 	}
-	items, err := svc.ListConflicts(r.Context())
+	items, err := svc.ListConflictViews(r.Context())
 	if err != nil {
 		writeError(w, 500, "carddav_failed", "CardDAV operation failed")
 		return
@@ -874,7 +1164,7 @@ func (s *Server) handleCardDAVConflict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	conflict, err := svc.GetConflict(r.Context(), id)
+	conflict, err := svc.GetConflictView(r.Context(), id)
 	if err != nil {
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV conflict lookup failed")
 		return
@@ -899,7 +1189,7 @@ func (s *Server) handleCardDAVResolve(w http.ResponseWriter, r *http.Request) {
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV conflict resolution failed")
 		return
 	}
-	writeJSON(w, 200, CardDAVConflictResolutionResponse{ID: id, Status: string(store.CardDAVConflictResolved)})
+	writeJSON(w, 200, CardDAVConflictResolutionResponse{ID: id, Status: store.CardDAVConflictResolved, Resolution: req.Choice})
 }
 func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 	svc := s.cardDAVService(w)
@@ -910,7 +1200,9 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
-	result, err := svc.Sync(r.Context(), carddav.SyncOptions{Full: req.Full})
+	result, err := svc.Sync(r.Context(), carddav.SyncOptions{
+		Full: req.Full, Trigger: store.CardDAVSyncTriggerManual,
+	})
 	if err != nil {
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV synchronization failed")
 		return

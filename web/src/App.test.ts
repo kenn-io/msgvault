@@ -242,6 +242,100 @@ describe('application foundation', () => {
     ).toBe('true'));
     window.history.replaceState(null, '', '/');
   });
+
+  it('threads repeated same-conflict handoffs through AppShell as distinct exactly-once live events', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryPersonID: 7
+    }))}`);
+    const detailRequests: number[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') {
+        return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
+      }
+      if (path === '/api/v1/settings') return settingsResponse('system', '"etag-carddav"');
+      if (path === '/api/v1/people/directory') return Response.json({ people: [{
+        id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
+        categories: [], organizations: []
+      }] });
+      if (path === '/api/v1/carddav/publications/7') return Response.json({
+        person_id: 7, state: 'conflict', desired: true, conflict_id: 41,
+        address_book: { id: 5, name: 'Synthetic contacts' }
+      });
+      if (path === '/api/v1/carddav/conflicts/41') {
+        detailRequests.push(41);
+        return Response.json({
+          id: 41,
+          address_book: { id: 5, name: 'Synthetic contacts' },
+          status: 'unresolved',
+          base: { state: 'present', display_name: 'Base person', emails: [], phones: [] },
+          local: { state: 'present', display_name: 'Local person', emails: [], phones: [] },
+          remote: { state: 'deleted', emails: [], phones: [] },
+          allowed_resolutions: ['keep_local', 'keep_remote'],
+          created_at: '2026-08-28T10:00:00Z', updated_at: '2026-08-28T11:00:00Z'
+        });
+      }
+      if (path === '/api/v1/carddav/status') return Response.json({
+        configured: true, available: true, credential_configured: true,
+        enabled: false, scheduled: false, schedule: ''
+      });
+      if (path === '/api/v1/carddav/books') return Response.json({ books: [] });
+      if (path === '/api/v1/carddav/runs') return Response.json({ runs: [] });
+      if (path === '/api/v1/carddav/conflicts') return Response.json({ conflicts: [] });
+      if (path === '/api/v1/people/7') return Response.json({
+        id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: '',
+        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+      });
+      if (path === '/api/v1/people/7/profile') return Response.json({
+        person: { id: 7, revision: 1, display_name: 'Synthetic Person' },
+        names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
+      });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({
+        person_id: 7, cadence_status: 'current', interaction_count: 0,
+        computed_at: '2026-08-28T10:00:00Z', stale: false
+      });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
+      if (path === '/api/v1/people/7/files/search') return Response.json({
+        files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {}
+      });
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [], limit: 100, offset: 0 });
+      if (path === '/api/v1/explore') return Response.json({
+        rows: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {}
+      });
+      return Response.json({}, { status: 404 });
+    });
+    const session = createSessionController(fetchFn);
+    const rendered = render(App, { session });
+
+    await session.bootstrap();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
+
+    const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
+    await waitFor(() => expect(document.activeElement).toBe(detailHeading));
+    expect(detailRequests).toEqual([41]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
+      .toBe('Opening CardDAV conflict 41 in Settings.');
+    const firstAnnouncement = screen.getByRole('status', { name: 'Operation status' }).firstElementChild;
+    expect(firstAnnouncement).not.toBeNull();
+
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
+
+    const repeatedStatus = screen.getByRole('status', { name: 'Operation status' });
+    await waitFor(() => expect(repeatedStatus.firstElementChild).not.toBe(firstAnnouncement));
+    expect(repeatedStatus.textContent).toBe('Opening CardDAV conflict 41 in Settings.');
+    expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
+    await waitFor(() => expect(detailRequests).toEqual([41, 41]));
+
+    rendered.unmount();
+    window.history.replaceState(null, '', '/');
+  });
 });
 
 function settingsResponse(theme: string, etag: string, pendingRestart = false): Response {

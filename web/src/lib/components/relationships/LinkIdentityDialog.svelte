@@ -12,6 +12,7 @@
   import type { APIClient } from '../../api/client';
   import type { PersonSummary } from '../../explore/models';
   import type { LinkOutcome } from '../../relationships/controller.svelte';
+  import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
 
   const SEARCH_DEBOUNCE_MS = 250;
   const SEARCH_LIMIT = 20;
@@ -25,10 +26,11 @@
      * flow reads in human terms ("Link another identity for Alice"). */
     personLabel: string;
     onConfirm: (participantID: number) => Promise<LinkOutcome>;
+    onMergeRequired?: (conflict: ValidatedPersonMergeRequired) => void;
     onClose: () => void;
   }
 
-  let { client, excludeID, personLabel, onConfirm, onClose }: Props = $props();
+  let { client, excludeID, personLabel, onConfirm, onMergeRequired = undefined, onClose }: Props = $props();
 
   let query = $state('');
   let results = $state<PersonSummary[]>([]);
@@ -135,6 +137,11 @@
       const outcome = await onConfirm(selectedID);
       if (outcome.ok) {
         onClose();
+        return;
+      }
+      if (outcome.code === 'merge_required') {
+        if (onMergeRequired) onMergeRequired(outcome.conflict);
+        else confirmError = outcome.message;
         return;
       }
       confirmError = outcome.code === 'already_linked'

@@ -77,19 +77,20 @@ type MergeOrganizationBody struct {
 // profile PUT could never round-trip a row carrying that metadata and would
 // supersede and reinsert it without the metadata on every unrelated update.
 type OrganizationEnvelopeBody struct {
-	Ordinal       *int       `json:"ordinal,omitempty" minimum:"0"`
-	Pref          *int       `json:"pref,omitempty" nullable:"true"`
-	TypeLabel     *string    `json:"type_label,omitempty" nullable:"true"`
-	TypeTokens    []string   `json:"type_tokens,omitempty"`
-	VCardProperty *string    `json:"vcard_property,omitempty" nullable:"true"`
-	VCardGroup    *string    `json:"vcard_group,omitempty" nullable:"true"`
-	VCardPropID   *string    `json:"vcard_prop_id,omitempty" nullable:"true"`
-	VCardPID      []string   `json:"vcard_pid,omitempty"`
-	VCardAltID    *string    `json:"vcard_altid,omitempty" nullable:"true"`
-	Source        string     `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef     *string    `json:"source_ref,omitempty" nullable:"true"`
-	Confidence    *float64   `json:"confidence,omitempty" nullable:"true"`
-	ActiveFrom    *time.Time `json:"active_from,omitempty" nullable:"true"`
+	Ordinal           *int       `json:"ordinal,omitempty" minimum:"0"`
+	Pref              *int       `json:"pref,omitempty" nullable:"true"`
+	TypeLabel         *string    `json:"type_label,omitempty" nullable:"true"`
+	TypeTokens        []string   `json:"type_tokens,omitempty"`
+	VCardProperty     *string    `json:"vcard_property,omitempty" nullable:"true"`
+	VCardGroup        *string    `json:"vcard_group,omitempty" nullable:"true"`
+	VCardPropID       *string    `json:"vcard_prop_id,omitempty" nullable:"true"`
+	VCardPID          []string   `json:"vcard_pid,omitempty"`
+	VCardAltID        *string    `json:"vcard_altid,omitempty" nullable:"true"`
+	Source            string     `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
+	SourceRef         *string    `json:"source_ref,omitempty" nullable:"true"`
+	SourceResourceUID *string    `json:"source_resource_uid,omitempty" nullable:"true"`
+	Confidence        *float64   `json:"confidence,omitempty" nullable:"true"`
+	ActiveFrom        *time.Time `json:"active_from,omitempty" nullable:"true"`
 }
 
 func (b OrganizationEnvelopeBody) envelope() store.ValueEnvelopeInput {
@@ -101,7 +102,7 @@ func (b OrganizationEnvelopeBody) envelope() store.ValueEnvelopeInput {
 		Ordinal: b.Ordinal, Pref: b.Pref,
 		TypeLabel: b.TypeLabel, TypeTokens: b.TypeTokens,
 		VCard:  store.VCardIdentity{Property: property, Group: b.VCardGroup, PropID: b.VCardPropID, PID: b.VCardPID, AltID: b.VCardAltID},
-		Source: store.Provenance(b.Source), SourceRef: b.SourceRef,
+		Source: store.Provenance(b.Source), SourceRef: b.SourceRef, SourceResourceUID: b.SourceResourceUID,
 		Confidence: b.Confidence, ActiveFrom: b.ActiveFrom,
 	}
 }

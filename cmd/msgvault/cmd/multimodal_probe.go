@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
 var (
@@ -53,9 +54,20 @@ capability profile.`,
 		if err := cfg.Vector.Multimodal.Validate(); err != nil {
 			return err
 		}
-		apiKey := cfg.Vector.Multimodal.APIKey()
+		credentials, err := providercredentials.Read(cfg.TokensDir())
+		if err != nil {
+			return fmt.Errorf("load provider credentials: %w", err)
+		}
+		apiKey, err := resolveProviderCredentialFromSnapshot(
+			credentials, providercredentials.VectorMultimodalID,
+			cfg.Vector.Multimodal.Endpoint, cfg.Vector.Multimodal.APIKeyEnv,
+		)
+		if err != nil {
+			return fmt.Errorf("resolve visual embedding credential: %w", err)
+		}
 		if apiKey == "" {
-			return fmt.Errorf("environment variable %s is not set", cfg.Vector.Multimodal.APIKeyEnv)
+			return fmt.Errorf("visual embedding credential is not configured: store one for %s in Settings "+
+				"or set environment variable %s", providercredentials.VectorMultimodalID, cfg.Vector.Multimodal.APIKeyEnv)
 		}
 		if !multimodalProbeYes {
 			return usageErr(cmd, errors.New("the probe sends synthetic fixture media to the configured provider; pass --yes to continue"))
@@ -86,7 +98,9 @@ capability profile.`,
 		if err := voyage.ValidateProbeFixtures(ctx, policy, fixtures); err != nil {
 			return fmt.Errorf("validate probe fixtures: %w", err)
 		}
-		client, err := voyage.NewClient(policy, voyage.ClientConfig{APIKey: apiKey})
+		client, err := voyage.NewClient(policy, voyage.ClientConfig{
+			APIKey: apiKey, HTTPClient: providerHTTPClientWithoutRedirects(nil),
+		})
 		if err != nil {
 			return fmt.Errorf("voyage client: %w", err)
 		}
