@@ -878,7 +878,7 @@ func personProviderProfileEdit(name string, provider peoplesweep.ProviderConfig)
 func personProviderProfileUpdateEdit(name string, provider peoplesweep.ProviderConfig) config.TableEdit {
 	return config.TableEdit{
 		Path:   []string{"people", "sweep", "providers", name},
-		Values: personProviderTableValues(provider),
+		Values: personProviderTableUpdateValues(provider),
 	}
 }
 
@@ -932,6 +932,17 @@ func personProviderTableValues(provider peoplesweep.ProviderConfig) map[string]a
 	}
 	if provider.ReasoningMode != "" {
 		values["reasoning_mode"] = provider.ReasoningMode
+	}
+	return values
+}
+
+func personProviderTableUpdateValues(provider peoplesweep.ProviderConfig) map[string]any {
+	values := personProviderTableValues(provider)
+	values["source_until"] = provider.SourceUntil
+	values["reasoning_effort"] = provider.ReasoningEffort
+	values["reasoning_mode"] = provider.ReasoningMode
+	if provider.Protocol == peoplesweep.ProtocolOpenAIChat {
+		values["token_limit_parameter"] = provider.TokenLimitParameter
 	}
 	return values
 }

@@ -738,6 +738,37 @@ func TestPersonProviderSetUpdatesExistingProfile(t *testing.T) {
 	assert.Equal("DEFAULT_KEY", provider.CredentialEnv)
 }
 
+func TestPersonProviderSetClearsOptionalPolicyFields(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	provider := loaded.People.Sweep.Providers["default"]
+	provider.SourceUntil = "2025-12-31"
+	provider.ReasoningEffort = "high"
+	provider.ReasoningMode = "enabled"
+	_, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{{
+		Path:   []string{"people", "sweep", "providers", "default"},
+		Values: personProviderTableValues(provider),
+	}})
+	require.NoError(err)
+	loaded, err = config.Load(path, "")
+	require.NoError(err)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	_, err = executePersonProviderCommand(t, deps, "set", "default",
+		"--source-until", "", "--reasoning-effort", "", "--reasoning-mode", "", "--yes")
+	require.NoError(err)
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	updated := reloaded.People.Sweep.Providers["default"]
+	assert.Empty(updated.SourceUntil)
+	assert.Empty(updated.ReasoningEffort)
+	assert.Empty(updated.ReasoningMode)
+}
+
 func TestPersonProviderSetRechecksAndRevokesOldConsent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -872,6 +903,13 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
 	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return true, nil }
+	var proxied []string
+	deps.proxy = func(command *cobra.Command, _ []string, _ map[string]string) error {
+		proxied = append(proxied, command.Use)
+		return nil
+	}
 	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
 
 	output, err := executePersonProviderCommand(t, deps,
@@ -879,6 +917,7 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(output, "msgvault daemon restart")
 	assert.Contains(output, "Updated and checked people provider profile")
+	assert.Equal([]string{"revoke", "check"}, proxied)
 }
 
 func providerSetupConfigFile(t *testing.T) (string, *config.Config) {

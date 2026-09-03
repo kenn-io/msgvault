@@ -650,8 +650,17 @@ func runPersonProviderSet(
 			errors.New("exact people provider consent remains revoked"))
 	}
 	if options.jsonOutput {
+		checkedProvider, err := selectPersonProviderConfig(checkedConfig, name)
+		if err != nil {
+			return err
+		}
+		checkedProvider.Enabled = true
+		checkedProfile, err := checkedProvider.Profile()
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderSetOutput{
-			Name: name, Fingerprint: proposedProfile.Fingerprint, Checked: true,
+			Name: name, Fingerprint: checkedProfile.Fingerprint, Checked: true,
 			DaemonRestartRequired: daemonRunning,
 		})
 	}
