@@ -701,3 +701,104 @@ func sortedIMAPMessageIDs(ids map[int64]struct{}) []int64 {
 	slices.Sort(sorted)
 	return sorted
 }
+
+// IMAPLabelRepairSummary reports what RepairIMAPSourceLabels found and, when
+// applying, changed.
+type IMAPLabelRepairSummary struct {
+	// Scanned counts messages with at least one imap_message_memberships row.
+	Scanned int
+	// Changed counts messages whose message_labels did not already match
+	// their stored memberships.
+	Changed int
+}
+
+var errIMAPLabelRepairDryRun = errors.New("imap label repair dry run rollback")
+
+// RepairIMAPSourceLabels rebuilds message_labels for every message that has
+// an imap_message_memberships row in sourceID, from those membership rows —
+// the same rebuild ApplyIMAPMailboxDeltas performs for its affected set, run
+// here over the whole source on demand. It exists because an add-only label
+// merge (ReconcileMessageLabels with replace=false) can leave a stray label
+// that no later Reset ever revisits, when the message's membership rows
+// never change again.
+//
+// It does not touch deleted_from_source_at: a message with no membership
+// rows never appears in the set this repairs, so there is nothing to
+// tombstone from this data. Tombstone reconciliation stays a Reset-only
+// concern.
+//
+// With apply false, every write happens inside the same transaction and is
+// then rolled back, so Changed still reports what would happen.
+func (s *Store) RepairIMAPSourceLabels(
+	ctx context.Context, sourceID int64, apply bool,
+) (IMAPLabelRepairSummary, error) {
+	var summary IMAPLabelRepairSummary
+	txErr := s.withTxContext(ctx, func(tx *loggedTx) error {
+		messageIDs, err := distinctIMAPMembershipMessageIDs(tx, sourceID)
+		if err != nil {
+			return err
+		}
+		for _, messageID := range messageIDs {
+			mailboxes, err := imapMembershipMailboxes(tx, sourceID, messageID)
+			if err != nil {
+				return err
+			}
+			labelIDs := make([]int64, 0, len(mailboxes))
+			for _, mailbox := range mailboxes {
+				labelID, err := ensureIMAPMailboxLabel(tx, sourceID, mailbox)
+				if err != nil {
+					return err
+				}
+				labelIDs = append(labelIDs, labelID)
+			}
+			changed, err := s.reconcileMessageLabelsTx(tx, messageID, labelIDs, true)
+			if err != nil {
+				return fmt.Errorf("reconcile labels for IMAP message %d: %w", messageID, err)
+			}
+			summary.Scanned++
+			if changed {
+				summary.Changed++
+			}
+		}
+		if summary.Changed > 0 {
+			// message_labels is exported into the analytics cache; bumping
+			// the revision is what tells that cache the export is stale, the
+			// same signal RepairListIDs and AddMessageLabels give it.
+			if err := s.bumpDerivedDataRevision(tx); err != nil {
+				return err
+			}
+		}
+		if !apply {
+			return errIMAPLabelRepairDryRun
+		}
+		return nil
+	})
+	if txErr != nil && !errors.Is(txErr, errIMAPLabelRepairDryRun) {
+		return IMAPLabelRepairSummary{}, txErr
+	}
+	return summary, nil
+}
+
+func distinctIMAPMembershipMessageIDs(tx *loggedTx, sourceID int64) ([]int64, error) {
+	rows, err := tx.Query(`
+		SELECT DISTINCT message_id FROM imap_message_memberships
+		WHERE source_id = ?
+		ORDER BY message_id
+	`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("query IMAP membership message IDs for source %d: %w", sourceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var messageIDs []int64
+	for rows.Next() {
+		var messageID int64
+		if err := rows.Scan(&messageID); err != nil {
+			return nil, fmt.Errorf("scan IMAP membership message ID: %w", err)
+		}
+		messageIDs = append(messageIDs, messageID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate IMAP membership message IDs: %w", err)
+	}
+	return messageIDs, nil
+}

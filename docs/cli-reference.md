@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-31"
+last_edited: "2026-09-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1125,6 +1125,33 @@ msgvault repair-list-ids [--apply]
 
 The default is a dry run and does not modify the archive. Pass `--apply` to
 write changed values and mark derived analytics stale for the normal rebuild path.
+
+---
+
+## repair-labels
+
+Rebuild an IMAP source's message labels from its stored mailbox memberships,
+without contacting the provider.
+
+```bash
+msgvault repair-labels [identifier] [--apply]
+```
+
+An add-only label merge — used when a sync's mailbox snapshot is incomplete or
+a dedup match is not fully confirmed — never removes a label. If the
+message's stored membership never changes again, nothing later revisits it,
+and a stray label can persist. `repair-labels` rebuilds a message's labels
+straight from `imap_message_memberships`, the same rebuild a full mailbox
+enumeration performs, without a live IMAP connection.
+
+With no identifier, every IMAP source is repaired. An identifier scopes the
+repair to one matching source. The default is a dry run and does not modify
+the archive. Pass `--apply` to write changed labels and mark derived
+analytics stale for the normal rebuild path.
+
+| Flag | Description |
+|---|---|
+| `--apply` | Write repaired labels to the archive. |
 
 ---
 

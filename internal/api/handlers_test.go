@@ -1745,6 +1745,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
+		{"repair-labels apply allowed", []string{"repair-labels", "--apply"}, true},
 		{"repair list IDs apply allowed", []string{"repair-list-ids", "--apply"}, true},
 		{"repair-senders apply allowed", []string{"repair-senders", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},

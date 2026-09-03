@@ -165,6 +165,7 @@ available with `msgvault tui`.
 | `setup` | Interactive first-run configuration wizard |
 | `repair-encoding` | Fix UTF-8 encoding issues |
 | `repair-dates` | Report or repair missing and implausible email sent dates |
+| `repair-labels` | Rebuild IMAP message labels from stored mailbox memberships |
 | `list-senders` / `list-domains` / `list-labels` | Explore metadata |
 
 See the [CLI Reference](https://msgvault.io/cli-reference/) for full details
