@@ -139,6 +139,28 @@ func TestStoredSuppressionLookupFeedsReservedRuntimeEnvironmentAndFailsClosed(t 
 	assertions.Empty(value)
 }
 
+func TestDefaultPersonEnrichmentLookupReadsRuntimeConfig(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	configured := config.NewDefaultConfig()
+	configured.Data.DataDir = t.TempDir()
+	configured.People.Enrichment.SuppressionKeyEnv = providercredentials.StoredSuppressionEnvironment
+	empty, err := providercredentials.Read(configured.TokensDir())
+	requirements.NoError(err)
+	_, err = providercredentials.PutSuppression(
+		configured.TokensDir(), empty.ETag, "runtime-suppression-key-0123456789012345",
+	)
+	requirements.NoError(err)
+
+	withTestConfig(t, nil)
+	deps := defaultPersonEnrichmentCommandDeps()
+	cfg = configured
+
+	value, ok := deps.lookupEnv(providercredentials.StoredSuppressionEnvironment)
+	assertions.True(ok)
+	assertions.Equal("runtime-suppression-key-0123456789012345", value)
+}
+
 func TestPersonEnrichmentGateLoadsStableStoredCredentialOnlyAfterSuppression(t *testing.T) {
 	requirements := require.New(t)
 	t.Setenv("SCHEDULE_PROVIDER_KEY", "")
@@ -177,6 +199,7 @@ func TestPersonEnrichmentGateLoadsStableStoredCredentialOnlyAfterSuppression(t *
 }
 
 func TestDefaultCLIProxyLookupsNeverForwardStoredCredentials(t *testing.T) {
+	requireStoredCredentialStorePlatform(t)
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	t.Setenv("TEST_PROVIDER_KEY", "")

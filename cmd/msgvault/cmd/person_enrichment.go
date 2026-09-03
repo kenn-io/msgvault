@@ -47,8 +47,10 @@ func defaultPersonEnrichmentCommandDeps() personEnrichmentCommandDeps {
 			}
 			return cfg.People.Enrichment
 		},
-		openStore:          openWritableStoreAndInit,
-		lookupEnv:          personEnrichmentEnvironmentLookup(cfg),
+		openStore: openWritableStoreAndInit,
+		lookupEnv: func(name string) (string, bool) {
+			return personEnrichmentEnvironmentLookup(cfg)(name)
+		},
 		proxyLookupEnv:     os.LookupEnv,
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		proxyArgs: func(command *cobra.Command, args []string, env map[string]string) error {
