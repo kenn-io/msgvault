@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,6 +24,155 @@ type NegotiatedCapabilities struct {
 	ReasoningMode       string
 	DriverVersion       string
 	Response            StructuredResponse
+}
+
+// NegotiationStage identifies the bounded phase that produced a terminal
+// capability-negotiation error.
+type NegotiationStage string
+
+const (
+	NegotiationStageDriverUnavailable NegotiationStage = "driver_unavailable"
+	NegotiationStageSettingsInvalid   NegotiationStage = "settings_invalid"
+	NegotiationStageProbe             NegotiationStage = "probe"
+	NegotiationStageReasoningProbe    NegotiationStage = "reasoning_probe"
+	NegotiationStageExhausted         NegotiationStage = "exhausted"
+)
+
+// NegotiationError carries safe attempt context while keeping its underlying
+// provider error available to errors.As.
+type NegotiationError struct {
+	Stage               NegotiationStage
+	OutputMode          OutputMode
+	TokenLimitParameter string
+	Reasoning           bool
+	StatusCode          int
+	RequestID           string
+	Capability          ProviderCapabilityError
+	Diagnostics         ProviderDiagnostics
+
+	cause error
+}
+
+func (e *NegotiationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := make([]string, 0, 9)
+	if negotiationStageIsKnown(e.Stage) {
+		parts = append(parts, "stage="+string(e.Stage))
+	}
+	if e.StatusCode != 0 {
+		parts = append(parts, fmt.Sprintf("status=%d", e.StatusCode))
+	}
+	if outputModeIsKnown(e.OutputMode) {
+		parts = append(parts, "output_mode="+string(e.OutputMode))
+	}
+	if tokenLimitParameterIsKnown(e.TokenLimitParameter) && e.TokenLimitParameter != "" {
+		parts = append(parts, "token_limit="+e.TokenLimitParameter)
+	}
+	if e.Reasoning {
+		parts = append(parts, "reasoning=true")
+	}
+	if safeProviderMetadata(e.RequestID) && e.RequestID != "" {
+		parts = append(parts, "request_id="+e.RequestID)
+	}
+	if providerEnvelopeIsKnown(e.Diagnostics.Envelope) {
+		parts = append(parts, "envelope="+string(e.Diagnostics.Envelope))
+	}
+	if providerDiagnosticCodeIsKnown(e.Diagnostics.Code) {
+		parts = append(parts, "code="+string(e.Diagnostics.Code))
+	}
+	if providerDiagnosticFieldIsKnown(e.Diagnostics.Field) {
+		parts = append(parts, "field="+string(e.Diagnostics.Field))
+	}
+	summary := negotiationSummary(e.Stage)
+	if len(parts) == 0 {
+		return summary
+	}
+	return summary + " (" + strings.Join(parts, " ") + ")"
+}
+
+func (e *NegotiationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func newNegotiationError(
+	stage NegotiationStage,
+	mode OutputMode,
+	tokenParameter string,
+	reasoning bool,
+	cause error,
+) *NegotiationError {
+	result := &NegotiationError{
+		Stage: stage, OutputMode: mode, TokenLimitParameter: tokenParameter,
+		Reasoning: reasoning,
+	}
+	var providerErr *ProviderError
+	if errors.As(cause, &providerErr) {
+		result.StatusCode = providerErr.StatusCode
+		result.RequestID = providerErr.RequestID
+		result.Capability = providerErr.Capability
+		result.Diagnostics = providerErr.Diagnostics
+		result.cause = providerErr
+	}
+	return result
+}
+
+func negotiationSummary(stage NegotiationStage) string {
+	switch stage {
+	case NegotiationStageDriverUnavailable:
+		return "provider capability negotiation is unavailable"
+	case NegotiationStageSettingsInvalid:
+		return "provider capability negotiation settings are invalid"
+	case NegotiationStageProbe:
+		return "provider capability negotiation failed"
+	case NegotiationStageReasoningProbe:
+		return "provider capability negotiation rejected requested reasoning settings"
+	case NegotiationStageExhausted:
+		return "provider capability negotiation found no supported structured output mode"
+	default:
+		return "provider capability negotiation failed"
+	}
+}
+
+func negotiationStageIsKnown(stage NegotiationStage) bool {
+	switch stage {
+	case NegotiationStageDriverUnavailable, NegotiationStageSettingsInvalid,
+		NegotiationStageProbe, NegotiationStageReasoningProbe, NegotiationStageExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
+func outputModeIsKnown(mode OutputMode) bool {
+	return mode == OutputModeNativeJSONSchema || mode == OutputModeJSONObject || mode == OutputModePromptJSON
+}
+
+func tokenLimitParameterIsKnown(parameter string) bool {
+	return parameter == "" || parameter == "max_completion_tokens" || parameter == "max_tokens" || parameter == "max_output_tokens"
+}
+
+func providerEnvelopeIsKnown(envelope ProviderEnvelope) bool {
+	return envelope == ProviderEnvelopeRecognized || envelope == ProviderEnvelopeOtherClass || envelope == ProviderEnvelopeUnreadable
+}
+
+func providerDiagnosticCodeIsKnown(code ProviderDiagnosticCode) bool {
+	return code == ProviderDiagnosticCodeRejectedField || code == ProviderDiagnosticCodeRejectedRepresentation || code == ProviderDiagnosticCodeUnclassified
+}
+
+func providerDiagnosticFieldIsKnown(field ProviderDiagnosticField) bool {
+	switch field {
+	case ProviderDiagnosticFieldTokenLimit, ProviderDiagnosticFieldReasoning,
+		ProviderDiagnosticFieldRepresentation, ProviderDiagnosticFieldForeign,
+		ProviderDiagnosticFieldMalformed, ProviderDiagnosticFieldAbsent:
+		return true
+	default:
+		return false
+	}
 }
 
 // CapabilityChecker owns setup-only synthetic negotiation. It has no archive,
@@ -45,10 +196,10 @@ func (c *CapabilityChecker) Negotiate(
 ) (NegotiatedCapabilities, error) {
 	driver, err := c.registry.capabilityDriver(candidate.Protocol)
 	if err != nil {
-		return NegotiatedCapabilities{}, errors.New("provider capability negotiation is unavailable")
+		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageDriverUnavailable, "", "", false, nil)
 	}
 	if err := validateCapabilityReasoning(candidate); err != nil {
-		return NegotiatedCapabilities{}, errors.New("provider capability negotiation settings are invalid")
+		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
 	}
 
 	// reasoningMissed records that at least one classified reasoning
@@ -56,19 +207,28 @@ func (c *CapabilityChecker) Negotiate(
 	// rejected reasoning settings instead of the generic no-supported-mode
 	// outcome when every viable base attempt succeeded.
 	reasoningMissed := false
+	var lastCapabilityMiss error
+	var lastCapabilityMode OutputMode
+	var lastCapabilityTokenParameter string
+	var lastReasoningMiss error
+	var lastReasoningMode OutputMode
+	var lastReasoningTokenParameter string
 	for _, mode := range capabilityOutputModes(candidate.Protocol) {
 		for _, tokenParameter := range capabilityTokenParameters(candidate.Protocol) {
 			base, profileErr := capabilityProfile(candidate, mode, tokenParameter, false)
 			if profileErr != nil {
-				return NegotiatedCapabilities{}, errors.New("provider capability negotiation settings are invalid")
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
 			}
 			response, attemptErr := runCapabilityAttempt(ctx, candidate.RequestTimeout,
 				driver, base, credential)
 			if attemptErr != nil {
 				if capabilityMiss(attemptErr) {
+					lastCapabilityMiss = attemptErr
+					lastCapabilityMode = mode
+					lastCapabilityTokenParameter = tokenParameter
 					continue
 				}
-				return NegotiatedCapabilities{}, errors.New("provider capability negotiation failed")
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageProbe, mode, tokenParameter, false, attemptErr)
 			}
 
 			result := NegotiatedCapabilities{
@@ -83,16 +243,19 @@ func (c *CapabilityChecker) Negotiate(
 
 			reasoningProfile, profileErr := capabilityProfile(candidate, mode, tokenParameter, true)
 			if profileErr != nil {
-				return NegotiatedCapabilities{}, errors.New("provider capability negotiation settings are invalid")
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
 			}
 			reasoningResponse, reasoningErr := runCapabilityAttempt(ctx, candidate.RequestTimeout,
 				driver, reasoningProfile, credential)
 			if reasoningErr != nil {
 				if capabilityMiss(reasoningErr) {
 					reasoningMissed = true
+					lastReasoningMiss = reasoningErr
+					lastReasoningMode = mode
+					lastReasoningTokenParameter = tokenParameter
 					continue
 				}
-				return NegotiatedCapabilities{}, errors.New("provider capability negotiation rejected requested reasoning settings")
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageReasoningProbe, mode, tokenParameter, true, reasoningErr)
 			}
 			result.ReasoningEffort = candidate.ReasoningEffort
 			result.ReasoningMode = candidate.ReasoningMode
@@ -101,9 +264,11 @@ func (c *CapabilityChecker) Negotiate(
 		}
 	}
 	if reasoningMissed {
-		return NegotiatedCapabilities{}, errors.New("provider capability negotiation rejected requested reasoning settings")
+		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageReasoningProbe,
+			lastReasoningMode, lastReasoningTokenParameter, true, lastReasoningMiss)
 	}
-	return NegotiatedCapabilities{}, errors.New("provider capability negotiation found no supported structured output mode")
+	return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageExhausted,
+		lastCapabilityMode, lastCapabilityTokenParameter, false, lastCapabilityMiss)
 }
 
 func capabilityOutputModes(protocol Protocol) []OutputMode {

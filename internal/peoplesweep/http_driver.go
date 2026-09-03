@@ -90,11 +90,14 @@ func (d *httpDriver) postWithHeaders(
 	requestID := safeRequestID(response.Header)
 	if response.StatusCode != http.StatusOK {
 		capability := ProviderCapabilityError("")
+		diagnostics := ProviderDiagnostics{}
 		if response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusNotFound ||
 			response.StatusCode == http.StatusUnprocessableEntity {
 			errorBody, readErr := io.ReadAll(io.LimitReader(response.Body, (32<<10)+1))
 			if readErr == nil && len(errorBody) <= 32<<10 {
-				capability = classifyProviderCapabilityError(profile, errorBody)
+				capability, diagnostics = classifyProviderError(profile, errorBody)
+			} else {
+				diagnostics = unreadableProviderDiagnostics()
 			}
 		}
 		retryAfter := time.Duration(0)
@@ -103,7 +106,7 @@ func (d *httpDriver) postWithHeaders(
 		}
 		return httpDriverResponse{}, &ProviderError{
 			StatusCode: response.StatusCode, RequestID: requestID, RetryAfter: retryAfter,
-			Capability: capability,
+			Capability: capability, Diagnostics: diagnostics,
 		}
 	}
 
@@ -131,42 +134,62 @@ func (d *httpDriver) postWithHeaders(
 }
 
 func classifyProviderCapabilityError(profile ProviderProfile, body []byte) ProviderCapabilityError {
+	capability, _ := classifyProviderError(profile, body)
+	return capability
+}
+
+func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabilityError, ProviderDiagnostics) {
 	root, ok := decodeUniqueErrorObject(body)
 	if !ok {
-		return ""
+		return "", unreadableProviderDiagnostics()
 	}
 	switch profile.Protocol {
 	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
 		errorObject, valid := decodeUniqueErrorObject(root["error"])
-		parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, "param")
-		if valid && parameterValid && rawJSONString(errorObject["type"]) == "invalid_request_error" &&
-			capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent) {
-			return ProviderCapabilityUnsupportedRepresentation
+		if !valid {
+			return "", unreadableProviderDiagnostics()
 		}
+		if rawJSONString(errorObject["type"]) != "invalid_request_error" {
+			return "", otherClassProviderDiagnostics()
+		}
+		diagnostics := diagnosticsForProviderError(profile, errorObject, "param")
+		if capabilityMatchesProviderError(profile, errorObject, "param") {
+			return ProviderCapabilityUnsupportedRepresentation, diagnostics
+		}
+		return "", diagnostics
 	case ProtocolAnthropicMessages:
 		errorObject, valid := decodeUniqueErrorObject(root["error"])
-		parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, "param")
-		if rawJSONString(root["type"]) == "error" && valid &&
-			parameterValid &&
-			rawJSONString(errorObject["type"]) == "invalid_request_error" &&
-			capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent) {
-			return ProviderCapabilityUnsupportedRepresentation
+		if !valid {
+			return "", unreadableProviderDiagnostics()
 		}
+		if rawJSONString(root["type"]) != "error" || rawJSONString(errorObject["type"]) != "invalid_request_error" {
+			return "", otherClassProviderDiagnostics()
+		}
+		diagnostics := diagnosticsForProviderError(profile, errorObject, "param")
+		if capabilityMatchesProviderError(profile, errorObject, "param") {
+			return ProviderCapabilityUnsupportedRepresentation, diagnostics
+		}
+		return "", diagnostics
 	case ProtocolGoogleGenerateContent:
 		errorObject, valid := decodeUniqueErrorObject(root["error"])
-		if !valid || rawJSONString(errorObject["status"]) != "INVALID_ARGUMENT" {
-			return ""
+		if !valid {
+			return "", unreadableProviderDiagnostics()
+		}
+		if rawJSONString(errorObject["status"]) != "INVALID_ARGUMENT" {
+			return "", otherClassProviderDiagnostics()
 		}
 		var details []json.RawMessage
 		if err := json.Unmarshal(errorObject["details"], &details); err != nil || len(details) > 32 {
-			return ""
+			return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)
 		}
 		relevantDetails := 0
 		matched := false
+		var diagnosticCode ProviderDiagnosticCode
+		var diagnosticField ProviderDiagnosticField
 		for _, raw := range details {
 			detail, valid := decodeUniqueErrorObject(raw)
 			if !valid {
-				return ""
+				return "", unreadableProviderDiagnostics()
 			}
 			if rawJSONString(detail["@type"]) != "type.googleapis.com/google.rpc.ErrorInfo" ||
 				rawJSONString(detail["domain"]) != "generativelanguage.googleapis.com" {
@@ -178,25 +201,76 @@ func classifyProviderCapabilityError(profile ProviderProfile, body []byte) Provi
 			if rawMetadata, present := detail["metadata"]; present {
 				metadata, metadataValid := decodeUniqueErrorObject(rawMetadata)
 				if !metadataValid {
-					return ""
+					return "", unreadableProviderDiagnostics()
 				}
 				var parameterValid bool
 				parameter, parameterPresent, parameterValid = rawOptionalJSONString(metadata, "parameter")
 				if !parameterValid {
-					return ""
+					return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldMalformed)
 				}
 			}
+			diagnosticCode = capabilityCodeClass(profile.Protocol, rawJSONString(detail["reason"]))
+			diagnosticField = providerDiagnosticField(profile, parameter, parameterPresent, true)
 			if capabilityCodeMatchesProfile(profile, rawJSONString(detail["reason"]), parameter, parameterPresent) {
 				matched = true
 			}
 		}
 		if relevantDetails == 1 && matched {
-			return ProviderCapabilityUnsupportedRepresentation
+			return ProviderCapabilityUnsupportedRepresentation,
+				recognizedProviderDiagnostics(diagnosticCode, diagnosticField)
 		}
+		return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)
 	case ProtocolCodexAppServer:
-		return ""
+		return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)
 	}
-	return ""
+	return "", unreadableProviderDiagnostics()
+}
+
+func capabilityMatchesProviderError(profile ProviderProfile, errorObject map[string]json.RawMessage, parameterKey string) bool {
+	parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, parameterKey)
+	return parameterValid && capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent)
+}
+
+func diagnosticsForProviderError(profile ProviderProfile, errorObject map[string]json.RawMessage, parameterKey string) ProviderDiagnostics {
+	parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, parameterKey)
+	if !parameterValid {
+		return recognizedProviderDiagnostics(capabilityCodeClass(profile.Protocol, rawJSONString(errorObject["code"])), ProviderDiagnosticFieldMalformed)
+	}
+	return recognizedProviderDiagnostics(capabilityCodeClass(profile.Protocol, rawJSONString(errorObject["code"])),
+		providerDiagnosticField(profile, parameter, parameterPresent, true))
+}
+
+func providerDiagnosticField(profile ProviderProfile, parameter string, parameterPresent, parameterValid bool) ProviderDiagnosticField {
+	if !parameterPresent {
+		return ProviderDiagnosticFieldAbsent
+	}
+	if !parameterValid {
+		return ProviderDiagnosticFieldMalformed
+	}
+	if field := capabilityParameterClass(profile, parameter); field != "" {
+		return field
+	}
+	return ProviderDiagnosticFieldForeign
+}
+
+func unreadableProviderDiagnostics() ProviderDiagnostics {
+	return ProviderDiagnostics{
+		Envelope: ProviderEnvelopeUnreadable,
+		Code:     ProviderDiagnosticCodeUnclassified,
+		Field:    ProviderDiagnosticFieldAbsent,
+	}
+}
+
+func otherClassProviderDiagnostics() ProviderDiagnostics {
+	return ProviderDiagnostics{
+		Envelope: ProviderEnvelopeOtherClass,
+		Code:     ProviderDiagnosticCodeUnclassified,
+		Field:    ProviderDiagnosticFieldAbsent,
+	}
+}
+
+func recognizedProviderDiagnostics(code ProviderDiagnosticCode, field ProviderDiagnosticField) ProviderDiagnostics {
+	return ProviderDiagnostics{Envelope: ProviderEnvelopeRecognized, Code: code, Field: field}
 }
 
 func capabilityCodeMatchesProfile(
@@ -205,64 +279,73 @@ func capabilityCodeMatchesProfile(
 	parameter string,
 	parameterPresent bool,
 ) bool {
-	genericCode := false
-	representationCode := false
-	switch profile.Protocol {
-	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
-		genericCode = code == "unsupported_parameter" || code == "unsupported_value"
-		representationCode = code == "unsupported_response_format" || code == "unsupported_json_schema"
-	case ProtocolAnthropicMessages:
-		genericCode = code == "unsupported_parameter" || code == "unsupported_value"
-		representationCode = code == "unsupported_json_schema"
-	case ProtocolGoogleGenerateContent:
-		genericCode = code == "UNSUPPORTED_PARAMETER" || code == "UNSUPPORTED_VALUE"
-		representationCode = code == "UNSUPPORTED_RESPONSE_FORMAT" || code == "UNSUPPORTED_JSON_SCHEMA"
-	case ProtocolCodexAppServer:
-		return false
-	}
-	if genericCode {
+	switch capabilityCodeClass(profile.Protocol, code) {
+	case ProviderDiagnosticCodeRejectedField:
 		return capabilityParameterMatchesProfile(profile, parameter)
+	case ProviderDiagnosticCodeRejectedRepresentation:
+		return capabilityRepresentationCodeMatchesProfile(profile, code) && !parameterPresent
 	}
-	if !representationCode || !capabilityRepresentationCodeMatchesProfile(profile, code) {
-		return false
+	return false
+}
+
+func capabilityCodeClass(protocol Protocol, code string) ProviderDiagnosticCode {
+	switch protocol {
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropicMessages:
+		if code == "unsupported_parameter" || code == "unsupported_value" {
+			return ProviderDiagnosticCodeRejectedField
+		}
+		if code == "unsupported_response_format" || code == "unsupported_json_schema" {
+			return ProviderDiagnosticCodeRejectedRepresentation
+		}
+	case ProtocolGoogleGenerateContent:
+		if code == "UNSUPPORTED_PARAMETER" || code == "UNSUPPORTED_VALUE" {
+			return ProviderDiagnosticCodeRejectedField
+		}
+		if code == "UNSUPPORTED_RESPONSE_FORMAT" || code == "UNSUPPORTED_JSON_SCHEMA" {
+			return ProviderDiagnosticCodeRejectedRepresentation
+		}
 	}
-	return !parameterPresent
+	return ProviderDiagnosticCodeUnclassified
 }
 
 func capabilityParameterMatchesProfile(profile ProviderProfile, parameter string) bool {
+	return capabilityParameterClass(profile, parameter) != ""
+}
+
+func capabilityParameterClass(profile ProviderProfile, parameter string) ProviderDiagnosticField {
 	switch profile.Protocol {
 	case ProtocolOpenAIChat:
 		if profile.TokenLimitParameter != "" && parameter == profile.TokenLimitParameter {
-			return true
+			return ProviderDiagnosticFieldTokenLimit
 		}
 		if profile.ReasoningEffort != "" && parameter == "reasoning_effort" {
-			return true
+			return ProviderDiagnosticFieldReasoning
 		}
 		if (profile.ReasoningMode == "enabled" || profile.ReasoningMode == "disabled") &&
 			(parameter == "reasoning" || parameter == "reasoning.enabled") {
-			return true
+			return ProviderDiagnosticFieldReasoning
 		}
-		return capabilityRepresentationParameterMatchesProfile(profile, parameter)
+		return capabilityRepresentationParameterClass(profile, parameter)
 	case ProtocolOpenAIResponses:
 		if parameter == "max_output_tokens" {
-			return true
+			return ProviderDiagnosticFieldTokenLimit
 		}
 		if profile.ReasoningEffort != "" && (parameter == "reasoning" || parameter == "reasoning.effort") {
-			return true
+			return ProviderDiagnosticFieldReasoning
 		}
-		return capabilityRepresentationParameterMatchesProfile(profile, parameter)
+		return capabilityRepresentationParameterClass(profile, parameter)
 	case ProtocolAnthropicMessages:
 		if parameter == "max_tokens" {
-			return true
+			return ProviderDiagnosticFieldTokenLimit
 		}
-		return capabilityRepresentationParameterMatchesProfile(profile, parameter)
+		return capabilityRepresentationParameterClass(profile, parameter)
 	case ProtocolGoogleGenerateContent:
 		if parameter == "generationConfig.maxOutputTokens" {
-			return true
+			return ProviderDiagnosticFieldTokenLimit
 		}
-		return capabilityRepresentationParameterMatchesProfile(profile, parameter)
+		return capabilityRepresentationParameterClass(profile, parameter)
 	default:
-		return false
+		return ""
 	}
 }
 
@@ -289,35 +372,51 @@ func capabilityRepresentationCodeMatchesProfile(profile ProviderProfile, code st
 }
 
 func capabilityRepresentationParameterMatchesProfile(profile ProviderProfile, parameter string) bool {
+	return capabilityRepresentationParameterClass(profile, parameter) != ""
+}
+
+func capabilityRepresentationParameterClass(profile ProviderProfile, parameter string) ProviderDiagnosticField {
 	switch profile.Protocol {
 	case ProtocolOpenAIChat:
 		switch profile.OutputMode {
 		case OutputModeNativeJSONSchema:
-			return parameter == "response_format" || parameter == "response_format.type" || parameter == "response_format.json_schema"
+			if parameter == "response_format" || parameter == "response_format.type" || parameter == "response_format.json_schema" {
+				return ProviderDiagnosticFieldRepresentation
+			}
 		case OutputModeJSONObject:
-			return parameter == "response_format" || parameter == "response_format.type"
+			if parameter == "response_format" || parameter == "response_format.type" {
+				return ProviderDiagnosticFieldRepresentation
+			}
 		case OutputModePromptJSON:
-			return false
+			return ""
 		}
 	case ProtocolOpenAIResponses:
 		switch profile.OutputMode {
 		case OutputModeNativeJSONSchema:
-			return parameter == "text.format" || parameter == "text.format.type" || parameter == "text.format.schema"
+			if parameter == "text.format" || parameter == "text.format.type" || parameter == "text.format.schema" {
+				return ProviderDiagnosticFieldRepresentation
+			}
 		case OutputModeJSONObject:
-			return parameter == "text.format" || parameter == "text.format.type"
+			if parameter == "text.format" || parameter == "text.format.type" {
+				return ProviderDiagnosticFieldRepresentation
+			}
 		case OutputModePromptJSON:
-			return false
+			return ""
 		}
 	case ProtocolAnthropicMessages:
-		return profile.OutputMode == OutputModeNativeJSONSchema &&
-			(parameter == "tools" || parameter == "tool_choice")
+		if profile.OutputMode == OutputModeNativeJSONSchema &&
+			(parameter == "tools" || parameter == "tool_choice") {
+			return ProviderDiagnosticFieldRepresentation
+		}
 	case ProtocolGoogleGenerateContent:
-		return profile.OutputMode == OutputModeNativeJSONSchema &&
-			(parameter == "generationConfig.responseMimeType" || parameter == "generationConfig.responseSchema")
+		if profile.OutputMode == OutputModeNativeJSONSchema &&
+			(parameter == "generationConfig.responseMimeType" || parameter == "generationConfig.responseSchema") {
+			return ProviderDiagnosticFieldRepresentation
+		}
 	case ProtocolCodexAppServer:
-		return false
+		return ""
 	}
-	return false
+	return ""
 }
 
 func decodeUniqueErrorObject(raw []byte) (map[string]json.RawMessage, bool) {
