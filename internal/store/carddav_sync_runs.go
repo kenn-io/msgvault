@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -150,11 +151,12 @@ func (s *Store) FinishCardDAVSyncRunContext(
 		if err != nil {
 			return fmt.Errorf("finish CardDAV sync run: %w", err)
 		}
-		return pruneCardDAVSyncRuns(ctx, tx)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.pruneCardDAVSyncRunsBestEffort(ctx)
 	return run, nil
 }
 
@@ -232,9 +234,13 @@ func (s *Store) RecoverCardDAVSyncRunsContext(ctx context.Context) (int64, error
 		if err != nil {
 			return fmt.Errorf("count recovered CardDAV sync runs: %w", err)
 		}
-		return pruneCardDAVSyncRuns(ctx, tx)
+		return nil
 	})
-	return recovered, err
+	if err != nil {
+		return recovered, err
+	}
+	s.pruneCardDAVSyncRunsBestEffort(ctx)
+	return recovered, nil
 }
 
 func validateCardDAVSyncRunFinish(input CardDAVSyncRunFinish) (string, string, error) {
@@ -289,8 +295,14 @@ func truncateCardDAVSyncRunMessage(message string) string {
 	return message[:end]
 }
 
-func pruneCardDAVSyncRuns(ctx context.Context, tx *loggedTx) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM carddav_sync_runs
+func (s *Store) pruneCardDAVSyncRunsBestEffort(ctx context.Context) {
+	if err := pruneCardDAVSyncRuns(ctx, s.db); err != nil {
+		slog.Warn("CardDAV sync run history prune failed", "error", err)
+	}
+}
+
+func pruneCardDAVSyncRuns(ctx context.Context, db contextQuerier) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM carddav_sync_runs
 		WHERE state <> 'running' AND id NOT IN (
 			SELECT id FROM carddav_sync_runs WHERE state <> 'running' ORDER BY id DESC LIMIT ?
 		)`, cardDAVSyncRunRetention)

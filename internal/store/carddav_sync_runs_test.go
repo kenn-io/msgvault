@@ -227,6 +227,44 @@ func TestCardDAVSyncRunPaginationAndRetention(t *testing.T) {
 	assert.Equal(wantIDs, gotIDs, "exclusive pagination must neither duplicate nor omit retained rows")
 }
 
+func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite trigger supplies the deterministic DELETE failure")
+	}
+	ctx := t.Context()
+
+	for range 101 {
+		_, err := st.DB().Exec(`INSERT INTO carddav_sync_runs
+			(trigger, full_sync, state, finished_at) VALUES ('manual', FALSE, 'succeeded', CURRENT_TIMESTAMP)`)
+		require.NoError(err)
+	}
+	_, err := st.DB().Exec(`CREATE TRIGGER reject_carddav_history_prune
+		BEFORE DELETE ON carddav_sync_runs WHEN OLD.state <> 'running'
+		BEGIN SELECT RAISE(ABORT, 'forced prune failure'); END`)
+	require.NoError(err)
+
+	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	require.NoError(err)
+	finished, err := st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded})
+	require.NoError(err)
+	assert.Equal(store.CardDAVSyncRunSucceeded, finished.State)
+
+	orphan, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	require.NoError(err, "the committed finish must release the active-run constraint")
+	recovered, err := st.RecoverCardDAVSyncRunsContext(ctx)
+	require.NoError(err)
+	assert.Equal(int64(1), recovered)
+
+	var state store.CardDAVSyncRunState
+	require.NoError(st.DB().QueryRow(`SELECT state FROM carddav_sync_runs WHERE id = ?`, orphan.ID).Scan(&state))
+	assert.Equal(store.CardDAVSyncRunFailed, state)
+	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	require.NoError(err, "the committed recovery must release the active-run constraint")
+}
+
 func TestCardDAVSyncRunRecoveryAndSafePublicErrors(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
