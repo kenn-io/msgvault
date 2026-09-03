@@ -762,7 +762,7 @@ func TestPersonProviderSetClosesStoreBeforeChecking(t *testing.T) {
 	_, err := executePersonProviderCommand(t, deps,
 		"set", "default", "--model", "local-model", "--yes")
 	require.NoError(err)
-	assert.Equal(2, opens)
+	assert.Equal(3, opens)
 	assert.False(active)
 }
 
@@ -969,8 +969,12 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	deps.isDaemonSubprocess = func() bool { return false }
 	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return true, nil }
 	var proxied []string
+	var checkFingerprint string
 	deps.proxy = func(command *cobra.Command, _ []string, _ map[string]string) error {
 		proxied = append(proxied, command.Use)
+		if command.Use == "check" {
+			checkFingerprint, _ = command.Flags().GetString(personProviderIfFingerprintFlag)
+		}
 		return nil
 	}
 	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
@@ -980,7 +984,8 @@ func TestPersonProviderSetDaemon(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(output, "msgvault daemon restart")
 	assert.Contains(output, "Updated and checked people provider profile")
-	assert.Equal([]string{"revoke", "check"}, proxied)
+	assert.Equal([]string{"revoke", "revoke", "check"}, proxied)
+	assert.NotEmpty(checkFingerprint)
 }
 
 func providerSetupConfigFile(t *testing.T) (string, *config.Config) {

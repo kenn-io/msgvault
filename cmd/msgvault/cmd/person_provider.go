@@ -608,24 +608,7 @@ func runPersonProviderSet(
 		return err
 	}
 
-	if directStore {
-		if deps.openStore == nil {
-			return errors.New("people provider consent store is unavailable")
-		}
-		st, cleanup, openErr := deps.openStore()
-		if openErr != nil {
-			return openErr
-		}
-		_, revokeErr := st.RevokePersonInferenceConsent(
-			command.Context(), oldProfile.Fingerprint, personProviderConsentActor,
-		)
-		cleanup()
-		if revokeErr != nil {
-			return revokeErr
-		}
-	} else if err := proxySavedPersonProviderOperation(
-		command, deps, "revoke", name, oldProfile.Fingerprint, io.Discard,
-	); err != nil {
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore); err != nil {
 		return err
 	}
 
@@ -633,6 +616,10 @@ func runPersonProviderSet(
 		personProviderProfileUpdateEdit(name, replacement),
 	})
 	if err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore); err != nil {
 		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
 			errors.New("exact people provider consent remains revoked"))
 	}
@@ -644,7 +631,7 @@ func runPersonProviderSet(
 		if options.jsonOutput {
 			checkOutput = io.Discard
 		}
-		err = executeSavedPersonProviderCheck(command, checkedDeps, name, checkOutput)
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, proposedProfile.Fingerprint, checkOutput)
 	}
 	if err != nil {
 		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
@@ -681,6 +668,29 @@ func personProviderSetHasMutableChanges(command *cobra.Command) bool {
 		}
 	}
 	return false
+}
+
+func revokePersonProviderSetConsent(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name, fingerprint string,
+	directStore bool,
+) error {
+	if directStore {
+		if deps.openStore == nil {
+			return errors.New("people provider consent store is unavailable")
+		}
+		st, cleanup, err := deps.openStore()
+		if err != nil {
+			return err
+		}
+		_, revokeErr := st.RevokePersonInferenceConsent(
+			command.Context(), fingerprint, personProviderConsentActor,
+		)
+		cleanup()
+		return revokeErr
+	}
+	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
 }
 
 func rollbackPersonProviderSetConfig(
@@ -1081,6 +1091,7 @@ func newPersonProviderHistoryCommand(deps personProviderCommandDeps) *cobra.Comm
 
 func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Command {
 	var jsonOutput bool
+	var ifFingerprint string
 	command := &cobra.Command{
 		Use:   "check [name]",
 		Short: "Run a fixed synthetic request through the people inference provider",
@@ -1097,7 +1108,7 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 						if len(args) == 1 {
 							name = args[0]
 						}
-						return runPersonProviderCheck(command, deps, name, jsonOutput)
+						return runPersonProviderCheck(command, deps, name, ifFingerprint, jsonOutput)
 					}
 				}
 				return deps.proxy(command, args, nil)
@@ -1106,10 +1117,13 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runPersonProviderCheck(command, deps, name, jsonOutput)
+			return runPersonProviderCheck(command, deps, name, ifFingerprint, jsonOutput)
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
+		"Require an exact provider fingerprint")
+	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
 	return command
 }
 
@@ -1446,8 +1460,12 @@ func runPersonProviderCheck(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	ifFingerprint string,
 	jsonOutput bool,
 ) error {
+	if err := verifyPersonProviderFingerprint(deps, name, ifFingerprint); err != nil {
+		return err
+	}
 	output, err := checkPersonProvider(command, deps, name)
 	if err != nil {
 		return err

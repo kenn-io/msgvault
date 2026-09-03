@@ -352,7 +352,7 @@ func runPersonProviderAdd(
 	if err == nil {
 		checkedDeps := deps
 		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
-		err = executeSavedPersonProviderCheck(command, checkedDeps, name, checkOutput)
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, "", checkOutput)
 	}
 	if err != nil {
 		rollbackErr := rollbackPersonProviderAdd(deps, before, after, credentialStore, name, credentialCleanup)
@@ -1002,6 +1002,7 @@ func executeSavedPersonProviderCheck(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	ifFingerprint string,
 	out io.Writer,
 ) error {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
@@ -1016,13 +1017,41 @@ func executeSavedPersonProviderCheck(
 		directStore = !owned
 	}
 	if directStore {
+		if err := verifyPersonProviderFingerprint(deps, name, ifFingerprint); err != nil {
+			return err
+		}
 		output, err := checkPersonProvider(command, deps, name)
 		if err != nil {
 			return err
 		}
 		return writePersonProviderCheckOutput(out, output, false)
 	}
-	return proxySavedPersonProviderOperation(command, deps, "check", name, "", out)
+	return proxySavedPersonProviderOperation(command, deps, "check", name, ifFingerprint, out)
+}
+
+func verifyPersonProviderFingerprint(
+	deps personProviderCommandDeps,
+	name, expected string,
+) error {
+	if expected == "" {
+		return nil
+	}
+	if err := validatePersonProviderFingerprint(expected); err != nil {
+		return err
+	}
+	current, err := selectPersonProviderConfig(deps.config(), name)
+	if err != nil {
+		return err
+	}
+	current.Enabled = true
+	profile, err := current.Profile()
+	if err != nil {
+		return err
+	}
+	if profile.Fingerprint != expected {
+		return errors.New("people provider profile changed before checking")
+	}
+	return nil
 }
 
 func proxySavedPersonProviderRevoke(
@@ -1053,7 +1082,7 @@ func proxySavedPersonProviderOperation(
 	provider := &cobra.Command{Use: "provider"}
 	leaf := &cobra.Command{Use: operation}
 	if fingerprint != "" {
-		if operation != "revoke" {
+		if operation != "revoke" && operation != "check" {
 			return errors.New("people provider fingerprint guard is unavailable for this operation")
 		}
 		if err := validatePersonProviderFingerprint(fingerprint); err != nil {
