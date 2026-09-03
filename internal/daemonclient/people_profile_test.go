@@ -161,7 +161,7 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 		case "/api/v1/people/51/contact-state":
 			writePeopleBrowserJSON(t, w, http.StatusNotFound, `{"error":"not_found","message":"resource not found"}`)
 		case "/api/v1/people/51/attributes":
-			writePeopleBrowserJSON(t, w, http.StatusOK, `{"person_id":51,"attributes":[]}`)
+			writePeopleBrowserJSON(t, w, http.StatusServiceUnavailable, `{"error":"unavailable","message":"attribute store unavailable"}`)
 		case "/api/v1/people/51/employments":
 			writePeopleBrowserJSON(t, w, http.StatusOK, `{"employments":[]}`)
 		case "/api/v1/people/51/relationships":
@@ -177,6 +177,8 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(profile.Tracked)
 	assert.Nil(profile.ContactState)
+	// An unavailable attribute store degrades to an empty set like the other
+	// sub-resources instead of failing the whole profile.
 	assert.Empty(profile.Attributes)
 	assert.Equal([]peoplebrowser.PersonEmployment{}, profile.Employments)
 	assert.Equal([]peoplebrowser.PersonRelationshipSummary{}, profile.Relationships)

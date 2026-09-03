@@ -71,10 +71,12 @@ func (b *PeopleBrowser) GetPersonProfile(
 	}
 
 	attributes, err := b.ListAttributes(ctx, personID)
-	if err != nil {
+	switch {
+	case err == nil:
+		profile.Attributes = attributes.Groups
+	case !absentAPIResource(err):
 		return nil, err
 	}
-	profile.Attributes = attributes.Groups
 
 	profile.Employments, err = b.currentEmployments(ctx, personID)
 	if err != nil {
