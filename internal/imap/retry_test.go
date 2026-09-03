@@ -43,6 +43,24 @@ func TestRetryUsesBoundedConnectionBackoff(t *testing.T) {
 	assert.Equal(t, int64(4), accepted())
 }
 
+func TestRetryDoesNotBackoffPermanentDialFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	client := newTestClient(t, addr)
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	_, err = client.ListMessages(t.Context(), "", "")
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+}
+
 func TestRetryDoesNotRepeatRejectedLogin(t *testing.T) {
 	addr, _, accepted := testutil.StartIMAPMemServerWithDroppedConnections(
 		t, map[string]int{"INBOX": 1}, 0)
@@ -112,6 +130,40 @@ func TestRetryDoesNotClassifyProtocolEOF(t *testing.T) {
 	assert.Contains(t, err.Error(), "EOF")
 	assert.False(t, sleepCalled)
 	assert.Equal(t, int64(1), accepted())
+}
+
+func TestRetryDoesNotClassifyMalformedGreeting(t *testing.T) {
+	addr, accepted := startMalformedGreetingServer(t)
+	client := newTestClient(t, addr)
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	_, err := client.ListMessages(t.Context(), "", "")
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
+}
+
+func startMalformedGreetingServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("not an IMAP greeting\\r\\n"))
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
 }
 
 func TestReconnectPreservesMailboxCursorState(t *testing.T) {

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -193,6 +195,24 @@ func (e *retryableConnectError) Error() string { return e.err.Error() }
 
 func (e *retryableConnectError) Unwrap() error { return e.err }
 
+func isTransientConnectError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+func isTransientGreetingError(err error) bool {
+	if isTransientConnectError(err) {
+		return true
+	}
+	// The pinned go-imap release exposes a closed socket before greeting as this
+	// sentinel, while parser failures retain their wrapped decoder error.
+	return err.Error() == "connection closed before greeting"
+}
+
 func sleepContext(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -257,6 +277,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		conn, err = imapclient.DialInsecure(addr, imapOpts)
 	}
 	if err != nil {
+		if !isTransientConnectError(err) {
+			return fmt.Errorf("dial IMAP %s: %w", addr, err)
+		}
 		return &retryableConnectError{
 			err: fmt.Errorf("dial IMAP %s: %w", addr, err),
 		}
@@ -266,6 +289,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		_ = conn.Close()
 		var protocolErr *imap.Error
 		if errors.As(err, &protocolErr) {
+			return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		}
+		if !isTransientGreetingError(err) {
 			return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
 		}
 		return &retryableConnectError{
