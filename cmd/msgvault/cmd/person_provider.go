@@ -102,6 +102,13 @@ type personProviderRemoveOutput struct {
 	DaemonRestartRequired bool   `json:"daemon_restart_required"`
 }
 
+type personProviderSetOutput struct {
+	Name                  string `json:"name"`
+	Fingerprint           string `json:"fingerprint"`
+	Checked               bool   `json:"checked"`
+	DaemonRestartRequired bool   `json:"daemon_restart_required"`
+}
+
 type personProviderCodexIsolationStatus struct {
 	Available         bool   `json:"available"`
 	ExecutionBoundary string `json:"execution_boundary"`
@@ -301,6 +308,7 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 	}
 	provider.AddCommand(
 		newPersonProviderAddCommand(deps),
+		newPersonProviderSetCommand(deps),
 		newPersonProviderRemoveCommand(deps),
 		newPersonProviderListCommand(deps),
 		newPersonProviderUseCommand(deps),
@@ -513,6 +521,176 @@ func personProviderMutationScope(
 func writePersonProviderDaemonRestartNotice(w io.Writer) {
 	_, _ = fmt.Fprintln(w,
 		"A running daemon keeps the people sweep config it started with; run `msgvault daemon restart` so scheduled sweeps observe this change.")
+}
+
+func runPersonProviderSet(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name string,
+	options personProviderSetOptions,
+) error {
+	if err := rejectRemotePersonProviderMutation(deps, "set"); err != nil {
+		return err
+	}
+	if !options.confirmed {
+		return errors.New("people provider set requires --yes after reviewing the final values")
+	}
+	if !personProviderSetHasMutableChanges(command) {
+		return errors.New("people provider set requires at least one mutable policy flag")
+	}
+	if deps.readConfigFile == nil || deps.editConfigTables == nil || deps.restoreConfigFile == nil {
+		return errors.New("people provider config editing is unavailable")
+	}
+	before, err := deps.readConfigFile()
+	if err != nil {
+		return err
+	}
+	configured, err := personProviderConfigFromSnapshot(deps, before)
+	if err != nil {
+		return err
+	}
+	provider, exists := configured.Providers[name]
+	if !exists {
+		return fmt.Errorf("people provider profile %q is not configured", name)
+	}
+	oldConfig, err := selectPersonProviderConfig(configured, name)
+	if err != nil {
+		return err
+	}
+	oldConfig.Enabled = true
+	oldProfile, err := oldConfig.Profile()
+	if err != nil {
+		return err
+	}
+
+	replacement := provider
+	applyPersonProviderSetOptions(command, &replacement, options)
+	proposed := personProviderProposedConfig(configured, name, replacement)
+	proposedProfile, err := proposed.Profile()
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateConfigTableEdits(before, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	}); err != nil {
+		return err
+	}
+	directStore, daemonRunning, err := personProviderMutationScope(command.Context(), deps)
+	if err != nil {
+		return err
+	}
+	credential, err := readExistingPersonProviderCredential(deps.setup, name, proposedProfile)
+	if err != nil {
+		return err
+	}
+	if replacement.Protocol != peoplesweep.ProtocolCodexAppServer {
+		if deps.setup.negotiate == nil {
+			return errors.New("people provider capability negotiation is unavailable")
+		}
+		capabilities, negotiateErr := deps.setup.negotiate(command.Context(), replacement, credential)
+		if negotiateErr != nil {
+			return negotiateErr
+		}
+		replacement.OutputMode = capabilities.OutputMode
+		replacement.TokenLimitParameter = capabilities.TokenLimitParameter
+		replacement.ReasoningEffort = capabilities.ReasoningEffort
+		replacement.ReasoningMode = capabilities.ReasoningMode
+		replacement.DriverVersion = capabilities.DriverVersion
+	}
+	proposed = personProviderProposedConfig(configured, name, replacement)
+	proposedProfile, err = proposed.Profile()
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateConfigTableEdits(before, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	}); err != nil {
+		return err
+	}
+
+	if directStore {
+		if deps.openStore == nil {
+			return errors.New("people provider consent store is unavailable")
+		}
+		st, cleanup, openErr := deps.openStore()
+		if openErr != nil {
+			return openErr
+		}
+		defer cleanup()
+		if _, err := st.RevokePersonInferenceConsent(
+			command.Context(), oldProfile.Fingerprint, personProviderConsentActor,
+		); err != nil {
+			return err
+		}
+	} else if err := proxySavedPersonProviderOperation(
+		command, deps, "revoke", name, oldProfile.Fingerprint, io.Discard,
+	); err != nil {
+		return err
+	}
+
+	after, err := deps.editConfigTables(before.ETag, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	})
+	if err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	checkedConfig, err := personProviderConfigFromSnapshot(deps, after)
+	if err == nil {
+		checkedDeps := deps
+		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
+		checkOutput := command.OutOrStdout()
+		if options.jsonOutput {
+			checkOutput = io.Discard
+		}
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, checkOutput)
+	}
+	if err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	if options.jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderSetOutput{
+			Name: name, Fingerprint: proposedProfile.Fingerprint, Checked: true,
+			DaemonRestartRequired: daemonRunning,
+		})
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(),
+		"Updated and checked people provider profile %q; run `msgvault person provider consent %q --yes` to grant consent for the new policy.\n",
+		name, name)
+	if daemonRunning {
+		writePersonProviderDaemonRestartNotice(command.OutOrStdout())
+	}
+	return nil
+}
+
+func personProviderSetHasMutableChanges(command *cobra.Command) bool {
+	for _, name := range personProviderSetMutableFlags {
+		if command.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func rollbackPersonProviderSetConfig(
+	deps personProviderCommandDeps,
+	published, before config.ConfigFile,
+) error {
+	if !published.Exists || published.ETag == "" {
+		current, err := deps.readConfigFile()
+		if err != nil {
+			return fmt.Errorf("inspect people provider config after failed publication: %w", err)
+		}
+		if config.SameConfigFileVersion(current, before) {
+			return nil
+		}
+		published = current
+	}
+	if _, err := deps.restoreConfigFile(published, before); err != nil {
+		return fmt.Errorf("restore people provider config: %w", err)
+	}
+	return nil
 }
 
 func runPersonProviderUse(

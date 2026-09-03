@@ -716,6 +716,171 @@ func TestPersonProviderAddRejectsInvalidSnapshotCapsBeforeSecretOrProvider(t *te
 	assert.Zero(writes)
 }
 
+func TestPersonProviderSetUpdatesExistingProfile(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	output, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "updated-model", "--yes")
+	require.NoError(err)
+	assert.Contains(output, `Updated and checked people provider profile "default"`)
+
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	provider := reloaded.People.Sweep.Providers["default"]
+	assert.Equal("updated-model", provider.Model)
+	assert.Equal("https://default.example.test/v1", provider.Endpoint)
+	assert.Equal(peoplesweep.AuthBearer, provider.Auth)
+	assert.Equal(peoplesweep.CredentialEnv, provider.Credential)
+	assert.Equal("DEFAULT_KEY", provider.CredentialEnv)
+}
+
+func TestPersonProviderSetRechecksAndRevokesOldConsent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	checker := newCheckedPersonProviderChecker()
+	deps := providerSetupCommandDeps(t, path, loaded, checker)
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	oldConfig := loaded.People.Sweep
+	oldConfig.Enabled = true
+	oldProfile, err := oldConfig.Profile()
+	require.NoError(err)
+	st, cleanup, err := deps.openStore()
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), oldProfile)
+	require.NoError(err)
+	_, _, err = st.GrantPersonInferenceConsent(
+		t.Context(), oldProfile.Fingerprint, personProviderConsentActor)
+	require.NoError(err)
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "rechecked-model", "--yes")
+	require.NoError(err)
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	newConfig := reloaded.People.Sweep
+	newConfig.Enabled = true
+	newProfile, err := newConfig.Profile()
+	require.NoError(err)
+	assert.NotEqual(oldProfile.Fingerprint, newProfile.Fingerprint)
+	oldActive, err := st.HasActivePersonInferenceConsent(
+		t.Context(), oldProfile.Fingerprint)
+	require.NoError(err)
+	assert.False(oldActive)
+	newChecked, err := st.HasSuccessfulPersonInferenceCheck(
+		t.Context(), newProfile.Fingerprint)
+	require.NoError(err)
+	assert.True(newChecked)
+	newActive, err := st.HasActivePersonInferenceConsent(
+		t.Context(), newProfile.Fingerprint)
+	require.NoError(err)
+	assert.False(newActive)
+	assert.Equal(int64(1), checker.calls.Load())
+}
+
+func TestPersonProviderSetPreservesUnselectedProfileAndConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	sibling := peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://sibling.example.test/v1",
+		Model: "sibling-model", Auth: peoplesweep.AuthBearer,
+		Credential: peoplesweep.CredentialEnv, CredentialEnv: "SIBLING_KEY",
+		OutputMode:          peoplesweep.OutputModeNativeJSONSchema,
+		TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention",
+		TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceConversationText,
+		}, SourceSince: "2025-01-01",
+	}
+	_, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{
+		{Path: []string{"people", "sweep", "providers", "sibling"}, Values: personProviderTableValues(sibling)},
+	})
+	require.NoError(err)
+	loaded, err = config.Load(path, "")
+	require.NoError(err)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+	t.Setenv("SIBLING_KEY", "sibling-secret")
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "preserved-model", "--yes")
+	require.NoError(err)
+	content, err := os.ReadFile(path)
+	require.NoError(err)
+	text := string(content)
+	assert.Contains(text, "# retained operator comment")
+	assert.Contains(text, "[future.operator_extension]")
+	assert.Contains(text, "answer = 42")
+	assert.Contains(text, "input_cost_microusd_per_million_tokens = 111 # operator price")
+	assert.Contains(text, `provider = "default" # selector formatting must survive rollback`)
+	assert.Contains(text, "credential_env = \"SIBLING_KEY\"")
+	assert.Contains(text, "model = \"sibling-model\"")
+
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	assert.Equal("default", reloaded.People.Sweep.Provider.Name)
+	assert.False(reloaded.People.Sweep.Enabled)
+	assert.Equal("preserved-model", reloaded.People.Sweep.Providers["default"].Model)
+	assert.Equal("SIBLING_KEY", reloaded.People.Sweep.Providers["sibling"].CredentialEnv)
+}
+
+func TestPersonProviderSetRemote(t *testing.T) {
+	assertAnError := assert.AnError
+	assert := assert.New(t)
+	require := require.New(t)
+	calls := 0
+	deps := personProviderCommandDeps{
+		remoteConfigured: func() bool { return true },
+		readConfigFile: func() (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		editConfigTables: func(string, []config.TableEdit) (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		restoreConfigFile: func(config.ConfigFile, config.ConfigFile) (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		setup: personProviderSetupDeps{
+			credentials: countingCredentialStore{calls: &calls},
+			lookupEnv: func(string) (string, bool) {
+				calls++
+				return providerSetupSecretCanary, true
+			},
+		},
+	}
+
+	_, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "remote-model", "--yes")
+	require.Error(err)
+	assert.Contains(err.Error(), "remote daemon")
+	assert.Zero(calls)
+}
+
+func TestPersonProviderSetDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	output, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "daemon-model", "--yes")
+	require.NoError(err)
+	assert.Contains(output, "msgvault daemon restart")
+	assert.Contains(output, "Updated and checked people provider profile")
+}
+
 func providerSetupConfigFile(t *testing.T) (string, *config.Config) {
 	t.Helper()
 	dir := t.TempDir()
