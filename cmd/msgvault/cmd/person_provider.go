@@ -616,11 +616,12 @@ func runPersonProviderSet(
 		if openErr != nil {
 			return openErr
 		}
-		defer cleanup()
-		if _, err := st.RevokePersonInferenceConsent(
+		_, revokeErr := st.RevokePersonInferenceConsent(
 			command.Context(), oldProfile.Fingerprint, personProviderConsentActor,
-		); err != nil {
-			return err
+		)
+		cleanup()
+		if revokeErr != nil {
+			return revokeErr
 		}
 	} else if err := proxySavedPersonProviderOperation(
 		command, deps, "revoke", name, oldProfile.Fingerprint, io.Discard,
@@ -687,14 +688,7 @@ func rollbackPersonProviderSetConfig(
 	published, before config.ConfigFile,
 ) error {
 	if !published.Exists || published.ETag == "" {
-		current, err := deps.readConfigFile()
-		if err != nil {
-			return fmt.Errorf("inspect people provider config after failed publication: %w", err)
-		}
-		if config.SameConfigFileVersion(current, before) {
-			return nil
-		}
-		published = current
+		return errors.New("cannot roll back people provider config without a verified published snapshot")
 	}
 	if _, err := deps.restoreConfigFile(published, before); err != nil {
 		return fmt.Errorf("restore people provider config: %w", err)

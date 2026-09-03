@@ -738,6 +738,69 @@ func TestPersonProviderSetUpdatesExistingProfile(t *testing.T) {
 	assert.Equal("DEFAULT_KEY", provider.CredentialEnv)
 }
 
+func TestPersonProviderSetClosesStoreBeforeChecking(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
+	deps.daemonAliveForRestartNotice = func(context.Context) (bool, error) { return false, nil }
+	active := false
+	opens := 0
+	deps.openStore = func() (personProviderStore, func(), error) {
+		opens++
+		if active {
+			return nil, nil, errors.New("people provider store lock is held")
+		}
+		active = true
+		return st, func() { active = false }, nil
+	}
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	_, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "local-model", "--yes")
+	require.NoError(err)
+	assert.Equal(2, opens)
+	assert.False(active)
+}
+
+func TestPersonProviderSetDoesNotRollbackAnUnverifiedConflictSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+	before, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	raced := before
+	raced.Content = []byte("operator change")
+	raced.ETag = "operator-change"
+	reads := 0
+	deps.readConfigFile = func() (config.ConfigFile, error) {
+		reads++
+		if reads == 1 {
+			return before, nil
+		}
+		return raced, nil
+	}
+	deps.editConfigTables = func(string, []config.TableEdit) (config.ConfigFile, error) {
+		return config.ConfigFile{}, config.ErrConfigConflict
+	}
+	restored := false
+	deps.restoreConfigFile = func(config.ConfigFile, config.ConfigFile) (config.ConfigFile, error) {
+		restored = true
+		return config.ConfigFile{}, nil
+	}
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "conflict-model", "--yes")
+	require.ErrorIs(err, config.ErrConfigConflict)
+	assert.Equal(1, reads)
+	assert.False(restored)
+}
+
 func TestPersonProviderSetClearsOptionalPolicyFields(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
