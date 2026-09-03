@@ -410,6 +410,54 @@ func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	assert.Contains(snapshot.Body, "Attendees: user-1, user-2")
 }
 
+func TestHydratorDegradesOnInvalidUserPaginationAndKeepsFetchedUsers(t *testing.T) {
+	tests := []struct {
+		name  string
+		pages map[string]*UserPage
+		want  string
+	}{
+		{
+			name: "missing cursor",
+			pages: map[string]*UserPage{
+				"": {Results: []User{{
+					ID: "user-1", Name: "Test Attendee", Type: "person",
+					Person: UserPerson{Email: "attendee@example.com", EmailVerified: true},
+				}}, HasMore: true},
+			},
+			want: "has_more without next_cursor",
+		},
+		{
+			name: "repeated cursor",
+			pages: map[string]*UserPage{
+				"": {Results: []User{{
+					ID: "user-1", Name: "Test Attendee", Type: "person",
+					Person: UserPerson{Email: "attendee@example.com", EmailVerified: true},
+				}}, HasMore: true, NextCursor: "same"},
+				"same": {HasMore: true, NextCursor: "same"},
+			},
+			want: "repeated cursor",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			source := completeHydrationSource()
+			source.users = tt.pages
+
+			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			require.NoError(err)
+			assert.True(hydrated.AttendeeResolutionDegraded)
+			require.Len(hydrated.Attendees, 1)
+			assert.Equal("attendee@example.com", hydrated.Attendees[0].Email)
+			assert.Equal([]string{"user-2"}, hydrated.UnresolvedAttendeeIDs)
+			require.Len(hydrated.Warnings, 1)
+			assert.Contains(hydrated.Warnings[0], "Notion User Information pagination was incomplete: "+tt.want)
+		})
+	}
+}
+
 func TestHydratorKeepsSystemicUserListingErrorsFatal(t *testing.T) {
 	tests := []struct {
 		name string

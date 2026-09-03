@@ -63,6 +63,7 @@ type Hydrator struct {
 	users            map[string]User
 	usersRead        bool
 	usersUnavailable bool
+	usersIncomplete  bool
 	usersFailure     error
 	requests         int
 	bytes            int
@@ -261,10 +262,18 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			}
 			next := strings.TrimSpace(page.NextCursor)
 			if next == "" {
-				return errors.New("notion user list has_more without next_cursor")
+				h.usersUnavailable = true
+				h.usersIncomplete = true
+				h.usersFailure = errors.New("has_more without next_cursor")
+				h.usersRead = true
+				break
 			}
 			if _, duplicate := seen[next]; duplicate {
-				return fmt.Errorf("notion user list returned repeated cursor %q", next)
+				h.usersUnavailable = true
+				h.usersIncomplete = true
+				h.usersFailure = fmt.Errorf("repeated cursor %q", next)
+				h.usersRead = true
+				break
 			}
 			seen[next] = struct{}{}
 			cursor = next
@@ -272,7 +281,10 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 	}
 	if h.usersUnavailable {
 		result.AttendeeResolutionDegraded = true
-		if errors.Is(h.usersFailure, ErrUserInformation) {
+		if h.usersIncomplete {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Notion User Information pagination was incomplete: %v", h.usersFailure))
+		} else if errors.Is(h.usersFailure, ErrUserInformation) {
 			result.Warnings = append(result.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
 		} else {
 			result.Warnings = append(result.Warnings,

@@ -116,6 +116,29 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 	assert.True(users.Results[0].Person.EmailVerified)
 }
 
+func TestBlockPlainTextExtractsContentBearingPayloads(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "heading 4", raw: `{"type":"heading_4","heading_4":{"rich_text":[{"plain_text":"Decisions"}]}}`, want: "Decisions"},
+		{name: "code and caption", raw: `{"type":"code","code":{"rich_text":[{"plain_text":"ship()"}],"caption":[{"plain_text":"Example"}]}}`, want: "ship()\nExample"},
+		{name: "media caption", raw: `{"type":"image","image":{"caption":[{"plain_text":"Architecture diagram"}]}}`, want: "Architecture diagram"},
+		{name: "child title", raw: `{"type":"child_page","child_page":{"title":"Project notes"}}`, want: "Project notes"},
+		{name: "equation", raw: `{"type":"equation","equation":{"expression":"e=mc^2"}}`, want: "e=mc^2"},
+		{name: "table row", raw: `{"type":"table_row","table_row":{"cells":[[{"plain_text":"Owner"}],[{"plain_text":"Status"}]]}}`, want: "Owner\nStatus"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var block Block
+			require.NoError(t, json.Unmarshal([]byte(tt.raw), &block))
+			assert.Equal(t, tt.want, block.PlainText())
+		})
+	}
+}
+
 func TestClientClassifiesAndSanitizesProviderErrors(t *testing.T) {
 	tests := []struct {
 		name      string
