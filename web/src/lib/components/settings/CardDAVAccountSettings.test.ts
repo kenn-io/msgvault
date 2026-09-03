@@ -70,6 +70,32 @@ describe('CardDAVAccountSettings', () => {
     expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe('https://draft.example.test/');
   });
 
+  it('disables an existing account without an available password', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requestBody = await request.json();
+      return Response.json({
+        base_url: 'https://fresh.example.test/', username: 'bob', enabled: false,
+        schedule: '0 4 * * *', books: 0
+      });
+    });
+    render(CardDAVAccountSettings, { client, settings: refreshedSettings });
+    const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(passwordInput.required).toBe(true);
+
+    await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+
+    expect(passwordInput.required).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+    await waitFor(() => expect(requestBody).toEqual({
+      base_url: 'https://fresh.example.test/', username: 'bob', enabled: false, schedule: '0 4 * * *'
+    }));
+    await screen.findByRole('status');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+    expect(passwordInput.required).toBe(true);
+  });
+
   it('locks the complete account tuple while a connection test is pending', async () => {
     const deferred = deferredResponse();
     let requestFacts: { baseURL: string; username: string; enabled: boolean; schedule: string; passwordMatched: boolean } | undefined;

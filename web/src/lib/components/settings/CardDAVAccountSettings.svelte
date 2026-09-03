@@ -125,15 +125,27 @@
     );
   }
 
-  function validatePassword(): boolean {
-    if (canReusePersistedPassword() || password !== '') return true;
+  function canDisableWithoutPassword(): boolean {
+    return !enabled && baseURL === persistedBaseURL && username === persistedUsername;
+  }
+
+  function passwordRequiredForSave(): boolean {
+    return !canReusePersistedPassword() && !canDisableWithoutPassword();
+  }
+
+  function validatePassword(allowCredentialFreeDisable: boolean): boolean {
+    if (
+      canReusePersistedPassword() ||
+      password !== '' ||
+      (allowCredentialFreeDisable && canDisableWithoutPassword())
+    ) return true;
     status = '';
     error = 'Password is required for a new or changed CardDAV account.';
     return false;
   }
 
   async function testConnection() {
-    if (activeAction !== undefined || !validatePassword()) return;
+    if (activeAction !== undefined || !validatePassword(false)) return;
     requestController?.abort();
     const controller = new AbortController();
     requestController = controller;
@@ -162,7 +174,7 @@
   }
 
   async function saveAccount() {
-    if (activeAction !== undefined || !validatePassword()) return;
+    if (activeAction !== undefined || !validatePassword(true)) return;
     requestController?.abort();
     const controller = new AbortController();
     requestController = controller;
@@ -177,13 +189,14 @@
       });
       if (!current(generation, controller.signal)) return;
       if (!data) throw new Error(apiErrorMessage(responseError, 'Unable to save the CardDAV account.'));
+      const passwordConfigured = persistedPasswordConfigured || password !== '';
       baseURL = data.base_url;
       username = data.username;
       enabled = data.enabled;
       schedule = data.schedule ?? '';
       persistedBaseURL = data.base_url;
       persistedUsername = data.username;
-      persistedPasswordConfigured = true;
+      persistedPasswordConfigured = passwordConfigured;
       persistedEnabled = data.enabled;
       persistedSchedule = data.schedule ?? '';
       password = '';
@@ -216,9 +229,11 @@
 
 <SettingsSection
   title="CardDAV account"
-  description={canReusePersistedPassword()
-    ? 'Connect an address-book account. Leave the password blank to keep the stored credential.'
-    : 'Connect an address-book account. A password is required for a new or changed account.'}
+  description={passwordRequiredForSave()
+    ? 'Connect an address-book account. A password is required for a new or changed account.'
+    : canReusePersistedPassword()
+      ? 'Connect an address-book account. Leave the password blank to keep the stored credential.'
+      : 'Disable an existing address-book account without re-entering its password.'}
 >
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
@@ -239,8 +254,10 @@
         autocomplete="current-password"
         bind:value={password}
         disabled={activeAction !== undefined}
-        required={!canReusePersistedPassword()}
-        placeholder={canReusePersistedPassword() ? 'Leave blank to keep current password' : ''}
+        required={passwordRequiredForSave()}
+        placeholder={canReusePersistedPassword()
+          ? 'Leave blank to keep current password'
+          : canDisableWithoutPassword() ? 'Not required while disabled' : ''}
         block
       />
     </label>
