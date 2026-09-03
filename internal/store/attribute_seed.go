@@ -220,7 +220,10 @@ func howWeMetDefinition() AttributeDefinitionInput {
 		UICreatable:  true,
 		UIEditable:   true,
 		APIMutable:   true,
-		IsSearchable: true,
+		// Relationship context, not a search facet: keeping it out of the
+		// searchable set also keeps it out of the semantic person document
+		// that a consented embedding provider receives.
+		IsSearchable: false,
 		IsSensitive:  false,
 		IsAudited:    true,
 		IsDeletable:  false,

@@ -304,7 +304,7 @@ open.
 | `interests_fun_growing_up` | Fun growing up | text | multiple | no | Activities this person enjoyed growing up |
 | `favorites_food` | Favorite food | text | multiple | no | Foods this person especially likes |
 | `favorites_place` | Favorite place | text | multiple | no | Places this person especially likes |
-| `how_we_met` | How we met | text | single | no | How you and this person first met; the one seeded field about your relationship rather than the person alone |
+| `how_we_met` | How we met | text | single | no | How you and this person first met; the one seeded field about your relationship rather than the person alone. Not searchable, so it stays out of the semantic person document |
 
 Contact points, addresses, dates such as birthdays, categories, organizations
 and employment, and typed relationships such as partner or child are structured

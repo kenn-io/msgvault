@@ -67,8 +67,8 @@ All notable changes to msgvault, grouped by release.
   `/api/v1/people/{id}/tracking` to opt a durable person into future profile
   maintenance.
 
-- The seeded person catalog gains `how_we_met`, a searchable single-value
-  text field for how you and a person first met, and every seeded text field
+- The seeded person catalog gains `how_we_met`, a single-value text field
+  for how you and a person first met, and every seeded text field
   now accepts 280 characters instead of 120. Both changes apply on store open
   for SQLite and PostgreSQL alike: a fresh archive has the field before anyone
   types, an existing archive is widened in place, and tracked people pick up

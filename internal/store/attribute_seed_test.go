@@ -123,7 +123,7 @@ func TestSeededAttributeDefinitionsIncludeHowWeMet(t *testing.T) {
 	assert.True(definition.UICreatable)
 	assert.True(definition.UIEditable)
 	assert.True(definition.APIMutable)
-	assert.True(definition.IsSearchable)
+	assert.False(definition.IsSearchable)
 	assert.False(definition.IsSensitive)
 	assert.True(definition.IsAudited)
 	assert.False(definition.IsDeletable)
