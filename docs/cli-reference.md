@@ -1930,6 +1930,12 @@ full-text search index, or while its analytical cache is unavailable, because an
 incomplete index could silently omit matching messages. Both states resolve in
 the background; retry when they finish.
 
+Like deletion staging in the TUI and Web UI, the selection is resolved against
+the committed analytical snapshot, so messages synced after the most recent
+cache build are not included until the daemon refreshes the cache (it does so
+automatically after each sync). Re-run the command after a refresh to stage
+newly synced matches.
+
 ```bash
 msgvault stage-delete <query>
 ```
