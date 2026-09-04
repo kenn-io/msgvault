@@ -664,7 +664,7 @@ func TestConnectRetry_STARTTLSHandshakeTransportFailureRetries(t *testing.T) {
 func TestConnectRetry_STARTTLSResponseTransportFailureIsTerminal(t *testing.T) {
 	addr, accepted := startRetryMemServer(t, "starttls", func(conn net.Conn, count int64) net.Conn {
 		if count == 1 {
-			return &retryCloseAfterReadConn{Conn: conn, closeAfter: 1, reset: true}
+			return &retryCloseAfterReadConn{Conn: conn, closeAfter: 1}
 		}
 		return conn
 	}, newIMAPServerTLSConfig(t))
