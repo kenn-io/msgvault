@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -132,6 +133,13 @@ type Client struct {
 	// folder state.
 	listProgress func(done, total int, mailbox string, found, unchanged int)
 	sleep        func(context.Context, time.Duration) error
+	tlsConfig    *tls.Config
+}
+
+var connectRetryDelays = [...]time.Duration{
+	5 * time.Second,
+	15 * time.Second,
+	45 * time.Second,
 }
 
 // NewClient creates a new IMAP client.
@@ -183,95 +191,135 @@ func (c *Client) labelsSnapshotFilteredLocked() bool {
 			len(c.folderFilterExclude) > 0)
 }
 
-// connect establishes and authenticates the IMAP connection with bounded backoff. Caller must hold mu.
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type preGreetingConn struct {
+	net.Conn
+
+	mu         sync.Mutex
+	progressed bool
+	zeroErr    error
+}
+
+func (c *preGreetingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.record(n, err)
+	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
+}
+
+func (c *preGreetingConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.record(n, err)
+	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
+}
+
+func (c *preGreetingConn) record(n int, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n > 0 {
+		c.progressed = true
+	}
+	if n == 0 && err != nil && c.zeroErr == nil {
+		c.zeroErr = err
+	}
+}
+
+func (c *preGreetingConn) hasProgress() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.progressed
+}
+
+func (c *preGreetingConn) transportError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.zeroErr
+}
+
+func isRetryableTransportError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if _, ok := errors.AsType[tls.AlertError](err); ok {
+		return false
+	}
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) { //nolint:staticcheck // legacy net.Error implementations can mark transient transport failures.
+		return true
+	}
+	for _, errno := range []syscall.Errno{
+		syscall.ECONNRESET,
+		syscall.ECONNABORTED,
+		syscall.EPIPE,
+		64, 109, 10053, 10054,
+	} {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
+}
+
+// connect establishes and authenticates the IMAP connection. Caller must hold mu.
 func (c *Client) connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-	for attempt := 0; ; attempt++ {
-		err := c.connectOnce(ctx)
-		if err == nil {
-			return nil
-		}
-		var retryErr *retryableConnectError
-		if !errors.As(err, &retryErr) {
-			return err
-		}
-		if attempt >= len(connectRetryDelays) {
-			return retryErr.Unwrap()
-		}
-		delay := connectRetryDelays[attempt]
-		c.logger.Warn("retrying IMAP connection",
-			"addr", c.config.Addr(),
-			"attempt", attempt+2,
-			"limit", len(connectRetryDelays)+1,
-			"delay", delay,
-			"error", retryErr.Unwrap())
-		if err := c.sleep(ctx, delay); err != nil {
-			return err
-		}
-	}
-}
 
-func (c *Client) connectOnce(ctx context.Context) error {
 	addr := c.config.Addr()
 	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
 
-	imapOpts := &imapclient.Options{
-		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
-			Vanished: c.captureQresyncVanished,
-		},
-	}
-	conn, probe, err := c.dialIMAP(ctx, addr, imapOpts)
+	conn, err := c.connectTransport(ctx)
 	if err != nil {
-		stage := stageDial
-		if probe != nil {
-			stage = stageSetup
-		}
-		classified := classifyConnect(stage, addr, err, probe)
-		if conn != nil {
-			_ = conn.Close()
-		} else if probe != nil {
-			_ = probe.Close()
-		}
-		return classified
-	}
-
-	if err := waitGreeting(ctx, conn); err != nil {
-		classified := classifyConnect(stageGreeting, addr, err, probe)
-		_ = conn.Close()
-		return classified
-	}
-	if err := waitCapabilities(ctx, conn, addr, probe); err != nil {
-		_ = conn.Close()
 		return err
 	}
+
 	switch c.config.EffectiveAuthMethod() {
 	case AuthXOAuth2:
 		if c.tokenSource == nil {
 			_ = conn.Close()
 			return errors.New("XOAUTH2 auth requires a token source (use WithTokenSource)")
 		}
-		token, err := c.tokenSource(ctx)
-		if err != nil {
+		var token string
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			var err error
+			token, err = c.tokenSource(ctx)
+			return err
+		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("get XOAUTH2 token: %w", err)
 		}
 		saslClient := NewXOAuth2Client(c.config.Username, token)
-		if err := waitAuthentication(ctx, conn, func() error {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
 			return conn.Authenticate(saslClient)
 		}); err != nil {
-			classified := classifyConnect(stageAuth, addr, err, probe)
 			_ = conn.Close()
-			return fmt.Errorf("XOAUTH2 authenticate: %w", classified)
+			return fmt.Errorf("XOAUTH2 authenticate: %w", err)
 		}
 	default:
-		if err := waitAuthentication(ctx, conn, func() error {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
 			return conn.Login(c.config.Username, c.password).Wait()
 		}); err != nil {
-			classified := classifyConnect(stageAuth, addr, err, probe)
 			_ = conn.Close()
-			return fmt.Errorf("IMAP login: %w", classified)
+			return fmt.Errorf("IMAP login: %w", err)
 		}
 	}
 
@@ -283,49 +331,105 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	return nil
 }
 
-func waitGreeting(ctx context.Context, conn *imapclient.Client) error {
+func (c *Client) connectTransport(ctx context.Context) (*imapclient.Client, error) {
+	for attempt := 0; ; attempt++ {
+		conn, retry, err := c.connectTransportOnce(ctx)
+		if err == nil {
+			return conn, nil
+		}
+		if !retry || attempt == len(connectRetryDelays) {
+			return nil, err
+		}
+
+		delay := connectRetryDelays[attempt]
+		c.logger.Warn("retrying IMAP connection",
+			"addr", c.config.Addr(),
+			"attempt", attempt+2,
+			"limit", len(connectRetryDelays)+1,
+			"delay", delay,
+			"error", err,
+		)
+		if err := c.sleep(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, bool, error) {
+	addr := c.config.Addr()
+	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
+
+	imapOpts := &imapclient.Options{
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+			Vanished: c.captureQresyncVanished,
+		},
+	}
+	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, isRetryableTransportError(err), fmt.Errorf("dial IMAP %s: %w", addr, err)
+	}
+
+	if c.config.TLS {
+		tlsConn := tls.Client(rawConn, c.newTLSConfig(true))
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return nil, isRetryableTransportError(err), fmt.Errorf("TLS handshake with %s: %w", addr, err)
+		}
+		probe := &preGreetingConn{Conn: tlsConn}
+		conn := imapclient.New(probe, imapOpts)
+		if err := waitGreetingContext(ctx, conn); err != nil {
+			_ = conn.Close()
+			return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		}
+		return conn, false, nil
+	}
+
+	probe := &preGreetingConn{Conn: rawConn}
+	if c.config.STARTTLS {
+		startTLSOpts := *imapOpts
+		startTLSOpts.TLSConfig = c.newTLSConfig(false)
+		conn, err := newStartTLSContext(ctx, probe, &startTLSOpts)
+		if err != nil {
+			_ = probe.Close()
+			return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
+		}
+		return conn, false, nil
+	}
+
+	conn := imapclient.New(probe, imapOpts)
+	if err := waitGreetingContext(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+	}
+	return conn, false, nil
+}
+
+func (c *Client) newTLSConfig(implicit bool) *tls.Config {
+	var config *tls.Config
+	if c.tlsConfig == nil {
+		config = &tls.Config{}
+	} else {
+		config = c.tlsConfig.Clone()
+	}
+	if config.ServerName == "" {
+		config.ServerName = normalizeHost(c.config.Host)
+	}
+	if implicit && config.NextProtos == nil {
+		config.NextProtos = []string{"imap"}
+	}
+	return config
+}
+
+func retryableGreeting(probe *preGreetingConn) bool {
+	if probe == nil || probe.hasProgress() {
+		return false
+	}
+	return isRetryableTransportError(probe.transportError())
+}
+
+func waitGreetingContext(ctx context.Context, conn *imapclient.Client) error {
 	result := make(chan error, 1)
 	go func() { result <- conn.WaitGreeting() }()
-	select {
-	case err := <-result:
-		return err
-	case <-ctx.Done():
-		_ = conn.Close()
-		return ctx.Err()
-	}
-}
-
-func waitCapabilities(ctx context.Context, conn *imapclient.Client, addr string, probe *progressConn) error {
-	result := make(chan imap.CapSet, 1)
-	go func() {
-		result <- conn.Caps()
-	}()
-	select {
-	case caps := <-result:
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if caps != nil {
-			return nil
-		}
-		snapshot := probe.snapshot()
-		observed := snapshot.readErr
-		if observed == nil {
-			observed = snapshot.writeErr
-		}
-		if observed == nil {
-			observed = io.ErrUnexpectedEOF
-		}
-		return classifyConnect(stageSetup, addr, observed, probe)
-	case <-ctx.Done():
-		_ = conn.Close()
-		return ctx.Err()
-	}
-}
-
-func waitAuthentication(ctx context.Context, conn *imapclient.Client, authenticate func() error) error {
-	result := make(chan error, 1)
-	go func() { result <- authenticate() }()
 	select {
 	case err := <-result:
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -338,78 +442,50 @@ func waitAuthentication(ctx context.Context, conn *imapclient.Client, authentica
 	}
 }
 
-type startTLSResult struct {
-	conn *imapclient.Client
-	err  error
-}
-
-func newStartTLS(ctx context.Context, conn net.Conn, options *imapclient.Options) (*imapclient.Client, error) {
-	result := make(chan startTLSResult, 1)
+func newStartTLSContext(
+	ctx context.Context, rawConn net.Conn, options *imapclient.Options,
+) (*imapclient.Client, error) {
+	result := make(chan struct {
+		conn *imapclient.Client
+		err  error
+	}, 1)
 	go func() {
-		client, err := imapclient.NewStartTLS(conn, options)
-		if ctx.Err() != nil {
-			if client != nil {
-				_ = client.Close()
-			}
-			if err == nil {
-				err = ctx.Err()
-			}
-		}
-		result <- startTLSResult{conn: client, err: err}
+		conn, err := imapclient.NewStartTLS(rawConn, options)
+		result <- struct {
+			conn *imapclient.Client
+			err  error
+		}{conn: conn, err: err}
 	}()
 	select {
 	case result := <-result:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			return nil, ctxErr
+		}
 		return result.conn, result.err
 	case <-ctx.Done():
-		_ = conn.Close()
+		_ = rawConn.Close()
 		return nil, ctx.Err()
 	}
 }
 
-func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.Options) (*imapclient.Client, *progressConn, error) {
-	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, nil, err
+func waitAuthenticationContext(
+	ctx context.Context, conn *imapclient.Client, authenticate func() error,
+) error {
+	result := make(chan error, 1)
+	go func() { result <- authenticate() }()
+	select {
+	case err := <-result:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	case <-ctx.Done():
+		_ = conn.Close()
+		return ctx.Err()
 	}
-	probe := &progressConn{Conn: rawConn}
-	if c.config.TLS {
-		tlsConfig := options.TLSConfig
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{}
-		} else {
-			tlsConfig = tlsConfig.Clone()
-		}
-		if tlsConfig.ServerName == "" {
-			tlsConfig.ServerName = normalizeHost(c.config.Host)
-		}
-		if tlsConfig.NextProtos == nil {
-			tlsConfig.NextProtos = []string{"imap"}
-		}
-		tlsConn := tls.Client(probe, tlsConfig)
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return nil, probe, err
-		}
-		return imapclient.New(tlsConn, options), probe, nil
-	}
-	if c.config.STARTTLS {
-		startTLSOptions := *options
-		tlsConfig := options.TLSConfig
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{}
-		} else {
-			tlsConfig = tlsConfig.Clone()
-		}
-		if tlsConfig.ServerName == "" {
-			tlsConfig.ServerName = normalizeHost(c.config.Host)
-		}
-		startTLSOptions.TLSConfig = tlsConfig
-		conn, err := newStartTLS(ctx, probe, &startTLSOptions)
-		if err != nil {
-			return conn, probe, err
-		}
-		return conn, probe, nil
-	}
-	return imapclient.New(probe, options), probe, nil
 }
 
 // reconnect closes the current connection and re-establishes it.

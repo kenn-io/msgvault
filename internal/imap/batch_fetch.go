@@ -240,9 +240,8 @@ func batchMailboxOrder(byMailbox map[string][]batchFetchItem, allMailFolder stri
 	return order
 }
 
-// selectBatchMailbox selects the mailbox. Connection establishment uses the
-// bounded retry policy; an established-session network error reconnects once.
-// On non-fatal failure it marks all items with the error and
+// selectBatchMailbox selects the mailbox, reconnecting once on network
+// errors. On non-fatal failure it marks all items with the error and
 // returns ok=false so the caller can skip the mailbox; a non-nil error
 // means reconnect failed and the whole batch should be abandoned.
 func (c *Client) selectBatchMailbox(
@@ -272,9 +271,8 @@ func (c *Client) selectBatchMailbox(
 	return false, nil
 }
 
-// fetchChunk runs one UID FETCH, reconnecting and replaying the command once
-// on an established-session network error. Connection establishment uses the
-// bounded retry policy. fatal reports that the connection could not be re-established and
+// fetchChunk runs one UID FETCH, reconnecting and retrying once on network
+// errors. fatal reports that the connection could not be re-established and
 // the whole batch should be abandoned; otherwise a non-nil error is local
 // to this chunk.
 func (c *Client) fetchChunk(
