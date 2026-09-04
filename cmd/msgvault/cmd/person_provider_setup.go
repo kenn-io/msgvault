@@ -362,12 +362,12 @@ func personProviderCandidate(options personProviderAddOptions) (peoplesweep.Prov
 	} else {
 		candidate.Credential = peoplesweep.CredentialStored
 	}
-	if candidate.Protocol == peoplesweep.ProtocolOpenAIChat {
-		candidate.OutputMode = peoplesweep.OutputModeNativeJSONSchema
-		candidate.TokenLimitParameter = "max_completion_tokens"
-	} else {
-		candidate.OutputMode = peoplesweep.OutputModeNativeJSONSchema
+	capability, ok := peoplesweep.ProtocolCapabilityFor(candidate.Protocol)
+	if !ok || len(capability.OutputModes) == 0 || len(capability.TokenParameters) == 0 {
+		return peoplesweep.ProviderConfig{}, fmt.Errorf("unsupported people inference protocol %q", candidate.Protocol)
 	}
+	candidate.OutputMode = capability.OutputModes[0]
+	candidate.TokenLimitParameter = capability.TokenParameters[0]
 	return candidate, nil
 }
 
