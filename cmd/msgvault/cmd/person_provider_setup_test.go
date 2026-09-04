@@ -470,6 +470,36 @@ func TestPersonProviderCatalogAuthUsesProtocolCapabilities(t *testing.T) {
 	}
 }
 
+func TestPersonProviderCandidateUsesProtocolCapabilityDefaults(t *testing.T) {
+	for _, test := range []struct {
+		protocol peoplesweep.Protocol
+		auth     peoplesweep.AuthScheme
+		output   peoplesweep.OutputMode
+		token    string
+	}{
+		{protocol: peoplesweep.ProtocolOpenAIChat, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema, token: "max_completion_tokens"},
+		{protocol: peoplesweep.ProtocolOpenAIResponses, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolAnthropicMessages, auth: peoplesweep.AuthXAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolGoogleGenerateContent, auth: peoplesweep.AuthGoogleAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+	} {
+		t.Run(string(test.protocol), func(t *testing.T) {
+			candidate, err := personProviderCandidate(personProviderAddOptions{
+				protocol: string(test.protocol), endpoint: "https://example.test",
+				model: "test-model", auth: string(test.auth), retentionPosture: "zero",
+				trainingPosture: "none", allowedSources: []string{"conversation_text"},
+				sourceSince: "2025-01-01",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.output, candidate.OutputMode)
+			assert.Equal(t, test.token, candidate.TokenLimitParameter)
+		})
+	}
+}
+
 // TestPersonProviderAddNeverSendsCredentialToCatalogEndpoint catches
 // onboarding reading a credential or negotiating capabilities against an
 // endpoint chosen by the models.dev catalog: a compromised catalog must not
