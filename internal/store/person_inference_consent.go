@@ -37,31 +37,31 @@ const personInferenceConsentColumns = `
 	id, profile_fingerprint, granted_by, granted_at, revoked_by, revoked_at`
 
 type personInferenceProfileProjection struct {
-	Fingerprint           string         `db:"fingerprint"`
-	Protocol              string         `db:"provider_kind"`
-	Endpoint              string         `db:"endpoint"`
-	Model                 string         `db:"model"`
-	APIKeyEnv             string         `db:"api_key_env"`
-	AllowAnonymous        bool           `db:"allow_anonymous"`
-	Auth                  string         `db:"auth_scheme"`
-	Credential            string         `db:"credential_source"`
-	CredentialRef         string         `db:"credential_ref"`
-	OutputMode            string         `db:"output_mode"`
-	TokenLimit            string         `db:"token_limit_parameter"`
-	ReasoningEffort       string         `db:"reasoning_effort"`
-	ReasoningMode         string         `db:"reasoning_mode"`
-	DriverVersion         string         `db:"driver_version"`
-	Retention             string         `db:"retention_posture"`
-	Training              string         `db:"training_posture"`
-	AllowedSources        string         `db:"allowed_sources,json"`
-	SourceSince           string         `db:"source_since"`
-	SourceUntil           sql.NullString `db:"source_until"`
-	AllowSensitive        bool           `db:"allow_sensitive"`
-	ExecutionBoundary     string         `db:"execution_boundary"`
-	PacketRendererPolicy  string         `db:"packet_renderer_policy"`
-	ProgramFingerprint    string         `db:"program_fingerprint"`
-	DisclosedPacketFields string         `db:"disclosed_packet_fields,json"`
-	PolicyJSON            string         `db:"policy_json,json"`
+	Fingerprint           string         `db:"fingerprint" profile:"fingerprint"`
+	Protocol              string         `db:"provider_kind" profile:"protocol"`
+	Endpoint              string         `db:"endpoint" profile:"endpoint"`
+	Model                 string         `db:"model" profile:"model"`
+	APIKeyEnv             string         `db:"api_key_env" profile:"credential_ref"`
+	AllowAnonymous        bool           `db:"allow_anonymous" profile:"auth,anonymous"`
+	Auth                  string         `db:"auth_scheme" profile:"auth"`
+	Credential            string         `db:"credential_source" profile:"credential"`
+	CredentialRef         string         `db:"credential_ref" profile:"credential_ref"`
+	OutputMode            string         `db:"output_mode" profile:"output_mode"`
+	TokenLimit            string         `db:"token_limit_parameter" profile:"token_limit_parameter"`
+	ReasoningEffort       string         `db:"reasoning_effort" profile:"reasoning_effort"`
+	ReasoningMode         string         `db:"reasoning_mode" profile:"reasoning_mode"`
+	DriverVersion         string         `db:"driver_version" profile:"driver_version"`
+	Retention             string         `db:"retention_posture" profile:"retention_posture"`
+	Training              string         `db:"training_posture" profile:"training_posture"`
+	AllowedSources        string         `db:"allowed_sources,json" profile:"allowed_sources,json"`
+	SourceSince           string         `db:"source_since" profile:"source_since"`
+	SourceUntil           sql.NullString `db:"source_until" profile:"source_until,null"`
+	AllowSensitive        bool           `db:"allow_sensitive" profile:"allow_sensitive"`
+	ExecutionBoundary     string         `db:"execution_boundary" profile:"execution_boundary"`
+	PacketRendererPolicy  string         `db:"packet_renderer_policy" profile:"packet_renderer_policy"`
+	ProgramFingerprint    string         `db:"program_fingerprint" profile:"program_fingerprint"`
+	DisclosedPacketFields string         `db:"disclosed_packet_fields,json" profile:"disclosed_packet_fields,json"`
+	PolicyJSON            string         `db:"policy_json,json" profile:"policy_json,raw"`
 }
 
 var personInferenceProfileColumns = personInferenceProfileSelectColumns()
@@ -115,30 +115,63 @@ func personInferenceProfileDBFieldIndexes(typeOfProjection reflect.Type) []int {
 func newPersonInferenceProfileProjection(
 	profile peoplesweep.ProviderProfile,
 ) (personInferenceProfileProjection, error) {
-	allowedSources, err := json.Marshal(profile.AllowedSources)
-	if err != nil {
-		return personInferenceProfileProjection{}, fmt.Errorf("encode people inference allowed sources: %w", err)
+	profileValue := reflect.ValueOf(profile)
+	profileFields := make(map[string]reflect.Value, profileValue.NumField())
+	for index := 0; index < profileValue.NumField(); index++ {
+		field := reflect.TypeOf(profile).Field(index)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.Name == "PolicyJSON" {
+			profileFields["policy_json"] = profileValue.Field(index)
+		} else if name != "" && name != "-" {
+			profileFields[name] = profileValue.Field(index)
+		}
 	}
-	disclosedPacketFields, err := json.Marshal(profile.DisclosedPacketFields)
-	if err != nil {
-		return personInferenceProfileProjection{}, fmt.Errorf("encode people inference disclosed packet fields: %w", err)
+
+	projection := personInferenceProfileProjection{}
+	projectionValue := reflect.ValueOf(&projection).Elem()
+	projectionType := projectionValue.Type()
+	for index := 0; index < projectionValue.NumField(); index++ {
+		field := projectionType.Field(index)
+		name, option, _ := strings.Cut(field.Tag.Get("profile"), ",")
+		if name == "" || name == "-" {
+			return personInferenceProfileProjection{}, fmt.Errorf(
+				"people inference profile projection field %q has no profile tag", field.Name)
+		}
+		source, ok := profileFields[name]
+		if !ok {
+			return personInferenceProfileProjection{}, fmt.Errorf(
+				"people inference profile projection field %q maps to unknown profile field %q", field.Name, name)
+		}
+		target := projectionValue.Field(index)
+		switch option {
+		case "anonymous":
+			target.SetBool(source.String() == string(peoplesweep.AuthNone))
+		case "json":
+			encoded, err := json.Marshal(source.Interface())
+			if err != nil {
+				return personInferenceProfileProjection{}, fmt.Errorf(
+					"encode people inference %s: %w", name, err)
+			}
+			target.SetString(string(encoded))
+		case "null":
+			target.Set(reflect.ValueOf(sql.NullString{
+				String: source.String(), Valid: source.String() != "",
+			}))
+		case "raw":
+			target.SetString(string(source.Bytes()))
+		default:
+			if target.Kind() == reflect.Bool && source.Kind() == reflect.Bool {
+				target.SetBool(source.Bool())
+				continue
+			}
+			if target.Kind() != reflect.String || source.Kind() != reflect.String {
+				return personInferenceProfileProjection{}, fmt.Errorf(
+					"people inference profile projection field %q has incompatible profile field %q", field.Name, name)
+			}
+			target.SetString(source.String())
+		}
 	}
-	return personInferenceProfileProjection{
-		Fingerprint: profile.Fingerprint, Protocol: string(profile.Protocol),
-		Endpoint: profile.Endpoint, Model: profile.Model, APIKeyEnv: profile.CredentialRef,
-		AllowAnonymous: profile.Auth == peoplesweep.AuthNone, Auth: string(profile.Auth),
-		Credential: string(profile.Credential), CredentialRef: profile.CredentialRef,
-		OutputMode: string(profile.OutputMode), TokenLimit: profile.TokenLimitParameter,
-		ReasoningEffort: profile.ReasoningEffort, ReasoningMode: profile.ReasoningMode,
-		DriverVersion: profile.DriverVersion, Retention: profile.RetentionPosture,
-		Training: profile.TrainingPosture, AllowedSources: string(allowedSources),
-		SourceSince:    profile.SourceSince,
-		SourceUntil:    sql.NullString{String: profile.SourceUntil, Valid: profile.SourceUntil != ""},
-		AllowSensitive: profile.AllowSensitive, ExecutionBoundary: profile.ExecutionBoundary,
-		PacketRendererPolicy:  profile.PacketRendererPolicy,
-		ProgramFingerprint:    profile.ProgramFingerprint,
-		DisclosedPacketFields: string(disclosedPacketFields), PolicyJSON: string(profile.PolicyJSON),
-	}, nil
+	return projection, nil
 }
 
 func (p *personInferenceProfileProjection) scanDestinations() []any {
@@ -177,6 +210,13 @@ func (p personInferenceProfileProjection) equal(expected personInferenceProfileP
 	for _, fieldIndex := range indexes {
 		field := value.Type().Field(fieldIndex)
 		actual, want := value.Field(fieldIndex).Interface(), expectedValue.Field(fieldIndex).Interface()
+		if field.Type == reflect.TypeOf(sql.NullString{}) {
+			actualUntil, expectedUntil := actual.(sql.NullString), want.(sql.NullString)
+			if actualUntil.String != expectedUntil.String {
+				return false
+			}
+			continue
+		}
 		_, options, _ := strings.Cut(field.Tag.Get("db"), ",")
 		if options == "json" {
 			if !equalJSON([]byte(actual.(string)), []byte(want.(string))) {

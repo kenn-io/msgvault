@@ -44,6 +44,23 @@ func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	return profile
 }
 
+func TestPersonInferenceProfileNormalizesNullAndEmptySourceUntil(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	profile := inferenceTestProfile(t)
+	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(t, err)
+
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE person_inference_profiles SET source_until = '' WHERE fingerprint = ?`),
+		profile.Fingerprint)
+	require.NoError(t, err)
+
+	profiles, err := st.ListPersonInferenceProfiles(t.Context())
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	assert.Equal(t, profile.Fingerprint, profiles[0].Fingerprint)
+}
+
 func TestPersonInferenceConsentLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
