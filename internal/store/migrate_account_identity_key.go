@@ -49,15 +49,24 @@ func (s *Store) ensureAccountIdentityAddressKeys(ctx context.Context) error {
 	// has added address_key. The WHERE clause exempts the '' sentinel:
 	// previous-release inserts land with the column default and must not
 	// collide with each other; the next open keys them through the repair
-	// above.
-	if _, err := s.db.ExecContext(ctx, `
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_account_identities_address_key
-		ON account_identities(source_id, address_key)
-		WHERE address_key <> ''
-	`); err != nil {
-		return fmt.Errorf("create account identity address key index: %w", err)
-	}
-	return nil
+	// above. Ledgered so the DDL runs once per archive, and built through
+	// the maintenance escape hatch so a lock held by a concurrent identity
+	// writer cannot trip the pool-wide PostgreSQL statement timeout and
+	// fail the open; IF NOT EXISTS covers a cancellation between the
+	// create and the ledger write.
+	return s.runOnceMigration(ctx, migrationAccountIdentityAddressKeyIndex, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				if _, err := tx.ExecContext(ctx, `
+					CREATE UNIQUE INDEX IF NOT EXISTS idx_account_identities_address_key
+					ON account_identities(source_id, address_key)
+					WHERE address_key <> ''
+				`); err != nil {
+					return fmt.Errorf("create account identity address key index: %w", err)
+				}
+				return nil
+			})
+		})
 }
 
 // accountIdentityKeysNeedRepair reports whether any row's stored key differs
@@ -99,8 +108,14 @@ type accountIdentityGroupKey struct {
 	key      string
 }
 
+// repairAccountIdentityAddressKeys runs through the maintenance escape hatch:
+// a duplicate collapse refreshes source-wide message attribution, whose cost
+// scales with archive size, and the ordinary pool-wide PostgreSQL statement
+// timeout would cancel it on a large upgraded source and fail every
+// subsequent open. The identity-mutation lock is taken first, matching the
+// lock order of every other identity writer.
 func (s *Store) repairAccountIdentityAddressKeys(ctx context.Context) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
