@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-30
+last_edited: 2026-09-03
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -53,6 +53,9 @@ auto_confirm_identities = false
 [discord]
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
+# Skip attachments from rooms with more than this many participants
+# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"
 
@@ -463,14 +466,22 @@ add-discord`; tokens and binding labels do not belong in `config.toml`.
 | Key | Default | Description |
 |---|---|---|
 | `max_media_bytes` | `52428800` (50 MiB) | Maximum size of one Discord attachment downloaded during sync or backfill |
+| `max_media_mb` | — | Same cap in MiB; when set it takes precedence over `max_media_bytes` |
+| `media` | `true` | Download attachment bytes at all |
+| `media_scope` | `all` | Which conversations collect media: `all`, `direct` (direct and group chats only), or `none` |
+| `media_max_participants` | `20` | Skip media from conversations with more participants than this; `0` disables the cap. See [Media policy](#media-policy) |
 | `edit_rescan_window` | `168h` (seven days) | Trailing per-channel/thread window refreshed for edits, deletions, and reaction summaries |
 
-Use an exact guild ID for a per-guild filter block:
+Use an exact guild ID for a per-guild filter block. The same block also takes
+the per-account media overrides (`media`, `max_media_mb`) that the other chat
+providers put under `accounts_config`:
 
 ```toml
 [discord.guilds."123456789012345678"]
 include = ["456789012345678901"]
 exclude = ["567890123456789012"]
+# media = false
+# max_media_mb = 25
 ```
 
 An empty `include` means every accessible text or announcement channel, thread,
@@ -479,6 +490,48 @@ parent's state unless its own ID appears explicitly. An explicit child include
 can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
 [Discord](/usage/discord/#configure-media-repairs-and-channel-filters).
+
+### Media policy
+
+`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
+vocabulary. It decides which chat media is downloaded during sync and backfill;
+message text is always archived.
+
+| Key | Default | Description |
+|---|---|---|
+| `media` | `true` | Download attachment bytes. `false` archives messages without their media and records a `policy_scope` skip marker |
+| `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
+| `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
+| `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+
+The participant cap exists because most attachment bytes in a real chat
+archive come from large rooms whose forwarded videos nobody wants kept. Direct
+chats and small groups keep their photos, voice notes, and files. A skipped
+occurrence is recorded with a typed marker (`participant_threshold`,
+`policy_scope`, `account_policy`, or `size_cap`) that distinguishes a
+deliberate skip from a failed download, so the `backfill-*-media` commands do
+not retry it unless the policy changes.
+
+```toml
+[beeper]
+media_scope = "all"
+media_max_participants = 20
+max_media_mb = 250
+
+# Keep everything from one account regardless of room size or size cap.
+[beeper.accounts_config.signal]
+media = true
+max_media_mb = 500
+
+# Never download from another account.
+[beeper.accounts_config.telegram]
+media = false
+```
+
+Policy changes apply to future downloads. Media already stored under an
+earlier policy stays until you run `msgvault purge-excluded-media`, which
+removes attachment bytes the current policy would no longer collect.
 
 ### `[log]`
 
@@ -706,7 +759,13 @@ accounts = []                     # accountID include filter (empty = all)
 exclude_accounts = []             # skip networks archived natively, e.g. ["whatsapp"]
 rate_limit_qps = 20               # request rate against the local API
 media = true                      # download attachment bytes
-max_media_mb = 100                # per-attachment download cap (MiB)
+media_scope = "all"               # all, direct, or none
+media_max_participants = 20       # skip media from larger rooms; 0 = no cap
+max_media_mb = 250                # per-attachment download cap (MiB)
+
+# [beeper.accounts_config.signal]  # per-account override, keyed by accountID
+# media = true
+# max_media_mb = 500
 ```
 
 | Key | Default | Description |
@@ -718,7 +777,10 @@ max_media_mb = 100                # per-attachment download cap (MiB)
 | `exclude_accounts` | — | Beeper accountIDs to skip (wins over `accounts`) |
 | `rate_limit_qps` | `20` | Request rate limit against the local API |
 | `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
-| `max_media_mb` | `100` | Per-attachment download cap in MiB (over-cap media leaves a retry marker) |
+| `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media from conversations above this many participants; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
+| `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
 ### `[slack]`
 
@@ -733,7 +795,12 @@ schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
 channels = []                     # channel-name include filter (empty = all memberships)
 exclude_channels = []             # channel names to skip, e.g. ["noise"]
 media = true                      # download shared-file bytes
-max_media_mb = 100                # per-file download cap (MiB)
+media_scope = "all"               # all, direct, or none
+media_max_participants = 20       # skip files from larger channels; 0 = no cap
+max_media_mb = 250                # per-file download cap (MiB)
+
+# [slack.accounts_config.T0123456]  # per-workspace override, keyed by team ID
+# media = false
 ```
 
 | Key | Default | Description |
@@ -743,7 +810,36 @@ max_media_mb = 100                # per-file download cap (MiB)
 | `channels` | all | Channel names to sync (include filter; DMs are never filtered) |
 | `exclude_channels` | — | Channel names to skip (wins over `channels`) |
 | `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
-| `max_media_mb` | `100` | Per-file download cap in MiB (over-cap files leave a retry marker) |
+| `media_scope` | `all` | `all`, `direct` (DMs and group DMs only), or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip files from conversations above this many members; `0` = no cap |
+| `max_media_mb` | `250` | Per-file download cap in MiB (over-cap files are recorded as a `size_cap` skip and retried only after the cap changes) |
+| `accounts_config` | — | Per-team-ID `media` and `max_media_mb` overrides |
+
+### `[teams]`
+
+Media policy for [Microsoft Teams](/usage/teams/) chats and channels. Teams
+sync itself is scheduled through `[[accounts]]`; this table only decides which
+attachments are downloaded.
+
+```toml
+[teams]
+media = true
+media_scope = "all"
+media_max_participants = 20
+max_media_mb = 250
+
+[teams.accounts_config."user@example.com"]
+media = true
+max_media_mb = 500
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `media` | `true` | Download attachment and inline hosted-content bytes (failed downloads retry via `backfill-teams-media`) |
+| `media_scope` | `all` | `all`, `direct` (chats only, not channels), or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media from chats and channels above this many members; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
 ### Granola Sources
 

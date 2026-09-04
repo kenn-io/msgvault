@@ -18,8 +18,8 @@ import (
 )
 
 // defaultMaxMediaBytes caps individual file downloads (config max_media_mb
-// overrides).
-const defaultMaxMediaBytes = int64(100 << 20)
+// overrides). It mirrors the config-layer default exactly.
+const defaultMaxMediaBytes = attachmentpolicy.DefaultChatMaxBytes
 
 // mediaHost is the only host file bytes are ever fetched from with the
 // bearer token. Message JSON is attacker-influenceable (any workspace member
