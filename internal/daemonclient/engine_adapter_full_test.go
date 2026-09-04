@@ -2280,6 +2280,79 @@ func TestEngineSearchFastWithStatsForwardsSourceIDs(t *testing.T) {
 	assert.Equal(int64(2), result.Stats.AccountCount)
 }
 
+func TestEngineListCollectionScopesProjectsUserCollections(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/cli/collections", r.URL.Path)
+		writeJSONResponse(t, w, map[string]any{
+			"collections": []map[string]any{
+				{"name": "All", "created_at": "2026-01-01T00:00:00Z", "source_ids": []int64{1, 2}},
+				{"name": "Work", "created_at": "2026-01-02T00:00:00Z", "source_ids": []int64{2, 1}},
+				{"name": "Empty", "created_at": "2026-01-03T00:00:00Z", "source_ids": []int64{}},
+			},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	got, err := engine.ListCollectionScopes(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "Work", got[0].Name)
+	assert.Equal(t, []int64{2, 1}, got[0].SourceIDs)
+	assert.Equal(t, "Empty", got[1].Name)
+	assert.NotNil(t, got[1].SourceIDs)
+	assert.Empty(t, got[1].SourceIDs)
+}
+
+func TestEngineAggregateForwardsAndConfirmsCollectionSourceIDs(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, []string{"7", "8"}, r.URL.Query()["source_ids"])
+		assert.Empty(t, r.URL.Query()["source_id"])
+		writeJSONResponse(t, w, map[string]any{
+			"view_type": "senders", "rows": []map[string]any{}, "applied_source_ids": []int64{8, 7},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+func TestEngineCollectionReadsFailClosedWithoutAppliedSourceEcho(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONResponse(t, w, map[string]any{"view_type": "senders", "rows": []map[string]any{}})
+	})
+	engine := NewEngineAdapter(store)
+
+	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
+	require.Error(t, err)
+	assert.Nil(t, rows)
+	assert.Contains(t, err.Error(), "source IDs")
+	assert.Contains(t, err.Error(), "upgrade")
+}
+
+func TestEngineCollectionMessageReadsForwardSourceIDsAndEmptySkipsHTTP(t *testing.T) {
+	calls := 0
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, "/api/v1/messages/filter", r.URL.Path)
+		assert.Equal(t, []string{"7", "8"}, r.URL.Query()["source_ids"])
+		writeJSONResponse(t, w, map[string]any{
+			"count": 0, "has_more": false, "offset": 0, "limit": 500,
+			"messages": []map[string]any{}, "applied_source_ids": []int64{7, 8},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	messages, err := engine.ListMessages(context.Background(), query.MessageFilter{SourceIDs: []int64{7, 8}})
+	require.NoError(t, err)
+	assert.Empty(t, messages)
+	empty, err := engine.ListMessages(context.Background(), query.MessageFilter{SourceIDs: []int64{}})
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+	assert.Equal(t, 1, calls)
+}
+
 func TestEngineSearchFastWithStatsRequiresSourceIDEcho(t *testing.T) {
 	tests := []struct {
 		name string

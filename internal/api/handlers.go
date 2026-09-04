@@ -226,18 +226,20 @@ type StatusMessageResponse struct {
 }
 
 type FilteredMessagesResponse struct {
-	Count    int              `json:"count"`
-	HasMore  bool             `json:"has_more"`
-	Offset   int              `json:"offset"`
-	Limit    int              `json:"limit"`
-	Messages []MessageSummary `json:"messages"`
+	Count            int              `json:"count"`
+	HasMore          bool             `json:"has_more"`
+	Offset           int              `json:"offset"`
+	Limit            int              `json:"limit"`
+	Messages         []MessageSummary `json:"messages"`
+	AppliedSourceIDs []int64          `json:"applied_source_ids,omitempty"`
 }
 
 type GmailIDsResponse struct {
-	GmailIDs    []string               `json:"gmail_ids"`
-	Targets     []query.DeletionTarget `json:"targets,omitempty"`
-	SearchQuery string                 `json:"search_query,omitempty"`
-	SearchMode  string                 `json:"search_mode,omitempty"`
+	GmailIDs         []string               `json:"gmail_ids"`
+	Targets          []query.DeletionTarget `json:"targets,omitempty"`
+	SearchQuery      string                 `json:"search_query,omitempty"`
+	SearchMode       string                 `json:"search_mode,omitempty"`
+	AppliedSourceIDs []int64                `json:"applied_source_ids,omitempty"`
 }
 
 type DeepSearchResponse struct {
@@ -2003,8 +2005,9 @@ func (s *Server) writeIfAnalyticsInitializing(ctx context.Context, w http.Respon
 
 // AggregateResponse represents aggregate query results.
 type AggregateResponse struct {
-	ViewType string             `json:"view_type"`
-	Rows     []AggregateRowJSON `json:"rows"`
+	ViewType         string             `json:"view_type"`
+	Rows             []AggregateRowJSON `json:"rows"`
+	AppliedSourceIDs []int64            `json:"applied_source_ids,omitempty"`
 }
 
 // AggregateRowJSON represents a single aggregate row in JSON format.
@@ -2286,6 +2289,11 @@ func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	} else if ok {
 		opts.SourceID = &sourceID
 	}
+	if sourceIDs, ok, err := queryInt64s(r, "source_ids"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.SourceIDs = normalizeSourceIDs(sourceIDs)
+	}
 	if r.URL.Query().Get("attachments_only") == "true" {
 		opts.WithAttachmentsOnly = true
 	}
@@ -2364,6 +2372,11 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 		return filter, err
 	} else if ok {
 		filter.SourceID = &id
+	}
+	if ids, ok, err := queryInt64s(r, "source_ids"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.SourceIDs = normalizeSourceIDs(ids)
 	}
 	if r.URL.Query().Get("attachments_only") == "true" {
 		filter.WithAttachmentsOnly = true
@@ -2754,8 +2767,9 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AggregateResponse{
-		ViewType: viewTypeString(viewType),
-		Rows:     jsonRows,
+		ViewType:         viewTypeString(viewType),
+		Rows:             jsonRows,
+		AppliedSourceIDs: append([]int64(nil), opts.SourceIDs...),
 	})
 }
 
@@ -2816,8 +2830,9 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AggregateResponse{
-		ViewType: viewTypeString(viewType),
-		Rows:     jsonRows,
+		ViewType:         viewTypeString(viewType),
+		Rows:             jsonRows,
+		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
 	})
 }
 
@@ -2870,11 +2885,12 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
-		Count:    len(summaries),
-		HasMore:  hasMore,
-		Offset:   filter.Pagination.Offset,
-		Limit:    requestLimit,
-		Messages: summaries,
+		Count:            len(summaries),
+		HasMore:          hasMore,
+		Offset:           filter.Pagination.Offset,
+		Limit:            requestLimit,
+		Messages:         summaries,
+		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
 	})
 }
 
@@ -3227,8 +3243,11 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		targets = []query.DeletionTarget{}
 	}
 	writeJSON(w, http.StatusOK, GmailIDsResponse{
-		GmailIDs: deletion.SourceMessageIDs(targets), Targets: targets,
-		SearchQuery: searchQuery, SearchMode: searchMode,
+		GmailIDs:         deletion.SourceMessageIDs(targets),
+		Targets:          targets,
+		SearchQuery:      searchQuery,
+		SearchMode:       searchMode,
+		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
 	})
 }
 
@@ -3641,12 +3660,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	if ids, ok, err := queryInt64s(r, "source_ids"); err != nil {
-		s.rejectBadParam(w, err)
-		return
-	} else if ok {
-		filter.SourceIDs = normalizeSourceIDs(ids)
-	}
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
@@ -3742,11 +3755,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		filter.Recipient != "" || filter.RecipientName != "" ||
 		filter.Domain != "" || filter.Label != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
-		filter.MessageType != "" || filter.ListID != "") {
+		filter.MessageType != "" || filter.ListID != "" || filter.SourceIDs != nil) {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Body search does not support sender, sender_name, recipient, "+
 				"recipient_name, domain, label, time_period, empty_targets, "+
-				"message_type, or list_id filters")
+				"message_type, list_id, or source_ids filters")
 		return
 	}
 

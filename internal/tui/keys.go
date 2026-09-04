@@ -166,7 +166,7 @@ func (m *Model) invalidateInlineSearchRequests() {
 
 func (m Model) currentSearchFilter() query.MessageFilter {
 	filter := m.drillFilter
-	filter.SourceID = m.accountFilter
+	m.applyEmailSourceScope(&filter)
 	filter.WithAttachmentsOnly = m.filters.attachmentsOnly
 	filter.HideDeletedFromSource = m.filters.hideDeletedFromSource
 	return filter
@@ -178,7 +178,8 @@ func (m Model) semanticSearchAvailable() bool {
 }
 
 func (m Model) deepSearchAvailable() bool {
-	return true
+	filter := m.currentSearchFilter()
+	return filter.ListID == "" && (filter.SourceIDs == nil || len(filter.SourceIDs) == 1)
 }
 
 func (m *Model) syncSearchScope() {
@@ -1248,8 +1249,8 @@ func (m Model) handleQuitConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	accounts := m.selectableAccounts()
-	maxIdx := len(accounts) // 0 = All Accounts/Sources, then selectable sources
+	options := m.selectorOptions()
+	maxIdx := len(options) - 1
 	switch msg.String() {
 	case "up", "k", keyNameCtrlP:
 		if m.modalCursor > 0 {
@@ -1261,15 +1262,33 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		}
 	case keyNameEnter:
 		// Apply selection with bounds check
-		var selectedID *int64
-		if m.modalCursor > 0 && m.modalCursor <= len(accounts) {
-			accID := accounts[m.modalCursor-1].ID
-			selectedID = &accID
+		if m.modalCursor < 0 || m.modalCursor > maxIdx {
+			m.modalCursor = 0
 		}
+		selected := options[m.modalCursor]
 		if m.mode == modeMeetings {
-			m.meetingState.sourceID = selectedID
+			m.meetingState.sourceID = selected.accountID
 		} else {
-			m.accountFilter = selectedID
+			if m.mode == modeEmail {
+				previous := m.currentSourceScope()
+				m.sourceScopeExplicit = true
+				switch selected.kind {
+				case scopeOptionAll:
+					m.accountFilter = nil
+					m.sourceScope = allSourceScope()
+				case scopeOptionAccount:
+					m.accountFilter = selected.accountID
+					m.sourceScope = accountSourceScope(selected.accountID)
+				case scopeOptionCollection:
+					m.accountFilter = nil
+					m.sourceScope = collectionSourceScope(selected.collection)
+				}
+				if !previous.matches(selected) {
+					m.invalidateSourceScope()
+				}
+			} else {
+				m.accountFilter = selected.accountID
+			}
 		}
 		m.modal = modalNone
 		m.loading = true
@@ -1556,11 +1575,11 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 		// Top-level: create fresh drill filter
 		m.drillViewType = m.viewType
 		m.drillFilter = query.MessageFilter{
-			SourceID:              m.accountFilter,
 			WithAttachmentsOnly:   m.filters.attachmentsOnly,
 			HideDeletedFromSource: m.filters.hideDeletedFromSource,
 			TimeRange:             query.TimeRange{Granularity: m.timeGranularity},
 		}
+		m.applyEmailSourceScope(&m.drillFilter)
 	}
 
 	// Set filter field on drillFilter (accumulates for sub-agg)
@@ -1603,23 +1622,49 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 func (m *Model) openAccountSelector() {
 	m.modal = modalAccountSelector
 	m.modalCursor = 0 // Default to "All Accounts" / "All Sources"
-	selectedID := m.accountFilter
-	if m.mode == modeMeetings {
-		selectedID = m.meetingState.sourceID
-	}
-	accounts := m.selectableAccounts()
-	if selectedID != nil {
-		for i, acc := range accounts {
-			if acc.ID == *selectedID {
-				m.modalCursor = i + 1 // +1 because 0 is "All Accounts"
+	options := m.selectorOptions()
+	for i, option := range options {
+		if m.mode == modeEmail {
+			if m.currentSourceScope().matches(option) {
+				m.modalCursor = i
+				break
+			}
+		} else if option.kind == scopeOptionAll && m.mode == modeMeetings && m.meetingState.sourceID == nil {
+			m.modalCursor = i
+		} else if option.kind == scopeOptionAll && m.mode == modeTexts && m.accountFilter == nil {
+			m.modalCursor = i
+		} else if option.accountID != nil {
+			selectedID := m.accountFilter
+			if m.mode == modeMeetings {
+				selectedID = m.meetingState.sourceID
+			}
+			if selectedID != nil && *selectedID == *option.accountID {
+				m.modalCursor = i
 				break
 			}
 		}
 	}
 	// Clamp to valid range in case accounts list changed
-	if m.modalCursor > len(accounts) {
+	if m.modalCursor >= len(options) {
 		m.modalCursor = 0
 	}
+}
+
+func (m *Model) invalidateSourceScope() {
+	m.aggregateRequestID++
+	m.loadRequestID++
+	m.detailRequestID++
+	m.searchRequestID++
+	m.presentationGeneration++
+	m.invalidatePreSearchSnapshot()
+	m.searchFilter = query.MessageFilter{}
+	m.drillFilter.SourceID = nil
+	m.drillFilter.SourceIDs = nil
+	m.selection.aggregateKeys = make(map[string]bool)
+	m.selection.messageIDs = make(map[int64]bool)
+	m.messages = nil
+	m.rows = nil
+	m.contextStats = nil
 }
 
 func (m *Model) openFilterModal() {

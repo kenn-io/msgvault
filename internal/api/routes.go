@@ -882,16 +882,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("q", "Search query", true),
 			queryStringParam("view_type", "Stats grouping view type", false),
 		}, messageFilterParams()...)
-		return append(params,
-			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
-		)
+		return params
 	case "deepSearch":
 		filterParams := messageFilterParams()
 		for _, parameter := range filterParams {
 			switch parameter.Name {
 			case "sender", "sender_name", recipientParam, "recipient_name", "domain", "label",
 				"time_period", "conversation_id",
-				"empty_targets", "message_type", "list_id":
+				"empty_targets", "message_type", "list_id", "source_ids":
 				parameter.Description += "; not supported when scope=body"
 			}
 		}
@@ -974,6 +972,7 @@ func aggregateOptionParams() []*huma.Param {
 		queryIntegerParam(limitParam, "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
 		queryStringParam("time_granularity", "Time bucket granularity", false),
 		queryIntegerParam("source_id", "Source ID"),
+		queryIntegerArrayParam("source_ids", "Source IDs; repeat or comma-separate values"),
 		queryBooleanParam("attachments_only", "Only include messages with attachments"),
 		queryBooleanParam("hide_deleted", "Exclude deleted messages"),
 		queryStringParam("search_query", "Search query", false),
@@ -1005,6 +1004,7 @@ func messageFilterScopeParams() []*huma.Param {
 		queryStringParam("time_granularity", "Time bucket granularity", false),
 		queryIntegerParam("conversation_id", "Conversation ID"),
 		queryIntegerParam("source_id", "Source ID"),
+		queryIntegerArrayParam("source_ids", "Source IDs; repeat or comma-separate values"),
 		queryBooleanParam("attachments_only", "Only include messages with attachments"),
 		queryBooleanParam("hide_deleted", "Exclude deleted messages"),
 		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),

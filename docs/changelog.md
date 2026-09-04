@@ -12,7 +12,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.15.0. Version 2.14.0 also replaces the CardDAV
+  current unreleased API schema is 2.17.0. Version 2.14.0 also replaces the CardDAV
   publication and conflict response shapes with bounded projections that
   omit raw vCards and resource hrefs. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
@@ -33,6 +33,13 @@ All notable changes to msgvault, grouped by release.
   should pass `account` or stage each source separately.
 
 **Features**
+
+- The Email TUI scope selector now exposes named collections. Collection
+  member source IDs flow through aggregate, message, fast-search, statistics,
+  and deletion-target reads, with API schema 2.17.0 gating and fail-closed
+  response echoes. Empty collections match nothing, Texts and Meetings keep
+  their existing selectors, and deletion staging retains its single-source
+  manifest rule.
 
 - Web Directory workspace: browse and search promoted durable people, filter
   by contact state, category, organization, and last contact, and maintain a

@@ -37,6 +37,7 @@ type Engine struct {
 // Compile-time check that Engine implements query.Engine.
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
+var _ query.CollectionScopeLister = (*Engine)(nil)
 var _ query.MessageBodySearcher = (*Engine)(nil)
 var _ query.SemanticMessageSearcher = (*Engine)(nil)
 var _ query.DeletionTargetSearchResolver = (*Engine)(nil)
@@ -295,6 +296,10 @@ func emptyValueTargetsString(filter query.MessageFilter) *string {
 }
 
 func generatedFilterMessagesQuery(filter query.MessageFilter, paginated bool) generated.FilterMessagesQuery {
+	sourceID := filter.SourceID
+	if filter.SourceIDs != nil {
+		sourceID = nil
+	}
 	out := generated.FilterMessagesQuery{
 		Sender:          optionalString(filter.Sender),
 		SenderName:      optionalString(filter.SenderName),
@@ -307,7 +312,8 @@ func generatedFilterMessagesQuery(filter query.MessageFilter, paginated bool) ge
 		TimePeriod:      optionalString(filter.TimeRange.Period),
 		TimeGranularity: optionalString(timeGranularityToString(filter.TimeRange.Granularity)),
 		ConversationID:  filter.ConversationID,
-		SourceID:        filter.SourceID,
+		SourceID:        sourceID,
+		SourceIds:       copyInt64sPreserveNil(filter.SourceIDs),
 		AttachmentsOnly: optionalBool(filter.WithAttachmentsOnly),
 		HideDeleted:     optionalBool(filter.HideDeletedFromSource),
 		After:           optionalTimeRFC3339(filter.After),
@@ -421,7 +427,7 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		TimeGranularity: fields.TimeGranularity,
 		ConversationID:  fields.ConversationID,
 		SourceID:        fields.SourceID,
-		SourceIds:       append([]int64(nil), filter.SourceIDs...),
+		SourceIds:       copyInt64sPreserveNil(filter.SourceIDs),
 		AttachmentsOnly: fields.AttachmentsOnly,
 		HideDeleted:     fields.HideDeleted,
 		After:           fields.After,
@@ -642,6 +648,9 @@ func queryMessageSummariesFromCLIGenerated(msgs []generated.CLIQueryMessageSumma
 
 // Aggregate performs grouping based on the provided ViewType.
 func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
+	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
+		return []query.AggregateRow{}, nil
+	}
 	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{}, groupBy); err != nil {
 		return nil, err
 	}
@@ -653,7 +662,8 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 				Direction:       optionalString(sortDirectionToString(opts.SortDirection)),
 				Limit:           optionalPositiveInt64(opts.Limit),
 				TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
-				SourceID:        opts.SourceID,
+				SourceID:        sourceIDForSourceIDs(opts.SourceID, opts.SourceIDs),
+				SourceIds:       copyInt64sPreserveNil(opts.SourceIDs),
 				AttachmentsOnly: optionalBool(opts.WithAttachmentsOnly),
 				HideDeleted:     optionalBool(opts.HideDeletedFromSource),
 				SearchQuery:     optionalString(opts.SearchQuery),
@@ -665,12 +675,17 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	if err != nil {
 		return nil, err
 	}
-
+	if err := requireAppliedSourceIDs(opts.SourceIDs, resp.JSON200.AppliedSourceIds, "aggregate"); err != nil {
+		return nil, err
+	}
 	return aggregateRowsFromGenerated(resp.JSON200), nil
 }
 
 // SubAggregate performs aggregation on a filtered subset of messages.
 func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, groupBy query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.AggregateRow{}, nil
+	}
 	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, groupBy); err != nil {
 		return nil, err
 	}
@@ -693,7 +708,8 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 				TimePeriod:      optionalString(filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
 				ConversationID:  filter.ConversationID,
-				SourceID:        filter.SourceID,
+				SourceID:        sourceIDForSourceIDs(filter.SourceID, filter.SourceIDs),
+				SourceIds:       copyInt64sPreserveNil(filter.SourceIDs),
 				AttachmentsOnly: optionalBool(filter.WithAttachmentsOnly),
 				HideDeleted:     optionalBool(filter.HideDeletedFromSource),
 				After:           optionalTimeRFC3339(filter.After),
@@ -710,12 +726,17 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 	if err != nil {
 		return nil, err
 	}
-
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "sub-aggregate"); err != nil {
+		return nil, err
+	}
 	return aggregateRowsFromGenerated(resp.JSON200), nil
 }
 
 // ListMessages returns messages matching the filter criteria.
 func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.MessageSummary{}, nil
+	}
 	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
 		return nil, err
 	}
@@ -725,6 +746,9 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 		})
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "message filter"); err != nil {
 		return nil, err
 	}
 	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
@@ -1101,9 +1125,8 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	if err != nil {
 		return nil, err
 	}
-	if len(filter.SourceIDs) > 0 &&
-		!slices.Equal(normalizedSourceIDs(filter.SourceIDs), normalizedSourceIDs(resp.JSON200.AppliedSourceIds)) {
-		return nil, errors.New("daemon did not confirm fast-search source IDs; upgrade the daemon to API schema 1.5.0 or newer")
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "fast-search"); err != nil {
+		return nil, err
 	}
 	return &query.SearchFastResult{
 		Messages:   messageSummariesFromGenerated(resp.JSON200.Messages),
@@ -1113,6 +1136,9 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 }
 
 func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.DeletionTarget{}, nil
+	}
 	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
 		return nil, err
 	}
@@ -1122,6 +1148,9 @@ func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.Me
 		})
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
 		return nil, err
 	}
 	return deletionTargetsFromGenerated(resp.JSON200)
@@ -1159,6 +1188,9 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	}
 	if stringValue(resp.JSON200.SearchQuery) != queryString || stringValue(resp.JSON200.SearchMode) != modeString {
 		return nil, errors.New("daemon did not confirm the deletion search scope; upgrade the daemon and retry")
+	}
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
+		return nil, err
 	}
 	return deletionTargetsFromGenerated(resp.JSON200)
 }
@@ -1201,6 +1233,9 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	}
 	if stringValue(resp.JSON200.SearchQuery) != queryString || stringValue(resp.JSON200.SearchMode) != modeString {
 		return nil, errors.New("daemon did not confirm the aggregate deletion search scope; upgrade the daemon and retry")
+	}
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
+		return nil, err
 	}
 	return deletionTargetsFromGenerated(resp.JSON200)
 }
@@ -1281,6 +1316,26 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 		}
 	}
 	return result, nil
+}
+
+// ListCollectionScopes returns the user-managed collection projections used
+// by the TUI. The daemon-owned All collection is not a selectable scope.
+func (e *Engine) ListCollectionScopes(ctx context.Context) ([]query.CollectionScope, error) {
+	collections, err := e.store.GetCLICollections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopes := make([]query.CollectionScope, 0, len(collections))
+	for _, collection := range collections {
+		if collection.Name == store.DefaultCollectionName {
+			continue
+		}
+		scopes = append(scopes, query.CollectionScope{
+			Name:      collection.Name,
+			SourceIDs: copyInt64sPreserveNil(collection.SourceIDs),
+		})
+	}
+	return scopes, nil
 }
 
 func (e *Engine) ListConversations(ctx context.Context, filter query.TextFilter) ([]query.ConversationRow, error) {
@@ -1374,8 +1429,8 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 		return nil, err
 	}
 	params := &generated.GetTotalStatsQuery{
-		SourceID:        opts.SourceID,
-		SourceIds:       append([]int64(nil), opts.SourceIDs...),
+		SourceID:        sourceIDForSourceIDs(opts.SourceID, opts.SourceIDs),
+		SourceIds:       copyInt64sPreserveNil(opts.SourceIDs),
 		AttachmentsOnly: optionalBool(opts.WithAttachmentsOnly),
 		HideDeleted:     optionalBool(opts.HideDeletedFromSource),
 		SearchQuery:     optionalString(opts.SearchQuery),
@@ -1418,9 +1473,8 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	if opts.SearchScope && (resp.JSON200.AppliedSearchScope == nil || !*resp.JSON200.AppliedSearchScope) {
 		return nil, errors.New("daemon did not confirm total-stats search scope; upgrade the daemon to API schema 1.5.0 or newer")
 	}
-	if len(opts.SourceIDs) > 0 &&
-		!slices.Equal(normalizedSourceIDs(opts.SourceIDs), normalizedSourceIDs(resp.JSON200.AppliedSourceIds)) {
-		return nil, errors.New("daemon did not confirm total-stats source IDs; upgrade the daemon to API schema 1.5.0 or newer")
+	if err := requireAppliedSourceIDs(opts.SourceIDs, resp.JSON200.AppliedSourceIds, "total-stats"); err != nil {
+		return nil, err
 	}
 	return totalStatsFromGenerated(resp.JSON200), nil
 }
@@ -1442,6 +1496,30 @@ func normalizedSourceIDs(ids []int64) []int64 {
 	normalized := append([]int64(nil), ids...)
 	slices.Sort(normalized)
 	return slices.Compact(normalized)
+}
+
+func copyInt64sPreserveNil(ids []int64) []int64 {
+	if ids == nil {
+		return nil
+	}
+	return append(make([]int64, 0, len(ids)), ids...)
+}
+
+func sourceIDForSourceIDs(sourceID *int64, sourceIDs []int64) *int64 {
+	if sourceIDs != nil {
+		return nil
+	}
+	return sourceID
+}
+
+func requireAppliedSourceIDs(requested, applied []int64, surface string) error {
+	if requested == nil {
+		return nil
+	}
+	if !slices.Equal(normalizedSourceIDs(requested), normalizedSourceIDs(applied)) {
+		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)
+	}
+	return nil
 }
 
 func hasExplicitEmptyAccountScope(q *search.Query) bool {

@@ -27,6 +27,9 @@ type GetAggregatesQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// SourceIds Source IDs; repeat or comma-separate values
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
 
@@ -61,6 +64,9 @@ type GetSubAggregatesQuery struct {
 
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SourceIds Source IDs; repeat or comma-separate values
+	SourceIds []int64 `json:"source_ids,omitempty"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -499,6 +505,9 @@ type FilterMessagesQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// SourceIds Source IDs; repeat or comma-separate values
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
 
@@ -563,6 +572,9 @@ type GetGmailIDsByFilterQuery struct {
 
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SourceIds Source IDs; repeat or comma-separate values
+	SourceIds []int64 `json:"source_ids,omitempty"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -1048,6 +1060,9 @@ type DeepSearchQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// SourceIds Source IDs; repeat or comma-separate values; not supported by deep search
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
 
@@ -1144,6 +1159,9 @@ type FastSearchQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// SourceIds Source IDs; repeat or comma-separate values
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
 
@@ -1170,9 +1188,6 @@ type FastSearchQuery struct {
 
 	// Direction Sort direction: asc or desc
 	Direction *string `json:"direction,omitempty"`
-
-	// SourceIds Source IDs; repeat the parameter for multiple sources
-	SourceIds []int64 `json:"source_ids,omitempty"`
 }
 
 func (f FastSearchQuery) Validate() error {

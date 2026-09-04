@@ -178,17 +178,7 @@ func (m Model) buildTitleBar() string {
 	}
 
 	// Account indicator
-	var accountStr string
-	if m.accountFilter == nil {
-		accountStr = "All Accounts"
-	} else {
-		for _, acc := range m.accounts {
-			if acc.ID == *m.accountFilter {
-				accountStr = acc.Identifier
-				break
-			}
-		}
-	}
+	accountStr := m.scopeTitle()
 
 	// Filter indicators
 	if m.filters.attachmentsOnly {
@@ -1371,19 +1361,16 @@ func (m Model) renderAccountSelectorModal() string {
 	}
 	sb.WriteString(m.styles.modalTitle.Render(title))
 	sb.WriteString("\n\n")
-	// All Accounts option
-	indicator := "○"
-	if m.modalCursor == 0 {
-		indicator = "●"
-	}
-	_, _ = fmt.Fprintf(&sb, " %s %s\n", indicator, allLabel)
-	// Individual accounts
-	for i, acc := range m.selectableAccounts() {
-		indicator = "○"
-		if m.modalCursor == i+1 {
+	for i, option := range m.selectorOptions() {
+		label := option.label
+		if i == 0 {
+			label = allLabel
+		}
+		indicator := "○"
+		if m.modalCursor == i {
 			indicator = "●"
 		}
-		_, _ = fmt.Fprintf(&sb, " %s %s\n", indicator, acc.Identifier)
+		_, _ = fmt.Fprintf(&sb, " %s %s\n", indicator, label)
 	}
 	sb.WriteString("\n[↑/↓] Navigate  [Enter] Select  [Esc] Cancel")
 	return sb.String()

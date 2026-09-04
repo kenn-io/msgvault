@@ -8241,3 +8241,66 @@ func TestStatsReportsTextLaneSeparatelyFromMultimodal(t *testing.T) {
 	assert.Equal("ready", resp.VectorVisualStatus,
 		"the visual lane reports its own readiness for MCP capability probes")
 }
+
+func TestHandleAggregatesEchoesNormalizedSourceIDs(t *testing.T) {
+	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+	w := doGet(srv, "/api/v1/aggregates?view_type=senders&source_id=99&source_ids=8,7&source_ids=8")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, []any{float64(7), float64(8)}, response["applied_source_ids"])
+}
+
+func TestHandleFilteredMessagesUsesSourceIDsAndEchoesThem(t *testing.T) {
+	var captured query.MessageFilter
+	engine := &querytest.MockEngine{
+		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+			captured = filter
+			return []query.MessageSummary{}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := doGet(srv, "/api/v1/messages/filter?source_id=99&source_ids=8,7&source_ids=8")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, []int64{7, 8}, captured.SourceIDs)
+	require.NotNil(t, captured.SourceID)
+	assert.Equal(t, int64(99), *captured.SourceID)
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, []any{float64(7), float64(8)}, response["applied_source_ids"])
+}
+
+func TestHandleDeepSearchRejectsSourceIDs(t *testing.T) {
+	called := false
+	engine := &querytest.MockEngine{
+		SearchFunc: func(_ context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := doGet(srv, "/api/v1/search/deep?q=needle&source_ids=7,8")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.False(t, called)
+}
+
+func TestHandleGmailIDsEchoesSourceIDs(t *testing.T) {
+	var captured query.MessageFilter
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+			captured = filter
+			return []query.DeletionTarget{}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := doGet(srv, "/api/v1/messages/gmail-ids?source_ids=8,7")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, []int64{7, 8}, captured.SourceIDs)
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, []any{float64(7), float64(8)}, response["applied_source_ids"])
+}
