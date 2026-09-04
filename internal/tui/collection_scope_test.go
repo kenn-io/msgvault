@@ -146,6 +146,27 @@ func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
 	assert.Equal(t, int64(2), updated.(Model).stats.MessageCount)
 }
 
+func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.level = levelMessageDetail
+	model.breadcrumbs = []navigationSnapshot{{state: viewState{level: levelAggregates}}}
+	model.messageDetail = &query.MessageDetail{ID: 7}
+	model.threadConversationID = 12
+	model.threadMessages = []query.MessageSummary{{ID: 7}}
+	model.parkedMessageReaders[modeEmail].messageDetail = &query.MessageDetail{ID: 8}
+
+	model.invalidateSourceScope()
+
+	assert.Equal(t, levelAggregates, model.level)
+	assert.Empty(t, model.breadcrumbs)
+	assert.Nil(t, model.messageDetail)
+	assert.Empty(t, model.threadMessages)
+	assert.Zero(t, model.threadConversationID)
+	assert.Nil(t, model.parkedMessageReaders[modeEmail].messageDetail)
+	_, cmd := model.goBack()
+	assert.Nil(t, cmd)
+}
+
 func TestCollectionRowsStayEmailOnly(t *testing.T) {
 	model := New(newMockEngine(MockConfig{}), Options{
 		DataDir: "/tmp/test",

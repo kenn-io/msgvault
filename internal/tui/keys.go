@@ -1657,14 +1657,27 @@ func (m *Model) invalidateSourceScope() {
 	m.presentationGeneration++
 	m.invalidatePreSearchSnapshot()
 	m.searchFilter = query.MessageFilter{}
-	m.drillFilter.SourceID = nil
-	m.drillFilter.SourceIDs = nil
+	m.level = levelAggregates
+	m.filterKey = ""
+	m.allMessages = false
+	m.drillFilter = query.MessageFilter{}
+	m.drillViewType = 0
+	m.contextStats = nil
+	m.searchQuery = ""
+	m.breadcrumbs = nil
 	m.selection.aggregateKeys = make(map[string]bool)
 	m.selection.messageIDs = make(map[int64]bool)
 	m.messages = nil
 	m.rows = nil
 	m.stats = nil
-	m.contextStats = nil
+	m.messageReaderState = messageReaderState{}
+	m.parkedMessageReaders[modeEmail] = messageReaderState{}
+	m.threadConversationID = 0
+	m.threadMessages = nil
+	m.threadCursor = 0
+	m.threadScrollOffset = 0
+	m.threadTruncated = false
+	m.restorePosition = false
 }
 
 func (m *Model) openFilterModal() {

@@ -288,7 +288,7 @@ func (c *ActionController) resolveDeletionTargets(ctx context.Context, dctx Dele
 			accounts[account.ID] = account
 		}
 		for _, msg := range dctx.Messages {
-			if dctx.MessageSelection[msg.ID] {
+			if dctx.MessageSelection[msg.ID] && deletionSourceAllowed(msg.SourceID, dctx) {
 				account, ok := accounts[msg.SourceID]
 				if !ok {
 					return nil, fmt.Errorf("selected message %d has no source metadata", msg.ID)
@@ -366,6 +366,18 @@ func deletionSearchModeName(mode searchModeKind) string {
 	default:
 		return string(query.DeletionSearchFast)
 	}
+}
+
+func deletionSourceAllowed(sourceID int64, dctx DeletionContext) bool {
+	if dctx.SourceIDs != nil {
+		for _, allowedID := range dctx.SourceIDs {
+			if sourceID == allowedID {
+				return true
+			}
+		}
+		return false
+	}
+	return dctx.AccountFilter == nil || sourceID == *dctx.AccountFilter
 }
 
 // buildFilterForAggregate constructs a MessageFilter for a single aggregate key.
