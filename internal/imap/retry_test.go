@@ -2,13 +2,17 @@ package imap
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
@@ -163,6 +167,27 @@ func TestRetryDoesNotClassifyTruncatedGreeting(t *testing.T) {
 	assert.Equal(t, int64(1), accepted())
 }
 
+func TestRetryDoesNotClassifySTARTTLSTruncatedGreeting(t *testing.T) {
+	addr, accepted := startTruncatedGreetingServer(t)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{
+		Host: host, Port: port, STARTTLS: true, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
+}
+
 func TestRetryDoesNotClassifySTARTTLSProtocolFailure(t *testing.T) {
 	addr, accepted := startTruncatedSTARTTLSServer(t)
 	host, portText, err := net.SplitHostPort(addr)
@@ -246,6 +271,109 @@ func TestRetryRetriesDroppedSTARTTLSGreeting(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, connectRetryDelays[:1], delays)
 	assert.Equal(t, int64(2), accepted())
+}
+
+func TestRetryRetriesResetAfterSTARTTLSCommand(t *testing.T) {
+	addr, accepted := startResetSTARTTLSResponseServer(t)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{
+		Host: host, Port: port, STARTTLS: true, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	var delays []time.Duration
+	client.sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.Equal(t, connectRetryDelays[:1], delays)
+	assert.Equal(t, int64(2), accepted())
+}
+
+func TestDialIMAPImplicitTLSSuccess(t *testing.T) {
+	addr, _ := startImplicitTLSServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		_, _ = conn.Write([]byte("* OK ready\r\n"))
+	})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{Host: host, Port: port, TLS: true}, "")
+	conn, err, retryable, _ := client.dialIMAP(t.Context(), addr, &imapclient.Options{
+		TLSConfig: &tls.Config{InsecureSkipVerify: true}, // test certificate is intentionally not trusted
+	})
+	require.NoError(t, err)
+	assert.False(t, retryable)
+	require.NoError(t, waitGreeting(t.Context(), conn))
+	require.NoError(t, conn.Close())
+}
+
+func TestRetryRetriesImplicitTLSHandshakeFailure(t *testing.T) {
+	addr, accepted := startDroppedTLSHandshakeServer(t, len(connectRetryDelays)+1)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{Host: host, Port: port, TLS: true}, "")
+	var delays []time.Duration
+	client.sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.Equal(t, connectRetryDelays[:], delays)
+	assert.Equal(t, int64(len(connectRetryDelays)+1), accepted())
+}
+
+func TestRetryDoesNotRepeatImplicitTLSCertificateFailure(t *testing.T) {
+	addr, accepted := startImplicitTLSServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		buffer := make([]byte, 1)
+		_, _ = conn.Read(buffer)
+	})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{Host: host, Port: port, TLS: true}, "")
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+
+	err = client.connect(t.Context())
+	assert.Error(t, err)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
+}
+
+func TestRetryDoesNotRepeatCanceledImplicitTLSHandshake(t *testing.T) {
+	addr, accepted := startSilentTCPServer(t)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{Host: host, Port: port, TLS: true}, "")
+	sleepCalled := false
+	client.sleep = func(context.Context, time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+
+	err = client.connect(ctx)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.False(t, sleepCalled)
+	assert.Equal(t, int64(1), accepted())
 }
 
 func TestRetryHonorsCancellationDuringGreeting(t *testing.T) {
@@ -420,6 +548,107 @@ func startDroppedSTARTTLSGreetingServer(t *testing.T) (string, func() int64) {
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startResetSTARTTLSResponseServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+			buffer := make([]byte, 128)
+			_, _ = conn.Read(buffer)
+			if counted.accepted.Load() == 1 {
+				if tcpConn, ok := conn.(*net.TCPConn); ok {
+					_ = tcpConn.SetLinger(0)
+				}
+				_ = conn.Close()
+				continue
+			}
+			_, _ = conn.Write([]byte("* NO STARTTLS rejected\r\n"))
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startImplicitTLSServer(t *testing.T, handler func(net.Conn)) (string, func() int64) {
+	t.Helper()
+	certServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	certificate := certServer.TLS.Certificates[0]
+	certServer.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tlsListener := tls.NewListener(listener, &tls.Config{
+		Certificates: []tls.Certificate{certificate},
+	})
+	counted := &countedListener{Listener: tlsListener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			go handler(conn)
+		}
+	}()
+	t.Cleanup(func() {
+		_ = tlsListener.Close()
+	})
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startDroppedTLSHandshakeServer(t *testing.T, connections int) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetLinger(0)
+			}
+			_ = conn.Close()
+			if int(counted.accepted.Load()) >= connections {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startSilentTCPServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	release := make(chan struct{})
+	go func() {
+		conn, err := counted.Accept()
+		if err != nil {
+			return
+		}
+		<-release
+		_ = conn.Close()
+	}()
+	t.Cleanup(func() {
+		close(release)
+		_ = listener.Close()
+	})
 	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
 }
 

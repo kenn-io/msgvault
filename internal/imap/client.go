@@ -212,8 +212,42 @@ func (c *observedConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	c.mu.Lock()
 	c.readBytes += int64(n)
-	if c.startTLSCommandSent && !c.startTLSResponseReady && n > 0 {
+	if !c.startTLSResponseReady && n > 0 {
 		c.startTLSResponse = append(c.startTLSResponse, p[:n]...)
+		if c.startTLSCommandSent {
+			c.parseStartTLSResponseLocked()
+		}
+	}
+	if err != nil && c.readErr == nil {
+		c.readErr = err
+	}
+	c.mu.Unlock()
+	return n, err
+}
+
+func (c *observedConn) parseStartTLSResponseLocked() {
+	for {
+		end := bytes.Index(c.startTLSResponse, []byte("\r\n"))
+		if end < 0 {
+			break
+		}
+		fields := strings.Fields(string(c.startTLSResponse[:end]))
+		if len(fields) > 1 && fields[0] == "*" && strings.EqualFold(fields[1], "OK") {
+			c.startTLSResponse = c.startTLSResponse[end+2:]
+			continue
+		}
+		c.startTLSResponseReady = true
+		c.startTLSResponseOK = len(fields) > 1 && strings.EqualFold(fields[1], "OK")
+		break
+	}
+}
+
+func (c *observedConn) Write(p []byte) (int, error) {
+	if strings.Contains(strings.ToUpper(string(p)), "STARTTLS") {
+		c.mu.Lock()
+		c.startTLSCommandSent = true
+		c.startTLSResponseReady = false
+		c.startTLSResponseOK = false
 		for {
 			end := bytes.Index(c.startTLSResponse, []byte("\r\n"))
 			if end < 0 {
@@ -224,25 +258,8 @@ func (c *observedConn) Read(p []byte) (int, error) {
 				c.startTLSResponse = c.startTLSResponse[end+2:]
 				continue
 			}
-			c.startTLSResponseReady = true
-			c.startTLSResponseOK = len(fields) > 1 && strings.EqualFold(fields[1], "OK")
 			break
 		}
-	}
-	if err != nil && c.readErr == nil {
-		c.readErr = err
-	}
-	c.mu.Unlock()
-	return n, err
-}
-
-func (c *observedConn) Write(p []byte) (int, error) {
-	if strings.Contains(strings.ToUpper(string(p)), "STARTTLS") {
-		c.mu.Lock()
-		c.startTLSCommandSent = true
-		c.startTLSResponse = nil
-		c.startTLSResponseReady = false
-		c.startTLSResponseOK = false
 		c.mu.Unlock()
 	}
 	return c.Conn.Write(p)
@@ -472,10 +489,19 @@ func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.
 	}
 	observed := &observedConn{Conn: rawConn}
 	if c.config.TLS {
-		tlsConn := tls.Client(observed, &tls.Config{
-			ServerName: normalizeHost(c.config.Host),
-			NextProtos: []string{"imap"},
-		})
+		tlsConfig := options.TLSConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+		}
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = normalizeHost(c.config.Host)
+		}
+		if tlsConfig.NextProtos == nil {
+			tlsConfig.NextProtos = []string{"imap"}
+		}
+		tlsConn := tls.Client(observed, tlsConfig)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = rawConn.Close()
 			return nil, err, isTransientConnectError(err), observed
