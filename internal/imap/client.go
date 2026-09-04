@@ -511,7 +511,16 @@ func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.
 	}
 	if c.config.STARTTLS {
 		startTLSOptions := *options
-		startTLSOptions.TLSConfig = &tls.Config{ServerName: normalizeHost(c.config.Host)}
+		tlsConfig := options.TLSConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+		}
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = normalizeHost(c.config.Host)
+		}
+		startTLSOptions.TLSConfig = tlsConfig
 		conn, err := newStartTLS(ctx, observed, &startTLSOptions)
 		if err != nil {
 			return nil, err,

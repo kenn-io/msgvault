@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -168,7 +170,7 @@ func TestRetryDoesNotClassifyTruncatedGreeting(t *testing.T) {
 }
 
 func TestRetryDoesNotClassifySTARTTLSTruncatedGreeting(t *testing.T) {
-	addr, accepted := startTruncatedGreetingServer(t)
+	addr, accepted := startTruncatedSTARTTLSGreetingServer(t)
 	host, portText, err := net.SplitHostPort(addr)
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
@@ -310,6 +312,46 @@ func TestDialIMAPImplicitTLSSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, retryable)
 	require.NoError(t, waitGreeting(t.Context(), conn))
+	require.NoError(t, conn.Close())
+}
+
+func TestDialIMAPSTARTTLSSuccess(t *testing.T) {
+	addr, _ := startSTARTTLSServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		for {
+			buffer := make([]byte, 128)
+			n, err := conn.Read(buffer)
+			if err != nil {
+				return
+			}
+			fields := strings.Fields(string(buffer[:n]))
+			if len(fields) < 2 {
+				return
+			}
+			switch fields[1] {
+			case "CAPABILITY":
+				_, _ = fmt.Fprintf(conn, "* CAPABILITY IMAP4rev1\r\n%s OK capabilities\r\n", fields[0])
+			case "LOGIN":
+				_, _ = fmt.Fprintf(conn, "%s OK logged in\r\n", fields[0])
+				return
+			default:
+				_, _ = fmt.Fprintf(conn, "%s BAD unexpected command\r\n", fields[0])
+				return
+			}
+		}
+	})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	client := NewClient(&Config{Host: host, Port: port, STARTTLS: true}, "")
+	conn, err, retryable, _ := client.dialIMAP(t.Context(), addr, &imapclient.Options{
+		TLSConfig: &tls.Config{InsecureSkipVerify: true}, // test certificate is intentionally not trusted
+	})
+	require.NoError(t, err)
+	assert.False(t, retryable)
+	require.NoError(t, waitGreeting(t.Context(), conn))
+	require.NoError(t, conn.Login("alice@example.test", "secret").Wait())
 	require.NoError(t, conn.Close())
 }
 
@@ -479,6 +521,26 @@ func startTruncatedSTARTTLSServer(t *testing.T) (string, func() int64) {
 	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
 }
 
+func startTruncatedSTARTTLSGreetingServer(t *testing.T) (string, func() int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("* OK truncated"))
+			time.Sleep(50 * time.Millisecond)
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
 func startRejectedSTARTTLSServer(t *testing.T) (string, func() int64) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -604,6 +666,50 @@ func startImplicitTLSServer(t *testing.T, handler func(net.Conn)) (string, func(
 	t.Cleanup(func() {
 		_ = tlsListener.Close()
 	})
+	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
+}
+
+func startSTARTTLSServer(t *testing.T, handler func(net.Conn)) (string, func() int64) {
+	t.Helper()
+	certServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	certificate := certServer.TLS.Certificates[0]
+	certServer.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &countedListener{Listener: listener}
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+				buffer := make([]byte, 128)
+				n, err := conn.Read(buffer)
+				if err != nil {
+					return
+				}
+				fields := strings.Fields(string(buffer[:n]))
+				if len(fields) == 0 {
+					return
+				}
+				if _, err := fmt.Fprintf(conn, "%s OK Begin TLS\r\n", fields[0]); err != nil {
+					return
+				}
+				tlsConn := tls.Server(conn, &tls.Config{
+					Certificates: []tls.Certificate{certificate},
+				})
+				if err := tlsConn.Handshake(); err != nil {
+					return
+				}
+				handler(tlsConn)
+			}(conn)
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
 	return listener.Addr().String(), func() int64 { return counted.accepted.Load() }
 }
 
