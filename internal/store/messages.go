@@ -2626,7 +2626,20 @@ func (s *Store) ReconcileMessageLabels(
 func (s *Store) reconcileMessageLabelsTx(
 	tx *loggedTx, messageID int64, labelIDs []int64, replace bool,
 ) (bool, error) {
-	rows, err := tx.Query(`
+	return s.reconcileMessageLabelsTxContext(
+		context.Background(), tx, messageID, labelIDs, replace,
+	)
+}
+
+// reconcileMessageLabelsTxContext is the context-aware form of
+// reconcileMessageLabelsTx: every statement carries ctx, so a cancelled caller
+// interrupts the read and the write in flight rather than only between calls.
+// ReconcileMessageLabels and AddMessageLabels have no ctx to give, so they keep
+// reaching it through the background-context wrapper above.
+func (s *Store) reconcileMessageLabelsTxContext(
+	ctx context.Context, tx *loggedTx, messageID int64, labelIDs []int64, replace bool,
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `
 		SELECT label_id FROM message_labels WHERE message_id = ?
 	`, messageID)
 	if err != nil {
@@ -2668,7 +2681,9 @@ func (s *Store) reconcileMessageLabelsTx(
 		if !changed {
 			return false, nil
 		}
-		if err := replaceMessageLabelsTx(tx, messageID, labelIDs); err != nil {
+		if err := replaceMessageLabelsTx(
+			boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs,
+		); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -2683,7 +2698,7 @@ func (s *Store) reconcileMessageLabelsTx(
 	if len(missing) == 0 {
 		return false, nil
 	}
-	if err := s.addMessageLabelsTx(tx, messageID, missing); err != nil {
+	if err := s.addMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, missing); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -2737,7 +2752,7 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 }
 
 func (s *Store) addMessageLabelsTx(
-	tx *loggedTx, messageID int64, labelIDs []int64,
+	tx querier, messageID int64, labelIDs []int64,
 ) error {
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(labelIDs),

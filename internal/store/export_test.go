@@ -192,6 +192,19 @@ func (s *Store) SetIMAPLabelRepairPerMessageHookForTest(fn func(messageID int64)
 	return func() { s.imapLabelRepairPerMessageHook = nil }
 }
 
+// ReconcileMessageLabelsTxContextForTest runs the context-aware label
+// reconciliation on its own transaction. The transaction is deliberately begun
+// without ctx: BeginTx would otherwise reject a cancelled context first, and
+// the test could not tell whether the statements inside carry ctx or not.
+func ReconcileMessageLabelsTxContextForTest(
+	ctx context.Context, s *Store, messageID int64, labelIDs []int64, replace bool,
+) error {
+	return s.withTx(func(tx *loggedTx) error {
+		_, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, replace)
+		return err
+	})
+}
+
 // SetIdentityMatchAcceptBeforeDecisionHookForTest pauses a user acceptance
 // after its initial read and before its locked decision transaction.
 func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func() {

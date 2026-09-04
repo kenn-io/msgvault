@@ -133,3 +133,27 @@ func TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess(t *testin
 	assert.Equal(store.IMAPLabelRepairSummary{}, summary)
 	assert.Equal([]int64{messageID1}, processed)
 }
+
+// TestReconcileMessageLabelsTxContext_CancelledContextStopsItsStatements
+// guards the plumbing RepairIMAPSourceLabels relies on. The repair polls
+// ctx.Err() between messages, but that only interrupts it between statements.
+// This asserts the statements themselves carry ctx, which is what lets a
+// cancellation reach a query already running.
+func TestReconcileMessageLabelsTxContext_CancelledContextStopsItsStatements(t *testing.T) {
+	require := require.New(t)
+	f := newIMAPMembershipFixture(t)
+	messageID1, _ := seedTwoInboxMessages(t, f)
+
+	labelID, err := f.store.EnsureLabel(f.source.ID, "ctx-probe-label", "Ctx Probe", "user")
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.ErrorIs(
+		store.ReconcileMessageLabelsTxContextForTest(
+			ctx, f.store, messageID1, []int64{labelID}, true,
+		),
+		context.Canceled,
+	)
+}

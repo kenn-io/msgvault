@@ -686,12 +686,13 @@ func ensureIMAPMailboxLabel(ctx context.Context, tx *loggedTx, sourceID int64, m
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("find label for IMAP mailbox %q: %w", mailbox, err)
 	}
-	// ensureLabelWith is shared with EnsureLabel/EnsureLabelsBatch, neither
-	// of which is context-aware; left on context.Background() rather than
-	// threading ctx into that broader shared surface. It only runs here on
-	// the rare first sight of a new mailbox — the fast path above, hit on
-	// every other call, is what benefits from ctx.
-	labelID, err = ensureLabelWith(tx, sourceID, mailbox, mailbox, "user", nil)
+	// ensureLabelWith is shared with EnsureLabel and EnsureLabelsBatch, which
+	// have no ctx of their own, so it takes a querier rather than a context.
+	// boundQuerier carries ctx to its statements without changing that
+	// signature or any other caller.
+	labelID, err = ensureLabelWith(
+		boundQuerier{ctx: ctx, q: tx}, sourceID, mailbox, mailbox, "user", nil,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("ensure label for IMAP mailbox %q: %w", mailbox, err)
 	}
@@ -762,7 +763,7 @@ func (s *Store) RepairIMAPSourceLabels(
 				}
 				labelIDs = append(labelIDs, labelID)
 			}
-			changed, err := s.reconcileMessageLabelsTx(tx, messageID, labelIDs, true)
+			changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true)
 			if err != nil {
 				return fmt.Errorf("reconcile labels for IMAP message %d: %w", messageID, err)
 			}
