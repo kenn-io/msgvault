@@ -895,6 +895,31 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	assert.Nil(src, "source should be removed")
 }
 
+func TestStore_RemoveSourceSerialized_PreservesPendingOperation(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	fixture := storetest.New(t)
+	const operationID = "pending-operation"
+
+	_, err := fixture.Store.CreateSyncOperation(fixture.Source.ID, operationID)
+	requirements.NoError(err)
+
+	hadActiveSync, removed, err := fixture.Store.RemoveSourceSerialized(
+		t.Context(), fixture.Source.ID,
+	)
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	checks.True(hadActiveSync)
+	checks.Zero(removed)
+
+	source, err := fixture.Store.GetSourceByID(fixture.Source.ID)
+	requirements.NoError(err)
+	checks.Equal(fixture.Source.ID, source.ID)
+	operation, err := fixture.Store.GetSyncOperation(operationID)
+	requirements.NoError(err)
+	checks.Equal("pending", operation.Status)
+	requirements.NoError(fixture.Store.FinishSyncOperation(operationID, "failed"))
+}
+
 func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
