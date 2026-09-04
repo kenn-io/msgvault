@@ -113,7 +113,7 @@ func (c *retryShortWriteConn) Write(p []byte) (int, error) {
 
 func (c *retryShortWriteConn) Close() error {
 	if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
-		return tcpConn.CloseWrite()
+		return tcpConn.CloseWrite() //nolint:wrapcheck // the fixture preserves the socket's close cause
 	}
 	return nil
 }
