@@ -600,6 +600,9 @@ type collectionScopesLoadedMsg struct {
 // Uses "filtered" rather than the account identifier to avoid
 // persisting email addresses in the log file.
 func (m Model) scopeLabelForLog() string {
+	if m.currentSourceScope().kind == sourceScopeCollection {
+		return "filtered"
+	}
 	if m.accountFilter != nil {
 		return "filtered"
 	}

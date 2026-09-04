@@ -129,7 +129,7 @@ func TestCollectionRowsStayEmailOnly(t *testing.T) {
 			scopes: []query.CollectionScope{{Name: "Work", SourceIDs: []int64{1}}},
 		},
 	})
-	model.accounts = []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}
+	model.accounts = []query.AccountInfo{{ID: 1, SourceType: meetingSourceImported, Identifier: "alice@example.com"}}
 	model.collectionScopes = []query.CollectionScope{{Name: "Work", SourceIDs: []int64{1}}}
 
 	model.mode = modeTexts
