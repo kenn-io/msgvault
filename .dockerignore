@@ -56,11 +56,6 @@ LICENSE
 .github/
 .githooks/
 
-# Nix
-flake.nix
-flake.lock
-result
-
 # Test data
 testdata/
 *_test.go
