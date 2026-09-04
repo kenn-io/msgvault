@@ -1918,6 +1918,52 @@ analytics cache is rebuilt automatically.
 
 ---
 
+## stage-delete
+
+Stage all active messages matching Gmail-like search criteria as a pending deletion
+batch. The command uses the daemon's search and preflight checks before staging,
+and it does not delete messages from a provider. If the search matches more than
+one source, run the command once for each source with its exact numeric ID.
+
+Staging is refused while the daemon is still verifying or rebuilding its
+full-text search index, or while its analytical cache is unavailable, because an
+incomplete index could silently omit matching messages. Both states resolve in
+the background; retry when they finish.
+
+Like deletion staging in the TUI and Web UI, the selection is resolved against
+the committed analytical snapshot, so messages synced after the most recent
+cache build are not included until the daemon refreshes the cache (it does so
+automatically after each sync). Re-run the command after a refresh to stage
+newly synced matches.
+
+```bash
+msgvault stage-delete <query>
+```
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Show the match count without creating a deletion batch |
+| `--source-id ID` | Restrict staging to one exact source ID |
+
+Deletion staging covers Gmail-source email only. The daemon rejects a selection
+that includes anything else — chats, meetings, calendar entries, or mail from
+non-Gmail sources such as Apple Mail imports — rather than staging a subset of
+what matched. Narrow the search until it matches only deletable mail, for
+example with `message_type:email` in the query and `--source-id` for the Gmail
+source.
+
+For a query that resolves to one source, the source selector is optional. For a
+multi-source query, provide `--source-id` for each source:
+
+```bash
+msgvault stage-delete --source-id 42 "from:newsletter@example.com older_than:1y"
+```
+
+Review a created batch with `msgvault show-deletion <batch-id>`, then execute it
+with `msgvault delete-staged <batch-id>`.
+
+---
+
 ## list-deletions
 
 List pending and recent deletion batches.

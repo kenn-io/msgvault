@@ -69,6 +69,10 @@ All notable changes to msgvault, grouped by release.
   `media_max_participants`, `max_media_mb`, and `accounts_config` keys are now
   documented for every chat provider.
 
+- Add `msgvault stage-delete <query>` to stage active messages matching search
+  criteria, with optional exact-source narrowing and `--dry-run` support for
+  reviewing the match count first.
+
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with
   `[deletion] remote_enabled = true`; `MSGVAULT_ENABLE_REMOTE_DELETE=1`
