@@ -323,3 +323,47 @@ func TestParseFileReturnsMalformedContentLineError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "physical line 3")
 }
+
+func TestParseFileWithOptions(t *testing.T) {
+	vcf := "BEGIN:VCARD\r\n" +
+		"VERSION:4.0\r\n" +
+		"FN:Test User\r\n" +
+		"TEL:2025551234\r\n" +
+		"TEL:+1-202-555-0101\r\n" +
+		"TEL;VALUE=uri:tel:555-0103;phone-context=+1-202\r\n" +
+		"END:VCARD\r\n"
+	path := filepath.Join(t.TempDir(), "options.vcf")
+	require.NoError(t, os.WriteFile(path, []byte(vcf), 0o600))
+
+	defaultContacts, err := ParseFile(path)
+	require.NoError(t, err)
+	optionContacts, err := ParseFileWithOptions(path, ParseFileOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, defaultContacts, optionContacts)
+	assert.Equal(t, []Contact{{
+		FullName: "Test User",
+		Phones:   []string{"+12025551234", "+12025550101", "+12025550103"},
+	}}, defaultContacts)
+
+	var seen []string
+	customContacts, err := ParseFileWithOptions(path, ParseFileOptions{
+		NormalizePhone: func(raw string) string {
+			seen = append(seen, raw)
+			return "custom:" + raw
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"2025551234",
+		"+1-202-555-0101",
+		"+1-202555-0103",
+	}, seen)
+	assert.Equal(t, []Contact{{
+		FullName: "Test User",
+		Phones: []string{
+			"custom:2025551234",
+			"custom:+1-202-555-0101",
+			"custom:+1-202555-0103",
+		},
+	}}, customContacts)
+}
