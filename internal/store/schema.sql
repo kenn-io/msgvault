@@ -1784,9 +1784,19 @@ CREATE TABLE IF NOT EXISTS saved_views (
 -- Confirmed per-account "me" identities used by sent-message detection
 -- in dedup. Identity is account-scoped: an address confirmed for one
 -- source does not imply it is "me" in any other source.
+-- address_key is NormalizeIdentifierForCompare(address): lowercased for
+-- email-shaped identifiers, verbatim otherwise. It is the comparison-
+-- canonical form the application already matches on; persisting it lets a
+-- partial unique index enforce one row per logical identity at the schema
+-- level (see ensureAccountIdentityAddressKeys). The '' default is a
+-- sentinel for rows written by binaries that predate the column; the next
+-- store open derives their keys and merges any case-variant duplicates.
+-- The index itself is created in Go after the legacy-column migrations,
+-- because on upgraded archives this file runs before the column exists.
 CREATE TABLE IF NOT EXISTS account_identities (
     source_id    INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     address      TEXT NOT NULL,             -- case-preserved
+    address_key  TEXT NOT NULL DEFAULT '',  -- comparison key; '' = needs derivation
     source_signal TEXT NOT NULL DEFAULT '', -- sorted comma-separated signal set, e.g. 'manual' or 'account-identifier,manual'
     confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (source_id, address)

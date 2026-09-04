@@ -1797,9 +1797,14 @@ CREATE TABLE IF NOT EXISTS saved_views (
 -- Confirmed per-account "me" identities used by sent-message detection
 -- in dedup. Identity is account-scoped: an address confirmed for one
 -- source does not imply it is "me" in any other source.
+-- address_key mirrors the SQLite schema: the comparison-canonical form of
+-- address, '' for rows written by binaries that predate the column. The
+-- partial unique index on (source_id, address_key) is created in Go after
+-- the legacy-column migrations (see ensureAccountIdentityAddressKeys).
 CREATE TABLE IF NOT EXISTS account_identities (
     source_id     BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     address       TEXT NOT NULL,
+    address_key   TEXT NOT NULL DEFAULT '',
     source_signal TEXT NOT NULL DEFAULT '',
     confirmed_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (source_id, address)

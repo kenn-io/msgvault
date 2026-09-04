@@ -1953,6 +1953,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
 		{`ALTER TABLE labels ADD COLUMN system_role TEXT`, "labels.system_role"},
+		{`ALTER TABLE account_identities ADD COLUMN address_key TEXT NOT NULL DEFAULT ''`, "account_identities.address_key"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN service_id INTEGER REFERENCES communication_services(id) ON DELETE SET NULL`, "pi_service_id"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_kind TEXT`, "pi_scope_kind"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_value TEXT`, "pi_scope_value"},

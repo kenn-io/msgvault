@@ -1311,6 +1311,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureCardDAVConflictPendingInvariant(ctx); err != nil {
 		return fmt.Errorf("migrate CardDAV conflict pending state: %w", err)
 	}
+	// Runs after the legacy-column loop so upgraded archives have
+	// account_identities.address_key before it is read, backfilled, and
+	// uniquely indexed.
+	if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
+		return fmt.Errorf("ensure account identity address keys: %w", err)
+	}
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
