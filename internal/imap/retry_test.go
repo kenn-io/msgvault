@@ -136,6 +136,51 @@ func (c *retryCloseAfterReadConn) Read(p []byte) (int, error) {
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
 
+type retryCloseAfterWriteConn struct {
+	net.Conn
+
+	mu        sync.Mutex
+	written   []byte
+	response  bool
+	closeOnce sync.Once
+	reset     bool
+}
+
+func (c *retryCloseAfterWriteConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.written = append(c.written, p[:n]...)
+		if bytes.Contains(c.written, []byte("Begin TLS negotiation now")) {
+			c.response = true
+		}
+		c.mu.Unlock()
+	}
+	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
+}
+
+func (c *retryCloseAfterWriteConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		closeAfterHandshake := c.response
+		c.mu.Unlock()
+		if closeAfterHandshake {
+			c.closeOnce.Do(func() {
+				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && c.reset {
+					_ = tcpConn.SetLinger(0)
+				}
+				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && !c.reset {
+					_ = tcpConn.CloseWrite()
+					return
+				}
+				_ = c.Close()
+			})
+		}
+	}
+	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
+}
+
 type retryPhaseGateConn struct {
 	net.Conn
 
@@ -259,6 +304,8 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			transform := func(conn net.Conn, count int64) net.Conn {
 				if count == 1 && tt.mode == "starttls" {
 					return newRetryNoGreetingConn(conn, tt.reset)
@@ -291,15 +338,16 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 			}
 
 			response, err := client.ListMessages(t.Context(), "", "")
-			require.NoError(t, err)
-			require.Len(t, response.Messages, 1)
-			assert.Equal(t, connectRetryDelays[:1], delays)
-			assert.Equal(t, int64(2), accepted.accepted.Load())
+			require.NoError(err)
+			require.Len(response.Messages, 1)
+			assert.Equal(connectRetryDelays[:1], delays)
+			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
 }
 
 func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
+	require := require.New(t)
 	peer, rawConn := net.Pipe()
 	t.Cleanup(func() {
 		_ = peer.Close()
@@ -321,7 +369,7 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 	select {
 	case <-gate.writeStarted:
 	case <-time.After(time.Second):
-		require.FailNow(t, "STARTTLS command write did not start")
+		require.FailNow("STARTTLS command write did not start")
 	}
 
 	readDone := make(chan struct{})
@@ -333,17 +381,17 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 	select {
 	case <-readDone:
 	case <-time.After(time.Second):
-		require.FailNow(t, "overlapping STARTTLS response read did not complete")
+		require.FailNow("overlapping STARTTLS response read did not complete")
 	}
 	close(gate.allowWrite)
 	select {
 	case <-writeDone:
 	case <-time.After(time.Second):
-		require.FailNow(t, "STARTTLS command write did not complete")
+		require.FailNow("STARTTLS command write did not complete")
 	}
 
 	_, err := phaseConn.Write([]byte("client hello"))
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.True(t, phaseConn.handshakeStarted())
 }
 
@@ -453,8 +501,10 @@ func TestConnectRetry_TransportErrorTypes(t *testing.T) {
 }
 
 func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	counted := &retryCountingListener{Listener: listener, transform: func(conn net.Conn, _ int64) net.Conn {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			_ = tcpConn.SetLinger(0)
@@ -483,18 +533,18 @@ func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
 	}
 
 	err = connectRetryClient(t.Context(), t, client)
-	require.Error(t, err)
-	assert.Equal(t, connectRetryDelays[:], delays)
-	assert.Equal(t, int64(4), counted.accepted.Load())
-	assert.Contains(t, logs.String(), "attempt=2")
-	assert.Contains(t, logs.String(), "attempt=3")
-	assert.Contains(t, logs.String(), "attempt=4")
-	assert.Contains(t, logs.String(), "limit=4")
-	assert.Contains(t, logs.String(), "delay=5s")
-	assert.Contains(t, logs.String(), "delay=15s")
-	assert.Contains(t, logs.String(), "delay=45s")
-	assert.NotContains(t, logs.String(), testutil.IMAPTestPassword)
-	assert.NotContains(t, logs.String(), "access-token")
+	require.Error(err)
+	assert.Equal(connectRetryDelays[:], delays)
+	assert.Equal(int64(4), counted.accepted.Load())
+	assert.Contains(logs.String(), "attempt=2")
+	assert.Contains(logs.String(), "attempt=3")
+	assert.Contains(logs.String(), "attempt=4")
+	assert.Contains(logs.String(), "limit=4")
+	assert.Contains(logs.String(), "delay=5s")
+	assert.Contains(logs.String(), "delay=15s")
+	assert.Contains(logs.String(), "delay=45s")
+	assert.NotContains(logs.String(), testutil.IMAPTestPassword)
+	assert.NotContains(logs.String(), "access-token")
 }
 
 func TestConnectRetry_AuthenticationExactlyOnce(t *testing.T) {
@@ -541,7 +591,7 @@ func TestConnectRetry_STARTTLSHandshakeTransportFailureRetries(t *testing.T) {
 		t.Run(map[bool]string{false: "eof", true: "reset"}[reset], func(t *testing.T) {
 			addr, accepted := startRetryMemServer(t, "starttls", func(conn net.Conn, count int64) net.Conn {
 				if count == 1 {
-					return &retryCloseAfterReadConn{Conn: conn, closeAfter: 2, reset: reset}
+					return &retryCloseAfterWriteConn{Conn: conn, reset: reset}
 				}
 				return conn
 			}, newIMAPServerTLSConfig(t))
@@ -755,24 +805,26 @@ func TestConnectRetry_CancelDuringBackoff(t *testing.T) {
 }
 
 func TestReconnectPreservesMailboxCursorState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	addr, _ := startRetryMemServer(t, "plaintext", nil, nil)
 	client := newRetryClient(t, addr, "plaintext")
 
 	client.mu.Lock()
-	require.NoError(t, client.connect(t.Context()))
-	require.NoError(t, client.selectMailbox("INBOX"))
+	require.NoError(client.connect(t.Context()))
+	require.NoError(client.selectMailbox("INBOX"))
 	uidValidity := client.selectedUIDValidity
 	client.messageListCache = []gmailapi.MessageID{{ID: "INBOX|1"}}
 	client.msgIDToLabels = map[string][]string{"message": {"INBOX"}}
-	require.NoError(t, client.reconnect(t.Context()))
+	require.NoError(client.reconnect(t.Context()))
 	client.mu.Unlock()
 
-	assert.Empty(t, client.selectedMailbox)
-	assert.Zero(t, client.selectedUIDValidity)
-	assert.Equal(t, []gmailapi.MessageID{{ID: "INBOX|1"}}, client.messageListCache)
-	assert.Equal(t, map[string][]string{"message": {"INBOX"}}, client.msgIDToLabels)
+	assert.Empty(client.selectedMailbox)
+	assert.Zero(client.selectedUIDValidity)
+	assert.Equal([]gmailapi.MessageID{{ID: "INBOX|1"}}, client.messageListCache)
+	assert.Equal(map[string][]string{"message": {"INBOX"}}, client.msgIDToLabels)
 	client.mu.Lock()
-	require.NoError(t, client.selectMailbox("INBOX"))
+	require.NoError(client.selectMailbox("INBOX"))
 	client.mu.Unlock()
-	assert.Equal(t, uidValidity, client.selectedUIDValidity)
+	assert.Equal(uidValidity, client.selectedUIDValidity)
 }
