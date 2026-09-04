@@ -183,6 +183,15 @@ func (s *Store) SetListIDRepairAfterFingerprintLockHookForTest(fn func()) func()
 	return func() { s.listIDRepairAfterFingerprintLockHook = nil }
 }
 
+// SetIMAPLabelRepairPerMessageHookForTest installs a hook called with each
+// message's ID just before RepairIMAPSourceLabels processes it. Tests use it
+// to cancel the context mid-repair without needing a source large enough to
+// make cancellation a race.
+func (s *Store) SetIMAPLabelRepairPerMessageHookForTest(fn func(messageID int64)) func() {
+	s.imapLabelRepairPerMessageHook = fn
+	return func() { s.imapLabelRepairPerMessageHook = nil }
+}
+
 // SetIdentityMatchAcceptBeforeDecisionHookForTest pauses a user acceptance
 // after its initial read and before its locked decision transaction.
 func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func() {

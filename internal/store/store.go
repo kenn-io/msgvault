@@ -78,6 +78,7 @@ type Store struct {
 	listIDRepairBeforeApplyHook           func()
 	listIDRepairAfterScanHook             func(context.Context, *loggedTx, []listIDRepairUpdate) error
 	listIDRepairAfterFingerprintLockHook  func()
+	imapLabelRepairPerMessageHook         func(messageID int64)
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	identityMatchAcceptBeforeDecisionHook func()

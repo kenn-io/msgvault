@@ -739,6 +739,12 @@ func (s *Store) RepairIMAPSourceLabels(
 			return err
 		}
 		for _, messageID := range messageIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if s.imapLabelRepairPerMessageHook != nil {
+				s.imapLabelRepairPerMessageHook(messageID)
+			}
 			mailboxes, err := imapMembershipMailboxes(tx, sourceID, messageID)
 			if err != nil {
 				return err
@@ -760,6 +766,13 @@ func (s *Store) RepairIMAPSourceLabels(
 				summary.Changed++
 			}
 		}
+		// Checked once more here, not just per-message above: without this,
+		// a cancellation landing exactly after the last message would fall
+		// through to the dry-run branch below and get reported as a normal
+		// completion instead of surfaced as a cancellation error.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if summary.Changed > 0 {
 			// message_labels is exported into the analytics cache; bumping
 			// the revision is what tells that cache the export is stale, the
@@ -773,7 +786,19 @@ func (s *Store) RepairIMAPSourceLabels(
 		}
 		return nil
 	})
-	if txErr != nil && !errors.Is(txErr, errIMAPLabelRepairDryRun) {
+	if txErr != nil {
+		if errors.Is(txErr, errIMAPLabelRepairDryRun) {
+			return summary, nil
+		}
+		// database/sql rolls back a transaction in a background goroutine as
+		// soon as its context is cancelled, racing the ctx.Err() checks
+		// above — the query in flight when that goroutine wins can surface
+		// a raw driver error ("transaction has already been committed or
+		// rolled back") instead. Normalize: whenever the context is
+		// actually done, report that instead of whatever the race produced.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return IMAPLabelRepairSummary{}, ctxErr
+		}
 		return IMAPLabelRepairSummary{}, txErr
 	}
 	return summary, nil

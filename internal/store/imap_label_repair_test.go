@@ -83,3 +83,53 @@ func TestRepairIMAPSourceLabels_NoopWhenLabelsAlreadyMatch(t *testing.T) {
 	assert.Equal(2, summary.Scanned)
 	assert.Equal(0, summary.Changed)
 }
+
+// TestRepairIMAPSourceLabels_CancellationStopsTheLoop catches a repair that
+// keeps processing every message regardless of context cancellation. The
+// per-message test hook cancels after the first message, so a second message
+// being processed proves cancellation was not honored between messages.
+func TestRepairIMAPSourceLabels_CancellationStopsTheLoop(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	messageID1, _ := seedTwoInboxMessages(t, f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	var processed []int64
+	restore := f.store.SetIMAPLabelRepairPerMessageHookForTest(func(messageID int64) {
+		processed = append(processed, messageID)
+		cancel()
+	})
+	defer restore()
+
+	summary, err := f.store.RepairIMAPSourceLabels(ctx, f.source.ID, true)
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal(store.IMAPLabelRepairSummary{}, summary)
+	assert.Equal([]int64{messageID1}, processed)
+}
+
+// TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess catches
+// the specific failure mode roborev flagged on PR #754: the dry-run rollback
+// sentinel returning as a nil error even when the context was cancelled
+// mid-repair, which would report a cancelled run as a completed dry run.
+func TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	messageID1, _ := seedTwoInboxMessages(t, f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	var processed []int64
+	restore := f.store.SetIMAPLabelRepairPerMessageHookForTest(func(messageID int64) {
+		processed = append(processed, messageID)
+		cancel()
+	})
+	defer restore()
+
+	summary, err := f.store.RepairIMAPSourceLabels(ctx, f.source.ID, false)
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal(store.IMAPLabelRepairSummary{}, summary)
+	assert.Equal([]int64{messageID1}, processed)
+}
