@@ -580,8 +580,10 @@ type dataLoadedMsg struct {
 
 // statsLoadedMsg is sent when stats are loaded.
 type statsLoadedMsg struct {
-	stats *query.TotalStats
-	err   error
+	stats                  *query.TotalStats
+	err                    error
+	requestID              uint64
+	presentationGeneration uint64
 }
 
 // accountsLoadedMsg is sent when accounts are loaded.
@@ -724,10 +726,12 @@ func (m Model) loadData() tea.Cmd {
 
 // loadStats fetches total statistics.
 func (m Model) loadStats() tea.Cmd {
+	requestID := m.aggregateRequestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			if m.currentSourceScope().isEmpty() {
-				return statsLoadedMsg{stats: &query.TotalStats{}}
+				return statsLoadedMsg{stats: &query.TotalStats{}, requestID: requestID, presentationGeneration: presentationGeneration}
 			}
 			opts := query.StatsOptions{
 				WithAttachmentsOnly:   m.filters.attachmentsOnly,
@@ -736,10 +740,10 @@ func (m Model) loadStats() tea.Cmd {
 			opts.SourceID = m.currentSourceScope().accountID
 			opts.SourceIDs = copySourceIDs(m.currentSourceScope().sourceIDs)
 			stats, err := m.engine.GetTotalStats(context.Background(), opts)
-			return statsLoadedMsg{stats: stats, err: err}
+			return statsLoadedMsg{stats: stats, err: err, requestID: requestID, presentationGeneration: presentationGeneration}
 		},
 		func(r any) tea.Msg {
-			return statsLoadedMsg{err: fmt.Errorf("stats panic: %v", r)}
+			return statsLoadedMsg{err: fmt.Errorf("stats panic: %v", r), requestID: requestID, presentationGeneration: presentationGeneration}
 		},
 	)
 }
@@ -1601,6 +1605,9 @@ func (m Model) sumRowStats(rows []query.AggregateRow) *query.TotalStats {
 
 // handleStatsLoaded processes stats load completion.
 func (m Model) handleStatsLoaded(msg statsLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.aggregateRequestID || msg.presentationGeneration != m.presentationGeneration {
+		return m, nil
+	}
 	if msg.err == nil {
 		m.stats = msg.stats
 	}

@@ -121,6 +121,31 @@ func TestEmptyCollectionReadsDoNotCallEngine(t *testing.T) {
 	assert.Equal(t, 0, calls)
 }
 
+func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.stats = &query.TotalStats{MessageCount: 1}
+	model.aggregateRequestID = 10
+	model.presentationGeneration = 20
+	model.invalidateSourceScope()
+
+	stale := statsLoadedMsg{
+		stats:                  &query.TotalStats{MessageCount: 99},
+		requestID:              10,
+		presentationGeneration: 20,
+	}
+	updated, _ := model.handleStatsLoaded(stale)
+	got := updated.(Model)
+	assert.Nil(t, got.stats)
+
+	current := statsLoadedMsg{
+		stats:                  &query.TotalStats{MessageCount: 2},
+		requestID:              got.aggregateRequestID,
+		presentationGeneration: got.presentationGeneration,
+	}
+	updated, _ = got.handleStatsLoaded(current)
+	assert.Equal(t, int64(2), updated.(Model).stats.MessageCount)
+}
+
 func TestCollectionRowsStayEmailOnly(t *testing.T) {
 	model := New(newMockEngine(MockConfig{}), Options{
 		DataDir: "/tmp/test",

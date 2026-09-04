@@ -2287,7 +2287,7 @@ func TestEngineListCollectionScopesProjectsUserCollections(t *testing.T) {
 			"collections": []map[string]any{
 				{"name": "All", "created_at": "2026-01-01T00:00:00Z", "source_ids": []int64{1, 2}},
 				{"name": "Work", "created_at": "2026-01-02T00:00:00Z", "source_ids": []int64{2, 1}},
-				{"name": "Empty", "created_at": "2026-01-03T00:00:00Z", "source_ids": []int64{}},
+				{"name": "Empty", "created_at": "2026-01-03T00:00:00Z", "source_ids": nil},
 			},
 		})
 	})

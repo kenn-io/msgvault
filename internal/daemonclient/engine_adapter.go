@@ -1332,7 +1332,7 @@ func (e *Engine) ListCollectionScopes(ctx context.Context) ([]query.CollectionSc
 		}
 		scopes = append(scopes, query.CollectionScope{
 			Name:      collection.Name,
-			SourceIDs: copyInt64sPreserveNil(collection.SourceIDs),
+			SourceIDs: append([]int64{}, collection.SourceIDs...),
 		})
 	}
 	return scopes, nil

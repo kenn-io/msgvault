@@ -1280,7 +1280,6 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 					m.accountFilter = selected.accountID
 					m.sourceScope = accountSourceScope(selected.accountID)
 				case scopeOptionCollection:
-					m.accountFilter = nil
 					m.sourceScope = collectionSourceScope(selected.collection)
 				}
 				if !previous.matches(selected) {
@@ -1664,6 +1663,7 @@ func (m *Model) invalidateSourceScope() {
 	m.selection.messageIDs = make(map[int64]bool)
 	m.messages = nil
 	m.rows = nil
+	m.stats = nil
 	m.contextStats = nil
 }
 
