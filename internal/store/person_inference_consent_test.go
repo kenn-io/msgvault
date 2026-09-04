@@ -183,6 +183,21 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	assert.False(active)
 }
 
+func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	profile := inferenceTestProfile(t)
+	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE person_inference_profiles SET model = ? WHERE fingerprint = ?`),
+		"changed-model", profile.Fingerprint)
+	require.NoError(err)
+
+	_, err = st.ListPersonInferenceProfiles(t.Context())
+	require.ErrorContains(err, "does not match its immutable policy")
+}
+
 func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)

@@ -25,6 +25,40 @@ import (
 
 const providerSetupSecretCanary = "provider-setup-secret-canary"
 
+func TestPersonProviderTableValuesUsesCanonicalProjection(t *testing.T) {
+	httpProvider := peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://provider.example.test/v1",
+		Model: "test-model", Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv,
+		CredentialEnv: "TEST_PROVIDER_KEY", OutputMode: peoplesweep.OutputModeNativeJSONSchema,
+		TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention",
+		TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceMeetingText, peoplesweep.SourceConversationText,
+		}, SourceSince: "2025-01-01", SourceUntil: "2025-12-31",
+		ReasoningEffort: "medium", ReasoningMode: "enabled",
+	}
+	httpValues := personProviderTableValues(httpProvider)
+	assert.Equal(t, []string{"conversation_text", "meeting_text"}, httpValues["allowed_sources"])
+	assert.Equal(t, httpProvider.Endpoint, httpValues["endpoint"])
+	assert.Equal(t, httpProvider.CredentialEnv, httpValues["credential_env"])
+
+	codexProvider := peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolCodexAppServer, Model: "codex-model",
+		Auth: peoplesweep.AuthNone, Credential: peoplesweep.CredentialNone,
+		OutputMode: peoplesweep.OutputModeNativeJSONSchema, RetentionPosture: "zero_retention",
+		TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceConversationText,
+		}, SourceSince: "2025-01-01",
+	}
+	codexValues := personProviderTableValues(codexProvider)
+	assert.Equal(t, []string{"conversation_text"}, codexValues["allowed_sources"])
+	for _, key := range []string{
+		"endpoint", "credential_env", "token_limit_parameter", "reasoning_effort",
+		"reasoning_mode", "executable", "execution_boundary", "source_until",
+	} {
+		assert.NotContains(t, codexValues, key)
+	}
+}
+
 type providerCredentialChunkReader struct {
 	chunks [][]byte
 }
