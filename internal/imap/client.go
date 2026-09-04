@@ -245,6 +245,73 @@ func (c *preGreetingConn) transportError() error {
 	return c.zeroErr
 }
 
+type startTLSPhase uint8
+
+const (
+	startTLSCommandNotWritten startTLSPhase = iota
+	startTLSCommandWritten
+	startTLSResponseObserved
+	startTLSHandshakeStarted
+)
+
+type startTLSPhaseConn struct {
+	net.Conn
+
+	mu                    sync.Mutex
+	phase                 startTLSPhase
+	commandWriteInProcess bool
+	responseObserved      bool
+}
+
+func (c *startTLSPhaseConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		if c.commandWriteInProcess {
+			c.responseObserved = true
+		} else if c.phase == startTLSCommandWritten {
+			c.responseObserved = true
+			c.phase = startTLSResponseObserved
+		}
+		c.mu.Unlock()
+	}
+	return n, err //nolint:wrapcheck // the phase wrapper preserves the socket's typed transport cause
+}
+
+func (c *startTLSPhaseConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	phase := c.phase
+	switch phase {
+	case startTLSResponseObserved:
+		c.phase = startTLSHandshakeStarted
+	case startTLSCommandNotWritten:
+		c.commandWriteInProcess = true
+	case startTLSCommandWritten, startTLSHandshakeStarted:
+	}
+	c.mu.Unlock()
+
+	n, err := c.Conn.Write(p)
+	if phase == startTLSCommandNotWritten {
+		c.mu.Lock()
+		c.commandWriteInProcess = false
+		if n == len(p) && c.phase == startTLSCommandNotWritten {
+			if c.responseObserved {
+				c.phase = startTLSResponseObserved
+			} else {
+				c.phase = startTLSCommandWritten
+			}
+		}
+		c.mu.Unlock()
+	}
+	return n, err //nolint:wrapcheck // the phase wrapper preserves the socket's typed transport cause
+}
+
+func (c *startTLSPhaseConn) handshakeStarted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.phase == startTLSHandshakeStarted
+}
+
 func isRetryableTransportError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -386,12 +453,13 @@ func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, 
 
 	probe := &preGreetingConn{Conn: rawConn}
 	if c.config.STARTTLS {
+		phaseProbe := &startTLSPhaseConn{Conn: probe}
 		startTLSOpts := *imapOpts
 		startTLSOpts.TLSConfig = c.newTLSConfig(false)
-		conn, err := newStartTLSContext(ctx, probe, &startTLSOpts)
+		conn, err := newStartTLSContext(ctx, phaseProbe, &startTLSOpts)
 		if err != nil {
 			_ = probe.Close()
-			return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
+			return nil, ctx.Err() == nil && retryableSTARTTLS(phaseProbe, err), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
 		}
 		return conn, false, nil
 	}
@@ -425,6 +493,10 @@ func retryableGreeting(probe *preGreetingConn) bool {
 		return false
 	}
 	return isRetryableTransportError(probe.transportError())
+}
+
+func retryableSTARTTLS(probe *startTLSPhaseConn, err error) bool {
+	return probe != nil && probe.handshakeStarted() && isRetryableTransportError(err)
 }
 
 func waitGreetingContext(ctx context.Context, conn *imapclient.Client) error {
