@@ -23,7 +23,14 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	if source == nil {
 		return nil, errors.New("no source provided - run full sync first")
 	}
+	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
+		return s.incremental(ctx, source, execution)
+	})
+}
 
+func (s *Syncer) incremental(
+	ctx context.Context, source *store.Source, execution *store.SyncExecution,
+) (summary *gmail.SyncSummary, err error) {
 	startTime := time.Now()
 	summary = &gmail.SyncSummary{StartTime: startTime}
 
@@ -38,7 +45,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	}
 
 	// Start sync
-	syncID, err := s.store.StartSync(source.ID, "incremental")
+	syncID, err := s.startSync(ctx, execution, "incremental", "")
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
@@ -83,7 +90,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	if startHistoryID >= profile.HistoryID {
 		s.logger.Info("already up to date")
 		if err := s.completeSyncWithoutHook(
-			ctx, syncID, source.ID, strconv.FormatUint(profile.HistoryID, 10),
+			ctx, syncID, source.ID, strconv.FormatUint(profile.HistoryID, 10), true,
 		); err != nil {
 			return nil, err
 		}
@@ -238,7 +245,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, identityDiscoveryIDs))
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
-			s.failSyncUnlessCanceled(syncID, err)
+			s.failStoppedSync(syncID, err)
 			return nil, err
 		}
 

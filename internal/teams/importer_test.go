@@ -32,8 +32,7 @@ func TestImporterScopesParticipantResolver(t *testing.T) {
 	runID, err := st.StartSync(source.ID, sourceTypeTeams)
 	requirements.NoError(err)
 	scoped := NewImporter(st, nil).scopedToSync(source.ID, runID)
-	_, err = st.StartSync(source.ID, sourceTypeTeams)
-	requirements.NoError(err)
+	requirements.NoError(st.FailSync(runID, "worker stopped"))
 
 	_, err = scoped.res.resolve(t.Context(), &Identity{ID: "user-a"})
 	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)

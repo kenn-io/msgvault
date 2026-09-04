@@ -507,6 +507,7 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 		"/old/path/to/OtherMailbox.mbox", "",
 		&store.Checkpoint{},
 	), "save checkpoint")
+	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
 	_, err = ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -551,6 +552,7 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken: string(cpJSON),
 	}), "save checkpoint")
+	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
 	_, err = ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -583,6 +585,7 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 	require.NoError(saveEmlxCheckpoint(
 		st, syncID, absRootA, 0, "", "", &store.Checkpoint{},
 	), "save checkpoint")
+	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
 	// Create a mailbox at root B.
 	rootB := filepath.Join(tmp, "MailB")

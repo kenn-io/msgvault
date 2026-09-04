@@ -469,6 +469,7 @@ type CLISyncRequest struct {
 	Before      string
 	After       string
 	Limit       int
+	OperationID string
 	Folders     []string
 	SkipFolders []string
 }

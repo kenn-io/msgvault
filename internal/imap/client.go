@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
@@ -1252,6 +1253,9 @@ func folderStatusesCoverMailboxes(
 func isNetworkError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if _, ok := errors.AsType[net.Error](err); ok {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "use of closed network connection") ||

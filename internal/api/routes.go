@@ -224,6 +224,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	}, s.handleDaemonShutdown)
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
+	s.registerImportJobRoutes(apiV1)
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
@@ -648,6 +649,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathStringParam("id", "Opaque archive-bound operation run ID")}
 	case "getCLIStats":
 		return scopeParams()
+	case "getImportJob":
+		return []*huma.Param{pathStringParam("job_id", "Historical import job ID")}
 	case "searchCLI":
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),

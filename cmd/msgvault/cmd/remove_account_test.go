@@ -570,7 +570,7 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	// RemoveSource cascades away.
 	_, err = s.StartSync(aliceSrc.ID, "full")
 	require.NoError(err, "StartSync")
-	_ = s.Close()
+	t.Cleanup(func() { _ = s.Close() })
 
 	filePath := seedAttachmentFile(t, attachmentsDir, "dd/hashA", "content-a")
 
@@ -606,7 +606,7 @@ func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
 	require.NoError(err, "GetSourceByIdentifier")
 	_, err = s.StartSync(aliceSrc.ID, "full")
 	require.NoError(err, "StartSync")
-	_ = s.Close()
+	t.Cleanup(func() { _ = s.Close() })
 
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
@@ -1205,7 +1205,7 @@ func TestRemoveAccountCmd_DiscordPreservesTokenDuringActiveSync(t *testing.T) {
 	require.NoError(err)
 	_, err = st.StartSync(source.ID, "discord")
 	require.NoError(err)
-	require.NoError(st.Close())
+	t.Cleanup(func() { _ = st.Close() })
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
 	require.NoError(manager.Save(discord.NewTokenRecord(

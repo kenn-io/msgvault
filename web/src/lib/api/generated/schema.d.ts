@@ -1583,6 +1583,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a bounded historical import */
+        post: operations["createImportJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get historical import status */
+        get: operations["getImportJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integrations/tasks/search": {
         parameters: {
             query?: never;
@@ -5614,6 +5648,52 @@ export interface components {
         ImportEntry: {
             identifier: string;
             state?: string;
+        };
+        ImportJobRequest: {
+            account: string;
+            after?: string;
+            before?: string;
+            /** Format: int64 */
+            limit?: number;
+            noresume?: boolean;
+            /** @description Gmail search query; not supported for IMAP sources */
+            query?: string;
+        };
+        ImportJobResponse: {
+            account: string;
+            /** Format: int64 */
+            added: number;
+            /** Format: date-time */
+            created_at: string;
+            error?: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            job_id: string;
+            /** Format: int64 */
+            processed: number;
+            /** Format: int64 */
+            skipped: number;
+            /** Format: date-time */
+            started_at: string | null;
+            /** @enum {string} */
+            status: "pending" | "running" | "done" | "failed";
+            summary?: components["schemas"]["ImportJobSummary"];
+        } & {
+            [key: string]: unknown;
+        };
+        ImportJobSummary: {
+            /** Format: int64 */
+            added: number;
+            /** Format: int64 */
+            errors: number;
+            /** Format: int64 */
+            processed: number;
+            /** Format: int64 */
+            skipped: number;
+            /** Format: int64 */
+            updated: number;
+        } & {
+            [key: string]: unknown;
         };
         ImportRequest: {
             account?: string;
@@ -14502,6 +14582,170 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeetingImportResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createImportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getImportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Historical import job ID */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

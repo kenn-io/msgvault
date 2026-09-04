@@ -102,6 +102,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
+type CreateImportJobBody = ImportJobRequest
+
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
 type StartVisualAttachmentBuildBody = VisualBuildRequest

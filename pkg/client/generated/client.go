@@ -463,6 +463,14 @@ type ClientInterface interface {
 	ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMeetingResponseJSON, error)
 	ImportMeetingWithResponse(ctx context.Context, options *ImportMeetingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMeetingResp, error)
 
+	// CreateImportJob Start a bounded historical import
+	CreateImportJob(ctx context.Context, options *CreateImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateImportJobResponse, error)
+	CreateImportJobWithResponse(ctx context.Context, options *CreateImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateImportJobResp, error)
+
+	// GetImportJob Get historical import status
+	GetImportJob(ctx context.Context, options *GetImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetImportJobResponse, error)
+	GetImportJobWithResponse(ctx context.Context, options *GetImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetImportJobResp, error)
+
 	// SearchIntegrationTasks Search tasks in the configured project
 	SearchIntegrationTasks(ctx context.Context, options *SearchIntegrationTasksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchIntegrationTasksResponse, error)
 	SearchIntegrationTasksWithResponse(ctx context.Context, options *SearchIntegrationTasksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchIntegrationTasksResp, error)
@@ -7548,6 +7556,133 @@ func (c *Client) ImportMeeting(ctx context.Context, options *ImportMeetingReques
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/import/meeting")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateImportJob Start a bounded historical import
+func (c *Client) CreateImportJob(ctx context.Context, options *CreateImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateImportJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/imports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateImportJobResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			target := new(CreateImportJobErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreateImportJobErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreateImportJobResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreateImportJobResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/imports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetImportJob Get historical import status
+func (c *Client) GetImportJob(ctx context.Context, options *GetImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetImportJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/imports/{job_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetImportJobResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetImportJobErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetImportJobErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetImportJobResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetImportJobResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/imports/{job_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

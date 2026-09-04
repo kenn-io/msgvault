@@ -3,6 +3,10 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,28 +135,281 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
 }
 
-func TestStore_CompleteSyncRejectsSupersededRun(t *testing.T) {
+func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
 
-	oldID := f.StartSync()
-	newID := f.StartSync()
-
-	err := f.Store.CompleteSync(oldID, "stale-cursor")
-	require.ErrorIs(err, store.ErrSyncRunSuperseded)
-
-	var status string
-	var cursorAfter sql.NullString
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
-		SELECT status, cursor_after FROM sync_runs WHERE id = ?
-	`), oldID).Scan(&status, &cursorAfter))
-	assert.Equal(store.SyncStatusFailed, status)
-	assert.False(cursorAfter.Valid)
+	activeID := f.StartSync()
+	_, err := f.Store.StartSync(f.Source.ID, "full")
+	require.ErrorIs(err, store.ErrSyncAlreadyActive)
 
 	run, err := f.Store.GetActiveSync(f.Source.ID)
 	require.NoError(err)
-	assert.Equal(newID, run.ID)
+	assert.Equal(activeID, run.ID)
+
+	require.NoError(f.Store.CompleteSync(activeID, "cursor"))
+	_, err = f.Store.StartSync(f.Source.ID, "full")
+	require.NoError(err)
+}
+
+func TestStore_CompleteSyncWriteFailureReleasesExecution(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+
+	firstID, err := f.Store.StartSync(f.Source.ID, "full")
+	requirements.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = f.Store.CompleteSyncContext(ctx, firstID, "cursor")
+	requirements.ErrorIs(err, context.Canceled)
+
+	secondID, err := f.Store.StartSync(f.Source.ID, "full")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = f.Store.FailSync(secondID, "test complete") })
+	var firstStatus string
+	requirements.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT status FROM sync_runs WHERE id = ?`), firstID,
+	).Scan(&firstStatus))
+	checks.Equal(store.SyncStatusFailed, firstStatus)
+}
+
+func TestStore_StartSyncRejectsConcurrentRunAcrossSQLiteStores(t *testing.T) {
+	requirements := require.New(t)
+	testutil.SkipIfPostgres(t, "exercises the cross-process SQLite file lock")
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	first, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = first.Close() })
+	requirements.NoError(first.InitSchema())
+	source, err := first.GetOrCreateSource("gmail", "lock-owner@example.com")
+	requirements.NoError(err)
+
+	second, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	firstRun, err := first.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	_, err = second.StartSync(source.ID, "full")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+
+	requirements.NoError(first.CompleteSync(firstRun, "cursor"))
+	secondRun, err := second.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	requirements.NoError(second.FailSync(secondRun, "test complete"))
+}
+
+func TestStore_StartSyncUsesFilesystemPathForSQLiteFileURI(t *testing.T) {
+	requirements := require.New(t)
+	testutil.SkipIfPostgres(t, "exercises SQLite file URI lock resolution")
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	uriPath := filepath.ToSlash(dbPath)
+	if filepath.VolumeName(dbPath) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	dsn := (&url.URL{Scheme: "file", Path: uriPath}).String()
+
+	first, err := store.OpenForTest(dsn)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = first.Close() })
+	requirements.NoError(first.InitSchema())
+	source, err := first.GetOrCreateSource("gmail", "uri-lock-owner@example.com")
+	requirements.NoError(err)
+
+	second, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	firstRun, err := first.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	_, err = second.StartSync(source.ID, "full")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	requirements.NoError(first.FailSync(firstRun, "test complete"))
+}
+
+func TestStore_StartSyncRecoversRunWhoseOwnerClosed(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	first := testutil.NewTestStore(t)
+	source, err := first.GetOrCreateSource("gmail", "recovery@example.com")
+	requirements.NoError(err)
+	_, err = first.CreateSyncOperation(source.ID, "abandoned-operation")
+	requirements.NoError(err)
+	abandonedRun, err := first.StartSyncOperation(source.ID, "abandoned-operation")
+	requirements.NoError(err)
+	requirements.NoError(first.UpdateSyncCheckpoint(abandonedRun, &store.Checkpoint{
+		PageToken:         "resume-token",
+		MessagesProcessed: 17,
+		MessagesAdded:     11,
+	}))
+	requirements.NoError(first.Close())
+
+	second, err := store.OpenForTest(store.DBPathForTest(first))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+	active, err := second.GetActiveSync(source.ID)
+	requirements.ErrorIs(err, store.ErrSyncRunNotFound)
+	requirements.Nil(active)
+	recoveryRun, err := second.StartSync(source.ID, "full")
+	requirements.NoError(err)
+
+	op, err := second.GetSyncOperation("abandoned-operation")
+	requirements.NoError(err)
+	checks.Equal("failed", op.Status)
+	checks.True(op.FinishedAt.Valid)
+	requirements.Len(op.Runs, 1)
+	checks.Equal(store.SyncStatusFailed, op.Runs[0].Status)
+	checks.Equal("resume-token", op.Runs[0].CursorBefore.String)
+	checks.Equal(int64(17), op.Runs[0].MessagesProcessed)
+	checks.Equal(int64(11), op.Runs[0].MessagesAdded)
+	checks.Equal("sync worker exited before recording completion", op.Runs[0].ErrorMessage.String)
+
+	active, err = second.GetActiveSync(source.ID)
+	requirements.NoError(err)
+	checks.Equal(recoveryRun, active.ID)
+	requirements.NoError(second.FailSync(recoveryRun, "test complete"))
+}
+
+func TestStore_GetActiveSyncOnReadOnlyStoreDoesNotRecover(t *testing.T) {
+	requirements := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "read-only-active.db")
+	writable, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	requirements.NoError(writable.InitSchema())
+	source, err := writable.GetOrCreateSource("gmail", "read-only-active@example.test")
+	requirements.NoError(err)
+	runID, err := writable.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	requirements.NoError(writable.Close())
+
+	readOnly, err := store.OpenReadOnly(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = readOnly.Close() })
+	active, err := readOnly.GetActiveSync(source.ID)
+	requirements.NoError(err)
+	requirements.Equal(runID, active.ID)
+}
+
+func TestStore_SyncExecutionRetainsOwnershipAcrossRuns(t *testing.T) {
+	requirements := require.New(t)
+	first := testutil.NewTestStore(t)
+	source, err := first.GetOrCreateSource("gmail", "multi-phase-owner@example.com")
+	requirements.NoError(err)
+	second, err := store.OpenForTest(store.DBPathForTest(first))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	_, err = first.CreateSyncOperation(source.ID, "multi-phase-operation")
+	requirements.NoError(err)
+	execution, err := first.AcquireSyncExecutionContext(t.Context(), source.ID)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = execution.Release() })
+	fullRun, err := execution.StartSyncContext(t.Context(), "full", "multi-phase-operation")
+	requirements.NoError(err)
+	requirements.NoError(first.CompleteSync(fullRun, "full-cursor"))
+
+	_, err = second.StartSync(source.ID, "incremental")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+
+	catchupRun, err := execution.StartSyncContext(t.Context(), "incremental", "multi-phase-operation")
+	requirements.NoError(err)
+	requirements.NoError(first.CompleteSync(catchupRun, "catchup-cursor"))
+	requirements.NoError(execution.Release())
+	requirements.NoError(first.FinishSyncOperation("multi-phase-operation", "done"))
+
+	nextRun, err := second.StartSync(source.ID, "incremental")
+	requirements.NoError(err)
+	requirements.NoError(second.FailSync(nextRun, "test complete"))
+}
+
+func TestStore_UnfinishedSyncOperationIsRecoveredAtDaemonStartup(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "operation-recovery@example.com")
+	requirements.NoError(err)
+	_, err = st.CreateSyncOperation(source.ID, "abandoned-terminal-operation")
+	requirements.NoError(err)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
+	requirements.NoError(err)
+	runID, err := execution.StartSyncContext(t.Context(), "full", "abandoned-terminal-operation")
+	requirements.NoError(err)
+	requirements.NoError(st.CompleteSync(runID, "final-cursor"))
+	requirements.NoError(execution.Release())
+
+	op, err := st.GetSyncOperation("abandoned-terminal-operation")
+	requirements.NoError(err)
+	requirements.Equal("running", op.Status)
+	requirements.False(op.FinishedAt.Valid)
+
+	failed, err := st.FailUnfinishedSyncOperationsContext(t.Context())
+	requirements.NoError(err)
+	requirements.Equal(int64(1), failed)
+	op, err = st.GetSyncOperation("abandoned-terminal-operation")
+	requirements.NoError(err)
+	requirements.Equal("failed", op.Status)
+	requirements.True(op.FinishedAt.Valid)
+	requirements.Len(op.Runs, 1)
+	requirements.Equal(store.SyncStatusCompleted, op.Runs[0].Status)
+}
+
+func TestStore_UnfinishedSyncOperationRecoveryFailsRunningRun(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "running-operation-recovery@example.com")
+	requirements.NoError(err)
+	_, err = st.CreateSyncOperation(source.ID, "abandoned-running-operation")
+	requirements.NoError(err)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
+	requirements.NoError(err)
+	runID, err := execution.StartSyncContext(t.Context(), "full", "abandoned-running-operation")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSyncCheckpoint(runID, &store.Checkpoint{
+		PageToken:         "resume-token",
+		MessagesProcessed: 9,
+	}))
+	requirements.NoError(execution.Release())
+
+	failed, err := st.FailUnfinishedSyncOperationsContext(t.Context())
+	requirements.NoError(err)
+	checks.Equal(int64(1), failed)
+	op, err := st.GetSyncOperation("abandoned-running-operation")
+	requirements.NoError(err)
+	checks.Equal(store.SyncStatusFailed, op.Status)
+	requirements.Len(op.Runs, 1)
+	checks.Equal(runID, op.Runs[0].ID)
+	checks.Equal(store.SyncStatusFailed, op.Runs[0].Status)
+	checks.True(op.Runs[0].CompletedAt.Valid)
+	checks.Equal("sync worker exited before recording completion", op.Runs[0].ErrorMessage.String)
+	checks.Equal("resume-token", op.Runs[0].CursorBefore.String)
+	checks.Equal(int64(9), op.Runs[0].MessagesProcessed)
+	_, err = st.GetActiveSync(source.ID)
+	requirements.ErrorIs(err, store.ErrSyncRunNotFound)
+}
+
+func TestStore_StartSyncRejectsConcurrentRunAcrossPostgresStores(t *testing.T) {
+	requirements := require.New(t)
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL integration test")
+	}
+	first := testutil.NewTestStore(t)
+	source, err := first.GetOrCreateSource("gmail", "lock-owner@example.com")
+	requirements.NoError(err)
+	second, err := store.OpenForTest(store.DBPathForTest(first))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	firstRun, err := first.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	_, err = second.StartSync(source.ID, "full")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+
+	requirements.NoError(first.CompleteSync(firstRun, "cursor"))
+	secondRun, err := second.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	requirements.NoError(second.FailSync(secondRun, "test complete"))
 }
 
 func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t *testing.T) {
@@ -162,6 +419,7 @@ func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t
 	require.NoError(f.Store.UpdateSourceSyncCursor(f.Source.ID, "baseline-cursor"))
 
 	oldID := f.StartSync()
+	require.NoError(f.Store.FailSync(oldID, "worker stopped"))
 	newID := f.StartSync()
 
 	err := f.Store.CompleteSyncAndUpdateSourceCursorContext(
@@ -192,6 +450,7 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 	requirements.NoError(f.Store.UpdateSourceSyncCursor(f.Source.ID, "baseline-cursor"))
 
 	oldID := f.StartSync()
+	requirements.NoError(f.Store.FailSync(oldID, "worker stopped"))
 	newID := f.StartSync()
 	err := f.Store.FailSyncAndClearSourceCursorContext(
 		t.Context(), oldID, f.Source.ID, "expired cursor",
@@ -214,15 +473,18 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 }
 
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("generation-fence-message")
 	var conversationID int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT conversation_id FROM messages WHERE id = ?`), messageID,
 	).Scan(&conversationID))
 	participantID := f.EnsureParticipant("reactor@example.test", "Reactor", "example.test")
 	oldID := f.StartSync()
 	stale := f.Store.ScopedToSync(f.Source.ID, oldID)
+	requirements.NoError(f.Store.FailSync(oldID, "worker stopped"))
 	_ = f.StartSync()
 
 	tests := []struct {
@@ -306,14 +568,14 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.ErrorIs(t, test.write(), store.ErrSyncRunSuperseded)
+			require.New(t).ErrorIs(test.write(), store.ErrSyncRunSuperseded)
 		})
 	}
 	var staleEmailThreads int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM conversations
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM conversations
 		WHERE source_id = ? AND source_conversation_id = 'stale-email-thread'`),
 		f.Source.ID).Scan(&staleEmailThreads))
-	assert.Zero(t, staleEmailThreads)
+	checks.Zero(staleEmailThreads)
 }
 
 func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) {
@@ -410,6 +672,7 @@ func TestSupersededSyncDoesNotCoalescePersonSweep(t *testing.T) {
 	requirements.NoError(err)
 	f.insertMessage(t, "superseded-sync-change", "email", f.aliceID,
 		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
+	requirements.NoError(f.store.FailSync(oldSyncID, "worker stopped"))
 	newSyncID, err := f.store.StartSync(f.sourceID, "incremental")
 	requirements.NoError(err)
 
@@ -484,6 +747,189 @@ func TestStore_GetLatestCheckpointedSyncNeverFallsBackPastCompletion(t *testing.
 
 	_, err := f.Store.GetLatestCheckpointedSync(f.Source.ID)
 	require.ErrorIs(err, store.ErrSyncRunNotFound)
+}
+
+func TestStore_CreateSyncOperationRejectsActiveSource(t *testing.T) {
+	requirements := require.New(t)
+	fixture := storetest.New(t)
+	runID := fixture.StartSync()
+	t.Cleanup(func() { _ = fixture.Store.FailSync(runID, "test complete") })
+
+	_, err := fixture.Store.CreateSyncOperation(fixture.Source.ID, "competing-operation")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+}
+
+func TestStore_PendingSyncOperationReservesSource(t *testing.T) {
+	requirements := require.New(t)
+	fixture := storetest.New(t)
+	const operationID = "reserved-operation"
+	_, err := fixture.Store.CreateSyncOperation(fixture.Source.ID, operationID)
+	requirements.NoError(err)
+
+	_, err = fixture.Store.StartSync(fixture.Source.ID, "full")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+
+	execution, err := fixture.Store.AcquireSyncExecutionContext(t.Context(), fixture.Source.ID)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = execution.Release() })
+	runID, err := execution.StartSyncContext(t.Context(), "full", operationID)
+	requirements.NoError(err)
+	requirements.NoError(fixture.Store.CompleteSync(runID, "complete"))
+	requirements.NoError(execution.Release())
+	requirements.NoError(fixture.Store.FinishSyncOperation(operationID, "done"))
+
+	nextRunID, err := fixture.Store.StartSync(fixture.Source.ID, "full")
+	requirements.NoError(err)
+	requirements.NoError(fixture.Store.FailSync(nextRunID, "test complete"))
+}
+
+func TestStore_SyncOperationGroupsRunsAndPublishesFinalState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	pending, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(err)
+	assert.Equal("pending", pending.Status)
+	assert.Equal(f.Source.ID, pending.SourceID)
+	assert.False(pending.CreatedAt.IsZero())
+	assert.False(pending.StartedAt.Valid)
+	assert.Empty(pending.Runs)
+	pending, err = f.Store.GetSyncOperation("operation-1")
+	require.NoError(err)
+	assert.Equal("pending", pending.Status)
+	assert.Equal(f.Source.ID, pending.SourceID)
+	assert.Empty(pending.Runs)
+
+	execution, err := f.Store.AcquireSyncExecutionContext(t.Context(), f.Source.ID)
+	require.NoError(err)
+	t.Cleanup(func() { _ = execution.Release() })
+	firstID, err := execution.StartSyncContext(t.Context(), "full", "operation-1")
+	require.NoError(err)
+	require.NoError(f.Store.CompleteSync(firstID, "first"))
+	secondID, err := execution.StartSyncContext(t.Context(), "incremental", "operation-1")
+	require.NoError(err)
+	require.NoError(f.Store.CompleteSync(secondID, "second"))
+	require.NoError(execution.Release())
+	require.NoError(f.Store.FinishSyncOperation("operation-1", "done"))
+
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(err)
+	assert.Equal("done", op.Status)
+	assert.True(op.StartedAt.Valid)
+	assert.True(op.FinishedAt.Valid)
+	require.Len(op.Runs, 2)
+	assert.Equal(firstID, op.Runs[0].ID)
+	assert.Equal(secondID, op.Runs[1].ID)
+}
+
+func TestStore_FinishSyncOperationPreservesFirstTerminalStatus(t *testing.T) {
+	f := storetest.New(t)
+
+	for _, first := range []string{"done", store.SyncStatusFailed} {
+		t.Run(first, func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			operationID := "terminal-" + first
+			_, err := f.Store.CreateSyncOperation(f.Source.ID, operationID)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.FinishSyncOperation(operationID, first))
+
+			second := "done"
+			if first == "done" {
+				second = store.SyncStatusFailed
+			}
+			requirements.NoError(f.Store.FinishSyncOperation(operationID, second))
+
+			op, err := f.Store.GetSyncOperation(operationID)
+			requirements.NoError(err)
+			checks.Equal(first, op.Status)
+			checks.True(op.FinishedAt.Valid)
+		})
+	}
+}
+
+func TestStore_FinishFailedSyncOperationFailsRunningRuns(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	const operationID = "failed-with-running-run"
+
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, operationID)
+	requirements.NoError(err)
+	runID, err := f.Store.StartSyncOperation(f.Source.ID, operationID)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.FinishSyncOperation(operationID, store.SyncStatusFailed))
+
+	op, err := f.Store.GetSyncOperation(operationID)
+	requirements.NoError(err)
+	checks.Equal(store.SyncStatusFailed, op.Status)
+	requirements.Len(op.Runs, 1)
+	checks.Equal(runID, op.Runs[0].ID)
+	checks.Equal(store.SyncStatusFailed, op.Runs[0].Status)
+	checks.True(op.Runs[0].CompletedAt.Valid)
+	checks.Equal("sync worker exited before recording completion", op.Runs[0].ErrorMessage.String)
+	active, err := f.Store.HasAnyActiveSync()
+	requirements.NoError(err)
+	checks.False(active)
+}
+
+func TestStore_FailUnfinishedSyncOperations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "orphaned-operation")
+	require.NoError(err)
+	failed, err := f.Store.FailUnfinishedSyncOperationsContext(t.Context())
+	require.NoError(err)
+	assert.Equal(int64(1), failed)
+
+	op, err := f.Store.GetSyncOperation("orphaned-operation")
+	require.NoError(err)
+	assert.Equal("failed", op.Status)
+	assert.False(op.StartedAt.Valid)
+	assert.True(op.FinishedAt.Valid)
+	assert.Empty(op.Runs)
+}
+
+func TestStore_FailUnfinishedSyncOperationsRepairsFailedOperationRuns(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	first := testutil.NewTestStore(t)
+	source, err := first.GetOrCreateSource("gmail", "failed-operation-recovery@example.com")
+	requirements.NoError(err)
+	const operationID = "failed-operation-with-running-run"
+	_, err = first.CreateSyncOperation(source.ID, operationID)
+	requirements.NoError(err)
+	runID, err := first.StartSyncOperation(source.ID, operationID)
+	requirements.NoError(err)
+	_, err = first.DB().Exec(first.Rebind(`
+		UPDATE sync_operations
+		SET status = 'failed', finished_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`), operationID)
+	requirements.NoError(err)
+	dbPath := store.DBPathForTest(first)
+	requirements.NoError(first.Close())
+
+	second, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+	failed, err := second.FailUnfinishedSyncOperationsContext(t.Context())
+	requirements.NoError(err)
+	checks.Zero(failed)
+	op, err := second.GetSyncOperation(operationID)
+	requirements.NoError(err)
+	checks.Equal(store.SyncStatusFailed, op.Status)
+	requirements.Len(op.Runs, 1)
+	checks.Equal(runID, op.Runs[0].ID)
+	checks.Equal(store.SyncStatusFailed, op.Runs[0].Status)
+	checks.True(op.Runs[0].CompletedAt.Valid)
+	checks.Equal("sync worker exited before recording completion", op.Runs[0].ErrorMessage.String)
+	active, err := second.HasAnyActiveSync()
+	requirements.NoError(err)
+	checks.False(active)
 }
 
 func TestStore_SyncRunItems(t *testing.T) {
@@ -631,12 +1077,11 @@ func TestStore_HasAnyActiveSync(t *testing.T) {
 	require.NoError(err, "HasAnyActiveSync (after StartSync)")
 	assert.True(running, "expected active sync after StartSync")
 
-	// A second StartSync on the same source marks the prior one failed, but
-	// itself is running.
-	_ = f.StartSync()
+	_, err = f.Store.StartSync(f.Source.ID, "full")
+	require.ErrorIs(err, store.ErrSyncAlreadyActive)
 	running, err = f.Store.HasAnyActiveSync()
-	require.NoError(err, "HasAnyActiveSync (after second StartSync)")
-	assert.True(running, "expected an active sync after second StartSync")
+	require.NoError(err, "HasAnyActiveSync (after rejected StartSync)")
+	assert.True(running, "the original sync remains active")
 
 	// Mark the latest sync as completed.
 	_, err = f.Store.DB().Exec(

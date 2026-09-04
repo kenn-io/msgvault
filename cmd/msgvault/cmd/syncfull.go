@@ -28,6 +28,7 @@ var (
 	syncBefore      string
 	syncAfter       string
 	syncLimit       int
+	syncOperationID string
 	syncFolders     []string // folder names to include (from --folder flag)
 	syncSkipFolders []string // folder names to exclude (from --skip-folder flag)
 )
@@ -108,7 +109,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		for _, src := range allMatches {
-			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
+			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP || src.SourceType == "" {
 				sources = append(sources, src)
 			}
 		}
@@ -562,6 +563,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	opts.Query = query
 	opts.NoResume = syncNoResume
 	opts.Limit = syncLimit
+	opts.OperationID = syncOperationID
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	// IMAP page tokens are numeric offsets into a message list
@@ -589,8 +591,33 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		fmt.Printf("Query: %s\n", query)
 	}
 	fmt.Println()
+	syncSource := src
+	if syncSource.ID == 0 {
+		sourceType := syncSource.SourceType
+		if sourceType == "" {
+			sourceType = sourceTypeGmail
+		}
+		syncSource, err = s.GetOrCreateSource(sourceType, syncSource.Identifier)
+		if err != nil {
+			return fmt.Errorf("get/create source: %w", err)
+		}
+	}
 
-	summary, err := syncer.Full(ctx, src.Identifier)
+	summary, err := syncer.FullWithFinalizer(
+		ctx,
+		syncSource,
+		func(summary *gmail.SyncSummary) error {
+			if src.SourceType != sourceTypeIMAP {
+				return nil
+			}
+			if err := saveIMAPFolderStates(
+				ctx, s, src, apiClient, summary, opts.Limit,
+			); err != nil {
+				return fmt.Errorf("save IMAP incremental state: %w", err)
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		if ctx.Err() != nil {
 			if opts.NoResume {
@@ -601,12 +628,6 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 			return nil
 		}
 		return fmt.Errorf("sync failed: %w", err)
-	}
-
-	if src.SourceType == sourceTypeIMAP {
-		if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, opts.Limit); err != nil {
-			return fmt.Errorf("save IMAP incremental state: %w", err)
-		}
 	}
 
 	// Print summary; skip the spacer when no progress lines were
@@ -919,6 +940,8 @@ func imapSkipReason(src *store.Source) (string, error) {
 
 func init() {
 	syncFullCmd.Flags().Int64("source-id", 0, "Exact source ID to sync")
+	syncFullCmd.Flags().StringVar(&syncOperationID, "sync-operation-id", "", "Attribute runs to a daemon sync operation")
+	_ = syncFullCmd.Flags().MarkHidden("sync-operation-id")
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
 	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")

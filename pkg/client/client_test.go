@@ -557,6 +557,8 @@ func TestCreateCommunicationServiceAcceptsIdempotentOKResponse(t *testing.T) {
 
 func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t *testing.T) {
 	assertions := assert.New(t)
+	assertions.Equal(generated.Pending, generated.ListPersonRelationshipReviewsQueryStatus("pending"))
+	assertions.Equal(generated.ImportJobResponseStatusPending, generated.ImportJobResponseStatus("pending"))
 	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))
 	assertions.Equal(generated.Desc, generated.SavedViewSortDirection("desc"))
 	assertions.Equal(generated.IdentitySearchSortDirectionAsc, generated.IdentitySearchSortDirection("asc"))

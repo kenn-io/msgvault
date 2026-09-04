@@ -344,7 +344,8 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 // NOT exempt: its subprocess opens the store read-write and runs schema
 // init/migrations.
 //
-// Backup freeze begin and meeting import coordinate the gate in their handlers.
+// Backup freeze begin, meeting import, and historical import jobs coordinate
+// the gate in their handlers.
 // Meeting import first reads and validates its bounded request body so a slow
 // authenticated upload cannot hold the gate. Backup freeze end bypasses the
 // gate so it can release the freeze held by begin. Routing these through the
@@ -353,6 +354,7 @@ var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
 	sessionPath:                      true,
 	sessionLoginPath:                 true,
+	importJobsEndpointPath:           true,
 	meetingImportEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,

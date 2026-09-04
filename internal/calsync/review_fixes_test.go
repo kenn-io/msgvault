@@ -3,6 +3,7 @@ package calsync
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -418,6 +419,7 @@ func TestFull_LegacyResumeCheckpointIgnored(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(oldSyncID, &store.Checkpoint{
 		PageToken: "1", MessagesProcessed: 2, MessagesAdded: 2,
 	}))
+	require.NoError(st.FailSync(oldSyncID, "worker stopped"))
 
 	recorder := &listEventsRecorder{MockAPI: m}
 	s := New(recorder, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
@@ -514,11 +516,10 @@ func TestIncremental_PersistErrorDoesNotAdvanceCursor(t *testing.T) {
 	assert.Equal("T1", src2.SyncCursor.String, "cursor must NOT advance past an event that failed to persist")
 }
 
-// TestFull_ResumeSupersedesAndSeedsCounters is the regression for the resume
-// path: it must go through StartSync (so a stale/concurrent running run is
-// superseded under the writer lock, not shared) and carry the prior run's
-// counters forward so a resumed run's stats are not reset to zero.
-func TestFull_ResumeSupersedesAndSeedsCounters(t *testing.T) {
+// TestFull_ResumeFailedRunAndSeedsCounters is the regression for the resume
+// path: it starts a new run from a stopped worker's checkpoint and carries the
+// prior counters forward so a resumed run's stats are not reset to zero.
+func TestFull_ResumeFailedRunAndSeedsCounters(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -529,7 +530,7 @@ func TestFull_ResumeSupersedesAndSeedsCounters(t *testing.T) {
 
 	s, st := newSyncer(t, m, Options{})
 
-	// Simulate an interrupted prior run: a 'running' sync_run with 2 already
+	// Simulate an interrupted prior run with 2 already
 	// processed, checkpointed to resume from the first page ("").
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	require.NoError(err)
@@ -539,15 +540,16 @@ func TestFull_ResumeSupersedesAndSeedsCounters(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(oldSyncID, &store.Checkpoint{
 		PageToken: encodeCalendarFullCheckpoint(""), MessagesProcessed: 2, MessagesAdded: 2,
 	}))
+	require.NoError(st.FailSync(oldSyncID, "worker stopped"))
 
 	_, err = s.Full(context.Background())
 	require.NoError(err)
 
-	// The old run was superseded (no longer 'running').
+	// The old run remains failed.
 	var oldStatus string
 	require.NoError(st.DB().QueryRow(
 		st.Rebind("SELECT status FROM sync_runs WHERE id = ?"), oldSyncID).Scan(&oldStatus))
-	assert.NotEqual(store.SyncStatusRunning, oldStatus, "resume must supersede the prior running run via StartSync")
+	assert.Equal(store.SyncStatusFailed, oldStatus)
 
 	// The completed run's counter includes the 2 seeded + 1 newly ingested.
 	var processed int64
@@ -555,6 +557,47 @@ func TestFull_ResumeSupersedesAndSeedsCounters(t *testing.T) {
 		"SELECT messages_processed FROM sync_runs WHERE source_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1"),
 		src.ID).Scan(&processed))
 	assert.Equal(int64(3), processed, "resumed run seeds prior counters (2) + new (1)")
+}
+
+func TestFull_ResumesCheckpointAfterWorkerExit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+
+	first, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(first.InitSchema())
+	src, err := first.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
+	require.NoError(err)
+	require.NoError(first.UpdateSourceSyncConfig(
+		src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`,
+	))
+	runID, err := first.StartSync(src.ID, "full")
+	require.NoError(err)
+	require.NoError(first.UpdateSyncCheckpoint(runID, &store.Checkpoint{
+		PageToken: encodeCalendarFullCheckpoint("1"), MessagesProcessed: 1, MessagesAdded: 1,
+	}))
+	require.NoError(first.Close())
+
+	second, err := store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+	mock := gcal.NewMockAPI()
+	mock.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	mock.FullEvents["primary"] = [][]gcal.Event{
+		{timedEvent("e1", "One")},
+		{timedEvent("e2", "Two")},
+	}
+	mock.FullSyncToken["primary"] = "T1"
+	recorder := &listEventsRecorder{MockAPI: mock}
+	syncer := New(recorder, second, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
+
+	_, err = syncer.Full(t.Context())
+
+	require.NoError(err)
+	require.NotEmpty(recorder.params)
+	assert.Equal("1", recorder.params[0].PageToken)
 }
 
 func TestIncremental_ExpiredCursorCannotEraseNewerGeneration(t *testing.T) {
@@ -572,10 +615,10 @@ func TestIncremental_ExpiredCursorCannotEraseNewerGeneration(t *testing.T) {
 	syncer := New(api, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
 
 	_, err = syncer.Incremental(t.Context())
-	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
 	src, err = st.GetSourceByID(src.ID)
 	requirements.NoError(err)
-	checks.Equal("newer-token", src.SyncCursor.String)
+	checks.Equal("expired-token", src.SyncCursor.String)
 	checks.False(api.fullSyncAttempted)
 }
 

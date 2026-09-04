@@ -139,73 +139,45 @@ func TestPersonSweepPostgreSQLUntrackingWinsPausedPublication(t *testing.T) {
 	checks.Nil(lease)
 }
 
-func TestPersonSweepPostgreSQLSupersededWriterFailsGenerationFence(t *testing.T) {
+func TestPersonSweepPostgreSQLConcurrentStartDoesNotSupersedeWriter(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	if !f.store.IsPostgreSQL() {
-		t.Skip("PostgreSQL-only sync-generation race regression")
+		t.Skip("PostgreSQL-only concurrent sync regression")
 	}
-	oldRunID, err := f.store.StartSync(f.sourceID, "incremental")
+	runID, err := f.store.StartSync(f.sourceID, "incremental")
 	requirements.NoError(err)
-	oldWriter := f.store.ScopedToSync(f.sourceID, oldRunID)
-	partialID, err := oldWriter.UpsertMessage(&store.Message{
-		SourceID: f.sourceID, SourceMessageID: "old-run-committed-partial",
+	writer := f.store.ScopedToSync(f.sourceID, runID)
+	partialID, err := writer.UpsertMessage(&store.Message{
+		SourceID: f.sourceID, SourceMessageID: "active-run-committed-partial",
 		ConversationID: f.conversationID, MessageType: "email",
 		SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true},
 	})
 	requirements.NoError(err)
-	partialSequence := latestPersonSweepSequence(t, f.store)
 	deletePersonSweepWork(t, f.store, f.alicePersonID)
 
-	staleReady := make(chan struct{})
-	releaseStale := make(chan struct{})
-	staleDone := make(chan error, 1)
-	go func() {
-		close(staleReady)
-		<-releaseStale
-		_, staleErr := oldWriter.UpsertMessage(&store.Message{
-			SourceID: f.sourceID, SourceMessageID: "old-run-post-supersession",
-			ConversationID: f.conversationID, MessageType: "email",
-			SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true},
-		})
-		staleDone <- staleErr
-	}()
-	<-staleReady
-
-	newRunID, err := f.store.StartSync(f.sourceID, "incremental")
-	requirements.NoError(err)
-	newWriter := f.store.ScopedToSync(f.sourceID, newRunID)
-	err = oldWriter.UpsertMessageBody(partialID,
-		sql.NullString{String: "stale old-run body", Valid: true}, sql.NullString{})
-	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
-	newID, err := newWriter.UpsertMessage(&store.Message{
-		SourceID: f.sourceID, SourceMessageID: "new-run-legitimate",
+	_, err = f.store.StartSync(f.sourceID, "incremental")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	requirements.NoError(writer.UpsertMessageBody(partialID,
+		sql.NullString{String: "active run body", Valid: true}, sql.NullString{}))
+	secondID, err := writer.UpsertMessage(&store.Message{
+		SourceID: f.sourceID, SourceMessageID: "active-run-continued",
 		ConversationID: f.conversationID, MessageType: "email",
 		SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true},
 	})
 	requirements.NoError(err)
-	newSequence := latestPersonSweepSequence(t, f.store)
-	close(releaseStale)
-	requirements.ErrorIs(<-staleDone, store.ErrSyncRunSuperseded)
-	requirements.NoError(newWriter.CompleteSync(newRunID, "new-generation"))
+	secondSequence := latestPersonSweepSequence(t, f.store)
+	requirements.NoError(writer.CompleteSync(runID, "completed-generation"))
 
 	checks.True(messageExistsByID(t, f.store, partialID))
-	checks.True(messageExistsByID(t, f.store, newID))
-	checks.False(messageExistsBySourceID(t, f.store,
-		f.sourceID, "old-run-post-supersession"))
-	changes := personSweepChangesAfter(t, f.store, f.alicePersonID, 0)
-	requirements.Len(changes, 2)
-	checks.Equal(partialSequence, changes[0].Sequence,
-		"the already-committed superseded-run mutation remains journal debt")
-	checks.Equal(newSequence, changes[1].Sequence)
+	checks.True(messageExistsByID(t, f.store, secondID))
 	rows, dirtyThrough := personSweepWorkState(t, f.store, f.alicePersonID)
 	checks.Equal(1, rows)
-	checks.Equal(newSequence, dirtyThrough)
-	lower, upper := personSweepSyncPublicationBounds(t, f.store, newRunID)
+	checks.Equal(secondSequence, dirtyThrough)
+	_, upper := personSweepSyncPublicationBounds(t, f.store, runID)
 	requirements.True(upper.Valid)
-	checks.Equal(partialSequence, lower)
-	checks.Equal(newSequence, upper.Int64)
+	checks.Equal(secondSequence, upper.Int64)
 }
 
 func TestPersonSweepPostgreSQLClaimDoesNotReversePublicationOptOutLocks(t *testing.T) {
@@ -292,17 +264,5 @@ func messageExistsByID(t *testing.T, st *store.Store, messageID int64) bool {
 	var exists bool
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT EXISTS (SELECT 1 FROM messages WHERE id = ?)`), messageID).Scan(&exists))
-	return exists
-}
-
-func messageExistsBySourceID(
-	t *testing.T, st *store.Store, sourceID int64, sourceMessageID string,
-) bool {
-	t.Helper()
-	var exists bool
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT EXISTS (
-			SELECT 1 FROM messages WHERE source_id = ? AND source_message_id = ?
-		)`), sourceID, sourceMessageID).Scan(&exists))
 	return exists
 }

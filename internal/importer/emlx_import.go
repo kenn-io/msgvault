@@ -93,7 +93,7 @@ const defaultMaxEmlxBytes int64 = 128 << 20 // 128 MiB
 func ImportEmlxDir(
 	ctx context.Context, st *store.Store,
 	rootDir string, opts EmlxImportOptions,
-) (*EmlxImportSummary, error) {
+) (retSummary *EmlxImportSummary, retErr error) {
 	if opts.SourceType == "" {
 		opts.SourceType = "apple-mail"
 	}
@@ -139,6 +139,14 @@ func ImportEmlxDir(
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
 	summary.SourceID = src.ID
+	ownershipCtx := context.WithoutCancel(ctx)
+	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire sync execution: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, execution.Release())
+	}()
 
 	// Resume support.
 	var (
@@ -149,9 +157,9 @@ func ImportEmlxDir(
 	)
 
 	if !opts.NoResume {
-		active, err := st.GetActiveSync(src.ID)
+		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-emlx")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active sync: %w", err)
+			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
 		if active != nil {
 			if active.CursorBefore.Valid &&
@@ -182,7 +190,6 @@ func ImportEmlxDir(
 							mailboxes[ecp.MailboxIndex].Path,
 						)
 					}
-					syncID = active.ID
 					cp.MessagesProcessed = active.MessagesProcessed
 					cp.MessagesAdded = active.MessagesAdded
 					cp.MessagesUpdated = active.MessagesUpdated
@@ -217,11 +224,9 @@ func ImportEmlxDir(
 		}
 	}
 
-	if syncID == 0 {
-		syncID, err = st.StartSync(src.ID, "import-emlx")
-		if err != nil {
-			return nil, fmt.Errorf("start sync: %w", err)
-		}
+	syncID, err = execution.StartSyncContext(ownershipCtx, "import-emlx", "")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
 
@@ -550,7 +555,7 @@ func ImportEmlxDir(
 
 	// If cancelled, leave the sync run as "running" so resume works.
 	if ctx.Err() != nil {
-		return summary, nil //nolint:nilerr // cancellation is signalled via summary, not error
+		return summary, nil // Cancellation is signalled via summary, not error.
 	}
 
 	if hardErrors {

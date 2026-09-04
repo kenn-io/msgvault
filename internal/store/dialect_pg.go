@@ -635,6 +635,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE carddav_conflicts ADD COLUMN IF NOT EXISTS pending_started_at TIMESTAMPTZ`, "carddav_conflicts.pending_started_at"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS sync_config JSONB`, "sync_config"},
 		{`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS sync_type TEXT NOT NULL DEFAULT ''`, "sync_runs.sync_type"},
+		{`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS request_fingerprint TEXT`, "sync_runs.request_fingerprint"},
+		{`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS operation_id TEXT`, "sync_runs.operation_id"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS list_id TEXT`, "list_id"},
@@ -2314,6 +2316,7 @@ var exclusiveLockTables = []string{
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
+	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships",
 }

@@ -12,6 +12,12 @@ import (
 // ParseDBTime is exported for testing unexported timestamp parsing behavior.
 var ParseDBTime = parseDBTime
 
+// DBPathForTest returns the backend address used by a Store so an integration
+// test can open a second independent handle to the same isolated database.
+func DBPathForTest(s *Store) string {
+	return s.dbPath
+}
+
 // MessagesTableColumns returns the live column names of the messages table on
 // whichever backend the store uses. Test-only: it exists so
 // TestMessagesColumnClassificationIsExhaustive can compare the real table

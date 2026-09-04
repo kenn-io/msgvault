@@ -260,7 +260,10 @@ import (
 // 2.15.0 adds POST /api/v1/cli/repair-message with a dedicated request and
 // streaming event contract for Gmail snapshot repair and audit operations.
 // Additive (minor bump): existing CLI routes and clients remain unchanged.
-const APISchemaVersion = "2.15.0"
+// 2.16.0 adds authenticated asynchronous historical import jobs at
+// POST /api/v1/imports and GET /api/v1/imports/{job_id}. Existing synchronous
+// CLI sync routes and source-status responses are unchanged.
+const APISchemaVersion = "2.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -797,6 +800,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		"IdentitySearchSort": {
 			"direction": {"IdentitySearchSortDirectionAsc", "IdentitySearchSortDirectionDesc"},
 			"field":     {"IdentitySearchSortFieldActivityCount", "IdentitySearchSortFieldLatestAt", "IdentitySearchSortFieldDisplayLabel"},
+		},
+		"ImportJobResponse": {
+			"status": {
+				"ImportJobResponseStatusPending",
+				"ImportJobResponseStatusRunning",
+				"ImportJobResponseStatusDone",
+				"ImportJobResponseStatusFailed",
+			},
 		},
 		"ExploreSelection": {
 			"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"},

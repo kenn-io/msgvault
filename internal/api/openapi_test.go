@@ -34,8 +34,55 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
-func TestOpenAPISchemaVersionRepairMessageIs2150(t *testing.T) {
-	assert.Equal(t, "2.15.0", APISchemaVersion)
+func TestOpenAPISchemaVersionAsyncImportsIs2160(t *testing.T) {
+	assert.Equal(t, "2.16.0", APISchemaVersion)
+}
+
+func TestOpenAPIImportJobContract(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	doc := OpenAPIDocument()
+
+	createPath := doc.Paths["/api/v1/imports"]
+	require.NotNil(createPath, "import collection path")
+	require.NotNil(createPath.Post, "create import operation")
+	assert.Equal("createImportJob", createPath.Post.OperationID)
+	require.Len(createPath.Post.Security, 1)
+	_, secured := createPath.Post.Security[0][apiKeySecurityScheme]
+	assert.True(secured, "create import requires API-key security")
+	require.NotNil(createPath.Post.RequestBody)
+	requestMedia := createPath.Post.RequestBody.Content[applicationJSONMediaType]
+	require.NotNil(requestMedia)
+	assert.Equal("#/components/schemas/ImportJobRequest", requestMedia.Schema.Ref)
+	accepted := createPath.Post.Responses["202"]
+	require.NotNil(accepted, "create import documents 202")
+	acceptedMedia := accepted.Content[applicationJSONMediaType]
+	require.NotNil(acceptedMedia)
+	assert.Equal("#/components/schemas/ImportJobResponse", acceptedMedia.Schema.Ref)
+	assert.Contains(createPath.Post.Responses, "503", "operation-gate contention is documented")
+
+	statusPath := doc.Paths["/api/v1/imports/{job_id}"]
+	require.NotNil(statusPath, "import status path")
+	require.NotNil(statusPath.Get, "get import operation")
+	assert.Equal("getImportJob", statusPath.Get.OperationID)
+	require.Len(statusPath.Get.Parameters, 1)
+	assert.Equal("job_id", statusPath.Get.Parameters[0].Name)
+	assert.Equal("path", statusPath.Get.Parameters[0].In)
+	assert.True(statusPath.Get.Parameters[0].Required)
+}
+
+func TestOpenAPIClientImportJobStatusEnumNamesPreserveExistingConstants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["ImportJobResponse"]
+	requirements.NotNil(schema)
+	requirements.NotNil(schema.Properties["status"])
+	assertions.Equal([]any{
+		"ImportJobResponseStatusPending",
+		"ImportJobResponseStatusRunning",
+		"ImportJobResponseStatusDone",
+		"ImportJobResponseStatusFailed",
+	}, schema.Properties["status"].Extensions["x-enum-names"])
 }
 
 func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
@@ -145,7 +192,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assert := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.15.0", APISchemaVersion)
+	assert.Equal("2.16.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -167,11 +214,11 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.15.0", APISchemaVersion)
+	assert.Equal(t, "2.16.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.15.0", APISchemaVersion)
+	assert.Equal(t, "2.16.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -195,7 +242,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	require := require.New(t)
-	assert.Equal(t, "2.15.0", APISchemaVersion,
+	assert.Equal(t, "2.16.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -519,7 +566,7 @@ func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	assert.Equal("2.15.0", APISchemaVersion,
+	assert.Equal("2.16.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -633,7 +680,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.15.0", APISchemaVersion,
+	assertions.Equal("2.16.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -653,7 +700,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("2.15.0", APISchemaVersion,
+	assert.Equal("2.16.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -681,7 +728,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.15.0", APISchemaVersion,
+	assertions.Equal("2.16.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -729,9 +776,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
 	// calendars in 2.10.0, person fact diagnostics in 2.11.0, lexical deletion
 	// scope in 2.12.0, Directory people and deduplicate planning in 2.13.0,
-	// CardDAV status and run history plus List-ID filtering in 2.14.0, and Gmail
-	// repair in 2.15.0 did not touch it.
-	assert.Equal("2.15.0", APISchemaVersion, "meeting import is an additive schema release")
+	// CardDAV status and run history plus List-ID filtering in 2.14.0, Gmail
+	// repair in 2.15.0, and historical import jobs in 2.16.0 did not touch it.
+	assert.Equal("2.16.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
